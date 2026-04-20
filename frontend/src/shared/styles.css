@@ -1,0 +1,584 @@
+@import "tailwindcss";
+
+/* =========================================================
+   OTRequest_v2 - Shared Styles Baseline
+   PrimeVue first, Tailwind for layout/spacing only
+   Standard palette:
+   - Blue   : #81A6C6
+   - Sky    : #AACDDC
+   - Beige  : #F3E3D0
+   - Stone  : #D2C4B4
+   ========================================================= */
+
+:root {
+  color-scheme: light;
+
+  /* Brand palette */
+  --ot-blue: #81A6C6;
+  --ot-sky: #AACDDC;
+  --ot-beige: #F3E3D0;
+  --ot-stone: #D2C4B4;
+
+  /* Light theme surfaces */
+  --ot-bg: #f6f8fb;
+  --ot-bg-soft: #eef4f8;
+  --ot-surface: #ffffff;
+  --ot-surface-2: #f8fafc;
+  --ot-surface-3: #eef2f6;
+  --ot-border: #dbe4ec;
+
+  /* Text */
+  --ot-text: #1f2937;
+  --ot-text-soft: #5f6b7a;
+  --ot-text-muted: #7b8794;
+
+  /* Status / accent */
+  --ot-primary: var(--ot-blue);
+  --ot-primary-soft: #dbe8f1;
+  --ot-secondary: var(--ot-sky);
+  --ot-warm: var(--ot-beige);
+  --ot-neutral: var(--ot-stone);
+
+  /* Effects */
+  --ot-shadow-sm: 0 2px 10px rgba(15, 23, 42, 0.05);
+  --ot-shadow-md: 0 12px 30px rgba(15, 23, 42, 0.08);
+  --ot-shadow-lg: 0 22px 50px rgba(15, 23, 42, 0.12);
+
+  /* Radius */
+  --ot-radius-sm: 10px;
+  --ot-radius-md: 14px;
+  --ot-radius-lg: 18px;
+  --ot-radius-xl: 24px;
+}
+
+.dark {
+  color-scheme: dark;
+
+  /* Keep same brand palette */
+  --ot-blue: #81A6C6;
+  --ot-sky: #AACDDC;
+  --ot-beige: #F3E3D0;
+  --ot-stone: #D2C4B4;
+
+  /* Dark theme surfaces */
+  --ot-bg: #0f1722;
+  --ot-bg-soft: #15202d;
+  --ot-surface: #162130;
+  --ot-surface-2: #1b2838;
+  --ot-surface-3: #223246;
+  --ot-border: rgba(170, 205, 220, 0.18);
+
+  /* Text */
+  --ot-text: #edf3f8;
+  --ot-text-soft: #c4d1dc;
+  --ot-text-muted: #9fb0bf;
+
+  /* Accent */
+  --ot-primary: #8db2d1;
+  --ot-primary-soft: rgba(129, 166, 198, 0.18);
+  --ot-secondary: #aacddc;
+  --ot-warm: #f3e3d0;
+  --ot-neutral: #d2c4b4;
+
+  /* Effects */
+  --ot-shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.22);
+  --ot-shadow-md: 0 12px 30px rgba(0, 0, 0, 0.28);
+  --ot-shadow-lg: 0 22px 50px rgba(0, 0, 0, 0.35);
+}
+
+/* =========================================================
+   Base
+   ========================================================= */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  -webkit-text-size-adjust: 100%;
+  text-rendering: optimizeLegibility;
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  font-family:
+    Inter,
+    "Be Vietnam Pro",
+    "Manrope",
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  background:
+    radial-gradient(circle at top left, rgba(170, 205, 220, 0.24), transparent 32%),
+    radial-gradient(circle at top right, rgba(243, 227, 208, 0.30), transparent 28%),
+    linear-gradient(180deg, var(--ot-bg-soft) 0%, var(--ot-bg) 100%);
+  color: var(--ot-text);
+}
+
+#app {
+  min-height: 100vh;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+img,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+::selection {
+  background: rgba(129, 166, 198, 0.26);
+  color: var(--ot-text);
+}
+
+/* =========================================================
+   Scrollbar
+   ========================================================= */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(129, 166, 198, 0.65) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--ot-blue), var(--ot-sky));
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+/* =========================================================
+   Reusable Layout Helpers
+   ========================================================= */
+
+.ot-page {
+  @apply min-h-screen;
+}
+
+.ot-container {
+  @apply mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8;
+}
+
+.ot-section {
+  @apply space-y-4 sm:space-y-5;
+}
+
+.ot-grid-auto {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.ot-card {
+  background: linear-gradient(180deg, var(--ot-surface) 0%, var(--ot-surface-2) 100%);
+  border: 1px solid var(--ot-border);
+  border-radius: var(--ot-radius-lg);
+  box-shadow: var(--ot-shadow-sm);
+}
+
+.ot-card-soft {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.65) 0%, rgba(255, 255, 255, 0.45) 100%);
+  border: 1px solid var(--ot-border);
+  border-radius: var(--ot-radius-lg);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--ot-shadow-sm);
+}
+
+.dark .ot-card-soft {
+  background: linear-gradient(180deg, rgba(22, 33, 48, 0.90) 0%, rgba(27, 40, 56, 0.82) 100%);
+}
+
+.ot-panel {
+  padding: 1rem;
+  background: var(--ot-surface);
+  border: 1px solid var(--ot-border);
+  border-radius: var(--ot-radius-md);
+  box-shadow: var(--ot-shadow-sm);
+}
+
+.ot-hero {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--ot-border);
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at top left, rgba(170, 205, 220, 0.48), transparent 28%),
+    radial-gradient(circle at bottom right, rgba(243, 227, 208, 0.48), transparent 24%),
+    linear-gradient(135deg, rgba(129, 166, 198, 0.20), rgba(170, 205, 220, 0.12), rgba(243, 227, 208, 0.24));
+  box-shadow: var(--ot-shadow-md);
+}
+
+.ot-hero::before {
+  content: "";
+  position: absolute;
+  inset: auto -80px -80px auto;
+  width: 220px;
+  height: 220px;
+  border-radius: 999px;
+  background: rgba(210, 196, 180, 0.18);
+  filter: blur(8px);
+}
+
+.ot-hero__content {
+  position: relative;
+  z-index: 1;
+  padding: 1.25rem;
+}
+
+@media (min-width: 640px) {
+  .ot-hero__content {
+    padding: 1.5rem;
+  }
+}
+
+.ot-title {
+  font-size: clamp(1.4rem, 2vw, 2rem);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--ot-text);
+}
+
+.ot-subtitle {
+  margin-top: 0.4rem;
+  font-size: 0.95rem;
+  line-height: 1.55;
+  color: var(--ot-text-soft);
+}
+
+.ot-muted {
+  color: var(--ot-text-muted);
+}
+
+.ot-divider {
+  height: 1px;
+  width: 100%;
+  background: linear-gradient(90deg, transparent, var(--ot-border), transparent);
+}
+
+/* =========================================================
+   Small utility classes
+   ========================================================= */
+
+.ot-glass {
+  background: rgba(255, 255, 255, 0.62);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--ot-border);
+}
+
+.dark .ot-glass {
+  background: rgba(22, 33, 48, 0.78);
+}
+
+.ot-ring {
+  box-shadow: 0 0 0 3px rgba(129, 166, 198, 0.14);
+}
+
+.ot-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  border-radius: 999px;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1;
+  border: 1px solid var(--ot-border);
+  background: var(--ot-surface-2);
+  color: var(--ot-text-soft);
+}
+
+.ot-badge-primary {
+  background: rgba(129, 166, 198, 0.16);
+  color: #4d6d89;
+  border-color: rgba(129, 166, 198, 0.24);
+}
+
+.dark .ot-badge-primary {
+  color: #d9e7f1;
+}
+
+.ot-badge-sky {
+  background: rgba(170, 205, 220, 0.20);
+  color: #577f91;
+  border-color: rgba(170, 205, 220, 0.25);
+}
+
+.dark .ot-badge-sky {
+  color: #e6f3f8;
+}
+
+.ot-badge-beige {
+  background: rgba(243, 227, 208, 0.45);
+  color: #8a7258;
+  border-color: rgba(243, 227, 208, 0.6);
+}
+
+.dark .ot-badge-beige {
+  color: #f6eadf;
+}
+
+.ot-badge-stone {
+  background: rgba(210, 196, 180, 0.32);
+  color: #77695c;
+  border-color: rgba(210, 196, 180, 0.5);
+}
+
+.dark .ot-badge-stone {
+  color: #f0e8de;
+}
+
+/* =========================================================
+   PrimeVue polishing
+   Keep PrimeVue look, only refine with project palette
+   ========================================================= */
+
+.p-component {
+  font-family:
+    Inter,
+    "Be Vietnam Pro",
+    "Manrope",
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+}
+
+.p-inputtext,
+.p-select,
+.p-multiselect,
+.p-datepicker-input,
+.p-password-input,
+.p-textarea,
+.p-inputnumber-input {
+  width: 100%;
+}
+
+.p-inputtext,
+.p-select,
+.p-multiselect,
+.p-datepicker,
+.p-password-input,
+.p-inputnumber,
+.p-textarea {
+  border-radius: 14px !important;
+}
+
+.p-card,
+.p-panel,
+.p-datatable,
+.p-dialog,
+.p-drawer,
+.p-overlaypanel,
+.p-tieredmenu,
+.p-menu,
+.p-popover {
+  overflow: hidden;
+  border-radius: 18px !important;
+}
+
+.p-card,
+.p-panel,
+.p-datatable,
+.p-dialog,
+.p-drawer,
+.p-menu,
+.p-overlaypanel,
+.p-tieredmenu,
+.p-popover {
+  box-shadow: var(--ot-shadow-sm) !important;
+}
+
+.p-button {
+  border-radius: 14px !important;
+  font-weight: 600 !important;
+}
+
+.p-button:not(.p-button-text):not(.p-button-link) {
+  box-shadow: none !important;
+}
+
+.p-button:focus-visible,
+.p-inputtext:focus,
+.p-select:focus,
+.p-multiselect:focus,
+.p-datepicker:focus,
+.p-password-input:focus,
+.p-inputnumber:focus,
+.p-textarea:focus {
+  box-shadow: 0 0 0 3px rgba(129, 166, 198, 0.16) !important;
+}
+
+.p-datatable {
+  border: 1px solid var(--ot-border) !important;
+}
+
+.p-datatable .p-datatable-header,
+.p-datatable .p-datatable-footer {
+  background: var(--ot-surface) !important;
+  border-color: var(--ot-border) !important;
+}
+
+.p-datatable .p-datatable-thead > tr > th {
+  background: linear-gradient(180deg, var(--ot-surface-2), var(--ot-surface-3)) !important;
+  color: var(--ot-text-soft) !important;
+  border-color: var(--ot-border) !important;
+  font-weight: 700 !important;
+  white-space: nowrap;
+}
+
+.p-datatable .p-datatable-tbody > tr > td {
+  border-color: var(--ot-border) !important;
+}
+
+.p-datatable .p-datatable-tbody > tr:hover {
+  background: rgba(170, 205, 220, 0.10) !important;
+}
+
+.p-paginator {
+  background: transparent !important;
+  border: 0 !important;
+}
+
+.p-dialog .p-dialog-header,
+.p-drawer .p-drawer-header {
+  background: linear-gradient(180deg, rgba(129, 166, 198, 0.08), rgba(170, 205, 220, 0.08)) !important;
+  border-bottom: 1px solid var(--ot-border) !important;
+}
+
+.p-dialog .p-dialog-content,
+.p-drawer .p-drawer-content {
+  background: var(--ot-surface) !important;
+}
+
+.p-toast {
+  opacity: 1 !important;
+}
+
+.p-toast .p-toast-message {
+  border-radius: 16px !important;
+  overflow: hidden;
+  box-shadow: var(--ot-shadow-md) !important;
+}
+
+.p-tag {
+  border-radius: 999px !important;
+  font-weight: 600 !important;
+}
+
+.p-panelmenu .p-panelmenu-panel {
+  margin-bottom: 0.5rem;
+}
+
+.p-panelmenu .p-panelmenu-header-content,
+.p-panelmenu .p-panelmenu-content {
+  border-radius: 14px !important;
+}
+
+.p-menuitem-link {
+  border-radius: 12px !important;
+}
+
+/* =========================================================
+   Responsive helpers for pages
+   ========================================================= */
+
+.ot-filter-grid {
+  display: grid;
+  gap: 0.875rem;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 768px) {
+  .ot-filter-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1200px) {
+  .ot-filter-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.ot-actions-row {
+  @apply flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between;
+}
+
+.ot-mobile-stack {
+  @apply flex flex-col gap-3;
+}
+
+@media (min-width: 1024px) {
+  .ot-mobile-stack {
+    @apply flex-row items-center justify-between;
+  }
+}
+
+/* =========================================================
+   Optional semantic color helpers
+   ========================================================= */
+
+.text-ot-blue {
+  color: var(--ot-blue);
+}
+
+.text-ot-sky {
+  color: var(--ot-sky);
+}
+
+.text-ot-beige {
+  color: #b89573;
+}
+
+.text-ot-stone {
+  color: #8e7c6c;
+}
+
+.bg-ot-blue {
+  background-color: var(--ot-blue);
+}
+
+.bg-ot-sky {
+  background-color: var(--ot-sky);
+}
+
+.bg-ot-beige {
+  background-color: var(--ot-beige);
+}
+
+.bg-ot-stone {
+  background-color: var(--ot-stone);
+}
+
+.border-ot {
+  border-color: var(--ot-border);
+}
