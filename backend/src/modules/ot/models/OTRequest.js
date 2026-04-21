@@ -155,7 +155,6 @@ const OTRequestSchema = new mongoose.Schema(
       type: String,
       trim: true,
       default: '',
-      index: true,
     },
 
     employees: {
