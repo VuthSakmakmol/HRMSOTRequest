@@ -9,7 +9,7 @@ function normalizeHeader(value) {
   return s(value).toLowerCase().replace(/[^a-z0-9]/g, '')
 }
 
-function normalizeEmployeeNo(value) {
+function normalizeEmployeeId(value) {
   return s(value).toUpperCase()
 }
 
@@ -41,7 +41,7 @@ function parseDateValue(value) {
 
   if (isYMD(raw)) return raw
 
-  if (/^\d{5}(\.\d+)?$/.test(raw) || /^\d{1,5}(\.\d+)?$/.test(raw)) {
+  if (/^\d{1,5}(\.\d+)?$/.test(raw)) {
     const serialParsed = parseExcelSerialDate(raw)
     if (serialParsed) return serialParsed
   }
@@ -135,40 +135,6 @@ function parseTimeValue(value) {
   return ''
 }
 
-function parseMinutesValue(value) {
-  const raw = s(value)
-  if (!raw) return null
-
-  const numeric = Number(raw)
-  if (!Number.isFinite(numeric) || numeric < 0) return null
-
-  return Math.round(numeric)
-}
-
-function toMinutes(hhmm) {
-  const raw = s(hhmm)
-  const match = raw.match(/^(\d{2}):(\d{2})$/)
-
-  if (!match) return null
-
-  const hh = Number(match[1])
-  const mm = Number(match[2])
-  return hh * 60 + mm
-}
-
-function calculateMinutesFromTimes(clockIn, clockOut) {
-  const start = toMinutes(clockIn)
-  const end = toMinutes(clockOut)
-
-  if (start == null || end == null) return null
-
-  let total = end - start
-  if (total < 0) total += 24 * 60
-  if (total < 0) return null
-
-  return total
-}
-
 function normalizeAttendanceStatus(value) {
   const raw = s(value).toUpperCase()
 
@@ -185,14 +151,15 @@ function detectColumnIndexes(headerRow = []) {
   const normalizedHeaders = headerRow.map(normalizeHeader)
 
   const aliases = {
-    employeeNo: [
+    employeeId: [
+      'employeeid',
       'employeeno',
+      'empid',
       'empno',
       'employeecode',
       'empcode',
-      'staffcode',
       'staffid',
-      'employeeid',
+      'staffcode',
     ],
     employeeName: [
       'employeename',
@@ -220,24 +187,28 @@ function detectColumnIndexes(headerRow = []) {
       'outtime',
       'lastout',
     ],
-    workMinutes: [
-      'workminutes',
-      'workingminutes',
-      'minutesworked',
-      'workedminutes',
-      'workmins',
-      'workmin',
-    ],
-    otMinutes: [
-      'otminutes',
-      'overtimeminutes',
-      'otmins',
-      'otmin',
-    ],
     status: [
       'status',
       'attendancestatus',
       'daystatus',
+    ],
+    position: [
+      'position',
+      'positionname',
+      'jobtitle',
+      'title',
+    ],
+    department: [
+      'department',
+      'departmentname',
+      'dept',
+      'deptname',
+    ],
+    shift: [
+      'shift',
+      'shiftname',
+      'shiftcode',
+      'shifttype',
     ],
   }
 
@@ -313,14 +284,14 @@ function parseAttendanceWorkbook(buffer, options = {}) {
   const headerRow = Array.isArray(rows[headerRowIndex]) ? rows[headerRowIndex] : []
   const columnIndexes = detectColumnIndexes(headerRow)
 
-  if (columnIndexes.employeeNo === -1) {
-    const err = new Error('Attendance file must contain an employee number column')
+  if (columnIndexes.employeeId === -1) {
+    const err = new Error('Attendance file must contain an Employee ID column')
     err.status = 400
     throw err
   }
 
   if (columnIndexes.attendanceDate === -1) {
-    const err = new Error('Attendance file must contain an attendance date column')
+    const err = new Error('Attendance file must contain an Attendance Date column')
     err.status = 400
     throw err
   }
@@ -340,8 +311,8 @@ function parseAttendanceWorkbook(buffer, options = {}) {
     const rawRowNo = i + 1
     const rawData = buildRawRowObject(headerRow, row)
 
-    const employeeNo = normalizeEmployeeNo(row[columnIndexes.employeeNo])
-    const employeeName =
+    const importedEmployeeId = normalizeEmployeeId(row[columnIndexes.employeeId])
+    const importedEmployeeName =
       columnIndexes.employeeName >= 0 ? s(row[columnIndexes.employeeName]) : ''
     const attendanceDate = parseDateValue(row[columnIndexes.attendanceDate])
 
@@ -350,21 +321,24 @@ function parseAttendanceWorkbook(buffer, options = {}) {
     const clockOut =
       columnIndexes.clockOut >= 0 ? parseTimeValue(row[columnIndexes.clockOut]) : ''
 
-    let workMinutes =
-      columnIndexes.workMinutes >= 0 ? parseMinutesValue(row[columnIndexes.workMinutes]) : null
-
-    const otMinutes =
-      columnIndexes.otMinutes >= 0 ? parseMinutesValue(row[columnIndexes.otMinutes]) : null
-
     const status =
       columnIndexes.status >= 0
         ? normalizeAttendanceStatus(row[columnIndexes.status])
         : 'PRESENT'
 
-    if (!employeeNo) {
+    const importedPositionName =
+      columnIndexes.position >= 0 ? s(row[columnIndexes.position]) : ''
+
+    const importedDepartmentName =
+      columnIndexes.department >= 0 ? s(row[columnIndexes.department]) : ''
+
+    const importedShiftName =
+      columnIndexes.shift >= 0 ? s(row[columnIndexes.shift]) : ''
+
+    if (!importedEmployeeId) {
       failedRows.push({
         rawRowNo,
-        message: 'Employee number is required',
+        message: 'Employee ID is required',
         rawData,
       })
       continue
@@ -373,7 +347,7 @@ function parseAttendanceWorkbook(buffer, options = {}) {
     if (!attendanceDate) {
       failedRows.push({
         rawRowNo,
-        message: 'Attendance date is missing or invalid',
+        message: 'Attendance Date is missing or invalid',
         rawData,
       })
       continue
@@ -382,7 +356,7 @@ function parseAttendanceWorkbook(buffer, options = {}) {
     if (columnIndexes.clockIn >= 0 && s(row[columnIndexes.clockIn]) && !clockIn) {
       failedRows.push({
         rawRowNo,
-        message: 'Clock in time is invalid',
+        message: 'Clock In time is invalid',
         rawData,
       })
       continue
@@ -391,17 +365,13 @@ function parseAttendanceWorkbook(buffer, options = {}) {
     if (columnIndexes.clockOut >= 0 && s(row[columnIndexes.clockOut]) && !clockOut) {
       failedRows.push({
         rawRowNo,
-        message: 'Clock out time is invalid',
+        message: 'Clock Out time is invalid',
         rawData,
       })
       continue
     }
 
-    if (workMinutes == null && clockIn && clockOut) {
-      workMinutes = calculateMinutesFromTimes(clockIn, clockOut)
-    }
-
-    const duplicateKey = `${employeeNo}|${attendanceDate}`
+    const duplicateKey = `${importedEmployeeId}|${attendanceDate}`
     if (duplicateKeySet.has(duplicateKey)) {
       duplicateRowCount += 1
       continue
@@ -411,13 +381,14 @@ function parseAttendanceWorkbook(buffer, options = {}) {
 
     parsedRows.push({
       rawRowNo,
-      employeeNo,
-      employeeName,
+      importedEmployeeId,
+      importedEmployeeName,
+      importedDepartmentName,
+      importedPositionName,
+      importedShiftName,
       attendanceDate,
       clockIn,
       clockOut,
-      workMinutes,
-      otMinutes,
       status,
       rawData,
     })

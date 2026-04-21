@@ -6,6 +6,7 @@ const { Schema } = mongoose
 const ATTENDANCE_STATUS = ['PRESENT', 'ABSENT', 'LEAVE', 'OFF', 'UNKNOWN']
 const ATTENDANCE_DAY_TYPE = ['WORKING_DAY', 'SUNDAY', 'HOLIDAY']
 const ATTENDANCE_MATCHED_BY = ['EMPLOYEE_NO', 'MANUAL', 'NONE']
+const SHIFT_MATCH_STATUS = ['MATCHED', 'MISMATCH', 'UNKNOWN']
 
 function s(value) {
   return String(value ?? '').trim()
@@ -48,6 +49,7 @@ const attendanceRecordSchema = new Schema(
       index: true,
     },
 
+    // Resolved / normalized employee business id
     employeeNo: {
       type: String,
       required: true,
@@ -56,7 +58,129 @@ const attendanceRecordSchema = new Schema(
       index: true,
     },
 
+    // Resolved master snapshot
     employeeName: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 150,
+    },
+
+    departmentId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Department',
+      default: null,
+      index: true,
+    },
+
+    departmentCode: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 50,
+    },
+
+    departmentName: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 150,
+    },
+
+    positionId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Position',
+      default: null,
+      index: true,
+    },
+
+    positionCode: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 50,
+    },
+
+    positionName: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 150,
+    },
+
+    shiftId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Shift',
+      default: null,
+      index: true,
+    },
+
+    shiftCode: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 50,
+    },
+
+    shiftName: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 150,
+    },
+
+    shiftType: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 50,
+    },
+
+    shiftStartTime: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 5,
+    },
+
+    shiftEndTime: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 5,
+    },
+
+    // Imported Excel snapshot
+    importedEmployeeId: {
+      type: String,
+      required: true,
+      trim: true,
+      maxlength: 50,
+      index: true,
+    },
+
+    importedEmployeeName: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 150,
+    },
+
+    importedDepartmentName: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 150,
+    },
+
+    importedPositionName: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 150,
+    },
+
+    importedShiftName: {
       type: String,
       default: '',
       trim: true,
@@ -90,18 +214,6 @@ const attendanceRecordSchema = new Schema(
       maxlength: 5,
     },
 
-    workMinutes: {
-      type: Number,
-      default: null,
-      min: 0,
-    },
-
-    otMinutes: {
-      type: Number,
-      default: null,
-      min: 0,
-    },
-
     status: {
       type: String,
       required: true,
@@ -133,6 +245,49 @@ const attendanceRecordSchema = new Schema(
       maxlength: 1000,
     },
 
+    employeeMatched: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    nameMatched: {
+      type: Boolean,
+      default: null,
+    },
+
+    departmentMatched: {
+      type: Boolean,
+      default: null,
+    },
+
+    positionMatched: {
+      type: Boolean,
+      default: null,
+    },
+
+    shiftMatched: {
+      type: Boolean,
+      default: null,
+    },
+
+    shiftTimeMatched: {
+      type: Boolean,
+      default: null,
+    },
+
+    shiftMatchStatus: {
+      type: String,
+      enum: SHIFT_MATCH_STATUS,
+      default: 'UNKNOWN',
+      index: true,
+    },
+
+    validationIssues: {
+      type: [String],
+      default: [],
+    },
+
     rawRowNo: {
       type: Number,
       required: true,
@@ -159,12 +314,31 @@ const attendanceRecordSchema = new Schema(
   {
     timestamps: true,
     versionKey: false,
-  }
+  },
 )
 
 attendanceRecordSchema.pre('validate', function preValidate(next) {
   this.employeeNo = s(this.employeeNo).toUpperCase()
   this.employeeName = s(this.employeeName)
+
+  this.departmentCode = s(this.departmentCode).toUpperCase()
+  this.departmentName = s(this.departmentName)
+
+  this.positionCode = s(this.positionCode).toUpperCase()
+  this.positionName = s(this.positionName)
+
+  this.shiftCode = s(this.shiftCode).toUpperCase()
+  this.shiftName = s(this.shiftName)
+  this.shiftType = s(this.shiftType).toUpperCase()
+  this.shiftStartTime = s(this.shiftStartTime)
+  this.shiftEndTime = s(this.shiftEndTime)
+
+  this.importedEmployeeId = s(this.importedEmployeeId).toUpperCase()
+  this.importedEmployeeName = s(this.importedEmployeeName)
+  this.importedDepartmentName = s(this.importedDepartmentName)
+  this.importedPositionName = s(this.importedPositionName)
+  this.importedShiftName = s(this.importedShiftName)
+
   this.attendanceDate = s(this.attendanceDate)
   this.clockIn = s(this.clockIn)
   this.clockOut = s(this.clockOut)
@@ -172,6 +346,7 @@ attendanceRecordSchema.pre('validate', function preValidate(next) {
   this.dayType = s(this.dayType).toUpperCase()
   this.matchedBy = s(this.matchedBy).toUpperCase()
   this.matchRemark = s(this.matchRemark)
+  this.shiftMatchStatus = s(this.shiftMatchStatus).toUpperCase()
 
   if (!isYMD(this.attendanceDate)) {
     const err = new Error('attendanceDate must be in YYYY-MM-DD format')
@@ -187,6 +362,18 @@ attendanceRecordSchema.pre('validate', function preValidate(next) {
 
   if (this.clockOut && !isHHMM(this.clockOut)) {
     const err = new Error('clockOut must be in HH:mm format')
+    err.status = 400
+    return next(err)
+  }
+
+  if (this.shiftStartTime && !isHHMM(this.shiftStartTime)) {
+    const err = new Error('shiftStartTime must be in HH:mm format')
+    err.status = 400
+    return next(err)
+  }
+
+  if (this.shiftEndTime && !isHHMM(this.shiftEndTime)) {
+    const err = new Error('shiftEndTime must be in HH:mm format')
     err.status = 400
     return next(err)
   }
@@ -209,27 +396,9 @@ attendanceRecordSchema.pre('validate', function preValidate(next) {
       0,
       0,
       0,
-      0
-    )
+      0,
+    ),
   )
-
-  if (this.workMinutes !== null && this.workMinutes !== undefined) {
-    this.workMinutes = Number(this.workMinutes)
-    if (!Number.isFinite(this.workMinutes) || this.workMinutes < 0) {
-      const err = new Error('workMinutes must be a non-negative number')
-      err.status = 400
-      return next(err)
-    }
-  }
-
-  if (this.otMinutes !== null && this.otMinutes !== undefined) {
-    this.otMinutes = Number(this.otMinutes)
-    if (!Number.isFinite(this.otMinutes) || this.otMinutes < 0) {
-      const err = new Error('otMinutes must be a non-negative number')
-      err.status = 400
-      return next(err)
-    }
-  }
 
   this.rawRowNo = Number(this.rawRowNo || 0)
   if (!Number.isInteger(this.rawRowNo) || this.rawRowNo < 1) {
@@ -238,6 +407,14 @@ attendanceRecordSchema.pre('validate', function preValidate(next) {
     return next(err)
   }
 
+  if (!Array.isArray(this.validationIssues)) {
+    this.validationIssues = []
+  }
+
+  this.validationIssues = this.validationIssues
+    .map((item) => s(item))
+    .filter(Boolean)
+
   if (this.rawData == null || typeof this.rawData !== 'object') {
     this.rawData = {}
   }
@@ -245,17 +422,16 @@ attendanceRecordSchema.pre('validate', function preValidate(next) {
   next()
 })
 
-attendanceRecordSchema.index(
-  { importId: 1, rawRowNo: 1 },
-  { unique: true }
-)
-
+attendanceRecordSchema.index({ importId: 1, rawRowNo: 1 }, { unique: true })
 attendanceRecordSchema.index({ importId: 1, attendanceDate: -1 })
 attendanceRecordSchema.index({ employeeId: 1, attendanceDate: -1 })
 attendanceRecordSchema.index({ employeeNo: 1, attendanceDate: -1 })
+attendanceRecordSchema.index({ importedEmployeeId: 1, attendanceDate: -1 })
 attendanceRecordSchema.index({ attendanceDate: -1, status: 1 })
 attendanceRecordSchema.index({ dayType: 1, attendanceDate: -1 })
 attendanceRecordSchema.index({ matchedBy: 1, attendanceDate: -1 })
+attendanceRecordSchema.index({ employeeMatched: 1, attendanceDate: -1 })
+attendanceRecordSchema.index({ shiftMatchStatus: 1, attendanceDate: -1 })
 attendanceRecordSchema.index({ createdAt: -1 })
 
 module.exports = mongoose.model('AttendanceRecord', attendanceRecordSchema)

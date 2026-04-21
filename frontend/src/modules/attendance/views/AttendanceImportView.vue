@@ -99,6 +99,11 @@ function formatPeriod(row) {
   return '—'
 }
 
+function formatIssues(value) {
+  if (Array.isArray(value) && value.length) return value.join(', ')
+  return '—'
+}
+
 function getImportStatusSeverity(status) {
   switch (String(status || '').toUpperCase()) {
     case 'SUCCESS':
@@ -112,6 +117,43 @@ function getImportStatusSeverity(status) {
     default:
       return 'secondary'
   }
+}
+
+function getMatchSeverity(value) {
+  if (value === true) return 'success'
+  if (value === false) return 'danger'
+  return 'secondary'
+}
+
+function getShiftStatusSeverity(value) {
+  switch (String(value || '').toUpperCase()) {
+    case 'MATCHED':
+      return 'success'
+    case 'MISMATCH':
+      return 'danger'
+    default:
+      return 'secondary'
+  }
+}
+
+function displayResolvedEmployee(row) {
+  const code = String(row?.employeeNo || '').trim()
+  const name = String(row?.employeeName || '').trim()
+
+  if (code && name) return `${code} - ${name}`
+  if (code) return code
+  if (name) return name
+  return '—'
+}
+
+function displayShift(row) {
+  const code = String(row?.shiftCode || '').trim()
+  const name = String(row?.shiftName || '').trim()
+
+  if (code && name) return `${code} - ${name}`
+  if (code) return code
+  if (name) return name
+  return '—'
 }
 
 function clearFilters() {
@@ -256,7 +298,7 @@ onMounted(() => {
               </div>
 
               <p class="mt-1 text-sm text-[color:var(--ot-text-muted)]">
-                Import attendance files with sample guidance, review history, and inspect normalized rows.
+                Import attendance files with sample guidance, review history, and inspect validation results.
               </p>
             </div>
           </div>
@@ -491,7 +533,7 @@ onMounted(() => {
       v-model:visible="detailVisible"
       modal
       maximizable
-      :style="{ width: '94vw', maxWidth: '1100px' }"
+      :style="{ width: '96vw', maxWidth: '1280px' }"
       header="Attendance Import Detail"
     >
       <div v-if="detailLoading" class="py-10 text-center text-sm text-[color:var(--ot-text-muted)]">
@@ -578,25 +620,50 @@ onMounted(() => {
               </template>
 
               <Column field="rawRowNo" header="Row" style="min-width: 5rem" />
-              <Column field="employeeNo" header="Employee No" style="min-width: 9rem" />
-              <Column field="employeeName" header="Employee Name" style="min-width: 12rem" />
+              <Column field="importedEmployeeId" header="Imported ID" style="min-width: 9rem" />
+              <Column field="importedEmployeeName" header="Imported Name" style="min-width: 12rem" />
               <Column field="attendanceDate" header="Date" style="min-width: 9rem" />
               <Column field="clockIn" header="In" style="min-width: 6rem" />
               <Column field="clockOut" header="Out" style="min-width: 6rem" />
-              <Column field="workMinutes" header="Work Min" style="min-width: 7rem" />
               <Column field="status" header="Status" style="min-width: 8rem">
                 <template #body="{ data }">
                   <Tag :value="data.status || '—'" />
                 </template>
               </Column>
-              <Column field="dayType" header="Day Type" style="min-width: 9rem">
+              <Column field="importedDepartmentName" header="Imported Department" style="min-width: 11rem" />
+              <Column field="importedPositionName" header="Imported Position" style="min-width: 11rem" />
+              <Column field="importedShiftName" header="Imported Shift" style="min-width: 10rem" />
+              <Column header="Resolved Employee" style="min-width: 13rem">
                 <template #body="{ data }">
-                  <Tag :value="data.dayType || '—'" severity="info" />
+                  {{ displayResolvedEmployee(data) }}
                 </template>
               </Column>
-              <Column field="matchedBy" header="Matched By" style="min-width: 9rem">
+              <Column header="Matched" style="min-width: 8rem">
                 <template #body="{ data }">
-                  <Tag :value="data.matchedBy || '—'" severity="secondary" />
+                  <Tag
+                    :value="data.employeeMatched ? 'MATCHED' : 'NOT FOUND'"
+                    :severity="getMatchSeverity(data.employeeMatched)"
+                  />
+                </template>
+              </Column>
+              <Column header="Shift" style="min-width: 10rem">
+                <template #body="{ data }">
+                  {{ displayShift(data) }}
+                </template>
+              </Column>
+              <Column field="shiftMatchStatus" header="Shift Status" style="min-width: 9rem">
+                <template #body="{ data }">
+                  <Tag
+                    :value="data.shiftMatchStatus || 'UNKNOWN'"
+                    :severity="getShiftStatusSeverity(data.shiftMatchStatus)"
+                  />
+                </template>
+              </Column>
+              <Column header="Issues" style="min-width: 18rem">
+                <template #body="{ data }">
+                  <span class="text-xs text-[color:var(--ot-text-muted)]">
+                    {{ formatIssues(data.validationIssues) }}
+                  </span>
                 </template>
               </Column>
             </DataTable>

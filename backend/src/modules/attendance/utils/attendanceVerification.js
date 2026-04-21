@@ -25,20 +25,49 @@ function mapAttendanceRecord(item) {
   return {
     id: item?._id ? String(item._id) : null,
     importId: item?.importId ? String(item.importId) : null,
+
     employeeId: item?.employeeId ? String(item.employeeId) : null,
     employeeNo: upper(item?.employeeNo),
     employeeName: s(item?.employeeName),
+
+    importedEmployeeId: upper(item?.importedEmployeeId),
+    importedEmployeeName: s(item?.importedEmployeeName),
+    importedDepartmentName: s(item?.importedDepartmentName),
+    importedPositionName: s(item?.importedPositionName),
+    importedShiftName: s(item?.importedShiftName),
+
+    departmentId: item?.departmentId ? String(item.departmentId) : null,
+    departmentCode: upper(item?.departmentCode),
+    departmentName: s(item?.departmentName),
+
+    positionId: item?.positionId ? String(item.positionId) : null,
+    positionCode: upper(item?.positionCode),
+    positionName: s(item?.positionName),
+
+    shiftId: item?.shiftId ? String(item.shiftId) : null,
+    shiftCode: upper(item?.shiftCode),
+    shiftName: s(item?.shiftName),
+    shiftType: upper(item?.shiftType),
+    shiftStartTime: s(item?.shiftStartTime),
+    shiftEndTime: s(item?.shiftEndTime),
+
     attendanceDate: s(item?.attendanceDate),
     clockIn: s(item?.clockIn),
     clockOut: s(item?.clockOut),
-    workMinutes:
-      item?.workMinutes == null ? null : Number(item.workMinutes || 0),
-    otMinutes:
-      item?.otMinutes == null ? null : Number(item.otMinutes || 0),
     status: upper(item?.status),
     dayType: upper(item?.dayType),
     matchedBy: upper(item?.matchedBy),
     matchRemark: s(item?.matchRemark),
+
+    employeeMatched: item?.employeeMatched === true,
+    nameMatched: typeof item?.nameMatched === 'boolean' ? item.nameMatched : null,
+    departmentMatched: typeof item?.departmentMatched === 'boolean' ? item.departmentMatched : null,
+    positionMatched: typeof item?.positionMatched === 'boolean' ? item.positionMatched : null,
+    shiftMatched: typeof item?.shiftMatched === 'boolean' ? item.shiftMatched : null,
+    shiftTimeMatched: typeof item?.shiftTimeMatched === 'boolean' ? item.shiftTimeMatched : null,
+    shiftMatchStatus: upper(item?.shiftMatchStatus),
+    validationIssues: Array.isArray(item?.validationIssues) ? item.validationIssues : [],
+
     rawRowNo: Number(item?.rawRowNo || 0),
     createdAt: item?.createdAt || null,
     updatedAt: item?.updatedAt || null,
@@ -51,12 +80,11 @@ function isAttendedRecord(item) {
   if (status === 'PRESENT') return true
   if (['ABSENT', 'LEAVE', 'OFF'].includes(status)) return false
 
-  return Boolean(
-    s(item?.clockIn) ||
-      s(item?.clockOut) ||
-      Number(item?.workMinutes || 0) > 0 ||
-      Number(item?.otMinutes || 0) > 0
-  )
+  return Boolean(s(item?.clockIn) || s(item?.clockOut))
+}
+
+function isShiftValidRecord(item) {
+  return upper(item?.shiftMatchStatus) !== 'MISMATCH'
 }
 
 function buildRequestedIndex(requestedEmployees = []) {
@@ -99,7 +127,7 @@ function verifyAttendanceAgainstOT({
   const requestedIndex = buildRequestedIndex(requestedList)
 
   const approvedKeySet = new Set(
-    approvedList.map((item) => s(item.employeeId) || upper(item.employeeCode)).filter(Boolean)
+    approvedList.map((item) => s(item.employeeId) || upper(item.employeeCode)).filter(Boolean),
   )
 
   const requestedAttendanceMap = new Map()
@@ -117,6 +145,7 @@ function verifyAttendanceAgainstOT({
   const attendedEmployees = []
   const absentFromApproved = []
   const attendedButNotApproved = []
+  const shiftMismatchEmployees = []
 
   for (const requested of requestedList) {
     const requestedKey = s(requested.employeeId) || upper(requested.employeeCode)
@@ -132,10 +161,22 @@ function verifyAttendanceAgainstOT({
       importId: attendanceRecord.importId,
       clockIn: attendanceRecord.clockIn,
       clockOut: attendanceRecord.clockOut,
-      workMinutes: attendanceRecord.workMinutes,
-      otMinutes: attendanceRecord.otMinutes,
       attendanceStatus: attendanceRecord.status,
       attendanceDayType: attendanceRecord.dayType,
+      shiftCode: attendanceRecord.shiftCode,
+      shiftName: attendanceRecord.shiftName,
+      shiftType: attendanceRecord.shiftType,
+      shiftStartTime: attendanceRecord.shiftStartTime,
+      shiftEndTime: attendanceRecord.shiftEndTime,
+      shiftMatched: attendanceRecord.shiftMatched,
+      shiftTimeMatched: attendanceRecord.shiftTimeMatched,
+      shiftMatchStatus: attendanceRecord.shiftMatchStatus,
+      validationIssues: attendanceRecord.validationIssues,
+    }
+
+    if (!isShiftValidRecord(attendanceRecord)) {
+      shiftMismatchEmployees.push(item)
+      continue
     }
 
     attendedEmployees.push(item)
@@ -146,7 +187,7 @@ function verifyAttendanceAgainstOT({
   }
 
   const attendedKeySet = new Set(
-    attendedEmployees.map((item) => s(item.employeeId) || upper(item.employeeCode)).filter(Boolean)
+    attendedEmployees.map((item) => s(item.employeeId) || upper(item.employeeCode)).filter(Boolean),
   )
 
   for (const approved of approvedList) {
@@ -163,9 +204,11 @@ function verifyAttendanceAgainstOT({
     actualAttendedCount: attendedEmployees.length,
     absentFromApprovedCount: absentFromApproved.length,
     attendedButNotApprovedCount: attendedButNotApproved.length,
+    shiftMismatchCount: shiftMismatchEmployees.length,
     attendedEmployees,
     absentFromApproved,
     attendedButNotApproved,
+    shiftMismatchEmployees,
   }
 }
 

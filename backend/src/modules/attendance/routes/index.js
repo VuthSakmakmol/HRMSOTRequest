@@ -17,41 +17,41 @@ const upload = multer({
 
 router.use(requireAuth)
 
+router.get(
+  '/import/sample',
+  requirePermission('ATTENDANCE_VIEW'),
+  attendanceController.downloadAttendanceImportSample,
+)
+
 router.post(
   '/import',
   requirePermission('ATTENDANCE_IMPORT'),
   upload.single('file'),
-  attendanceController.importAttendance
+  attendanceController.importAttendance,
 )
 
 router.get(
   '/imports',
   requirePermission('ATTENDANCE_VIEW'),
-  attendanceController.listAttendanceImports
+  attendanceController.listAttendanceImports,
 )
 
 router.get(
   '/imports/:id',
   requirePermission('ATTENDANCE_VIEW'),
-  attendanceController.getAttendanceImportDetail
+  attendanceController.getAttendanceImportDetail,
 )
 
 router.get(
   '/records',
   requirePermission('ATTENDANCE_VIEW'),
-  attendanceController.listAttendanceRecords
+  attendanceController.listAttendanceRecords,
 )
 
 router.get(
   '/verification/ot/:id',
   requirePermission('ATTENDANCE_VERIFY'),
-  attendanceController.verifyAttendanceAgainstOT
-)
-
-router.get(
-  '/import/sample',
-  requirePermission('ATTENDANCE_VIEW'),
-  attendanceController.downloadAttendanceImportSample
+  attendanceController.verifyAttendanceAgainstOT,
 )
 
 module.exports = router

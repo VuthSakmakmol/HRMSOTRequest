@@ -1,16 +1,19 @@
 // backend/src/modules/attendance/services/attendance.service.js
 const path = require('path')
 const mongoose = require('mongoose')
+const XLSX = require('xlsx')
 
 const AttendanceImport = require('../models/AttendanceImport')
 const AttendanceRecord = require('../models/AttendanceRecord')
 const Employee = require('../../org/models/Employee')
 const OTRequest = require('../../ot/models/OTRequest')
 const Holiday = require('../../calendar/models/Holiday')
-const XLSX = require('xlsx')
 const { getDayType } = require('../../ot/utils/dayClassifier')
 const { parseAttendanceWorkbook } = require('../utils/attendanceParser')
 const { verifyAttendanceAgainstOT } = require('../utils/attendanceVerification')
+
+const SHIFT_IN_TOLERANCE_MINUTES = 240
+const SHIFT_OUT_TOLERANCE_MINUTES = 360
 
 function s(value) {
   return String(value ?? '').trim()
@@ -18,6 +21,14 @@ function s(value) {
 
 function upper(value) {
   return s(value).toUpperCase()
+}
+
+function normalizeComparable(value) {
+  return s(value)
+    .toUpperCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 function escapeRegex(value) {
@@ -53,9 +64,102 @@ function toUtcMidnight(ymd) {
   return start
 }
 
+function toMinutes(hhmm) {
+  const raw = s(hhmm)
+  const match = raw.match(/^(\d{2}):(\d{2})$/)
+  if (!match) return null
+
+  const hh = Number(match[1])
+  const mm = Number(match[2])
+
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null
+  return hh * 60 + mm
+}
+
+function compareImportedValue(importedValue, masterCandidates = []) {
+  const imported = normalizeComparable(importedValue)
+  if (!imported) return null
+
+  const normalizedCandidates = masterCandidates
+    .map((item) => normalizeComparable(item))
+    .filter(Boolean)
+
+  if (!normalizedCandidates.length) return false
+  return normalizedCandidates.includes(imported)
+}
+
+function buildShiftCandidates(shiftDoc) {
+  return [
+    shiftDoc?.code,
+    shiftDoc?.name,
+    shiftDoc?.type,
+  ]
+}
+
+function evaluateShiftTimeMatch({ clockIn, clockOut, shiftStartTime, shiftEndTime }) {
+  const startMinutes = toMinutes(shiftStartTime)
+  const endMinutes = toMinutes(shiftEndTime)
+
+  if (startMinutes == null || endMinutes == null) {
+    return {
+      shiftTimeMatched: null,
+      issues: [],
+    }
+  }
+
+  const inMinutes = toMinutes(clockIn)
+  const outMinutes = toMinutes(clockOut)
+
+  if (inMinutes == null && outMinutes == null) {
+    return {
+      shiftTimeMatched: null,
+      issues: [],
+    }
+  }
+
+  const isCrossMidnight = endMinutes <= startMinutes
+  let isMatched = true
+
+  if (inMinutes != null) {
+    const inDiff = Math.abs(inMinutes - startMinutes)
+    if (inDiff > SHIFT_IN_TOLERANCE_MINUTES) {
+      isMatched = false
+    }
+  }
+
+  if (outMinutes != null) {
+    let actualOut = outMinutes
+    let expectedOut = endMinutes
+
+    if (isCrossMidnight) {
+      expectedOut += 24 * 60
+
+      if (actualOut <= startMinutes) {
+        actualOut += 24 * 60
+      }
+    }
+
+    const outDiff = Math.abs(actualOut - expectedOut)
+    if (outDiff > SHIFT_OUT_TOLERANCE_MINUTES) {
+      isMatched = false
+    }
+  }
+
+  return {
+    shiftTimeMatched: isMatched,
+    issues: isMatched ? [] : ['Clock in/out does not align with assigned shift time'],
+  }
+}
+
+function resolveShiftMatchStatus({ shiftMatched, shiftTimeMatched }) {
+  if (shiftMatched === false || shiftTimeMatched === false) return 'MISMATCH'
+  if (shiftMatched === true || shiftTimeMatched === true) return 'MATCHED'
+  return 'UNKNOWN'
+}
+
 async function resolveHolidayDateStrings(dateStrings = []) {
   const uniqueDates = Array.from(
-    new Set((Array.isArray(dateStrings) ? dateStrings : []).map((d) => s(d)).filter(Boolean))
+    new Set((Array.isArray(dateStrings) ? dateStrings : []).map((d) => s(d)).filter(Boolean)),
   )
 
   if (!uniqueDates.length) return []
@@ -111,7 +215,7 @@ function buildAttendanceImportSampleWorkbook() {
     ['6. Time format: HH:mm'],
     ['7. Status examples: PRESENT, ABSENT, LEAVE, OFF'],
     ['8. Department / Position / Shift are validated against Employee master, not used as source of truth.'],
-    ['9. For night shift employees, the imported clock times must align with assigned shift logic.'],
+    ['9. Night shift rows are validated against assigned shift time logic.'],
   ]
 
   const sampleSheet = XLSX.utils.aoa_to_sheet(sampleRows)
@@ -172,9 +276,15 @@ function buildRecordSearchFilter(search) {
   return {
     $or: [
       { employeeNo: regex },
+      { importedEmployeeId: regex },
       { employeeName: regex },
+      { importedEmployeeName: regex },
+      { importedDepartmentName: regex },
+      { importedPositionName: regex },
+      { importedShiftName: regex },
       { matchRemark: regex },
-      { 'rawData.Employee No': regex },
+      { validationIssues: regex },
+      { 'rawData.Employee ID': regex },
       { 'rawData.Employee Name': regex },
     ],
   }
@@ -191,19 +301,13 @@ function buildImportFilter(query) {
 
     if (s(query.periodFrom)) {
       filter.$and.push({
-        $or: [
-          { periodTo: { $gte: s(query.periodFrom) } },
-          { periodTo: '' },
-        ],
+        $or: [{ periodTo: { $gte: s(query.periodFrom) } }, { periodTo: '' }],
       })
     }
 
     if (s(query.periodTo)) {
       filter.$and.push({
-        $or: [
-          { periodFrom: { $lte: s(query.periodTo) } },
-          { periodFrom: '' },
-        ],
+        $or: [{ periodFrom: { $lte: s(query.periodTo) } }, { periodFrom: '' }],
       })
     }
   }
@@ -272,9 +376,9 @@ function buildRecordSort(query) {
     attendanceDate: 'attendanceDate',
     employeeNo: 'employeeNo',
     employeeName: 'employeeName',
-    workMinutes: 'workMinutes',
     status: 'status',
     dayType: 'dayType',
+    shiftMatchStatus: 'shiftMatchStatus',
   }[query.sortBy] || 'attendanceDate'
 
   return { [sortField]: direction, createdAt: -1 }
@@ -313,15 +417,45 @@ function mapRecordItem(doc) {
     employeeId: doc.employeeId ? String(doc.employeeId) : null,
     employeeNo: upper(doc.employeeNo),
     employeeName: s(doc.employeeName),
+
+    importedEmployeeId: upper(doc.importedEmployeeId),
+    importedEmployeeName: s(doc.importedEmployeeName),
+    importedDepartmentName: s(doc.importedDepartmentName),
+    importedPositionName: s(doc.importedPositionName),
+    importedShiftName: s(doc.importedShiftName),
+
+    departmentId: doc.departmentId ? String(doc.departmentId) : null,
+    departmentCode: upper(doc.departmentCode),
+    departmentName: s(doc.departmentName),
+
+    positionId: doc.positionId ? String(doc.positionId) : null,
+    positionCode: upper(doc.positionCode),
+    positionName: s(doc.positionName),
+
+    shiftId: doc.shiftId ? String(doc.shiftId) : null,
+    shiftCode: upper(doc.shiftCode),
+    shiftName: s(doc.shiftName),
+    shiftType: upper(doc.shiftType),
+    shiftStartTime: s(doc.shiftStartTime),
+    shiftEndTime: s(doc.shiftEndTime),
+
     attendanceDate: s(doc.attendanceDate),
     clockIn: s(doc.clockIn),
     clockOut: s(doc.clockOut),
-    workMinutes: doc.workMinutes == null ? null : Number(doc.workMinutes || 0),
-    otMinutes: doc.otMinutes == null ? null : Number(doc.otMinutes || 0),
     status: upper(doc.status),
     dayType: upper(doc.dayType),
     matchedBy: upper(doc.matchedBy),
     matchRemark: s(doc.matchRemark),
+
+    employeeMatched: doc.employeeMatched === true,
+    nameMatched: typeof doc.nameMatched === 'boolean' ? doc.nameMatched : null,
+    departmentMatched: typeof doc.departmentMatched === 'boolean' ? doc.departmentMatched : null,
+    positionMatched: typeof doc.positionMatched === 'boolean' ? doc.positionMatched : null,
+    shiftMatched: typeof doc.shiftMatched === 'boolean' ? doc.shiftMatched : null,
+    shiftTimeMatched: typeof doc.shiftTimeMatched === 'boolean' ? doc.shiftTimeMatched : null,
+    shiftMatchStatus: upper(doc.shiftMatchStatus),
+    validationIssues: Array.isArray(doc.validationIssues) ? doc.validationIssues : [],
+
     rawRowNo: Number(doc.rawRowNo || 0),
     rawData: doc.rawData || {},
     createdBy: doc.createdBy ? String(doc.createdBy) : null,
@@ -393,6 +527,35 @@ function getPeriodRangeFromRows(rows = []) {
   }
 }
 
+function buildValidationIssues({
+  matchedEmployee,
+  item,
+  nameMatched,
+  departmentMatched,
+  positionMatched,
+  shiftMatched,
+  shiftTimeMatched,
+}) {
+  const issues = []
+
+  if (!matchedEmployee) {
+    issues.push('Employee not found by Employee ID')
+    return issues
+  }
+
+  if (nameMatched === false) issues.push('Employee name does not match Employee master')
+  if (departmentMatched === false) issues.push('Department does not match Employee master')
+  if (positionMatched === false) issues.push('Position does not match Employee master')
+  if (shiftMatched === false) issues.push('Shift does not match Employee master')
+  if (shiftTimeMatched === false) issues.push('Clock in/out does not align with assigned shift time')
+
+  if (upper(item.status) === 'UNKNOWN') {
+    issues.push('Attendance status is unknown')
+  }
+
+  return issues
+}
+
 async function importExcel(file, payload, authUser) {
   if (!file) {
     const err = new Error('Attendance file is required')
@@ -419,42 +582,125 @@ async function importExcel(file, payload, authUser) {
       fileName: file.originalname,
     })
 
-    const employeeNos = Array.from(new Set(parsed.rows.map((item) => upper(item.employeeNo)).filter(Boolean)))
+    const employeeNos = Array.from(
+      new Set(parsed.rows.map((item) => upper(item.importedEmployeeId)).filter(Boolean)),
+    )
 
     const employees = employeeNos.length
       ? await Employee.find({ employeeNo: { $in: employeeNos } })
-          .select({ _id: 1, employeeNo: 1, displayName: 1 })
+          .select({
+            _id: 1,
+            employeeNo: 1,
+            displayName: 1,
+            departmentId: 1,
+            positionId: 1,
+            shiftId: 1,
+          })
+          .populate({ path: 'departmentId', select: { _id: 1, code: 1, name: 1 } })
+          .populate({ path: 'positionId', select: { _id: 1, code: 1, name: 1 } })
+          .populate({ path: 'shiftId', select: { _id: 1, code: 1, name: 1, type: 1, startTime: 1, endTime: 1 } })
           .lean()
       : []
 
     const employeeMap = new Map(
-      employees.map((employee) => [upper(employee.employeeNo), employee])
+      employees.map((employee) => [upper(employee.employeeNo), employee]),
     )
 
     const holidayDates = await resolveHolidayDateStrings(
-      parsed.rows.map((item) => item.attendanceDate)
+      parsed.rows.map((item) => item.attendanceDate),
     )
 
     const recordsPayload = parsed.rows.map((item) => {
-      const matchedEmployee = employeeMap.get(upper(item.employeeNo))
+      const matchedEmployee = employeeMap.get(upper(item.importedEmployeeId))
+      const departmentDoc = matchedEmployee?.departmentId || null
+      const positionDoc = matchedEmployee?.positionId || null
+      const shiftDoc = matchedEmployee?.shiftId || null
+
+      const nameMatched = matchedEmployee
+        ? compareImportedValue(item.importedEmployeeName, [matchedEmployee.displayName])
+        : null
+
+      const departmentMatched = matchedEmployee
+        ? compareImportedValue(item.importedDepartmentName, [departmentDoc?.code, departmentDoc?.name])
+        : null
+
+      const positionMatched = matchedEmployee
+        ? compareImportedValue(item.importedPositionName, [positionDoc?.code, positionDoc?.name])
+        : null
+
+      const shiftMatched = matchedEmployee
+        ? compareImportedValue(item.importedShiftName, buildShiftCandidates(shiftDoc))
+        : null
+
+      const shiftTimeResult = matchedEmployee
+        ? evaluateShiftTimeMatch({
+            clockIn: item.clockIn,
+            clockOut: item.clockOut,
+            shiftStartTime: shiftDoc?.startTime,
+            shiftEndTime: shiftDoc?.endTime,
+          })
+        : { shiftTimeMatched: null, issues: [] }
+
+      const shiftTimeMatched = shiftTimeResult.shiftTimeMatched
+      const shiftMatchStatus = resolveShiftMatchStatus({ shiftMatched, shiftTimeMatched })
+
+      const validationIssues = buildValidationIssues({
+        matchedEmployee,
+        item,
+        nameMatched,
+        departmentMatched,
+        positionMatched,
+        shiftMatched,
+        shiftTimeMatched,
+      })
 
       return {
         importId: importDoc._id,
+
         employeeId: matchedEmployee?._id || null,
-        employeeNo: upper(item.employeeNo),
-        employeeName: s(item.employeeName) || s(matchedEmployee?.displayName),
+        employeeNo: upper(matchedEmployee?.employeeNo || item.importedEmployeeId),
+        employeeName: s(matchedEmployee?.displayName || item.importedEmployeeName),
+
+        departmentId: departmentDoc?._id || null,
+        departmentCode: upper(departmentDoc?.code),
+        departmentName: s(departmentDoc?.name),
+
+        positionId: positionDoc?._id || null,
+        positionCode: upper(positionDoc?.code),
+        positionName: s(positionDoc?.name),
+
+        shiftId: shiftDoc?._id || null,
+        shiftCode: upper(shiftDoc?.code),
+        shiftName: s(shiftDoc?.name),
+        shiftType: upper(shiftDoc?.type),
+        shiftStartTime: s(shiftDoc?.startTime),
+        shiftEndTime: s(shiftDoc?.endTime),
+
+        importedEmployeeId: upper(item.importedEmployeeId),
+        importedEmployeeName: s(item.importedEmployeeName),
+        importedDepartmentName: s(item.importedDepartmentName),
+        importedPositionName: s(item.importedPositionName),
+        importedShiftName: s(item.importedShiftName),
+
         attendanceDate: s(item.attendanceDate),
         attendanceDateValue: toUtcMidnight(item.attendanceDate),
         clockIn: s(item.clockIn),
         clockOut: s(item.clockOut),
-        workMinutes: item.workMinutes == null ? null : Number(item.workMinutes),
-        otMinutes: item.otMinutes == null ? null : Number(item.otMinutes),
         status: upper(item.status || 'PRESENT'),
-        dayType: getDayType(item.attendanceDate, {
-          holidays: holidayDates,
-        }),
+        dayType: getDayType(item.attendanceDate, { holidays: holidayDates }),
+
         matchedBy: matchedEmployee ? 'EMPLOYEE_NO' : 'NONE',
-        matchRemark: matchedEmployee ? '' : 'Employee not found by employeeNo',
+        matchRemark: validationIssues.join('; '),
+
+        employeeMatched: !!matchedEmployee,
+        nameMatched,
+        departmentMatched,
+        positionMatched,
+        shiftMatched,
+        shiftTimeMatched,
+        shiftMatchStatus,
+        validationIssues,
+
         rawRowNo: Number(item.rawRowNo || 0),
         rawData: item.rawData || {},
         createdBy: authUser?.accountId || authUser?._id || null,
@@ -475,7 +721,7 @@ async function importExcel(file, payload, authUser) {
     importDoc.failedRowCount = Number((parsed.failedRows || []).length || 0)
     importDoc.duplicateRowCount = Number(parsed.duplicateRowCount || 0)
     importDoc.status = recordsPayload.length
-      ? (parsed.failedRows.length || parsed.duplicateRowCount ? 'PARTIAL_SUCCESS' : 'SUCCESS')
+      ? ((parsed.failedRows.length || parsed.duplicateRowCount) ? 'PARTIAL_SUCCESS' : 'SUCCESS')
       : 'FAILED'
     importDoc.updatedBy = authUser?.accountId || authUser?._id || null
 
@@ -606,10 +852,10 @@ async function verifyOTRequest(otRequestId) {
     : []
 
   const requestedEmployeeIds = normalizeIdArray(
-    requestedEmployees.map((item) => item?.employeeId)
+    requestedEmployees.map((item) => item?.employeeId),
   )
   const requestedEmployeeCodes = Array.from(
-    new Set(requestedEmployees.map((item) => upper(item?.employeeCode)).filter(Boolean))
+    new Set(requestedEmployees.map((item) => upper(item?.employeeCode)).filter(Boolean)),
   )
 
   const attendanceOrConditions = []
@@ -651,7 +897,7 @@ async function verifyOTRequest(otRequestId) {
         otRequest.proposedApprovedEmployeeCount ||
           (Array.isArray(otRequest.proposedApprovedEmployees)
             ? otRequest.proposedApprovedEmployees.length
-            : 0)
+            : 0),
       ),
       requesterConfirmationStatus: upper(otRequest.requesterConfirmationStatus),
     },

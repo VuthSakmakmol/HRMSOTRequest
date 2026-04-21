@@ -63,6 +63,25 @@ async function importAttendance(req, res, next) {
   }
 }
 
+async function downloadAttendanceImportSample(req, res, next) {
+  try {
+    const result = await attendanceService.downloadImportSample()
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${result.filename}"`,
+    )
+
+    res.send(result.buffer)
+  } catch (error) {
+    next(error)
+  }
+}
+
 async function listAttendanceImports(req, res, next) {
   try {
     const query = parseQuery(normalizeListAttendanceImportsQuery, req.query || {})
@@ -119,31 +138,11 @@ async function verifyAttendanceAgainstOT(req, res, next) {
   }
 }
 
-async function downloadAttendanceImportSample(req, res, next) {
-  try {
-    const result = await attendanceService.downloadImportSample()
-
-    res.setHeader(
-      'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    )
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="${result.filename}"`,
-    )
-
-    res.send(result.buffer)
-  } catch (error) {
-    next(error)
-  }
-}
-
-
 module.exports = {
   importAttendance,
+  downloadAttendanceImportSample,
   listAttendanceImports,
   getAttendanceImportDetail,
   listAttendanceRecords,
   verifyAttendanceAgainstOT,
-  downloadAttendanceImportSample,
 }

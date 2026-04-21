@@ -5,6 +5,7 @@ import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
+import Tag from 'primevue/tag'
 
 import {
   downloadAttendanceImportSample,
@@ -34,6 +35,7 @@ const form = reactive({
 })
 
 const fileName = computed(() => selectedFile.value?.name || '')
+const canImport = computed(() => !!selectedFile.value && !importing.value)
 
 watch(
   () => props.visible,
@@ -129,7 +131,16 @@ async function handleImport() {
     }
 
     const res = await importAttendanceFile(formData)
+
     emit('success', res?.data)
+
+    toast.add({
+      severity: 'success',
+      summary: 'Import completed',
+      detail: 'Attendance file imported successfully',
+      life: 2500,
+    })
+
     closeDialog()
   } catch (error) {
     console.error(error)
@@ -158,15 +169,22 @@ async function handleImport() {
   >
     <div class="space-y-4">
       <div class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-4 py-4">
-        <div class="text-sm font-semibold text-[color:var(--ot-text)]">
-          Import guide
+        <div class="flex flex-wrap items-center gap-2">
+          <div class="text-sm font-semibold text-[color:var(--ot-text)]">
+            Import guide
+          </div>
+          <Tag value="Excel Sample" severity="info" />
         </div>
+
         <div class="mt-2 space-y-1 text-sm text-[color:var(--ot-text-muted)]">
           <div>1. Download the sample file.</div>
           <div>2. Fill your attendance data in the same format.</div>
           <div>3. Required columns: Employee ID, Employee Name, Attendance Date, Clock In, Clock Out, Status, Position, Department, Shift.</div>
-          <div>4. Choose the completed Excel file from your computer.</div>
-          <div>5. Click Import to upload and process it.</div>
+          <div>4. Employee ID maps to Employee master employeeNo.</div>
+          <div>5. Department / Position / Shift are checked against Employee master for validation.</div>
+          <div>6. Night shift rows are validated against assigned shift time.</div>
+          <div>7. Choose the completed Excel file from your computer.</div>
+          <div>8. Click Import to upload and process it.</div>
         </div>
 
         <div class="mt-4">
@@ -261,7 +279,7 @@ async function handleImport() {
           label="Import"
           icon="pi pi-check"
           size="small"
-          :disabled="!selectedFile"
+          :disabled="!canImport"
           :loading="importing"
           @click="handleImport"
         />

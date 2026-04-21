@@ -27,19 +27,25 @@ const verification = computed(() => verificationData.value?.verification || null
 const attendedEmployees = computed(() =>
   Array.isArray(verification.value?.attendedEmployees)
     ? verification.value.attendedEmployees
-    : []
+    : [],
 )
 
 const absentFromApproved = computed(() =>
   Array.isArray(verification.value?.absentFromApproved)
     ? verification.value.absentFromApproved
-    : []
+    : [],
 )
 
 const attendedButNotApproved = computed(() =>
   Array.isArray(verification.value?.attendedButNotApproved)
     ? verification.value.attendedButNotApproved
-    : []
+    : [],
+)
+
+const shiftMismatchEmployees = computed(() =>
+  Array.isArray(verification.value?.shiftMismatchEmployees)
+    ? verification.value.shiftMismatchEmployees
+    : [],
 )
 
 function getDayTypeSeverity(dayType) {
@@ -89,6 +95,32 @@ function getAttendanceStatusSeverity(status) {
   }
 }
 
+function getShiftStatusSeverity(status) {
+  switch (String(status || '').toUpperCase()) {
+    case 'MATCHED':
+      return 'success'
+    case 'MISMATCH':
+      return 'danger'
+    default:
+      return 'secondary'
+  }
+}
+
+function formatIssues(value) {
+  if (Array.isArray(value) && value.length) return value.join(', ')
+  return '—'
+}
+
+function displayShift(row) {
+  const code = String(row?.shiftCode || '').trim()
+  const name = String(row?.shiftName || '').trim()
+
+  if (code && name) return `${code} - ${name}`
+  if (code) return code
+  if (name) return name
+  return '—'
+}
+
 async function runVerification() {
   const id = String(otRequestId.value || '').trim()
 
@@ -128,7 +160,9 @@ async function runVerification() {
     toast.add({
       severity: 'error',
       summary: 'Verification failed',
-      detail: error?.response?.data?.message || 'Unable to verify attendance for this OT request',
+      detail:
+        error?.response?.data?.message ||
+        'Unable to verify attendance for this OT request',
       life: 4000,
     })
   } finally {
@@ -177,7 +211,7 @@ onMounted(() => {
                 <Tag value="Verification" severity="info" rounded />
               </div>
               <p class="mt-1 text-sm text-surface-600 dark:text-surface-300">
-                Compare OT approved employees against imported attendance.
+                Compare OT approved employees against imported attendance and shift validation.
               </p>
             </div>
           </div>
@@ -229,7 +263,7 @@ onMounted(() => {
     </Card>
 
     <template v-if="otRequest && verification">
-      <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+      <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
         <div class="verify-stat-box">
           <div class="verify-stat-label">Requested</div>
           <div class="verify-stat-value">{{ verification.requestedEmployeeCount || 0 }}</div>
@@ -248,7 +282,7 @@ onMounted(() => {
         </div>
 
         <div class="verify-stat-box border-amber-200 dark:border-amber-800">
-          <div class="verify-stat-label">Absent From Approved</div>
+          <div class="verify-stat-label">Absent Approved</div>
           <div class="verify-stat-value text-amber-600 dark:text-amber-400">
             {{ verification.absentFromApprovedCount || 0 }}
           </div>
@@ -258,6 +292,13 @@ onMounted(() => {
           <div class="verify-stat-label">Attended Not Approved</div>
           <div class="verify-stat-value text-rose-600 dark:text-rose-400">
             {{ verification.attendedButNotApprovedCount || 0 }}
+          </div>
+        </div>
+
+        <div class="verify-stat-box border-fuchsia-200 dark:border-fuchsia-800">
+          <div class="verify-stat-label">Shift Mismatch</div>
+          <div class="verify-stat-value text-fuchsia-600 dark:text-fuchsia-400">
+            {{ verification.shiftMismatchCount || 0 }}
           </div>
         </div>
       </div>
@@ -360,9 +401,13 @@ onMounted(() => {
             <Column field="employeeName" header="Employee Name" style="min-width: 12rem" />
             <Column field="departmentName" header="Department" style="min-width: 10rem" />
             <Column field="positionName" header="Position" style="min-width: 10rem" />
+            <Column header="Shift" style="min-width: 10rem">
+              <template #body="{ data }">
+                {{ displayShift(data) }}
+              </template>
+            </Column>
             <Column field="clockIn" header="In" style="min-width: 6rem" />
             <Column field="clockOut" header="Out" style="min-width: 6rem" />
-            <Column field="workMinutes" header="Work Min" style="min-width: 7rem" />
             <Column field="attendanceStatus" header="Attendance" style="min-width: 8rem">
               <template #body="{ data }">
                 <Tag
@@ -376,6 +421,14 @@ onMounted(() => {
                 <Tag
                   :value="data.attendanceDayType || '—'"
                   :severity="getDayTypeSeverity(data.attendanceDayType)"
+                />
+              </template>
+            </Column>
+            <Column field="shiftMatchStatus" header="Shift Status" style="min-width: 9rem">
+              <template #body="{ data }">
+                <Tag
+                  :value="data.shiftMatchStatus || 'UNKNOWN'"
+                  :severity="getShiftStatusSeverity(data.shiftMatchStatus)"
                 />
               </template>
             </Column>
@@ -442,9 +495,13 @@ onMounted(() => {
               <Column field="employeeName" header="Employee Name" style="min-width: 12rem" />
               <Column field="departmentName" header="Department" style="min-width: 10rem" />
               <Column field="positionName" header="Position" style="min-width: 10rem" />
+              <Column header="Shift" style="min-width: 10rem">
+                <template #body="{ data }">
+                  {{ displayShift(data) }}
+                </template>
+              </Column>
               <Column field="clockIn" header="In" style="min-width: 6rem" />
               <Column field="clockOut" header="Out" style="min-width: 6rem" />
-              <Column field="workMinutes" header="Work Min" style="min-width: 7rem" />
               <Column field="attendanceStatus" header="Attendance" style="min-width: 8rem">
                 <template #body="{ data }">
                   <Tag
@@ -457,6 +514,67 @@ onMounted(() => {
           </template>
         </Card>
       </div>
+
+      <Card class="compact-card rounded-3xl shadow-sm">
+        <template #title>
+          <div class="flex items-center gap-2 text-base">
+            <i class="pi pi-ban text-fuchsia-500" />
+            <span>Shift Mismatch Employees</span>
+          </div>
+        </template>
+
+        <template #content>
+          <DataTable
+            :value="shiftMismatchEmployees"
+            dataKey="attendanceRecordId"
+            responsiveLayout="scroll"
+            stripedRows
+            size="small"
+            class="verify-table"
+          >
+            <template #empty>
+              <div class="py-8 text-center text-sm text-surface-500">
+                No shift mismatch employees found.
+              </div>
+            </template>
+
+            <Column field="employeeCode" header="Employee No" style="min-width: 9rem" />
+            <Column field="employeeName" header="Employee Name" style="min-width: 12rem" />
+            <Column field="departmentName" header="Department" style="min-width: 10rem" />
+            <Column field="positionName" header="Position" style="min-width: 10rem" />
+            <Column header="Shift" style="min-width: 10rem">
+              <template #body="{ data }">
+                {{ displayShift(data) }}
+              </template>
+            </Column>
+            <Column field="clockIn" header="In" style="min-width: 6rem" />
+            <Column field="clockOut" header="Out" style="min-width: 6rem" />
+            <Column field="attendanceStatus" header="Attendance" style="min-width: 8rem">
+              <template #body="{ data }">
+                <Tag
+                  :value="data.attendanceStatus || '—'"
+                  :severity="getAttendanceStatusSeverity(data.attendanceStatus)"
+                />
+              </template>
+            </Column>
+            <Column field="shiftMatchStatus" header="Shift Status" style="min-width: 9rem">
+              <template #body="{ data }">
+                <Tag
+                  :value="data.shiftMatchStatus || 'UNKNOWN'"
+                  :severity="getShiftStatusSeverity(data.shiftMatchStatus)"
+                />
+              </template>
+            </Column>
+            <Column header="Issues" style="min-width: 18rem">
+              <template #body="{ data }">
+                <span class="text-xs text-surface-500">
+                  {{ formatIssues(data.validationIssues) }}
+                </span>
+              </template>
+            </Column>
+          </DataTable>
+        </template>
+      </Card>
     </template>
 
     <Card
@@ -472,7 +590,7 @@ onMounted(() => {
             Enter an OT request ID to verify attendance
           </div>
           <div class="mt-1 text-xs text-surface-500">
-            The page will compare approved employees with imported attendance records.
+            The page compares approved employees with imported attendance and shift validation.
           </div>
         </div>
       </template>
