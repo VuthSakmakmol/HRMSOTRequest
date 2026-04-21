@@ -8,6 +8,7 @@ const {
   listOTApprovalInboxQuerySchema,
   otRequestIdParamSchema,
   otApprovalDecisionSchema,
+  otRequesterConfirmationSchema,
 } = require('../validators/ot.validation')
 
 function parse(schema, data) {
@@ -38,9 +39,7 @@ async function createOTRequest(req, res, next) {
   try {
     const payload = parse(createOTRequestSchema, req.body || {})
 
-    const data = await otService.create(payload, req.user, {
-      holidays: [],
-    })
+    const data = await otService.create(payload, req.user)
 
     res.status(201).json({
       ok: true,
@@ -56,9 +55,7 @@ async function updateOTRequest(req, res, next) {
     const params = parse(otRequestIdParamSchema, req.params || {})
     const payload = parse(updateOTRequestSchema, req.body || {})
 
-    const data = await otService.update(params.id, payload, req.user, {
-      holidays: [],
-    })
+    const data = await otService.update(params.id, payload, req.user)
 
     res.json({
       ok: true,
@@ -181,6 +178,22 @@ async function decideOTRequest(req, res, next) {
   }
 }
 
+async function requesterConfirmOTRequest(req, res, next) {
+  try {
+    const params = parse(otRequestIdParamSchema, req.params || {})
+    const payload = parse(otRequesterConfirmationSchema, req.body || {})
+
+    const data = await otService.requesterConfirm(params.id, payload, req.user)
+
+    res.json({
+      ok: true,
+      data,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
 module.exports = {
   createOTRequest,
   updateOTRequest,
@@ -191,4 +204,5 @@ module.exports = {
   listMyApprovalInbox,
   exportOTApprovalInboxExcel,
   decideOTRequest,
+  requesterConfirmOTRequest,
 }

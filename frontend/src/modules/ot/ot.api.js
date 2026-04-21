@@ -17,6 +17,10 @@ export function updateOTRequest(id, payload) {
   return api.patch(`/ot/requests/${id}`, payload)
 }
 
+export function requesterConfirmOTRequest(id, payload) {
+  return api.post(`/ot/requests/${id}/requester-confirmation`, payload)
+}
+
 export function exportOTRequestsExcel(params = {}) {
   return api.get('/ot/requests/export', {
     params,

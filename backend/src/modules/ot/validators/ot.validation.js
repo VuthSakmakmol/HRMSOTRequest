@@ -21,6 +21,24 @@ function hhmmToMinutes(value) {
   return hh * 60 + mm
 }
 
+function validateUniqueIds(ids = [], ctx, path) {
+  const seen = new Set()
+
+  ids.forEach((id, index) => {
+    const normalized = String(id).toLowerCase()
+
+    if (seen.has(normalized)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [path, index],
+        message: 'Duplicate id is not allowed',
+      })
+    }
+
+    seen.add(normalized)
+  })
+}
+
 const baseOTRequestSchema = z
   .object({
     employeeIds: z
@@ -148,6 +166,12 @@ const otRequestIdParamSchema = z.object({
 const otApprovalDecisionSchema = z
   .object({
     action: z.enum(['APPROVE', 'REJECT']),
+
+    approvedEmployeeIds: z
+      .array(objectIdSchema)
+      .max(200, 'You can approve up to 200 employees at one time')
+      .default([]),
+
     remark: z
       .string()
       .trim()
@@ -155,11 +179,40 @@ const otApprovalDecisionSchema = z
       .default(''),
   })
   .superRefine((data, ctx) => {
+    validateUniqueIds(data.approvedEmployeeIds, ctx, 'approvedEmployeeIds')
+
+    if (data.action === 'APPROVE' && !data.approvedEmployeeIds.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['approvedEmployeeIds'],
+        message: 'Please select at least 1 approved employee',
+      })
+    }
+
     if (data.action === 'REJECT' && !String(data.remark || '').trim()) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['remark'],
         message: 'remark is required when rejecting',
+      })
+    }
+  })
+
+const otRequesterConfirmationSchema = z
+  .object({
+    action: z.enum(['AGREE', 'DISAGREE']),
+    remark: z
+      .string()
+      .trim()
+      .max(1000, 'remark must not exceed 1000 characters')
+      .default(''),
+  })
+  .superRefine((data, ctx) => {
+    if (data.action === 'DISAGREE' && !String(data.remark || '').trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['remark'],
+        message: 'remark is required when disagreeing',
       })
     }
   })
@@ -171,4 +224,5 @@ module.exports = {
   listOTApprovalInboxQuerySchema,
   otRequestIdParamSchema,
   otApprovalDecisionSchema,
+  otRequesterConfirmationSchema,
 }

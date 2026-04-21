@@ -5,9 +5,49 @@ function s(value) {
   return String(value ?? '').trim()
 }
 
-const OT_STATUS = ['DRAFT', 'PENDING', 'APPROVED', 'REJECTED', 'CANCELLED']
+const OT_STATUS = [
+  'PENDING',
+  'PENDING_REQUESTER_CONFIRMATION',
+  'APPROVED',
+  'REJECTED',
+  'REQUESTER_DISAGREED',
+  'CANCELLED',
+]
+
 const OT_DAY_TYPE = ['WORKING_DAY', 'SUNDAY', 'HOLIDAY']
 const OT_APPROVAL_STEP_STATUS = ['WAITING', 'PENDING', 'APPROVED', 'REJECTED']
+const OT_REQUESTER_CONFIRMATION_STATUS = [
+  'NOT_REQUIRED',
+  'PENDING',
+  'AGREED',
+  'DISAGREED',
+]
+
+function normalizeEmployeeCollection(items = []) {
+  const seen = new Set()
+  const result = []
+
+  for (const item of Array.isArray(items) ? items : []) {
+    const employeeId = String(item?.employeeId || '')
+    if (!employeeId) continue
+    if (seen.has(employeeId)) continue
+    seen.add(employeeId)
+
+    result.push({
+      employeeId: item.employeeId,
+      employeeCode: s(item.employeeCode),
+      employeeName: s(item.employeeName),
+      departmentId: item.departmentId || null,
+      departmentCode: s(item.departmentCode),
+      departmentName: s(item.departmentName),
+      positionId: item.positionId || null,
+      positionCode: s(item.positionCode),
+      positionName: s(item.positionName),
+    })
+  }
+
+  return result
+}
 
 const OTRequestEmployeeSchema = new mongoose.Schema(
   {
@@ -157,7 +197,7 @@ const OTRequestSchema = new mongoose.Schema(
       default: '',
     },
 
-    employees: {
+    requestedEmployees: {
       type: [OTRequestEmployeeSchema],
       required: true,
       default: [],
@@ -165,16 +205,54 @@ const OTRequestSchema = new mongoose.Schema(
         validator(value) {
           return Array.isArray(value) && value.length >= 1 && value.length <= 200
         },
-        message: 'employees must contain 1 to 200 employees',
+        message: 'requestedEmployees must contain 1 to 200 employees',
       },
     },
 
-    employeeCount: {
+    requestedEmployeeCount: {
       type: Number,
       required: true,
       min: 1,
       default: 1,
       index: true,
+    },
+
+    approvedEmployees: {
+      type: [OTRequestEmployeeSchema],
+      required: true,
+      default: [],
+      validate: {
+        validator(value) {
+          return Array.isArray(value) && value.length >= 1 && value.length <= 200
+        },
+        message: 'approvedEmployees must contain 1 to 200 employees',
+      },
+    },
+
+    approvedEmployeeCount: {
+      type: Number,
+      required: true,
+      min: 1,
+      default: 1,
+      index: true,
+    },
+
+    proposedApprovedEmployees: {
+      type: [OTRequestEmployeeSchema],
+      default: [],
+      validate: {
+        validator(value) {
+          return Array.isArray(value) && value.length <= 200
+        },
+        message: 'proposedApprovedEmployees must contain 0 to 200 employees',
+      },
+    },
+
+    proposedApprovedEmployeeCount: {
+      type: Number,
+      required: true,
+      min: 0,
+      default: 0,
     },
 
     otDate: {
@@ -260,6 +338,68 @@ const OTRequestSchema = new mongoose.Schema(
       index: true,
     },
 
+    requesterConfirmationStatus: {
+      type: String,
+      enum: OT_REQUESTER_CONFIRMATION_STATUS,
+      required: true,
+      default: 'NOT_REQUIRED',
+      index: true,
+    },
+
+    requesterConfirmedAt: {
+      type: Date,
+      default: null,
+    },
+
+    requesterConfirmationRemark: {
+      type: String,
+      trim: true,
+      default: '',
+      maxlength: 1000,
+    },
+
+    lastAdjustmentByEmployeeId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Employee',
+      default: null,
+    },
+
+    lastAdjustmentByEmployeeNo: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
+    lastAdjustmentByEmployeeName: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
+    lastAdjustmentByAccountId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Account',
+      default: null,
+    },
+
+    lastAdjustmentAt: {
+      type: Date,
+      default: null,
+    },
+
+    lastAdjustmentRemark: {
+      type: String,
+      trim: true,
+      default: '',
+      maxlength: 1000,
+    },
+
+    lastAdjustmentStepNo: {
+      type: Number,
+      default: null,
+      min: 1,
+    },
+
     status: {
       type: String,
       enum: OT_STATUS,
@@ -296,33 +436,20 @@ OTRequestSchema.pre('validate', function normalizeFields(next) {
   this.reason = s(this.reason)
   this.status = s(this.status).toUpperCase()
   this.dayType = s(this.dayType).toUpperCase()
+  this.requesterConfirmationStatus = s(this.requesterConfirmationStatus).toUpperCase()
+  this.requesterConfirmationRemark = s(this.requesterConfirmationRemark)
+  this.lastAdjustmentByEmployeeNo = s(this.lastAdjustmentByEmployeeNo)
+  this.lastAdjustmentByEmployeeName = s(this.lastAdjustmentByEmployeeName)
+  this.lastAdjustmentRemark = s(this.lastAdjustmentRemark)
 
-  if (Array.isArray(this.employees)) {
-    const seen = new Set()
-    const normalizedEmployees = []
+  this.requestedEmployees = normalizeEmployeeCollection(this.requestedEmployees)
+  this.requestedEmployeeCount = this.requestedEmployees.length
 
-    for (const item of this.employees) {
-      const employeeId = String(item?.employeeId || '')
-      if (!employeeId) continue
-      if (seen.has(employeeId)) continue
-      seen.add(employeeId)
+  this.approvedEmployees = normalizeEmployeeCollection(this.approvedEmployees)
+  this.approvedEmployeeCount = this.approvedEmployees.length
 
-      normalizedEmployees.push({
-        employeeId: item.employeeId,
-        employeeCode: s(item.employeeCode),
-        employeeName: s(item.employeeName),
-        departmentId: item.departmentId || null,
-        departmentCode: s(item.departmentCode),
-        departmentName: s(item.departmentName),
-        positionId: item.positionId || null,
-        positionCode: s(item.positionCode),
-        positionName: s(item.positionName),
-      })
-    }
-
-    this.employees = normalizedEmployees
-    this.employeeCount = normalizedEmployees.length
-  }
+  this.proposedApprovedEmployees = normalizeEmployeeCollection(this.proposedApprovedEmployees)
+  this.proposedApprovedEmployeeCount = this.proposedApprovedEmployees.length
 
   if (Array.isArray(this.approvalSteps)) {
     for (const step of this.approvalSteps) {
@@ -340,14 +467,19 @@ OTRequestSchema.index({ requesterEmployeeId: 1, otDate: -1 })
 OTRequestSchema.index({ requesterName: 1 })
 OTRequestSchema.index({ status: 1, otDate: -1 })
 OTRequestSchema.index({ dayType: 1, otDate: -1 })
+OTRequestSchema.index({ requesterConfirmationStatus: 1, otDate: -1 })
 OTRequestSchema.index({ currentApproverEmployeeId: 1, status: 1, otDate: -1 })
 OTRequestSchema.index({ finalApproverEmployeeId: 1, status: 1, otDate: -1 })
 OTRequestSchema.index({ createdAt: -1 })
-OTRequestSchema.index({ 'employees.employeeId': 1, otDate: -1 })
-OTRequestSchema.index({ 'employees.departmentId': 1, otDate: -1 })
-OTRequestSchema.index({ 'employees.positionId': 1, otDate: -1 })
-OTRequestSchema.index({ 'employees.employeeName': 1 })
-OTRequestSchema.index({ 'employees.departmentName': 1 })
-OTRequestSchema.index({ 'employees.positionName': 1 })
+
+OTRequestSchema.index({ 'requestedEmployees.employeeId': 1, otDate: -1 })
+OTRequestSchema.index({ 'requestedEmployees.departmentId': 1, otDate: -1 })
+OTRequestSchema.index({ 'requestedEmployees.positionId': 1, otDate: -1 })
+
+OTRequestSchema.index({ 'approvedEmployees.employeeId': 1, otDate: -1 })
+OTRequestSchema.index({ 'approvedEmployees.departmentId': 1, otDate: -1 })
+OTRequestSchema.index({ 'approvedEmployees.positionId': 1, otDate: -1 })
+
+OTRequestSchema.index({ 'proposedApprovedEmployees.employeeId': 1, otDate: -1 })
 
 module.exports = mongoose.model('OTRequest', OTRequestSchema)

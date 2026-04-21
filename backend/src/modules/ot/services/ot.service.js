@@ -6,6 +6,7 @@ const Employee = require('../../org/models/Employee')
 const Department = require('../../org/models/Department')
 const Position = require('../../org/models/Position')
 const { getDayType } = require('../utils/dayClassifier')
+const Holiday = require('../../calendar/models/Holiday')
 
 function s(value) {
   return String(value ?? '').trim()
@@ -51,8 +52,120 @@ function calculateDuration({ startTime, endTime, breakMinutes = 0 }) {
   }
 }
 
+// backend/src/modules/ot/services/ot.service.js
+function parseYMDToUtcRange(ymd) {
+  const raw = String(ymd || '').trim()
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+
+  if (!match) {
+    const err = new Error(`Invalid date format: ${raw}`)
+    err.status = 400
+    throw err
+  }
+
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+
+  const start = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0))
+  const end = new Date(Date.UTC(year, month - 1, day + 1, 0, 0, 0, 0))
+
+  return { start, end }
+}
+
+async function resolveHolidayDateStrings(dateStrings = []) {
+  const uniqueDates = Array.from(
+    new Set((Array.isArray(dateStrings) ? dateStrings : []).map((d) => s(d)).filter(Boolean))
+  )
+
+  if (!uniqueDates.length) return []
+
+  const orConditions = uniqueDates.map((ymd) => {
+    const { start, end } = parseYMDToUtcRange(ymd)
+    return {
+      date: { $gte: start, $lt: end },
+    }
+  })
+
+  const docs = await Holiday.find({
+    isActive: true,
+    $or: orConditions,
+  })
+    .select({ date: 1 })
+    .lean()
+
+  return docs
+    .map((doc) => {
+      if (!(doc?.date instanceof Date) || Number.isNaN(doc.date.getTime())) return ''
+      return doc.date.toISOString().slice(0, 10)
+    })
+    .filter(Boolean)
+}
+
 function escapeRegex(value) {
   return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function normalizeIdArray(values = []) {
+  return Array.from(new Set((Array.isArray(values) ? values : []).map((id) => s(id)).filter(Boolean)))
+}
+
+function mapEmployeeOutput(item) {
+  return {
+    employeeId: item?.employeeId ? String(item.employeeId) : null,
+    employeeCode: s(item?.employeeCode),
+    employeeName: s(item?.employeeName),
+    departmentId: item?.departmentId ? String(item.departmentId) : null,
+    departmentCode: s(item?.departmentCode),
+    departmentName: s(item?.departmentName),
+    positionId: item?.positionId ? String(item.positionId) : null,
+    positionCode: s(item?.positionCode),
+    positionName: s(item?.positionName),
+  }
+}
+
+function getCollectionIds(items = []) {
+  return (Array.isArray(items) ? items : []).map((item) => s(item?.employeeId)).filter(Boolean)
+}
+
+function filterEmployeeSnapshotsByIds(sourceItems = [], allowedIds = []) {
+  const allowedIdSet = new Set(normalizeIdArray(allowedIds))
+  return (Array.isArray(sourceItems) ? sourceItems : []).filter((item) =>
+    allowedIdSet.has(s(item?.employeeId))
+  )
+}
+
+function areSameEmployeeSelections(sourceItems = [], selectedIds = []) {
+  const sourceIds = getCollectionIds(sourceItems)
+  const nextIds = getCollectionIds(filterEmployeeSnapshotsByIds(sourceItems, selectedIds))
+
+  if (sourceIds.length !== nextIds.length) return false
+  return sourceIds.every((id, index) => id === nextIds[index])
+}
+
+function countRemoved(baseItems = [], compareItems = []) {
+  const compareIdSet = new Set(getCollectionIds(compareItems))
+  return getCollectionIds(baseItems).filter((id) => !compareIdSet.has(id)).length
+}
+
+function effectiveEmployeesForDoc(doc) {
+  if (
+    s(doc?.status).toUpperCase() === 'PENDING_REQUESTER_CONFIRMATION' &&
+    Array.isArray(doc?.proposedApprovedEmployees) &&
+    doc.proposedApprovedEmployees.length
+  ) {
+    return doc.proposedApprovedEmployees
+  }
+
+  if (Array.isArray(doc?.approvedEmployees) && doc.approvedEmployees.length) {
+    return doc.approvedEmployees
+  }
+
+  return Array.isArray(doc?.requestedEmployees) ? doc.requestedEmployees : []
+}
+
+function effectiveEmployeeCountForDoc(doc) {
+  return effectiveEmployeesForDoc(doc).length
 }
 
 function buildSearchFilter(search) {
@@ -66,15 +179,34 @@ function buildSearchFilter(search) {
       { requestNo: regex },
       { requesterEmployeeNo: regex },
       { requesterName: regex },
-      { 'employees.employeeCode': regex },
-      { 'employees.employeeName': regex },
-      { 'employees.departmentCode': regex },
-      { 'employees.departmentName': regex },
-      { 'employees.positionCode': regex },
-      { 'employees.positionName': regex },
+      { 'requestedEmployees.employeeCode': regex },
+      { 'requestedEmployees.employeeName': regex },
+      { 'requestedEmployees.departmentCode': regex },
+      { 'requestedEmployees.departmentName': regex },
+      { 'requestedEmployees.positionCode': regex },
+      { 'requestedEmployees.positionName': regex },
+      { 'approvedEmployees.employeeCode': regex },
+      { 'approvedEmployees.employeeName': regex },
+      { 'approvedEmployees.departmentCode': regex },
+      { 'approvedEmployees.departmentName': regex },
+      { 'approvedEmployees.positionCode': regex },
+      { 'approvedEmployees.positionName': regex },
+      { 'proposedApprovedEmployees.employeeCode': regex },
+      { 'proposedApprovedEmployees.employeeName': regex },
       { reason: regex },
     ],
   }
+}
+
+function pushMembershipFilter(filter, fieldName, value) {
+  filter.$and = filter.$and || []
+  filter.$and.push({
+    $or: [
+      { [`requestedEmployees.${fieldName}`]: value },
+      { [`approvedEmployees.${fieldName}`]: value },
+      { [`proposedApprovedEmployees.${fieldName}`]: value },
+    ],
+  })
 }
 
 function buildListFilter(query) {
@@ -84,15 +216,15 @@ function buildListFilter(query) {
   if (s(query.dayType)) filter.dayType = s(query.dayType).toUpperCase()
 
   if (s(query.employeeId) && mongoose.isValidObjectId(query.employeeId)) {
-    filter['employees.employeeId'] = query.employeeId
+    pushMembershipFilter(filter, 'employeeId', query.employeeId)
   }
 
   if (s(query.departmentId) && mongoose.isValidObjectId(query.departmentId)) {
-    filter['employees.departmentId'] = query.departmentId
+    pushMembershipFilter(filter, 'departmentId', query.departmentId)
   }
 
   if (s(query.positionId) && mongoose.isValidObjectId(query.positionId)) {
-    filter['employees.positionId'] = query.positionId
+    pushMembershipFilter(filter, 'positionId', query.positionId)
   }
 
   if (s(query.otDateFrom) || s(query.otDateTo)) {
@@ -129,6 +261,7 @@ function buildApprovalInboxFilter(query, authUser) {
 
     if (normalizedStatus === 'PENDING') {
       filter.currentApproverEmployeeId = approverEmployeeId
+      filter.status = 'PENDING'
     } else {
       filter.$or = [
         { currentApproverEmployeeId: approverEmployeeId },
@@ -165,7 +298,7 @@ function buildSort(query) {
     requesterName: 'requesterName',
     status: 'status',
     totalHours: 'totalHours',
-    employeeCount: 'employeeCount',
+    employeeCount: 'approvedEmployeeCount',
   }
 
   const sortField = allowedSortMap[query.sortBy] || 'createdAt'
@@ -204,8 +337,39 @@ function makeSafeSheetName(input, usedNames = new Set()) {
   return finalName
 }
 
+function appendEmployeeSection(rows, title, employees = []) {
+  rows.push([title])
+  rows.push([
+    'No',
+    'Employee Code',
+    'Employee Name',
+    'Department Code',
+    'Department Name',
+    'Position Code',
+    'Position Name',
+  ])
+
+  for (const [index, item] of employees.entries()) {
+    rows.push([
+      index + 1,
+      s(item.employeeCode),
+      s(item.employeeName),
+      s(item.departmentCode),
+      s(item.departmentName),
+      s(item.positionCode),
+      s(item.positionName),
+    ])
+  }
+
+  rows.push([])
+}
+
 function buildRequestSheetRows(doc) {
-  const employees = Array.isArray(doc.employees) ? doc.employees : []
+  const requestedEmployees = Array.isArray(doc.requestedEmployees) ? doc.requestedEmployees : []
+  const approvedEmployees = Array.isArray(doc.approvedEmployees) ? doc.approvedEmployees : []
+  const proposedApprovedEmployees = Array.isArray(doc.proposedApprovedEmployees)
+    ? doc.proposedApprovedEmployees
+    : []
   const approvalSteps = Array.isArray(doc.approvalSteps) ? doc.approvalSteps : []
 
   const rows = [
@@ -223,32 +387,36 @@ function buildRequestSheetRows(doc) {
     ['Status', s(doc.status)],
     ['Current Step', Number(doc.currentApprovalStep || 1)],
     ['Reason', s(doc.reason)],
+    ['Requested Staff', Number(doc.requestedEmployeeCount || requestedEmployees.length)],
+    ['Approved Staff', Number(doc.approvedEmployeeCount || approvedEmployees.length)],
+    ['Requester Confirmation', s(doc.requesterConfirmationStatus)],
+    ['Last Adjustment By', s(doc.lastAdjustmentByEmployeeName)],
+    ['Last Adjustment Remark', s(doc.lastAdjustmentRemark)],
     ['Created At', formatDateTime(doc.createdAt)],
     ['Updated At', formatDateTime(doc.updatedAt)],
     [],
-    ['EMPLOYEES'],
-    ['No', 'Employee Code', 'Employee Name', 'Department Code', 'Department Name', 'Position Code', 'Position Name'],
-    ...employees.map((item, index) => [
-      index + 1,
-      s(item.employeeCode),
-      s(item.employeeName),
-      s(item.departmentCode),
-      s(item.departmentName),
-      s(item.positionCode),
-      s(item.positionName),
-    ]),
-    [],
-    ['APPROVAL STEPS'],
-    ['Step No', 'Approver Code', 'Approver Name', 'Status', 'Acted At', 'Remark'],
-    ...approvalSteps.map((step) => [
+  ]
+
+  appendEmployeeSection(rows, 'REQUESTED EMPLOYEES', requestedEmployees)
+  appendEmployeeSection(rows, 'CURRENT APPROVED EMPLOYEES', approvedEmployees)
+
+  if (proposedApprovedEmployees.length) {
+    appendEmployeeSection(rows, 'PROPOSED APPROVED EMPLOYEES', proposedApprovedEmployees)
+  }
+
+  rows.push(['APPROVAL STEPS'])
+  rows.push(['Step No', 'Approver Code', 'Approver Name', 'Status', 'Acted At', 'Remark'])
+
+  for (const step of approvalSteps) {
+    rows.push([
       Number(step.stepNo || 0),
       s(step.approverCode),
       s(step.approverName),
       s(step.status),
       formatDateTime(step.actedAt),
       s(step.remark),
-    ]),
-  ]
+    ])
+  }
 
   return rows
 }
@@ -475,6 +643,37 @@ async function resolveApprovalFlow(requesterEmployeeId, approverEmployeeIds = []
   }
 }
 
+async function resolveActorIdentity(authUser, fallback = {}) {
+  const actorEmployeeId = s(authUser?.employeeId)
+
+  if (actorEmployeeId && mongoose.isValidObjectId(actorEmployeeId)) {
+    try {
+      const snapshot = await resolveEmployeeSnapshot(actorEmployeeId)
+      return {
+        employeeId: snapshot.employee._id,
+        employeeNo: s(
+          snapshot.employee.employeeNo ||
+            snapshot.employee.employeeCode ||
+            snapshot.employee.code
+        ),
+        employeeName: s(
+          snapshot.employee.displayName ||
+            snapshot.employee.employeeName ||
+            snapshot.employee.name
+        ),
+      }
+    } catch {
+      // fallback below
+    }
+  }
+
+  return {
+    employeeId: fallback.employeeId || null,
+    employeeNo: s(fallback.employeeNo || authUser?.loginId),
+    employeeName: s(fallback.employeeName || authUser?.displayName || authUser?.loginId),
+  }
+}
+
 function hasApprovedStep(doc) {
   const steps = Array.isArray(doc?.approvalSteps) ? doc.approvalSteps : []
   return steps.some((step) => s(step?.status).toUpperCase() === 'APPROVED')
@@ -489,6 +688,20 @@ function canEditOTRequest(doc, authUser) {
   if (actorEmployeeId !== ownerEmployeeId) return false
   if (status !== 'PENDING') return false
   if (hasApprovedStep(doc)) return false
+
+  return true
+}
+
+function canRequesterConfirm(doc, authUser) {
+  const actorEmployeeId = s(authUser?.employeeId)
+  const ownerEmployeeId = s(doc?.requesterEmployeeId)
+  const status = s(doc?.status).toUpperCase()
+  const confirmation = s(doc?.requesterConfirmationStatus).toUpperCase()
+
+  if (!actorEmployeeId || !ownerEmployeeId) return false
+  if (actorEmployeeId !== ownerEmployeeId) return false
+  if (status !== 'PENDING_REQUESTER_CONFIRMATION') return false
+  if (confirmation !== 'PENDING') return false
 
   return true
 }
@@ -516,14 +729,64 @@ function assertCanEditOTRequest(doc, authUser) {
   }
 
   if (hasApprovedStep(doc)) {
-    const err = new Error('This OT request can no longer be edited because it already has an approved step')
+    const err = new Error(
+      'This OT request can no longer be edited because it already has an approved step'
+    )
     err.status = 400
     throw err
   }
 }
 
+function assertCanRequesterConfirm(doc, authUser) {
+  const actorEmployeeId = s(authUser?.employeeId)
+  const ownerEmployeeId = s(doc?.requesterEmployeeId)
+
+  if (!actorEmployeeId || !mongoose.isValidObjectId(actorEmployeeId)) {
+    const err = new Error('Your account is not linked to an employee profile')
+    err.status = 400
+    throw err
+  }
+
+  if (!ownerEmployeeId || actorEmployeeId !== ownerEmployeeId) {
+    const err = new Error('Only the request owner can confirm this OT request')
+    err.status = 403
+    throw err
+  }
+
+  if (s(doc?.status).toUpperCase() !== 'PENDING_REQUESTER_CONFIRMATION') {
+    const err = new Error('This OT request is not waiting for requester confirmation')
+    err.status = 400
+    throw err
+  }
+
+  if (s(doc?.requesterConfirmationStatus).toUpperCase() !== 'PENDING') {
+    const err = new Error('Requester confirmation is not available for this OT request')
+    err.status = 400
+    throw err
+  }
+}
+
+function buildComparisonSummary(doc) {
+  const requestedEmployees = Array.isArray(doc?.requestedEmployees) ? doc.requestedEmployees : []
+  const approvedEmployees = Array.isArray(doc?.approvedEmployees) ? doc.approvedEmployees : []
+  const proposedApprovedEmployees = Array.isArray(doc?.proposedApprovedEmployees)
+    ? doc.proposedApprovedEmployees
+    : []
+
+  return {
+    requestedEmployeeCount: requestedEmployees.length,
+    approvedEmployeeCount: approvedEmployees.length,
+    proposedApprovedEmployeeCount: proposedApprovedEmployees.length,
+    removedFromOriginalCount: countRemoved(requestedEmployees, approvedEmployees),
+    pendingRemovedCount: proposedApprovedEmployees.length
+      ? countRemoved(approvedEmployees, proposedApprovedEmployees)
+      : 0,
+  }
+}
+
 function mapListItem(doc, authUser) {
   const approvalSteps = Array.isArray(doc.approvalSteps) ? doc.approvalSteps : []
+  const effectiveEmployees = effectiveEmployeesForDoc(doc)
 
   return {
     id: String(doc._id),
@@ -531,6 +794,7 @@ function mapListItem(doc, authUser) {
     requesterEmployeeId: doc.requesterEmployeeId ? String(doc.requesterEmployeeId) : null,
     requesterEmployeeNo: s(doc.requesterEmployeeNo),
     requesterName: s(doc.requesterName),
+
     otDate: s(doc.otDate),
     startTime: s(doc.startTime),
     endTime: s(doc.endTime),
@@ -539,10 +803,22 @@ function mapListItem(doc, authUser) {
     totalHours: Number(doc.totalHours || 0),
     dayType: s(doc.dayType),
     reason: s(doc.reason),
-    employeeCount: Number(
-      doc.employeeCount || (Array.isArray(doc.employees) ? doc.employees.length : 0)
+
+    employeeCount: effectiveEmployeeCountForDoc(doc),
+    requestedEmployeeCount: Number(
+      doc.requestedEmployeeCount || (Array.isArray(doc.requestedEmployees) ? doc.requestedEmployees.length : 0)
     ),
+    approvedEmployeeCount: Number(
+      doc.approvedEmployeeCount || (Array.isArray(doc.approvedEmployees) ? doc.approvedEmployees.length : 0)
+    ),
+    proposedApprovedEmployeeCount: Number(
+      doc.proposedApprovedEmployeeCount ||
+        (Array.isArray(doc.proposedApprovedEmployees) ? doc.proposedApprovedEmployees.length : 0)
+    ),
+
     status: s(doc.status),
+    requesterConfirmationStatus: s(doc.requesterConfirmationStatus),
+
     currentApprovalStep: Number(doc.currentApprovalStep || 1),
     currentApproverEmployeeId: doc.currentApproverEmployeeId
       ? String(doc.currentApproverEmployeeId)
@@ -550,15 +826,27 @@ function mapListItem(doc, authUser) {
     finalApproverEmployeeId: doc.finalApproverEmployeeId
       ? String(doc.finalApproverEmployeeId)
       : null,
+
     approvalStepCount: approvalSteps.length,
     hasApprovedStep: hasApprovedStep(doc),
     canEdit: canEditOTRequest(doc, authUser),
+    canRequesterConfirm: canRequesterConfirm(doc, authUser),
+
+    employees: effectiveEmployees.map(mapEmployeeOutput),
+
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   }
 }
 
-function mapDetail(doc) {
+function mapDetail(doc, authUser) {
+  const requestedEmployees = Array.isArray(doc.requestedEmployees) ? doc.requestedEmployees : []
+  const approvedEmployees = Array.isArray(doc.approvedEmployees) ? doc.approvedEmployees : []
+  const proposedApprovedEmployees = Array.isArray(doc.proposedApprovedEmployees)
+    ? doc.proposedApprovedEmployees
+    : []
+  const effectiveEmployees = effectiveEmployeesForDoc(doc)
+
   return {
     id: String(doc._id),
     requestNo: doc.requestNo,
@@ -575,23 +863,21 @@ function mapDetail(doc) {
     dayType: s(doc.dayType),
     reason: s(doc.reason),
 
-    employees: Array.isArray(doc.employees)
-      ? doc.employees.map((item) => ({
-          employeeId: item.employeeId ? String(item.employeeId) : null,
-          employeeCode: s(item.employeeCode),
-          employeeName: s(item.employeeName),
-          departmentId: item.departmentId ? String(item.departmentId) : null,
-          departmentCode: s(item.departmentCode),
-          departmentName: s(item.departmentName),
-          positionId: item.positionId ? String(item.positionId) : null,
-          positionCode: s(item.positionCode),
-          positionName: s(item.positionName),
-        }))
-      : [],
+    requestedEmployees: requestedEmployees.map(mapEmployeeOutput),
+    approvedEmployees: approvedEmployees.map(mapEmployeeOutput),
+    proposedApprovedEmployees: proposedApprovedEmployees.map(mapEmployeeOutput),
 
-    employeeCount: Number(
-      doc.employeeCount || (Array.isArray(doc.employees) ? doc.employees.length : 0)
+    // alias so old frontend still shows something
+    employees: effectiveEmployees.map(mapEmployeeOutput),
+
+    employeeCount: effectiveEmployees.length,
+    requestedEmployeeCount: Number(doc.requestedEmployeeCount || requestedEmployees.length),
+    approvedEmployeeCount: Number(doc.approvedEmployeeCount || approvedEmployees.length),
+    proposedApprovedEmployeeCount: Number(
+      doc.proposedApprovedEmployeeCount || proposedApprovedEmployees.length
     ),
+
+    comparisonSummary: buildComparisonSummary(doc),
 
     approvalSteps: Array.isArray(doc.approvalSteps)
       ? doc.approvalSteps.map((step) => ({
@@ -615,8 +901,25 @@ function mapDetail(doc) {
       : null,
 
     status: s(doc.status),
+    requesterConfirmationStatus: s(doc.requesterConfirmationStatus),
+    requesterConfirmedAt: doc.requesterConfirmedAt || null,
+    requesterConfirmationRemark: s(doc.requesterConfirmationRemark),
+
+    lastAdjustmentByEmployeeId: doc.lastAdjustmentByEmployeeId
+      ? String(doc.lastAdjustmentByEmployeeId)
+      : null,
+    lastAdjustmentByEmployeeNo: s(doc.lastAdjustmentByEmployeeNo),
+    lastAdjustmentByEmployeeName: s(doc.lastAdjustmentByEmployeeName),
+    lastAdjustmentAt: doc.lastAdjustmentAt || null,
+    lastAdjustmentRemark: s(doc.lastAdjustmentRemark),
+    lastAdjustmentStepNo: Number(doc.lastAdjustmentStepNo || 0) || null,
+
     createdBy: doc.createdBy ? String(doc.createdBy) : null,
     updatedBy: doc.updatedBy ? String(doc.updatedBy) : null,
+
+    canEdit: canEditOTRequest(doc, authUser),
+    canRequesterConfirm: canRequesterConfirm(doc, authUser),
+
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   }
@@ -633,9 +936,7 @@ async function create(payload, authUser, options = {}) {
 
   const requesterSnapshot = await resolveEmployeeSnapshot(requesterEmployeeId)
 
-  const uniqueEmployeeIds = Array.from(
-    new Set((payload.employeeIds || []).map((id) => s(id)).filter(Boolean))
-  )
+  const uniqueEmployeeIds = normalizeIdArray(payload.employeeIds)
 
   if (!uniqueEmployeeIds.length) {
     const err = new Error('Please select at least 1 employee')
@@ -643,7 +944,7 @@ async function create(payload, authUser, options = {}) {
     throw err
   }
 
-  const employees = await resolveEmployeesSnapshots(uniqueEmployeeIds)
+  const requestedEmployees = await resolveEmployeesSnapshots(uniqueEmployeeIds)
 
   const duration = calculateDuration({
     startTime: payload.startTime,
@@ -651,8 +952,13 @@ async function create(payload, authUser, options = {}) {
     breakMinutes: payload.breakMinutes,
   })
 
+  const holidayDates =
+    Array.isArray(options.holidays) && options.holidays.length
+      ? options.holidays
+      : await resolveHolidayDateStrings([payload.otDate])
+
   const dayType = getDayType(payload.otDate, {
-    holidays: options.holidays || [],
+    holidays: holidayDates,
   })
 
   const approvalFlow = await resolveApprovalFlow(
@@ -675,8 +981,14 @@ async function create(payload, authUser, options = {}) {
         requesterSnapshot.employee.name
     ),
 
-    employees,
-    employeeCount: employees.length,
+    requestedEmployees,
+    requestedEmployeeCount: requestedEmployees.length,
+
+    approvedEmployees: requestedEmployees,
+    approvedEmployeeCount: requestedEmployees.length,
+
+    proposedApprovedEmployees: [],
+    proposedApprovedEmployeeCount: 0,
 
     otDate: s(payload.otDate),
     startTime: s(payload.startTime),
@@ -694,6 +1006,10 @@ async function create(payload, authUser, options = {}) {
     currentApprovalStep: approvalFlow.currentApprovalStep,
     currentApproverEmployeeId: approvalFlow.currentApproverEmployeeId,
     finalApproverEmployeeId: approvalFlow.finalApproverEmployeeId,
+
+    requesterConfirmationStatus: 'NOT_REQUIRED',
+    requesterConfirmedAt: null,
+    requesterConfirmationRemark: '',
 
     status: 'PENDING',
     createdBy: authUser?.accountId || authUser?._id || null,
@@ -723,9 +1039,7 @@ async function update(id, payload, authUser, options = {}) {
   const requesterEmployeeId = s(doc.requesterEmployeeId || authUser?.employeeId)
   const requesterSnapshot = await resolveEmployeeSnapshot(requesterEmployeeId)
 
-  const uniqueEmployeeIds = Array.from(
-    new Set((payload.employeeIds || []).map((item) => s(item)).filter(Boolean))
-  )
+  const uniqueEmployeeIds = normalizeIdArray(payload.employeeIds)
 
   if (!uniqueEmployeeIds.length) {
     const err = new Error('Please select at least 1 employee')
@@ -733,7 +1047,7 @@ async function update(id, payload, authUser, options = {}) {
     throw err
   }
 
-  const employees = await resolveEmployeesSnapshots(uniqueEmployeeIds)
+  const requestedEmployees = await resolveEmployeesSnapshots(uniqueEmployeeIds)
 
   const duration = calculateDuration({
     startTime: payload.startTime,
@@ -741,8 +1055,13 @@ async function update(id, payload, authUser, options = {}) {
     breakMinutes: payload.breakMinutes,
   })
 
+  const holidayDates =
+    Array.isArray(options.holidays) && options.holidays.length
+      ? options.holidays
+      : await resolveHolidayDateStrings([payload.otDate])
+
   const dayType = getDayType(payload.otDate, {
-    holidays: options.holidays || [],
+    holidays: holidayDates,
   })
 
   const approvalFlow = await resolveApprovalFlow(
@@ -762,8 +1081,14 @@ async function update(id, payload, authUser, options = {}) {
       requesterSnapshot.employee.name
   )
 
-  doc.employees = employees
-  doc.employeeCount = employees.length
+  doc.requestedEmployees = requestedEmployees
+  doc.requestedEmployeeCount = requestedEmployees.length
+
+  doc.approvedEmployees = requestedEmployees
+  doc.approvedEmployeeCount = requestedEmployees.length
+
+  doc.proposedApprovedEmployees = []
+  doc.proposedApprovedEmployeeCount = 0
 
   doc.otDate = s(payload.otDate)
   doc.startTime = s(payload.startTime)
@@ -781,6 +1106,18 @@ async function update(id, payload, authUser, options = {}) {
   doc.currentApprovalStep = approvalFlow.currentApprovalStep
   doc.currentApproverEmployeeId = approvalFlow.currentApproverEmployeeId
   doc.finalApproverEmployeeId = approvalFlow.finalApproverEmployeeId
+
+  doc.requesterConfirmationStatus = 'NOT_REQUIRED'
+  doc.requesterConfirmedAt = null
+  doc.requesterConfirmationRemark = ''
+
+  doc.lastAdjustmentByEmployeeId = null
+  doc.lastAdjustmentByEmployeeNo = ''
+  doc.lastAdjustmentByEmployeeName = ''
+  doc.lastAdjustmentByAccountId = null
+  doc.lastAdjustmentAt = null
+  doc.lastAdjustmentRemark = ''
+  doc.lastAdjustmentStepNo = null
 
   doc.status = 'PENDING'
   doc.updatedBy = authUser?.accountId || authUser?._id || null
@@ -931,20 +1268,16 @@ async function getById(id, authUser) {
     throw err
   }
 
-  const detail = mapDetail(doc)
+  const detail = mapDetail(doc, authUser)
 
   if (detail.requesterEmployeeId && mongoose.isValidObjectId(detail.requesterEmployeeId)) {
     try {
       const snapshot = await resolveEmployeeSnapshot(detail.requesterEmployeeId)
 
-      detail.departmentId = snapshot.department?._id
-        ? String(snapshot.department._id)
-        : null
+      detail.departmentId = snapshot.department?._id ? String(snapshot.department._id) : null
       detail.departmentName = s(snapshot.department?.name)
 
-      detail.positionId = snapshot.position?._id
-        ? String(snapshot.position._id)
-        : null
+      detail.positionId = snapshot.position?._id ? String(snapshot.position._id) : null
       detail.positionName = s(snapshot.position?.name)
     } catch {
       detail.departmentId = null
@@ -963,7 +1296,6 @@ async function getById(id, authUser) {
     ? detail.approvalSteps.length
     : 0
   detail.hasApprovedStep = hasApprovedStep(doc)
-  detail.canEdit = canEditOTRequest(doc, authUser)
 
   return detail
 }
@@ -983,7 +1315,7 @@ async function decide(id, payload, authUser) {
     throw err
   }
 
-  if (doc.status !== 'PENDING') {
+  if (s(doc.status).toUpperCase() !== 'PENDING') {
     const err = new Error('Only pending OT requests can be decided')
     err.status = 400
     throw err
@@ -1020,10 +1352,153 @@ async function decide(id, payload, authUser) {
   const remark = s(payload.remark)
 
   if (action === 'APPROVE') {
+    const currentApprovedPool = Array.isArray(doc.approvedEmployees) && doc.approvedEmployees.length
+      ? doc.approvedEmployees
+      : doc.requestedEmployees
+
+    const approvedEmployeeIds = normalizeIdArray(payload.approvedEmployeeIds)
+
+    if (!approvedEmployeeIds.length) {
+      const err = new Error('Please select at least 1 approved employee')
+      err.status = 400
+      throw err
+    }
+
+    const poolIdSet = new Set(getCollectionIds(currentApprovedPool))
+    const invalidEmployeeId = approvedEmployeeIds.find((employeeId) => !poolIdSet.has(employeeId))
+
+    if (invalidEmployeeId) {
+      const err = new Error('Approved employees must be selected from the current OT employee list')
+      err.status = 400
+      throw err
+    }
+
+    const nextApprovedEmployees = filterEmployeeSnapshotsByIds(currentApprovedPool, approvedEmployeeIds)
+    const isChanged = !areSameEmployeeSelections(currentApprovedPool, approvedEmployeeIds)
+
     currentStep.status = 'APPROVED'
     currentStep.actedAt = new Date()
     currentStep.actedBy = authUser?.accountId || authUser?._id || null
     currentStep.remark = remark
+
+    if (isChanged) {
+      const actorIdentity = await resolveActorIdentity(authUser, {
+        employeeId: currentStep.approverEmployeeId || null,
+        employeeNo: currentStep.approverCode,
+        employeeName: currentStep.approverName,
+      })
+
+      doc.proposedApprovedEmployees = nextApprovedEmployees
+      doc.proposedApprovedEmployeeCount = nextApprovedEmployees.length
+
+      doc.lastAdjustmentByEmployeeId = actorIdentity.employeeId || null
+      doc.lastAdjustmentByEmployeeNo = s(actorIdentity.employeeNo)
+      doc.lastAdjustmentByEmployeeName = s(actorIdentity.employeeName)
+      doc.lastAdjustmentByAccountId = authUser?.accountId || authUser?._id || null
+      doc.lastAdjustmentAt = new Date()
+      doc.lastAdjustmentRemark = remark
+      doc.lastAdjustmentStepNo = Number(currentStep.stepNo || 0) || null
+
+      doc.requesterConfirmationStatus = 'PENDING'
+      doc.requesterConfirmedAt = null
+      doc.requesterConfirmationRemark = ''
+
+      doc.currentApproverEmployeeId = null
+      doc.status = 'PENDING_REQUESTER_CONFIRMATION'
+    } else {
+      doc.proposedApprovedEmployees = []
+      doc.proposedApprovedEmployeeCount = 0
+      doc.requesterConfirmationStatus = 'NOT_REQUIRED'
+      doc.requesterConfirmedAt = null
+      doc.requesterConfirmationRemark = ''
+
+      const nextStep = doc.approvalSteps[stepIndex + 1]
+
+      if (nextStep) {
+        nextStep.status = 'PENDING'
+        doc.currentApprovalStep = Number(nextStep.stepNo)
+        doc.currentApproverEmployeeId = nextStep.approverEmployeeId
+        doc.status = 'PENDING'
+      } else {
+        doc.currentApprovalStep = Number(currentStep.stepNo)
+        doc.currentApproverEmployeeId = null
+        doc.status = 'APPROVED'
+      }
+    }
+  } else if (action === 'REJECT') {
+    currentStep.status = 'REJECTED'
+    currentStep.actedAt = new Date()
+    currentStep.actedBy = authUser?.accountId || authUser?._id || null
+    currentStep.remark = remark
+
+    doc.proposedApprovedEmployees = []
+    doc.proposedApprovedEmployeeCount = 0
+    doc.requesterConfirmationStatus = 'NOT_REQUIRED'
+    doc.requesterConfirmedAt = null
+    doc.requesterConfirmationRemark = ''
+
+    doc.currentApproverEmployeeId = null
+    doc.status = 'REJECTED'
+  } else {
+    const err = new Error('Invalid action')
+    err.status = 400
+    throw err
+  }
+
+  doc.updatedBy = authUser?.accountId || authUser?._id || null
+
+  await doc.save()
+
+  return getById(doc._id, authUser)
+}
+
+async function requesterConfirm(id, payload, authUser) {
+  if (!mongoose.isValidObjectId(id)) {
+    const err = new Error('Invalid OT request id')
+    err.status = 400
+    throw err
+  }
+
+  const doc = await OTRequest.findById(id)
+
+  if (!doc) {
+    const err = new Error('OT request not found')
+    err.status = 404
+    throw err
+  }
+
+  assertCanRequesterConfirm(doc, authUser)
+
+  const action = s(payload.action).toUpperCase()
+  const remark = s(payload.remark)
+
+  if (action === 'AGREE') {
+    if (!Array.isArray(doc.proposedApprovedEmployees) || !doc.proposedApprovedEmployees.length) {
+      const err = new Error('There is no adjusted employee list to confirm')
+      err.status = 400
+      throw err
+    }
+
+    doc.approvedEmployees = doc.proposedApprovedEmployees
+    doc.approvedEmployeeCount = doc.proposedApprovedEmployees.length
+
+    doc.proposedApprovedEmployees = []
+    doc.proposedApprovedEmployeeCount = 0
+
+    doc.requesterConfirmationStatus = 'AGREED'
+    doc.requesterConfirmedAt = new Date()
+    doc.requesterConfirmationRemark = remark
+
+    const currentStepNo = Number(doc.currentApprovalStep || 1)
+    const stepIndex = doc.approvalSteps.findIndex(
+      (step) => Number(step.stepNo) === currentStepNo
+    )
+
+    if (stepIndex === -1) {
+      const err = new Error('Current approval step not found')
+      err.status = 400
+      throw err
+    }
 
     const nextStep = doc.approvalSteps[stepIndex + 1]
 
@@ -1033,20 +1508,18 @@ async function decide(id, payload, authUser) {
       doc.currentApproverEmployeeId = nextStep.approverEmployeeId
       doc.status = 'PENDING'
     } else {
-      doc.currentApprovalStep = Number(currentStep.stepNo)
       doc.currentApproverEmployeeId = null
       doc.status = 'APPROVED'
     }
-  } else if (action === 'REJECT') {
-    currentStep.status = 'REJECTED'
-    currentStep.actedAt = new Date()
-    currentStep.actedBy = authUser?.accountId || authUser?._id || null
-    currentStep.remark = remark
+  } else if (action === 'DISAGREE') {
+    doc.requesterConfirmationStatus = 'DISAGREED'
+    doc.requesterConfirmedAt = new Date()
+    doc.requesterConfirmationRemark = remark
 
     doc.currentApproverEmployeeId = null
-    doc.status = 'REJECTED'
+    doc.status = 'REQUESTER_DISAGREED'
   } else {
-    const err = new Error('Invalid action')
+    const err = new Error('Invalid requester confirmation action')
     err.status = 400
     throw err
   }
@@ -1080,6 +1553,7 @@ module.exports = {
   exportApprovalInboxExcel,
   getById,
   decide,
+  requesterConfirm,
   calculateDuration,
   getAllowedApproverChain,
 }
