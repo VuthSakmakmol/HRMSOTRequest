@@ -16,9 +16,11 @@ import HolidayListView from '@/modules/calendar/views/HolidayListView.vue'
 import OTRequestListView from '@/modules/ot/views/OTRequestListView.vue'
 import OTRequestCreateView from '@/modules/ot/views/OTRequestCreateView.vue'
 import OTApprovalInboxView from '@/modules/ot/views/OTApprovalInboxView.vue'
-import OTRequestDetailView from '../../modules/ot/views/OTRequestDetailView.vue'
+import OTRequestDetailView from '@/modules/ot/views/OTRequestDetailView.vue'
 import OTRequestEditView from '@/modules/ot/views/OTRequestEditView.vue'
 import ShiftListView from '@/modules/shift/views/ShiftListView.vue'
+import AttendanceImportView from '@/modules/attendance/views/AttendanceImportView.vue'
+import OTAttendanceVerificationView from '@/modules/attendance/views/OTAttendanceVerificationView.vue'
 import ForbiddenView from '@/modules/errors/views/ForbiddenView.vue'
 
 let bootstrapped = false
@@ -272,6 +274,26 @@ const routes = [
           requiredAnyPermissions: [
             'OT_REQUEST_UPDATE',
           ],
+        },
+      },
+      {
+        path: '/attendance/imports',
+        name: 'attendance-imports',
+        component: AttendanceImportView,
+        meta: {
+          title: 'Attendance Import',
+          requiresAuth: true,
+          requiredAnyPermissions: ['ATTENDANCE_VIEW'],
+        },
+      },
+      {
+        path: '/attendance/ot-verification',
+        name: 'attendance-ot-verification',
+        component: OTAttendanceVerificationView,
+        meta: {
+          title: 'OT Attendance Verification',
+          requiresAuth: true,
+          requiredAnyPermissions: ['ATTENDANCE_VERIFY'],
         },
       },
       {

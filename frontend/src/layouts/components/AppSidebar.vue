@@ -186,6 +186,27 @@ const navGroups = computed(() => {
       ],
     },
     {
+      key: 'attendance',
+      label: 'Attendance',
+      icon: 'pi pi-calendar-clock',
+      items: [
+        {
+          key: 'attendance-imports',
+          label: 'Attendance Import',
+          icon: 'pi pi-upload',
+          to: '/attendance/imports',
+          permissions: ['ATTENDANCE_VIEW', 'ATTENDANCE_IMPORT'],
+        },
+        {
+          key: 'attendance-verification',
+          label: 'OT Verification',
+          icon: 'pi pi-check-square',
+          to: '/attendance/ot-verification',
+          permissions: ['ATTENDANCE_VERIFY'],
+        },
+      ],
+    },
+    {
       key: 'overtime',
       label: 'Overtime',
       icon: 'pi pi-clock',

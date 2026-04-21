@@ -12,6 +12,7 @@ import Divider from 'primevue/divider'
 import Tag from 'primevue/tag'
 import Textarea from 'primevue/textarea'
 
+import { useAuthStore } from '@/modules/auth/auth.store'
 import {
   getOTRequestById,
   requesterConfirmOTRequest,
@@ -20,6 +21,7 @@ import {
 const route = useRoute()
 const router = useRouter()
 const toast = useToast()
+const auth = useAuthStore()
 
 const loading = ref(false)
 const confirmLoading = ref(false)
@@ -31,20 +33,30 @@ const confirmation = reactive({
 
 const requestId = computed(() => String(route.params.id || '').trim())
 
-const requestedEmployees = computed(() => {
-  return Array.isArray(detail.value?.requestedEmployees) ? detail.value.requestedEmployees : []
-})
+const requestedEmployees = computed(() =>
+  Array.isArray(detail.value?.requestedEmployees) ? detail.value.requestedEmployees : [],
+)
 
-const approvedEmployees = computed(() => {
-  return Array.isArray(detail.value?.approvedEmployees) ? detail.value.approvedEmployees : []
-})
+const approvedEmployees = computed(() =>
+  Array.isArray(detail.value?.approvedEmployees) ? detail.value.approvedEmployees : [],
+)
 
-const proposedApprovedEmployees = computed(() => {
-  return Array.isArray(detail.value?.proposedApprovedEmployees) ? detail.value.proposedApprovedEmployees : []
-})
+const proposedApprovedEmployees = computed(() =>
+  Array.isArray(detail.value?.proposedApprovedEmployees) ? detail.value.proposedApprovedEmployees : [],
+)
 
-const approvalSteps = computed(() => {
-  return Array.isArray(detail.value?.approvalSteps) ? detail.value.approvalSteps : []
+const approvalSteps = computed(() =>
+  Array.isArray(detail.value?.approvalSteps) ? detail.value.approvalSteps : [],
+)
+
+const canVerifyAttendance = computed(() => {
+  const status = String(detail.value?.status || '').trim().toUpperCase()
+
+  if (!detail.value?.id) return false
+  if (['REJECTED', 'CANCELLED'].includes(status)) return false
+
+  if (auth.isRootAdmin) return true
+  return auth.hasAnyPermission?.(['ATTENDANCE_VERIFY']) ?? false
 })
 
 function normalizePayload(res) {
@@ -86,7 +98,13 @@ function formatDateTime(value) {
   if (!value) return '-'
 
   try {
-    return new Date(value).toLocaleString()
+    return new Date(value).toLocaleString([], {
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
   } catch {
     return String(value)
   }
@@ -102,6 +120,16 @@ function formatTimeRange(row) {
 
 function goBack() {
   router.push('/ot/requests')
+}
+
+function goToAttendanceVerification() {
+  const id = String(detail.value?.id || '').trim()
+  if (!id) return
+
+  router.push({
+    name: 'attendance-ot-verification',
+    query: { id },
+  })
 }
 
 async function fetchDetail() {
@@ -181,43 +209,62 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4">
-    <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-      <div class="min-w-0">
-        <div class="flex flex-wrap items-center gap-2">
-          <h1 class="text-xl font-semibold text-[color:var(--ot-text)]">
-            OT Request Detail
-          </h1>
+  <div class="flex flex-col gap-4 p-3 md:p-4">
+    <section
+      class="overflow-hidden rounded-3xl border border-[color:var(--ot-border)] bg-gradient-to-r from-sky-50 via-white to-emerald-50 shadow-sm dark:from-surface-900 dark:via-surface-900 dark:to-surface-800"
+    >
+      <div class="flex flex-col gap-3 px-4 py-4 md:flex-row md:items-start md:justify-between md:px-5">
+        <div class="min-w-0">
+          <div class="flex flex-wrap items-center gap-2">
+            <h1 class="text-xl font-semibold tracking-tight text-[color:var(--ot-text)]">
+              OT Request Detail
+            </h1>
 
-          <Tag
-            v-if="detail"
-            :value="detail.status || '-'"
-            :severity="statusSeverity(detail.status)"
-          />
+            <Tag
+              v-if="detail?.requestNo"
+              :value="detail.requestNo"
+              severity="secondary"
+            />
 
-          <Tag
-            v-if="detail?.requesterConfirmationStatus && detail.requesterConfirmationStatus !== 'NOT_REQUIRED'"
-            :value="`Requester: ${detail.requesterConfirmationStatus}`"
-            :severity="confirmationSeverity(detail.requesterConfirmationStatus)"
-          />
+            <Tag
+              v-if="detail"
+              :value="detail.status || '-'"
+              :severity="statusSeverity(detail.status)"
+            />
+
+            <Tag
+              v-if="detail?.requesterConfirmationStatus && detail.requesterConfirmationStatus !== 'NOT_REQUIRED'"
+              :value="`Requester: ${detail.requesterConfirmationStatus}`"
+              :severity="confirmationSeverity(detail.requesterConfirmationStatus)"
+            />
+          </div>
+
+          <p class="mt-1 text-sm text-[color:var(--ot-text-muted)]">
+            Compact detail view for OT request, approval flow, and employee comparison.
+          </p>
         </div>
 
-        <p class="mt-1 text-sm text-[color:var(--ot-text-muted)]">
-          View requested staff, approved staff, adjusted proposal, and approval flow.
-        </p>
+        <div class="flex flex-wrap items-center gap-2">
+          <Button
+            v-if="canVerifyAttendance"
+            label="Verify Attendance"
+            icon="pi pi-check-square"
+            severity="info"
+            outlined
+            size="small"
+            @click="goToAttendanceVerification"
+          />
+          <Button
+            label="Back"
+            icon="pi pi-arrow-left"
+            severity="secondary"
+            outlined
+            size="small"
+            @click="goBack"
+          />
+        </div>
       </div>
-
-      <div class="flex items-center gap-2">
-        <Button
-          label="Back"
-          icon="pi pi-arrow-left"
-          severity="secondary"
-          outlined
-          size="small"
-          @click="goBack"
-        />
-      </div>
-    </div>
+    </section>
 
     <div
       v-if="loading"
@@ -237,46 +284,34 @@ onMounted(() => {
               Requester confirmation required
             </div>
             <div class="mt-1 text-sm text-amber-700 dark:text-amber-200">
-              An approver adjusted the approved employee list. Review the proposed staff and click Agree or Disagree.
+              An approver adjusted the approved employee list. Review the proposed staff and choose Agree or Disagree.
             </div>
           </div>
 
-          <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
-            <div class="rounded-xl border border-amber-200 bg-white px-4 py-3 dark:border-amber-900/40 dark:bg-amber-950/20">
-              <div class="text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-300">
-                Requested
-              </div>
-              <div class="mt-1 text-base font-semibold text-[color:var(--ot-text)]">
-                {{ detail.requestedEmployeeCount || 0 }} staff
-              </div>
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div class="detail-metric-box border-amber-200 bg-white dark:border-amber-900/40 dark:bg-amber-950/20">
+              <div class="detail-metric-label text-amber-600 dark:text-amber-300">Requested</div>
+              <div class="detail-metric-value">{{ detail.requestedEmployeeCount || 0 }} staff</div>
             </div>
 
-            <div class="rounded-xl border border-amber-200 bg-white px-4 py-3 dark:border-amber-900/40 dark:bg-amber-950/20">
-              <div class="text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-300">
-                Current Approved
-              </div>
-              <div class="mt-1 text-base font-semibold text-[color:var(--ot-text)]">
-                {{ detail.approvedEmployeeCount || 0 }} staff
-              </div>
+            <div class="detail-metric-box border-amber-200 bg-white dark:border-amber-900/40 dark:bg-amber-950/20">
+              <div class="detail-metric-label text-amber-600 dark:text-amber-300">Current Approved</div>
+              <div class="detail-metric-value">{{ detail.approvedEmployeeCount || 0 }} staff</div>
             </div>
 
-            <div class="rounded-xl border border-amber-200 bg-white px-4 py-3 dark:border-amber-900/40 dark:bg-amber-950/20">
-              <div class="text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-300">
-                Proposed Approved
-              </div>
-              <div class="mt-1 text-base font-semibold text-[color:var(--ot-text)]">
-                {{ detail.proposedApprovedEmployeeCount || 0 }} staff
-              </div>
+            <div class="detail-metric-box border-amber-200 bg-white dark:border-amber-900/40 dark:bg-amber-950/20">
+              <div class="detail-metric-label text-amber-600 dark:text-amber-300">Proposed Approved</div>
+              <div class="detail-metric-value">{{ detail.proposedApprovedEmployeeCount || 0 }} staff</div>
             </div>
           </div>
 
-          <div class="space-y-2">
+          <div class="space-y-1.5">
             <label class="text-sm font-medium text-[color:var(--ot-text)]">
               Remark
             </label>
             <Textarea
               v-model.trim="confirmation.remark"
-              rows="4"
+              rows="3"
               autoResize
               class="w-full"
               placeholder="Optional if agreeing. Required if disagreeing."
@@ -304,10 +339,10 @@ onMounted(() => {
         </div>
       </div>
 
-      <div class="grid grid-cols-1 gap-4 xl:grid-cols-3">
-        <Card class="ot-detail-card xl:col-span-2">
+      <div class="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,2fr),360px]">
+        <Card class="compact-card rounded-3xl shadow-sm">
           <template #title>
-            <div class="flex flex-wrap items-center justify-between gap-2">
+            <div class="flex flex-wrap items-center justify-between gap-2 text-base">
               <span>Request Summary</span>
 
               <div class="flex flex-wrap items-center gap-2">
@@ -316,11 +351,11 @@ onMounted(() => {
                   :severity="dayTypeSeverity(detail.dayType)"
                 />
                 <Tag
-                  :value="`Requested ${detail.requestedEmployeeCount ?? 0}`"
+                  :value="`Req ${detail.requestedEmployeeCount ?? 0}`"
                   severity="secondary"
                 />
                 <Tag
-                  :value="`Approved ${detail.approvedEmployeeCount ?? 0}`"
+                  :value="`App ${detail.approvedEmployeeCount ?? 0}`"
                   severity="info"
                 />
                 <Tag
@@ -333,91 +368,91 @@ onMounted(() => {
           </template>
 
           <template #content>
-            <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-              <div class="ot-info-box">
-                <div class="ot-info-label">Request No</div>
-                <div class="ot-info-value">{{ detail.requestNo || '-' }}</div>
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              <div class="detail-info-box">
+                <div class="detail-info-label">Request No</div>
+                <div class="detail-info-value">{{ detail.requestNo || '-' }}</div>
               </div>
 
-              <div class="ot-info-box">
-                <div class="ot-info-label">OT Date</div>
-                <div class="ot-info-value">{{ detail.otDate || '-' }}</div>
+              <div class="detail-info-box">
+                <div class="detail-info-label">OT Date</div>
+                <div class="detail-info-value">{{ detail.otDate || '-' }}</div>
               </div>
 
-              <div class="ot-info-box">
-                <div class="ot-info-label">Time</div>
-                <div class="ot-info-value">{{ formatTimeRange(detail) }}</div>
+              <div class="detail-info-box">
+                <div class="detail-info-label">Time</div>
+                <div class="detail-info-value">{{ formatTimeRange(detail) }}</div>
               </div>
 
-              <div class="ot-info-box">
-                <div class="ot-info-label">Break Minutes</div>
-                <div class="ot-info-value">{{ detail.breakMinutes ?? 0 }} min</div>
+              <div class="detail-info-box">
+                <div class="detail-info-label">Break Minutes</div>
+                <div class="detail-info-value">{{ detail.breakMinutes ?? 0 }} min</div>
               </div>
 
-              <div class="ot-info-box">
-                <div class="ot-info-label">Total Hours</div>
-                <div class="ot-info-value">{{ detail.totalHours ?? '-' }}</div>
+              <div class="detail-info-box">
+                <div class="detail-info-label">Total Hours</div>
+                <div class="detail-info-value">{{ detail.totalHours ?? '-' }}</div>
               </div>
 
-              <div class="ot-info-box">
-                <div class="ot-info-label">Requester</div>
-                <div class="ot-info-value">{{ detail.requesterName || '-' }}</div>
+              <div class="detail-info-box">
+                <div class="detail-info-label">Requester</div>
+                <div class="detail-info-value">{{ detail.requesterName || '-' }}</div>
               </div>
 
-              <div class="ot-info-box">
-                <div class="ot-info-label">Requester Id</div>
-                <div class="ot-info-value">{{ detail.requesterEmployeeNo || '-' }}</div>
+              <div class="detail-info-box">
+                <div class="detail-info-label">Requester ID</div>
+                <div class="detail-info-value">{{ detail.requesterEmployeeNo || '-' }}</div>
               </div>
 
-              <div class="ot-info-box">
-                <div class="ot-info-label">Department</div>
-                <div class="ot-info-value">{{ detail.departmentName || '-' }}</div>
+              <div class="detail-info-box">
+                <div class="detail-info-label">Department</div>
+                <div class="detail-info-value">{{ detail.departmentName || '-' }}</div>
               </div>
 
-              <div class="ot-info-box">
-                <div class="ot-info-label">Position</div>
-                <div class="ot-info-value">{{ detail.positionName || '-' }}</div>
+              <div class="detail-info-box">
+                <div class="detail-info-label">Position</div>
+                <div class="detail-info-value">{{ detail.positionName || '-' }}</div>
               </div>
 
-              <div class="ot-info-box">
-                <div class="ot-info-label">Requester Confirmation</div>
-                <div class="ot-info-value">
+              <div class="detail-info-box">
+                <div class="detail-info-label">Requester Confirmation</div>
+                <div class="detail-info-value">
                   {{ detail.requesterConfirmationStatus || 'NOT_REQUIRED' }}
                 </div>
               </div>
 
-              <div class="ot-info-box">
-                <div class="ot-info-label">Created At</div>
-                <div class="ot-info-value">{{ formatDateTime(detail.createdAt) }}</div>
+              <div class="detail-info-box">
+                <div class="detail-info-label">Created At</div>
+                <div class="detail-info-value">{{ formatDateTime(detail.createdAt) }}</div>
               </div>
 
-              <div class="ot-info-box">
-                <div class="ot-info-label">Updated At</div>
-                <div class="ot-info-value">{{ formatDateTime(detail.updatedAt) }}</div>
+              <div class="detail-info-box">
+                <div class="detail-info-label">Updated At</div>
+                <div class="detail-info-value">{{ formatDateTime(detail.updatedAt) }}</div>
               </div>
             </div>
 
             <Divider />
 
-            <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <div class="ot-info-box">
-                <div class="ot-info-label">Requested Staff</div>
-                <div class="ot-info-value">{{ detail.requestedEmployeeCount ?? 0 }}</div>
+            <div class="grid grid-cols-2 gap-3 xl:grid-cols-4">
+              <div class="detail-stat-box">
+                <div class="detail-stat-label">Requested</div>
+                <div class="detail-stat-value">{{ detail.requestedEmployeeCount ?? 0 }}</div>
               </div>
 
-              <div class="ot-info-box">
-                <div class="ot-info-label">Approved Staff</div>
-                <div class="ot-info-value">{{ detail.approvedEmployeeCount ?? 0 }}</div>
+              <div class="detail-stat-box">
+                <div class="detail-stat-label">Approved</div>
+                <div class="detail-stat-value">{{ detail.approvedEmployeeCount ?? 0 }}</div>
               </div>
 
-              <div class="ot-info-box">
-                <div class="ot-info-label">Pending Proposed</div>
-                <div class="ot-info-value">{{ detail.proposedApprovedEmployeeCount ?? 0 }}</div>
+              <div class="detail-stat-box">
+                <div class="detail-stat-label">Pending Proposed</div>
+                <div class="detail-stat-value">{{ detail.proposedApprovedEmployeeCount ?? 0 }}</div>
               </div>
 
-              <div class="ot-info-box">
-                <div class="ot-info-label">Removed From Original</div>
-                <div class="ot-info-value">
+              <div class="detail-stat-box">
+                <div class="detail-stat-label">Removed</div>
+                <div class="detail-stat-value">
                   {{ detail.comparisonSummary?.removedFromOriginalCount ?? 0 }}
                 </div>
               </div>
@@ -425,22 +460,22 @@ onMounted(() => {
 
             <Divider />
 
-            <div class="ot-info-box">
-              <div class="ot-info-label">Reason</div>
-              <div class="ot-info-value whitespace-pre-line">
+            <div class="detail-info-box">
+              <div class="detail-info-label">Reason</div>
+              <div class="detail-info-value whitespace-pre-line">
                 {{ detail.reason || '-' }}
               </div>
             </div>
 
             <div
               v-if="detail.lastAdjustmentByEmployeeName || detail.lastAdjustmentRemark"
-              class="mt-4 rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-bg)] p-4"
+              class="mt-4 rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-bg)] p-4"
             >
               <div class="mb-2 text-sm font-semibold text-[color:var(--ot-text)]">
                 Last Adjustment
               </div>
 
-              <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <div class="text-sm text-[color:var(--ot-text-muted)]">
                   <span class="font-medium text-[color:var(--ot-text)]">By:</span>
                   {{ detail.lastAdjustmentByEmployeeName || '-' }}
@@ -451,7 +486,7 @@ onMounted(() => {
                   {{ formatDateTime(detail.lastAdjustmentAt) }}
                 </div>
 
-                <div class="text-sm text-[color:var(--ot-text-muted)] md:col-span-2">
+                <div class="text-sm text-[color:var(--ot-text-muted)] sm:col-span-2">
                   <span class="font-medium text-[color:var(--ot-text)]">Remark:</span>
                   {{ detail.lastAdjustmentRemark || '-' }}
                 </div>
@@ -460,9 +495,12 @@ onMounted(() => {
           </template>
         </Card>
 
-        <Card class="ot-detail-card">
+        <Card class="compact-card rounded-3xl shadow-sm">
           <template #title>
-            Approval Flow
+            <div class="flex items-center gap-2 text-base">
+              <i class="pi pi-list-check text-sky-500" />
+              <span>Approval Flow</span>
+            </div>
           </template>
 
           <template #content>
@@ -470,7 +508,7 @@ onMounted(() => {
               <div
                 v-for="step in approvalSteps"
                 :key="step.stepNo"
-                class="rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-bg)] p-3"
+                class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-bg)] p-3"
               >
                 <div class="mb-2 flex items-center justify-between gap-2">
                   <div class="text-sm font-semibold text-[color:var(--ot-text)]">
@@ -487,7 +525,7 @@ onMounted(() => {
                   {{ step.approverName || '-' }}
                 </div>
 
-                <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
+                <div class="mt-0.5 text-xs text-[color:var(--ot-text-muted)]">
                   {{ step.approverCode || '-' }}
                 </div>
 
@@ -497,7 +535,7 @@ onMounted(() => {
 
                 <div
                   v-if="step.remark"
-                  class="mt-2 rounded-lg border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-2 py-2 text-xs text-[color:var(--ot-text)]"
+                  class="mt-2 rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-3 py-2 text-xs text-[color:var(--ot-text)]"
                 >
                   {{ step.remark }}
                 </div>
@@ -511,9 +549,9 @@ onMounted(() => {
         </Card>
       </div>
 
-      <Card class="ot-detail-card">
+      <Card class="compact-card rounded-3xl shadow-sm">
         <template #title>
-          <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center justify-between gap-2 text-base">
             <span>Requested Employees</span>
             <Tag
               :value="`${detail.requestedEmployeeCount ?? requestedEmployees.length} staff`"
@@ -527,8 +565,9 @@ onMounted(() => {
             :value="requestedEmployees"
             scrollable
             responsiveLayout="scroll"
-            tableStyle="min-width: 72rem"
-            class="ot-detail-employee-table"
+            size="small"
+            tableStyle="min-width: 64rem"
+            class="detail-table"
           >
             <template #empty>
               <div class="py-8 text-center text-sm text-[color:var(--ot-text-muted)]">
@@ -536,29 +575,29 @@ onMounted(() => {
               </div>
             </template>
 
-            <Column header="#" style="width: 5rem; min-width: 5rem">
+            <Column header="#" style="width: 4rem; min-width: 4rem">
               <template #body="{ index }">
                 {{ index + 1 }}
               </template>
             </Column>
 
-            <Column field="employeeCode" header="Employee No" style="min-width: 10rem" />
-            <Column field="employeeName" header="Employee Name" style="min-width: 15rem">
+            <Column field="employeeCode" header="Employee No" style="min-width: 9rem" />
+            <Column field="employeeName" header="Employee Name" style="min-width: 14rem">
               <template #body="{ data }">
                 <span class="font-medium text-[color:var(--ot-text)]">
                   {{ data.employeeName || '-' }}
                 </span>
               </template>
             </Column>
-            <Column field="departmentName" header="Department" style="min-width: 14rem" />
-            <Column field="positionName" header="Position" style="min-width: 14rem" />
+            <Column field="departmentName" header="Department" style="min-width: 12rem" />
+            <Column field="positionName" header="Position" style="min-width: 12rem" />
           </DataTable>
         </template>
       </Card>
 
-      <Card class="ot-detail-card">
+      <Card class="compact-card rounded-3xl shadow-sm">
         <template #title>
-          <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center justify-between gap-2 text-base">
             <span>Approved Employees</span>
             <Tag
               :value="`${detail.approvedEmployeeCount ?? approvedEmployees.length} staff`"
@@ -572,8 +611,9 @@ onMounted(() => {
             :value="approvedEmployees"
             scrollable
             responsiveLayout="scroll"
-            tableStyle="min-width: 72rem"
-            class="ot-detail-employee-table"
+            size="small"
+            tableStyle="min-width: 64rem"
+            class="detail-table"
           >
             <template #empty>
               <div class="py-8 text-center text-sm text-[color:var(--ot-text-muted)]">
@@ -581,32 +621,32 @@ onMounted(() => {
               </div>
             </template>
 
-            <Column header="#" style="width: 5rem; min-width: 5rem">
+            <Column header="#" style="width: 4rem; min-width: 4rem">
               <template #body="{ index }">
                 {{ index + 1 }}
               </template>
             </Column>
 
-            <Column field="employeeCode" header="Employee No" style="min-width: 10rem" />
-            <Column field="employeeName" header="Employee Name" style="min-width: 15rem">
+            <Column field="employeeCode" header="Employee No" style="min-width: 9rem" />
+            <Column field="employeeName" header="Employee Name" style="min-width: 14rem">
               <template #body="{ data }">
                 <span class="font-medium text-[color:var(--ot-text)]">
                   {{ data.employeeName || '-' }}
                 </span>
               </template>
             </Column>
-            <Column field="departmentName" header="Department" style="min-width: 14rem" />
-            <Column field="positionName" header="Position" style="min-width: 14rem" />
+            <Column field="departmentName" header="Department" style="min-width: 12rem" />
+            <Column field="positionName" header="Position" style="min-width: 12rem" />
           </DataTable>
         </template>
       </Card>
 
       <Card
         v-if="proposedApprovedEmployees.length"
-        class="ot-detail-card"
+        class="compact-card rounded-3xl shadow-sm"
       >
         <template #title>
-          <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center justify-between gap-2 text-base">
             <span>Proposed Approved Employees</span>
             <Tag
               :value="`${detail.proposedApprovedEmployeeCount ?? proposedApprovedEmployees.length} staff`"
@@ -620,8 +660,9 @@ onMounted(() => {
             :value="proposedApprovedEmployees"
             scrollable
             responsiveLayout="scroll"
-            tableStyle="min-width: 72rem"
-            class="ot-detail-employee-table"
+            size="small"
+            tableStyle="min-width: 64rem"
+            class="detail-table"
           >
             <template #empty>
               <div class="py-8 text-center text-sm text-[color:var(--ot-text-muted)]">
@@ -629,22 +670,22 @@ onMounted(() => {
               </div>
             </template>
 
-            <Column header="#" style="width: 5rem; min-width: 5rem">
+            <Column header="#" style="width: 4rem; min-width: 4rem">
               <template #body="{ index }">
                 {{ index + 1 }}
               </template>
             </Column>
 
-            <Column field="employeeCode" header="Employee No" style="min-width: 10rem" />
-            <Column field="employeeName" header="Employee Name" style="min-width: 15rem">
+            <Column field="employeeCode" header="Employee No" style="min-width: 9rem" />
+            <Column field="employeeName" header="Employee Name" style="min-width: 14rem">
               <template #body="{ data }">
                 <span class="font-medium text-[color:var(--ot-text)]">
                   {{ data.employeeName || '-' }}
                 </span>
               </template>
             </Column>
-            <Column field="departmentName" header="Department" style="min-width: 14rem" />
-            <Column field="positionName" header="Position" style="min-width: 14rem" />
+            <Column field="departmentName" header="Department" style="min-width: 12rem" />
+            <Column field="positionName" header="Position" style="min-width: 12rem" />
           </DataTable>
         </template>
       </Card>
@@ -660,45 +701,76 @@ onMounted(() => {
 </template>
 
 <style scoped>
-:deep(.ot-detail-card .p-card-body) {
-  padding: 1rem !important;
+:deep(.compact-card .p-card-body) {
+  padding: 0.95rem !important;
 }
 
-:deep(.ot-detail-card .p-card-title) {
+:deep(.compact-card .p-card-title) {
   font-size: 1rem !important;
   font-weight: 700 !important;
   color: var(--ot-text) !important;
 }
 
-.ot-info-box {
+:deep(.detail-table .p-datatable-thead > tr > th) {
+  padding: 0.65rem 0.75rem !important;
+  font-size: 0.8rem !important;
+  white-space: nowrap;
+}
+
+:deep(.detail-table .p-datatable-tbody > tr > td) {
+  padding: 0.65rem 0.75rem !important;
+  vertical-align: middle !important;
+}
+
+.detail-info-box,
+.detail-stat-box,
+.detail-metric-box {
   border: 1px solid var(--ot-border);
   background: var(--ot-bg);
   border-radius: 1rem;
   padding: 0.9rem;
 }
 
-.ot-info-label {
-  margin-bottom: 0.3rem;
-  font-size: 0.75rem;
+.detail-info-label,
+.detail-stat-label,
+.detail-metric-label {
+  font-size: 0.72rem;
   font-weight: 700;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--ot-text-muted);
 }
 
-.ot-info-value {
-  word-break: break-word;
-  font-size: 0.95rem;
+.detail-info-value,
+.detail-metric-value {
+  margin-top: 0.35rem;
+  font-size: 0.92rem;
   font-weight: 600;
+  color: var(--ot-text);
+  word-break: break-word;
+}
+
+.detail-stat-value {
+  margin-top: 0.35rem;
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.1;
   color: var(--ot-text);
 }
 
-:deep(.ot-detail-employee-table .p-datatable-thead > tr > th) {
-  padding: 0.72rem 0.9rem !important;
-}
+@media (max-width: 640px) {
+  :deep(.compact-card .p-card-body) {
+    padding: 0.8rem !important;
+  }
 
-:deep(.ot-detail-employee-table .p-datatable-tbody > tr > td) {
-  padding: 0.7rem 0.9rem !important;
-  vertical-align: middle !important;
+  .detail-info-box,
+  .detail-stat-box,
+  .detail-metric-box {
+    padding: 0.8rem;
+  }
+
+  .detail-stat-value {
+    font-size: 1.1rem;
+  }
 }
 </style>

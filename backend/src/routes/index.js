@@ -7,6 +7,7 @@ const accessRoutes = require('../modules/access/routes')
 const calendarRoutes = require('../modules/calendar/routes')
 const otRoutes = require('../modules/ot/routes')
 const shiftRoutes = require('../modules/shift/routes')
+const attendanceRoutes = require('../modules/attendance/routes')
 
 const router = express.Router()
 
@@ -16,5 +17,6 @@ router.use('/access', accessRoutes)
 router.use('/calendar', calendarRoutes)
 router.use('/ot', otRoutes)
 router.use('/shift', shiftRoutes)
+router.use('/attendance', attendanceRoutes)
 
 module.exports = router

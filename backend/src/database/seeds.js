@@ -5,8 +5,8 @@ const mongoose = require('mongoose')
 const bcrypt = require('bcryptjs')
 
 const { connectMongo } = require('./mongoose')
-const Permission = require('../modules/org/models/Permission')
-const SystemRole = require('../modules/org/models/SystemRole')
+const Permission = require('../modules/access/models/Permission')
+const SystemRole = require('../modules/access/models/SystemRole')
 const Account = require('../modules/auth/models/Account')
 
 const ROOT_ADMIN_ROLE_CODE = 'ROOT_ADMIN'
@@ -203,6 +203,26 @@ const PERMISSIONS = [
     module: 'OT',
     description: 'Allow approving OT requests',
   },
+  // Attendance
+  {
+    code: 'ATTENDANCE_VIEW',
+    name: 'View Attendance',
+    module: 'ATTENDANCE',
+    description: 'Allow viewing attendance imports and attendance records',
+  },
+  {
+    code: 'ATTENDANCE_IMPORT',
+    name: 'Import Attendance',
+    module: 'ATTENDANCE',
+    description: 'Allow importing attendance files',
+  },
+  {
+    code: 'ATTENDANCE_VERIFY',
+    name: 'Verify Attendance',
+    module: 'ATTENDANCE',
+    description: 'Allow verifying OT requests against attendance records',
+  },
+
 ]
 async function seedPermissions() {
   const results = []
