@@ -27,7 +27,7 @@ router.post(
   '/import',
   requirePermission('ATTENDANCE_IMPORT'),
   upload.single('file'),
-  attendanceController.importAttendance,
+  attendanceController.importAttendanceExcel,
 )
 
 router.get(
@@ -39,7 +39,7 @@ router.get(
 router.get(
   '/imports/:id',
   requirePermission('ATTENDANCE_VIEW'),
-  attendanceController.getAttendanceImportDetail,
+  attendanceController.getAttendanceImportById,
 )
 
 router.get(
@@ -49,9 +49,9 @@ router.get(
 )
 
 router.get(
-  '/verification/ot/:id',
+  '/verification/ot/:otRequestId',
   requirePermission('ATTENDANCE_VERIFY'),
-  attendanceController.verifyAttendanceAgainstOT,
+  attendanceController.verifyOTAttendance,
 )
 
 module.exports = router

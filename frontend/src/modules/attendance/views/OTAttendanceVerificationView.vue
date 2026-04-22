@@ -2,14 +2,13 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
 import Card from 'primevue/card'
 import Column from 'primevue/column'
 import DataTable from 'primevue/datatable'
-import InputText from 'primevue/inputtext'
 import Tag from 'primevue/tag'
+import { useToast } from 'primevue/usetoast'
 
 import { verifyOTAttendance } from '@/modules/attendance/attendance.api'
 
@@ -18,38 +17,103 @@ const router = useRouter()
 const toast = useToast()
 
 const loading = ref(false)
-const otRequestId = ref(String(route.query.id || '').trim())
-const verificationData = ref(null)
+const payload = ref(null)
 
-const otRequest = computed(() => verificationData.value?.otRequest || null)
-const verification = computed(() => verificationData.value?.verification || null)
+const otRequestId = computed(() => {
+  return (
+    String(route.params.otRequestId || '').trim() ||
+    String(route.params.id || '').trim() ||
+    String(route.query.otRequestId || '').trim() ||
+    String(route.query.id || '').trim()
+  )
+})
 
-const attendedEmployees = computed(() =>
-  Array.isArray(verification.value?.attendedEmployees)
-    ? verification.value.attendedEmployees
-    : [],
-)
+const otRequest = computed(() => payload.value?.otRequest || {})
+const verification = computed(() => payload.value?.verification || {})
 
-const absentFromApproved = computed(() =>
-  Array.isArray(verification.value?.absentFromApproved)
-    ? verification.value.absentFromApproved
-    : [],
-)
+const attendedEmployees = computed(() => verification.value?.attendedEmployees || [])
+const absentFromApproved = computed(() => verification.value?.absentFromApproved || [])
+const attendedButNotApproved = computed(() => verification.value?.attendedButNotApproved || [])
+const shiftMismatchEmployees = computed(() => verification.value?.shiftMismatchEmployees || [])
+const pendingReviewEmployees = computed(() => verification.value?.pendingReviewEmployees || [])
+const notEligibleEmployees = computed(() => verification.value?.notEligibleEmployees || [])
 
-const attendedButNotApproved = computed(() =>
-  Array.isArray(verification.value?.attendedButNotApproved)
-    ? verification.value.attendedButNotApproved
-    : [],
-)
+const summaryCards = computed(() => {
+  return [
+    {
+      label: 'Requested',
+      value: Number(verification.value?.requestedEmployeeCount || 0),
+      tone: 'bg-slate-50 text-slate-700 dark:bg-slate-900/40 dark:text-slate-200',
+    },
+    {
+      label: 'Approved',
+      value: Number(verification.value?.approvedEmployeeCount || 0),
+      tone: 'bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300',
+    },
+    {
+      label: 'Attended',
+      value: Number(verification.value?.actualAttendedCount || 0),
+      tone: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300',
+    },
+    {
+      label: 'Absent From Approved',
+      value: Number(verification.value?.absentFromApprovedCount || 0),
+      tone: 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300',
+    },
+    {
+      label: 'Shift Mismatch',
+      value: Number(verification.value?.shiftMismatchCount || 0),
+      tone: 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300',
+    },
+    {
+      label: 'Pending Review',
+      value: Number(verification.value?.pendingReviewCount || 0),
+      tone: 'bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300',
+    },
+    {
+      label: 'Not Eligible',
+      value: Number(verification.value?.notEligibleCount || 0),
+      tone: 'bg-orange-50 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300',
+    },
+    {
+      label: 'Attended Not Approved',
+      value: Number(verification.value?.attendedButNotApprovedCount || 0),
+      tone: 'bg-cyan-50 text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-300',
+    },
+  ]
+})
 
-const shiftMismatchEmployees = computed(() =>
-  Array.isArray(verification.value?.shiftMismatchEmployees)
-    ? verification.value.shiftMismatchEmployees
-    : [],
-)
+function formatNumber(value) {
+  return Number(value || 0)
+}
 
-function getDayTypeSeverity(dayType) {
-  switch (String(dayType || '').toUpperCase()) {
+function statusSeverity(value) {
+  switch (String(value || '').toUpperCase()) {
+    case 'APPROVED':
+    case 'PRESENT':
+      return 'success'
+    case 'PENDING':
+    case 'PENDING_REQUESTER_CONFIRMATION':
+      return 'warning'
+    case 'REQUESTER_DISAGREED':
+    case 'REJECTED':
+    case 'ABSENT':
+    case 'SHIFT_MISMATCH':
+      return 'danger'
+    case 'LATE':
+      return 'warn'
+    case 'FORGET_SCAN_IN':
+    case 'FORGET_SCAN_OUT':
+      return 'info'
+    case 'CANCELLED':
+      return 'secondary'
+    default:
+      return 'contrast'
+  }
+}
+
+function dayTypeSeverity(value) {
+  switch (String(value || '').toUpperCase()) {
     case 'HOLIDAY':
       return 'danger'
     case 'SUNDAY':
@@ -61,108 +125,41 @@ function getDayTypeSeverity(dayType) {
   }
 }
 
-function getStatusSeverity(status) {
-  switch (String(status || '').toUpperCase()) {
-    case 'APPROVED':
-      return 'success'
-    case 'PENDING':
-      return 'warning'
-    case 'PENDING_REQUESTER_CONFIRMATION':
-      return 'info'
-    case 'REJECTED':
-      return 'danger'
-    case 'REQUESTER_DISAGREED':
-      return 'danger'
-    case 'CANCELLED':
-      return 'secondary'
-    default:
-      return 'secondary'
-  }
+function yesNoSeverity(value) {
+  return value === true ? 'success' : value === false ? 'danger' : 'secondary'
 }
 
-function getAttendanceStatusSeverity(status) {
-  switch (String(status || '').toUpperCase()) {
-    case 'PRESENT':
-      return 'success'
-    case 'ABSENT':
-      return 'danger'
-    case 'LEAVE':
-      return 'warning'
-    case 'OFF':
-      return 'info'
-    default:
-      return 'secondary'
-  }
+function personLabel(row) {
+  const code = String(row?.employeeCode || row?.employeeNo || '').trim()
+  const name = String(row?.employeeName || '').trim()
+
+  if (code && name) return `${code} · ${name}`
+  return code || name || '-'
 }
 
-function getShiftStatusSeverity(status) {
-  switch (String(status || '').toUpperCase()) {
-    case 'MATCHED':
-      return 'success'
-    case 'MISMATCH':
-      return 'danger'
-    default:
-      return 'secondary'
-  }
-}
-
-function formatIssues(value) {
-  if (Array.isArray(value) && value.length) return value.join(', ')
-  return '—'
-}
-
-function displayShift(row) {
-  const code = String(row?.shiftCode || '').trim()
-  const name = String(row?.shiftName || '').trim()
-
-  if (code && name) return `${code} - ${name}`
-  if (code) return code
-  if (name) return name
-  return '—'
-}
-
-async function runVerification() {
-  const id = String(otRequestId.value || '').trim()
-
-  if (!id) {
+async function loadData() {
+  if (!otRequestId.value) {
     toast.add({
       severity: 'warn',
-      summary: 'OT Request ID required',
-      detail: 'Please enter an OT request ID first',
-      life: 2500,
+      summary: 'Missing OT request id',
+      detail: 'Cannot load OT attendance verification without OT request id.',
+      life: 3500,
     })
     return
   }
 
   loading.value = true
-
   try {
-    const response = await verifyOTAttendance(id)
-    verificationData.value = response?.data?.data || null
-
-    router.replace({
-      query: {
-        ...route.query,
-        id,
-      },
-    })
-
-    toast.add({
-      severity: 'success',
-      summary: 'Verification loaded',
-      detail: 'Attendance verification loaded successfully',
-      life: 2200,
-    })
+    const response = await verifyOTAttendance(otRequestId.value)
+    payload.value = response?.data?.data || null
   } catch (error) {
-    console.error(error)
-    verificationData.value = null
-
     toast.add({
       severity: 'error',
-      summary: 'Verification failed',
+      summary: 'Load failed',
       detail:
         error?.response?.data?.message ||
-        'Unable to verify attendance for this OT request',
+        error?.message ||
+        'Failed to load OT attendance verification.',
       life: 4000,
     })
   } finally {
@@ -170,513 +167,411 @@ async function runVerification() {
   }
 }
 
-function clearVerification() {
-  otRequestId.value = ''
-  verificationData.value = null
+function goBack() {
+  if (window.history.length > 1) {
+    router.back()
+    return
+  }
 
-  router.replace({
-    query: {
-      ...route.query,
-      id: undefined,
-    },
-  })
+  router.push('/attendance/imports')
 }
 
 onMounted(() => {
-  if (otRequestId.value) {
-    runVerification()
-  }
+  loadData()
 })
 </script>
 
 <template>
-  <div class="flex flex-col gap-4 p-3 md:p-4">
-    <section
-      class="overflow-hidden rounded-3xl border border-surface-200 bg-gradient-to-r from-sky-50 via-white to-emerald-50 shadow-sm dark:border-surface-700 dark:from-surface-900 dark:via-surface-900 dark:to-surface-800"
-    >
-      <div class="flex flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between md:px-5">
-        <div class="min-w-0">
-          <div class="flex items-center gap-3">
-            <span
-              class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white/80 text-sky-600 shadow-sm ring-1 ring-black/5 dark:bg-surface-800 dark:text-sky-400"
+  <div class="min-h-full bg-transparent">
+    <div class="mx-auto flex w-full max-w-7xl flex-col gap-5 p-4 md:p-6">
+      <section
+        class="overflow-hidden rounded-3xl border border-surface-200 bg-gradient-to-r from-sky-50 via-white to-emerald-50 p-5 shadow-sm dark:border-surface-800 dark:from-sky-950/30 dark:via-surface-950 dark:to-emerald-950/20"
+      >
+        <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div class="space-y-2">
+            <div
+              class="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-xs font-semibold text-surface-700 shadow-sm ring-1 ring-surface-200 dark:bg-surface-900/80 dark:text-surface-200 dark:ring-surface-700"
             >
-              <i class="pi pi-check-square text-base" />
-            </span>
+              <i class="pi pi-check-square text-xs" />
+              OT Attendance Verification
+            </div>
 
-            <div class="min-w-0">
-              <div class="flex flex-wrap items-center gap-2">
-                <h1 class="text-xl font-semibold tracking-tight text-surface-900 dark:text-surface-0">
-                  OT Attendance Verification
-                </h1>
-                <Tag value="Verification" severity="info" rounded />
-              </div>
-              <p class="mt-1 text-sm text-surface-600 dark:text-surface-300">
-                Compare OT approved employees against imported attendance and shift validation.
+            <div>
+              <h1 class="text-2xl font-bold tracking-tight text-surface-900 dark:text-surface-0">
+                OT Verification Summary
+              </h1>
+              <p class="mt-1 max-w-3xl text-sm leading-6 text-surface-600 dark:text-surface-300">
+                Compare OT requested and approved employees against imported attendance reality.
               </p>
             </div>
           </div>
-        </div>
-      </div>
-    </section>
 
-    <Card class="compact-card rounded-3xl shadow-sm">
-      <template #title>
-        <div class="flex items-center gap-2 text-base">
-          <i class="pi pi-search text-sky-500" />
-          <span>Find OT Request</span>
-        </div>
-      </template>
-
-      <template #content>
-        <div class="grid gap-3 lg:grid-cols-[minmax(0,1fr),auto]">
-          <div class="flex flex-col gap-1.5">
-            <label class="text-xs font-semibold uppercase tracking-[0.12em] text-surface-500">
-              OT Request ID
-            </label>
-            <InputText
-              v-model="otRequestId"
-              class="w-full"
-              placeholder="Paste OT request Mongo ID here"
-              @keyup.enter="runVerification"
-            />
-          </div>
-
-          <div class="flex flex-wrap items-end gap-2">
+          <div class="flex flex-wrap items-center gap-2">
             <Button
-              label="Verify"
-              icon="pi pi-search"
-              size="small"
-              :loading="loading"
-              @click="runVerification"
-            />
-            <Button
-              label="Clear"
-              icon="pi pi-times"
-              size="small"
+              label="Back"
+              icon="pi pi-arrow-left"
               severity="secondary"
               outlined
-              @click="clearVerification"
+              @click="goBack"
+            />
+            <Button
+              label="Refresh"
+              icon="pi pi-refresh"
+              :loading="loading"
+              @click="loadData"
             />
           </div>
         </div>
-      </template>
-    </Card>
 
-    <template v-if="otRequest && verification">
-      <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-        <div class="verify-stat-box">
-          <div class="verify-stat-label">Requested</div>
-          <div class="verify-stat-value">{{ verification.requestedEmployeeCount || 0 }}</div>
-        </div>
-
-        <div class="verify-stat-box">
-          <div class="verify-stat-label">Approved</div>
-          <div class="verify-stat-value">{{ verification.approvedEmployeeCount || 0 }}</div>
-        </div>
-
-        <div class="verify-stat-box border-emerald-200 dark:border-emerald-800">
-          <div class="verify-stat-label">Actual Attended</div>
-          <div class="verify-stat-value text-emerald-600 dark:text-emerald-400">
-            {{ verification.actualAttendedCount || 0 }}
+        <div class="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
+          <div
+            v-for="card in summaryCards"
+            :key="card.label"
+            class="rounded-2xl px-4 py-3 shadow-sm ring-1 ring-black/5"
+            :class="card.tone"
+          >
+            <div class="text-xs font-medium opacity-80">{{ card.label }}</div>
+            <div class="mt-1 text-xl font-bold">{{ card.value }}</div>
           </div>
         </div>
+      </section>
 
-        <div class="verify-stat-box border-amber-200 dark:border-amber-800">
-          <div class="verify-stat-label">Absent Approved</div>
-          <div class="verify-stat-value text-amber-600 dark:text-amber-400">
-            {{ verification.absentFromApprovedCount || 0 }}
-          </div>
-        </div>
-
-        <div class="verify-stat-box border-rose-200 dark:border-rose-800">
-          <div class="verify-stat-label">Attended Not Approved</div>
-          <div class="verify-stat-value text-rose-600 dark:text-rose-400">
-            {{ verification.attendedButNotApprovedCount || 0 }}
-          </div>
-        </div>
-
-        <div class="verify-stat-box border-fuchsia-200 dark:border-fuchsia-800">
-          <div class="verify-stat-label">Shift Mismatch</div>
-          <div class="verify-stat-value text-fuchsia-600 dark:text-fuchsia-400">
-            {{ verification.shiftMismatchCount || 0 }}
-          </div>
-        </div>
-      </div>
-
-      <Card class="compact-card rounded-3xl shadow-sm">
-        <template #title>
-          <div class="flex items-center gap-2 text-base">
-            <i class="pi pi-info-circle text-sky-500" />
-            <span>OT Request Summary</span>
-          </div>
-        </template>
-
+      <Card class="overflow-hidden rounded-3xl shadow-sm">
         <template #content>
-          <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <div class="verify-info-box">
-              <div class="verify-info-label">Request No</div>
-              <div class="verify-info-value">{{ otRequest.requestNo || '—' }}</div>
-            </div>
-
-            <div class="verify-info-box">
-              <div class="verify-info-label">Requester</div>
-              <div class="verify-info-value">{{ otRequest.requesterName || '—' }}</div>
-              <div class="mt-0.5 text-xs text-surface-500">
-                {{ otRequest.requesterEmployeeNo || '—' }}
+          <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div class="rounded-2xl border border-surface-200 p-4 dark:border-surface-700">
+              <div class="text-xs text-surface-500 dark:text-surface-400">Request No</div>
+              <div class="mt-1 font-semibold text-surface-900 dark:text-surface-0">
+                {{ otRequest.requestNo || '-' }}
               </div>
             </div>
 
-            <div class="verify-info-box">
-              <div class="verify-info-label">OT Date</div>
-              <div class="verify-info-value">{{ otRequest.otDate || '—' }}</div>
+            <div class="rounded-2xl border border-surface-200 p-4 dark:border-surface-700">
+              <div class="text-xs text-surface-500 dark:text-surface-400">Requester</div>
+              <div class="mt-1 font-semibold text-surface-900 dark:text-surface-0">
+                {{ otRequest.requesterEmployeeNo || '-' }} · {{ otRequest.requesterName || '-' }}
+              </div>
             </div>
 
-            <div class="verify-info-box">
-              <div class="verify-info-label">Day Type</div>
-              <div class="mt-1">
+            <div class="rounded-2xl border border-surface-200 p-4 dark:border-surface-700">
+              <div class="text-xs text-surface-500 dark:text-surface-400">OT Date</div>
+              <div class="mt-2 flex flex-wrap items-center gap-2">
+                <span class="font-semibold text-surface-900 dark:text-surface-0">
+                  {{ otRequest.otDate || '-' }}
+                </span>
                 <Tag
-                  :value="otRequest.dayType || '—'"
-                  :severity="getDayTypeSeverity(otRequest.dayType)"
+                  :value="otRequest.dayType || '-'"
+                  :severity="dayTypeSeverity(otRequest.dayType)"
                 />
               </div>
             </div>
 
-            <div class="verify-info-box">
-              <div class="verify-info-label">Status</div>
-              <div class="mt-1">
+            <div class="rounded-2xl border border-surface-200 p-4 dark:border-surface-700">
+              <div class="text-xs text-surface-500 dark:text-surface-400">Request Status</div>
+              <div class="mt-2 flex flex-wrap items-center gap-2">
                 <Tag
-                  :value="otRequest.status || '—'"
-                  :severity="getStatusSeverity(otRequest.status)"
+                  :value="otRequest.status || '-'"
+                  :severity="statusSeverity(otRequest.status)"
                 />
-              </div>
-            </div>
-
-            <div class="verify-info-box">
-              <div class="verify-info-label">Requester Confirmation</div>
-              <div class="mt-1">
                 <Tag
-                  :value="otRequest.requesterConfirmationStatus || '—'"
+                  v-if="otRequest.requesterConfirmationStatus"
+                  :value="otRequest.requesterConfirmationStatus"
                   severity="info"
                 />
               </div>
             </div>
-
-            <div class="verify-info-box">
-              <div class="verify-info-label">Approved Count</div>
-              <div class="verify-info-value">{{ otRequest.approvedEmployeeCount || 0 }}</div>
-            </div>
-
-            <div class="verify-info-box">
-              <div class="verify-info-label">Proposed Approved</div>
-              <div class="verify-info-value">{{ otRequest.proposedApprovedEmployeeCount || 0 }}</div>
-            </div>
           </div>
         </template>
       </Card>
 
-      <Card class="compact-card rounded-3xl shadow-sm">
+      <Card class="overflow-hidden rounded-3xl shadow-sm">
         <template #title>
-          <div class="flex items-center gap-2 text-base">
-            <i class="pi pi-users text-emerald-500" />
-            <span>Actual Attended Employees</span>
+          <div class="flex items-center justify-between gap-3">
+            <span>Attended Employees</span>
+            <Tag :value="String(formatNumber(verification.actualAttendedCount))" severity="success" />
           </div>
         </template>
-
         <template #content>
           <DataTable
             :value="attendedEmployees"
-            dataKey="attendanceRecordId"
+            :loading="loading"
             responsiveLayout="scroll"
+            scrollable
             stripedRows
-            size="small"
-            class="verify-table"
+            dataKey="employeeId"
           >
             <template #empty>
-              <div class="py-8 text-center text-sm text-surface-500">
-                No attended employees found for this OT date.
+              <div class="py-8 text-center text-sm text-surface-500 dark:text-surface-400">
+                No attended employees found.
               </div>
             </template>
 
-            <Column field="employeeCode" header="Employee No" style="min-width: 9rem" />
-            <Column field="employeeName" header="Employee Name" style="min-width: 12rem" />
-            <Column field="departmentName" header="Department" style="min-width: 10rem" />
-            <Column field="positionName" header="Position" style="min-width: 10rem" />
-            <Column header="Shift" style="min-width: 10rem">
+            <Column header="Employee" style="min-width: 15rem">
               <template #body="{ data }">
-                {{ displayShift(data) }}
+                <div class="font-medium text-surface-900 dark:text-surface-0">
+                  {{ personLabel(data) }}
+                </div>
               </template>
             </Column>
-            <Column field="clockIn" header="In" style="min-width: 6rem" />
-            <Column field="clockOut" header="Out" style="min-width: 6rem" />
-            <Column field="attendanceStatus" header="Attendance" style="min-width: 8rem">
+
+            <Column field="clockIn" header="Clock In" style="min-width: 7rem" />
+            <Column field="clockOut" header="Clock Out" style="min-width: 7rem" />
+
+            <Column header="Attendance Status" style="min-width: 10rem">
               <template #body="{ data }">
                 <Tag
-                  :value="data.attendanceStatus || '—'"
-                  :severity="getAttendanceStatusSeverity(data.attendanceStatus)"
+                  :value="data.attendanceStatus || '-'"
+                  :severity="statusSeverity(data.attendanceStatus)"
                 />
               </template>
             </Column>
-            <Column field="attendanceDayType" header="Day Type" style="min-width: 8rem">
-              <template #body="{ data }">
-                <Tag
-                  :value="data.attendanceDayType || '—'"
-                  :severity="getDayTypeSeverity(data.attendanceDayType)"
-                />
-              </template>
-            </Column>
-            <Column field="shiftMatchStatus" header="Shift Status" style="min-width: 9rem">
-              <template #body="{ data }">
-                <Tag
-                  :value="data.shiftMatchStatus || 'UNKNOWN'"
-                  :severity="getShiftStatusSeverity(data.shiftMatchStatus)"
-                />
-              </template>
-            </Column>
+
+            <Column field="shiftName" header="Shift" style="min-width: 10rem" />
+            <Column field="shiftStartTime" header="Shift Start" style="min-width: 7rem" />
+            <Column field="shiftEndTime" header="Shift End" style="min-width: 7rem" />
+            <Column field="workedMinutes" header="Worked Min" style="min-width: 7rem" />
+            <Column field="lateMinutes" header="Late Min" style="min-width: 7rem" />
+            <Column field="earlyOutMinutes" header="Early Out" style="min-width: 7rem" />
           </DataTable>
         </template>
       </Card>
 
-      <div class="grid gap-4 xl:grid-cols-2">
-        <Card class="compact-card rounded-3xl shadow-sm">
+      <div class="grid grid-cols-1 gap-5 xl:grid-cols-2">
+        <Card class="overflow-hidden rounded-3xl shadow-sm">
           <template #title>
-            <div class="flex items-center gap-2 text-base">
-              <i class="pi pi-user-minus text-amber-500" />
-              <span>Absent From Approved</span>
+            <div class="flex items-center justify-between gap-3">
+              <span>Absent From Approved OT</span>
+              <Tag :value="String(formatNumber(verification.absentFromApprovedCount))" severity="danger" />
             </div>
           </template>
-
           <template #content>
             <DataTable
               :value="absentFromApproved"
-              dataKey="employeeId"
+              :loading="loading"
               responsiveLayout="scroll"
+              scrollable
               stripedRows
-              size="small"
-              class="verify-table"
+              dataKey="employeeId"
             >
               <template #empty>
-                <div class="py-8 text-center text-sm text-surface-500">
-                  No absent employees from approved OT.
+                <div class="py-8 text-center text-sm text-surface-500 dark:text-surface-400">
+                  No absent approved employees.
                 </div>
               </template>
 
-              <Column field="employeeCode" header="Employee No" style="min-width: 9rem" />
-              <Column field="employeeName" header="Employee Name" style="min-width: 12rem" />
-              <Column field="departmentName" header="Department" style="min-width: 10rem" />
-              <Column field="positionName" header="Position" style="min-width: 10rem" />
+              <Column header="Employee" style="min-width: 15rem">
+                <template #body="{ data }">
+                  <div class="font-medium text-surface-900 dark:text-surface-0">
+                    {{ personLabel(data) }}
+                  </div>
+                </template>
+              </Column>
             </DataTable>
           </template>
         </Card>
 
-        <Card class="compact-card rounded-3xl shadow-sm">
+        <Card class="overflow-hidden rounded-3xl shadow-sm">
           <template #title>
-            <div class="flex items-center gap-2 text-base">
-              <i class="pi pi-exclamation-triangle text-rose-500" />
+            <div class="flex items-center justify-between gap-3">
               <span>Attended But Not Approved</span>
+              <Tag :value="String(formatNumber(verification.attendedButNotApprovedCount))" severity="info" />
             </div>
           </template>
-
           <template #content>
             <DataTable
               :value="attendedButNotApproved"
-              dataKey="attendanceRecordId"
+              :loading="loading"
               responsiveLayout="scroll"
+              scrollable
               stripedRows
-              size="small"
-              class="verify-table"
+              dataKey="employeeId"
             >
               <template #empty>
-                <div class="py-8 text-center text-sm text-surface-500">
-                  No employees attended outside the approved OT list.
+                <div class="py-8 text-center text-sm text-surface-500 dark:text-surface-400">
+                  No employees found in this group.
                 </div>
               </template>
 
-              <Column field="employeeCode" header="Employee No" style="min-width: 9rem" />
-              <Column field="employeeName" header="Employee Name" style="min-width: 12rem" />
-              <Column field="departmentName" header="Department" style="min-width: 10rem" />
-              <Column field="positionName" header="Position" style="min-width: 10rem" />
-              <Column header="Shift" style="min-width: 10rem">
+              <Column header="Employee" style="min-width: 15rem">
                 <template #body="{ data }">
-                  {{ displayShift(data) }}
+                  <div class="font-medium text-surface-900 dark:text-surface-0">
+                    {{ personLabel(data) }}
+                  </div>
                 </template>
               </Column>
-              <Column field="clockIn" header="In" style="min-width: 6rem" />
-              <Column field="clockOut" header="Out" style="min-width: 6rem" />
-              <Column field="attendanceStatus" header="Attendance" style="min-width: 8rem">
+              <Column field="clockIn" header="Clock In" style="min-width: 7rem" />
+              <Column field="clockOut" header="Clock Out" style="min-width: 7rem" />
+              <Column header="Attendance Status" style="min-width: 10rem">
                 <template #body="{ data }">
                   <Tag
-                    :value="data.attendanceStatus || '—'"
-                    :severity="getAttendanceStatusSeverity(data.attendanceStatus)"
+                    :value="data.attendanceStatus || '-'"
+                    :severity="statusSeverity(data.attendanceStatus)"
                   />
                 </template>
               </Column>
             </DataTable>
           </template>
         </Card>
+
+        <Card class="overflow-hidden rounded-3xl shadow-sm">
+          <template #title>
+            <div class="flex items-center justify-between gap-3">
+              <span>Shift Mismatch</span>
+              <Tag :value="String(formatNumber(verification.shiftMismatchCount))" severity="warning" />
+            </div>
+          </template>
+          <template #content>
+            <DataTable
+              :value="shiftMismatchEmployees"
+              :loading="loading"
+              responsiveLayout="scroll"
+              scrollable
+              stripedRows
+              dataKey="employeeId"
+            >
+              <template #empty>
+                <div class="py-8 text-center text-sm text-surface-500 dark:text-surface-400">
+                  No shift mismatch employees.
+                </div>
+              </template>
+
+              <Column header="Employee" style="min-width: 15rem">
+                <template #body="{ data }">
+                  <div class="font-medium text-surface-900 dark:text-surface-0">
+                    {{ personLabel(data) }}
+                  </div>
+                </template>
+              </Column>
+              <Column field="clockIn" header="Clock In" style="min-width: 7rem" />
+              <Column field="clockOut" header="Clock Out" style="min-width: 7rem" />
+              <Column field="shiftName" header="Shift" style="min-width: 10rem" />
+              <Column header="Shift Match" style="min-width: 8rem">
+                <template #body="{ data }">
+                  <Tag
+                    :value="data.shiftMatchStatus || '-'"
+                    :severity="statusSeverity(data.shiftMatchStatus)"
+                  />
+                </template>
+              </Column>
+              <Column header="Reason" style="min-width: 16rem">
+                <template #body="{ data }">
+                  <span class="text-sm text-surface-600 dark:text-surface-300">
+                    {{ (data.validationIssues || []).join(', ') || '-' }}
+                  </span>
+                </template>
+              </Column>
+            </DataTable>
+          </template>
+        </Card>
+
+        <Card class="overflow-hidden rounded-3xl shadow-sm">
+          <template #title>
+            <div class="flex items-center justify-between gap-3">
+              <span>Pending Review</span>
+              <Tag :value="String(formatNumber(verification.pendingReviewCount))" severity="info" />
+            </div>
+          </template>
+          <template #content>
+            <DataTable
+              :value="pendingReviewEmployees"
+              :loading="loading"
+              responsiveLayout="scroll"
+              scrollable
+              stripedRows
+              dataKey="employeeId"
+            >
+              <template #empty>
+                <div class="py-8 text-center text-sm text-surface-500 dark:text-surface-400">
+                  No pending review employees.
+                </div>
+              </template>
+
+              <Column header="Employee" style="min-width: 15rem">
+                <template #body="{ data }">
+                  <div class="font-medium text-surface-900 dark:text-surface-0">
+                    {{ personLabel(data) }}
+                  </div>
+                </template>
+              </Column>
+              <Column header="Attendance Status" style="min-width: 10rem">
+                <template #body="{ data }">
+                  <Tag
+                    :value="data.attendanceStatus || '-'"
+                    :severity="statusSeverity(data.attendanceStatus)"
+                  />
+                </template>
+              </Column>
+              <Column header="Has Clock In" style="min-width: 8rem">
+                <template #body="{ data }">
+                  <Tag :value="data.hasClockIn === true ? 'YES' : 'NO'" :severity="yesNoSeverity(data.hasClockIn)" />
+                </template>
+              </Column>
+              <Column header="Has Clock Out" style="min-width: 8rem">
+                <template #body="{ data }">
+                  <Tag :value="data.hasClockOut === true ? 'YES' : 'NO'" :severity="yesNoSeverity(data.hasClockOut)" />
+                </template>
+              </Column>
+              <Column header="Reason" style="min-width: 16rem">
+                <template #body="{ data }">
+                  <span class="text-sm text-surface-600 dark:text-surface-300">
+                    {{ data.derivedStatusReason || (data.validationIssues || []).join(', ') || '-' }}
+                  </span>
+                </template>
+              </Column>
+            </DataTable>
+          </template>
+        </Card>
       </div>
 
-      <Card class="compact-card rounded-3xl shadow-sm">
+      <Card class="overflow-hidden rounded-3xl shadow-sm">
         <template #title>
-          <div class="flex items-center gap-2 text-base">
-            <i class="pi pi-ban text-fuchsia-500" />
-            <span>Shift Mismatch Employees</span>
+          <div class="flex items-center justify-between gap-3">
+            <span>Not Eligible</span>
+            <Tag :value="String(formatNumber(verification.notEligibleCount))" severity="contrast" />
           </div>
         </template>
-
         <template #content>
           <DataTable
-            :value="shiftMismatchEmployees"
-            dataKey="attendanceRecordId"
+            :value="notEligibleEmployees"
+            :loading="loading"
             responsiveLayout="scroll"
+            scrollable
             stripedRows
-            size="small"
-            class="verify-table"
+            dataKey="employeeId"
           >
             <template #empty>
-              <div class="py-8 text-center text-sm text-surface-500">
-                No shift mismatch employees found.
+              <div class="py-8 text-center text-sm text-surface-500 dark:text-surface-400">
+                No not-eligible employees.
               </div>
             </template>
 
-            <Column field="employeeCode" header="Employee No" style="min-width: 9rem" />
-            <Column field="employeeName" header="Employee Name" style="min-width: 12rem" />
-            <Column field="departmentName" header="Department" style="min-width: 10rem" />
-            <Column field="positionName" header="Position" style="min-width: 10rem" />
-            <Column header="Shift" style="min-width: 10rem">
+            <Column header="Employee" style="min-width: 15rem">
               <template #body="{ data }">
-                {{ displayShift(data) }}
+                <div class="font-medium text-surface-900 dark:text-surface-0">
+                  {{ personLabel(data) }}
+                </div>
               </template>
             </Column>
-            <Column field="clockIn" header="In" style="min-width: 6rem" />
-            <Column field="clockOut" header="Out" style="min-width: 6rem" />
-            <Column field="attendanceStatus" header="Attendance" style="min-width: 8rem">
+
+            <Column header="Attendance Status" style="min-width: 10rem">
               <template #body="{ data }">
                 <Tag
-                  :value="data.attendanceStatus || '—'"
-                  :severity="getAttendanceStatusSeverity(data.attendanceStatus)"
+                  :value="data.attendanceStatus || '-'"
+                  :severity="statusSeverity(data.attendanceStatus)"
                 />
               </template>
             </Column>
-            <Column field="shiftMatchStatus" header="Shift Status" style="min-width: 9rem">
+
+            <Column header="Reason" style="min-width: 16rem">
               <template #body="{ data }">
-                <Tag
-                  :value="data.shiftMatchStatus || 'UNKNOWN'"
-                  :severity="getShiftStatusSeverity(data.shiftMatchStatus)"
-                />
-              </template>
-            </Column>
-            <Column header="Issues" style="min-width: 18rem">
-              <template #body="{ data }">
-                <span class="text-xs text-surface-500">
-                  {{ formatIssues(data.validationIssues) }}
+                <span class="text-sm text-surface-600 dark:text-surface-300">
+                  {{ data.derivedStatusReason || (data.validationIssues || []).join(', ') || '-' }}
                 </span>
               </template>
             </Column>
           </DataTable>
         </template>
       </Card>
-    </template>
-
-    <Card
-      v-else
-      class="compact-card rounded-3xl border border-dashed border-surface-300 shadow-sm dark:border-surface-700"
-    >
-      <template #content>
-        <div class="py-8 text-center">
-          <div class="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-surface-100 text-surface-500 dark:bg-surface-800 dark:text-surface-300">
-            <i class="pi pi-search text-lg" />
-          </div>
-          <div class="text-sm font-medium text-surface-700 dark:text-surface-200">
-            Enter an OT request ID to verify attendance
-          </div>
-          <div class="mt-1 text-xs text-surface-500">
-            The page compares approved employees with imported attendance and shift validation.
-          </div>
-        </div>
-      </template>
-    </Card>
+    </div>
   </div>
 </template>
-
-<style scoped>
-:deep(.compact-card .p-card-body) {
-  padding: 0.95rem !important;
-}
-
-:deep(.compact-card .p-card-title) {
-  font-size: 1rem !important;
-  font-weight: 700 !important;
-}
-
-:deep(.verify-table .p-datatable-thead > tr > th) {
-  padding: 0.65rem 0.75rem !important;
-  font-size: 0.8rem !important;
-  white-space: nowrap;
-}
-
-:deep(.verify-table .p-datatable-tbody > tr > td) {
-  padding: 0.65rem 0.75rem !important;
-  vertical-align: middle !important;
-}
-
-.verify-stat-box {
-  border: 1px solid var(--ot-border);
-  background: var(--ot-surface);
-  border-radius: 1rem;
-  padding: 0.95rem;
-}
-
-.verify-stat-label {
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--ot-text-muted);
-}
-
-.verify-stat-value {
-  margin-top: 0.35rem;
-  font-size: 1.5rem;
-  font-weight: 700;
-  line-height: 1.1;
-  color: var(--ot-text);
-}
-
-.verify-info-box {
-  border: 1px solid var(--ot-border);
-  background: var(--ot-bg);
-  border-radius: 1rem;
-  padding: 0.9rem;
-}
-
-.verify-info-label {
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--ot-text-muted);
-}
-
-.verify-info-value {
-  margin-top: 0.35rem;
-  font-size: 0.92rem;
-  font-weight: 600;
-  color: var(--ot-text);
-  word-break: break-word;
-}
-
-@media (max-width: 640px) {
-  :deep(.compact-card .p-card-body) {
-    padding: 0.8rem !important;
-  }
-
-  .verify-stat-box,
-  .verify-info-box {
-    padding: 0.8rem;
-  }
-
-  .verify-stat-value {
-    font-size: 1.25rem;
-  }
-}
-</style>

@@ -10,10 +10,14 @@ const OTRequest = require('../../ot/models/OTRequest')
 const Holiday = require('../../calendar/models/Holiday')
 const { getDayType } = require('../../ot/utils/dayClassifier')
 const { parseAttendanceWorkbook } = require('../utils/attendanceParser')
-const { verifyAttendanceAgainstOT } = require('../utils/attendanceVerification')
+const {
+  deriveAttendanceResult,
+  verifyAttendanceAgainstOT,
+} = require('../utils/attendanceVerification')
 
 const SHIFT_IN_TOLERANCE_MINUTES = 240
 const SHIFT_OUT_TOLERANCE_MINUTES = 360
+const LATE_GRACE_MINUTES = 0
 
 function s(value) {
   return String(value ?? '').trim()
@@ -89,11 +93,7 @@ function compareImportedValue(importedValue, masterCandidates = []) {
 }
 
 function buildShiftCandidates(shiftDoc) {
-  return [
-    shiftDoc?.code,
-    shiftDoc?.name,
-    shiftDoc?.type,
-  ]
+  return [shiftDoc?.code, shiftDoc?.name, shiftDoc?.type]
 }
 
 function evaluateShiftTimeMatch({ clockIn, clockOut, shiftStartTime, shiftEndTime }) {
@@ -209,11 +209,13 @@ function buildAttendanceImportSampleWorkbook() {
     [],
     ['1. Download this sample file.'],
     ['2. Fill your attendance rows in the same column format as the Sample sheet.'],
-    ['3. Required columns: Employee ID, Employee Name, Attendance Date, Clock In, Clock Out, Status, Position, Department, Shift.'],
+    [
+      '3. Required columns: Employee ID, Employee Name, Attendance Date, Clock In, Clock Out, Status, Position, Department, Shift.',
+    ],
     ['4. Employee ID maps to employeeNo in Employee master.'],
     ['5. Attendance Date format: YYYY-MM-DD'],
     ['6. Time format: HH:mm'],
-    ['7. Status examples: PRESENT, ABSENT, LEAVE, OFF'],
+    ['7. Imported Status is only a hint. Backend derives final attendance status from punches + assigned shift.'],
     ['8. Department / Position / Shift are validated against Employee master, not used as source of truth.'],
     ['9. Night shift rows are validated against assigned shift time logic.'],
   ]
@@ -282,6 +284,9 @@ function buildRecordSearchFilter(search) {
       { importedDepartmentName: regex },
       { importedPositionName: regex },
       { importedShiftName: regex },
+      { importedStatus: regex },
+      { status: regex },
+      { derivedStatusReason: regex },
       { matchRemark: regex },
       { validationIssues: regex },
       { 'rawData.Employee ID': regex },
@@ -337,8 +342,10 @@ function buildRecordFilter(query) {
   }
 
   if (s(query.status)) filter.status = upper(query.status)
+  if (s(query.importedStatus)) filter.importedStatus = upper(query.importedStatus)
   if (s(query.dayType)) filter.dayType = upper(query.dayType)
   if (s(query.matchedBy)) filter.matchedBy = upper(query.matchedBy)
+  if (s(query.shiftMatchStatus)) filter.shiftMatchStatus = upper(query.shiftMatchStatus)
 
   if (s(query.attendanceDateFrom) || s(query.attendanceDateTo)) {
     filter.attendanceDate = {}
@@ -357,29 +364,35 @@ function buildRecordFilter(query) {
 
 function buildImportSort(query) {
   const direction = query.sortOrder === 'asc' ? 1 : -1
-  const sortField = {
-    createdAt: 'createdAt',
-    importNo: 'importNo',
-    periodFrom: 'periodFrom',
-    periodTo: 'periodTo',
-    status: 'status',
-    rowCount: 'rowCount',
-  }[query.sortBy] || 'createdAt'
+  const sortField =
+    {
+      createdAt: 'createdAt',
+      importNo: 'importNo',
+      periodFrom: 'periodFrom',
+      periodTo: 'periodTo',
+      status: 'status',
+      rowCount: 'rowCount',
+    }[query.sortBy] || 'createdAt'
 
   return { [sortField]: direction, createdAt: -1 }
 }
 
 function buildRecordSort(query) {
   const direction = query.sortOrder === 'asc' ? 1 : -1
-  const sortField = {
-    createdAt: 'createdAt',
-    attendanceDate: 'attendanceDate',
-    employeeNo: 'employeeNo',
-    employeeName: 'employeeName',
-    status: 'status',
-    dayType: 'dayType',
-    shiftMatchStatus: 'shiftMatchStatus',
-  }[query.sortBy] || 'attendanceDate'
+  const sortField =
+    {
+      createdAt: 'createdAt',
+      attendanceDate: 'attendanceDate',
+      employeeNo: 'employeeNo',
+      employeeName: 'employeeName',
+      status: 'status',
+      importedStatus: 'importedStatus',
+      dayType: 'dayType',
+      shiftMatchStatus: 'shiftMatchStatus',
+      workedMinutes: 'workedMinutes',
+      lateMinutes: 'lateMinutes',
+      earlyOutMinutes: 'earlyOutMinutes',
+    }[query.sortBy] || 'attendanceDate'
 
   return { [sortField]: direction, createdAt: -1 }
 }
@@ -423,6 +436,7 @@ function mapRecordItem(doc) {
     importedDepartmentName: s(doc.importedDepartmentName),
     importedPositionName: s(doc.importedPositionName),
     importedShiftName: s(doc.importedShiftName),
+    importedStatus: upper(doc.importedStatus),
 
     departmentId: doc.departmentId ? String(doc.departmentId) : null,
     departmentCode: upper(doc.departmentCode),
@@ -443,6 +457,7 @@ function mapRecordItem(doc) {
     clockIn: s(doc.clockIn),
     clockOut: s(doc.clockOut),
     status: upper(doc.status),
+    derivedStatusReason: s(doc.derivedStatusReason),
     dayType: upper(doc.dayType),
     matchedBy: upper(doc.matchedBy),
     matchRemark: s(doc.matchRemark),
@@ -454,6 +469,15 @@ function mapRecordItem(doc) {
     shiftMatched: typeof doc.shiftMatched === 'boolean' ? doc.shiftMatched : null,
     shiftTimeMatched: typeof doc.shiftTimeMatched === 'boolean' ? doc.shiftTimeMatched : null,
     shiftMatchStatus: upper(doc.shiftMatchStatus),
+
+    hasClockIn: typeof doc.hasClockIn === 'boolean' ? doc.hasClockIn : Boolean(s(doc.clockIn)),
+    hasClockOut: typeof doc.hasClockOut === 'boolean' ? doc.hasClockOut : Boolean(s(doc.clockOut)),
+    isCrossMidnightShift:
+      typeof doc.isCrossMidnightShift === 'boolean' ? doc.isCrossMidnightShift : null,
+    workedMinutes: Number(doc.workedMinutes || 0),
+    lateMinutes: Number(doc.lateMinutes || 0),
+    earlyOutMinutes: Number(doc.earlyOutMinutes || 0),
+
     validationIssues: Array.isArray(doc.validationIssues) ? doc.validationIssues : [],
 
     rawRowNo: Number(doc.rawRowNo || 0),
@@ -529,12 +553,12 @@ function getPeriodRangeFromRows(rows = []) {
 
 function buildValidationIssues({
   matchedEmployee,
-  item,
   nameMatched,
   departmentMatched,
   positionMatched,
   shiftMatched,
   shiftTimeMatched,
+  derivedResult,
 }) {
   const issues = []
 
@@ -549,11 +573,14 @@ function buildValidationIssues({
   if (shiftMatched === false) issues.push('Shift does not match Employee master')
   if (shiftTimeMatched === false) issues.push('Clock in/out does not align with assigned shift time')
 
-  if (upper(item.status) === 'UNKNOWN') {
-    issues.push('Attendance status is unknown')
+  const derivedStatus = upper(derivedResult?.derivedStatus)
+  const derivedReason = s(derivedResult?.derivedStatusReason)
+
+  if (['FORGET_SCAN_IN', 'FORGET_SCAN_OUT', 'UNKNOWN'].includes(derivedStatus) && derivedReason) {
+    issues.push(derivedReason)
   }
 
-  return issues
+  return Array.from(new Set(issues.map((item) => s(item)).filter(Boolean)))
 }
 
 async function importExcel(file, payload, authUser) {
@@ -598,13 +625,14 @@ async function importExcel(file, payload, authUser) {
           })
           .populate({ path: 'departmentId', select: { _id: 1, code: 1, name: 1 } })
           .populate({ path: 'positionId', select: { _id: 1, code: 1, name: 1 } })
-          .populate({ path: 'shiftId', select: { _id: 1, code: 1, name: 1, type: 1, startTime: 1, endTime: 1 } })
+          .populate({
+            path: 'shiftId',
+            select: { _id: 1, code: 1, name: 1, type: 1, startTime: 1, endTime: 1 },
+          })
           .lean()
       : []
 
-    const employeeMap = new Map(
-      employees.map((employee) => [upper(employee.employeeNo), employee]),
-    )
+    const employeeMap = new Map(employees.map((employee) => [upper(employee.employeeNo), employee]))
 
     const holidayDates = await resolveHolidayDateStrings(
       parsed.rows.map((item) => item.attendanceDate),
@@ -644,14 +672,27 @@ async function importExcel(file, payload, authUser) {
       const shiftTimeMatched = shiftTimeResult.shiftTimeMatched
       const shiftMatchStatus = resolveShiftMatchStatus({ shiftMatched, shiftTimeMatched })
 
+      const derivedResult = deriveAttendanceResult({
+        attendanceDate: item.attendanceDate,
+        clockIn: item.clockIn,
+        clockOut: item.clockOut,
+        importedStatus: item.status,
+        employeeMatched: !!matchedEmployee,
+        shiftMatched,
+        shiftTimeMatched,
+        shiftStartTime: shiftDoc?.startTime,
+        shiftEndTime: shiftDoc?.endTime,
+        lateGraceMinutes: LATE_GRACE_MINUTES,
+      })
+
       const validationIssues = buildValidationIssues({
         matchedEmployee,
-        item,
         nameMatched,
         departmentMatched,
         positionMatched,
         shiftMatched,
         shiftTimeMatched,
+        derivedResult,
       })
 
       return {
@@ -681,12 +722,14 @@ async function importExcel(file, payload, authUser) {
         importedDepartmentName: s(item.importedDepartmentName),
         importedPositionName: s(item.importedPositionName),
         importedShiftName: s(item.importedShiftName),
+        importedStatus: upper(item.status),
 
         attendanceDate: s(item.attendanceDate),
         attendanceDateValue: toUtcMidnight(item.attendanceDate),
         clockIn: s(item.clockIn),
         clockOut: s(item.clockOut),
-        status: upper(item.status || 'PRESENT'),
+        status: upper(derivedResult.derivedStatus || 'UNKNOWN'),
+        derivedStatusReason: s(derivedResult.derivedStatusReason),
         dayType: getDayType(item.attendanceDate, { holidays: holidayDates }),
 
         matchedBy: matchedEmployee ? 'EMPLOYEE_NO' : 'NONE',
@@ -699,6 +742,17 @@ async function importExcel(file, payload, authUser) {
         shiftMatched,
         shiftTimeMatched,
         shiftMatchStatus,
+
+        hasClockIn: derivedResult.hasClockIn === true,
+        hasClockOut: derivedResult.hasClockOut === true,
+        isCrossMidnightShift:
+          typeof derivedResult.isCrossMidnightShift === 'boolean'
+            ? derivedResult.isCrossMidnightShift
+            : null,
+        workedMinutes: Number(derivedResult.workedMinutes || 0),
+        lateMinutes: Number(derivedResult.lateMinutes || 0),
+        earlyOutMinutes: Number(derivedResult.earlyOutMinutes || 0),
+
         validationIssues,
 
         rawRowNo: Number(item.rawRowNo || 0),
@@ -721,7 +775,9 @@ async function importExcel(file, payload, authUser) {
     importDoc.failedRowCount = Number((parsed.failedRows || []).length || 0)
     importDoc.duplicateRowCount = Number(parsed.duplicateRowCount || 0)
     importDoc.status = recordsPayload.length
-      ? ((parsed.failedRows.length || parsed.duplicateRowCount) ? 'PARTIAL_SUCCESS' : 'SUCCESS')
+      ? parsed.failedRows.length || parsed.duplicateRowCount
+        ? 'PARTIAL_SUCCESS'
+        : 'SUCCESS'
       : 'FAILED'
     importDoc.updatedBy = authUser?.accountId || authUser?._id || null
 
@@ -851,9 +907,7 @@ async function verifyOTRequest(otRequestId) {
     ? otRequest.approvedEmployees
     : []
 
-  const requestedEmployeeIds = normalizeIdArray(
-    requestedEmployees.map((item) => item?.employeeId),
-  )
+  const requestedEmployeeIds = normalizeIdArray(requestedEmployees.map((item) => item?.employeeId))
   const requestedEmployeeCodes = Array.from(
     new Set(requestedEmployees.map((item) => upper(item?.employeeCode)).filter(Boolean)),
   )

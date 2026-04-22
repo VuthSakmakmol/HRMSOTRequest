@@ -1,86 +1,99 @@
 // backend/src/modules/attendance/validators/attendance.validation.js
 const { z } = require('zod')
 
-const ATTENDANCE_IMPORT_SOURCE_TYPES = ['EXCEL']
-const ATTENDANCE_IMPORT_STATUS = ['PROCESSING', 'SUCCESS', 'PARTIAL_SUCCESS', 'FAILED']
-const ATTENDANCE_STATUS = ['PRESENT', 'ABSENT', 'LEAVE', 'OFF', 'UNKNOWN']
+const ATTENDANCE_STATUS = [
+  'PRESENT',
+  'LATE',
+  'ABSENT',
+  'FORGET_SCAN_IN',
+  'FORGET_SCAN_OUT',
+  'SHIFT_MISMATCH',
+  'LEAVE',
+  'OFF',
+  'UNKNOWN',
+]
+
+const ATTENDANCE_IMPORTED_STATUS = ['PRESENT', 'ABSENT', 'LEAVE', 'OFF', 'UNKNOWN']
 const ATTENDANCE_DAY_TYPE = ['WORKING_DAY', 'SUNDAY', 'HOLIDAY']
 const ATTENDANCE_MATCHED_BY = ['EMPLOYEE_NO', 'MANUAL', 'NONE']
 const SHIFT_MATCH_STATUS = ['MATCHED', 'MISMATCH', 'UNKNOWN']
+const IMPORT_STATUS = ['PROCESSING', 'SUCCESS', 'PARTIAL_SUCCESS', 'FAILED']
+const SOURCE_TYPE = ['EXCEL', 'CSV', 'MANUAL']
+
+const IMPORT_SORT_FIELDS = ['createdAt', 'importNo', 'periodFrom', 'periodTo', 'status', 'rowCount']
+const RECORD_SORT_FIELDS = [
+  'createdAt',
+  'attendanceDate',
+  'employeeNo',
+  'employeeName',
+  'status',
+  'importedStatus',
+  'dayType',
+  'shiftMatchStatus',
+  'workedMinutes',
+  'lateMinutes',
+  'earlyOutMinutes',
+]
 
 function s(value) {
   return String(value ?? '').trim()
 }
 
-function emptyToUndefined(value) {
-  const raw = s(value)
-  return raw ? raw : undefined
-}
+const objectIdSchema = z
+  .string()
+  .trim()
+  .regex(/^[a-f\d]{24}$/i, 'Invalid id')
 
-const ymdRegex = /^\d{4}-\d{2}-\d{2}$/
-const objectIdRegex = /^[a-fA-F0-9]{24}$/
+const ymdSchema = z
+  .string()
+  .trim()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format')
 
-function optionalYMD(label) {
-  return z.preprocess(
-    emptyToUndefined,
-    z
-      .string()
-      .regex(ymdRegex, `${label} must be in YYYY-MM-DD format`)
-      .optional(),
-  )
-}
+const pageSchema = z.coerce.number().int().min(1).default(1)
+const limitSchema = z.coerce.number().int().min(1).max(200).default(10)
 
-function optionalObjectId(label) {
-  return z.preprocess(
-    emptyToUndefined,
-    z
-      .string()
-      .regex(objectIdRegex, `${label} must be a valid ObjectId`)
-      .optional(),
-  )
-}
+const sortOrderSchema = z.enum(['asc', 'desc']).default('desc')
 
-function optionalUpperEnum(values) {
-  return z.preprocess(
+const optionalUpperEnum = (values, label) =>
+  z.preprocess(
     (value) => {
-      const raw = s(value).toUpperCase()
+      const raw = s(value)
+      return raw ? raw.toUpperCase() : undefined
+    },
+    z.enum(values, `${label} is invalid`).optional(),
+  )
+
+const optionalTrimmedString = (max = 500) =>
+  z.preprocess(
+    (value) => {
+      const raw = s(value)
       return raw || undefined
     },
-    z.enum(values).optional(),
+    z.string().max(max).optional(),
   )
-}
 
-function queryPage(defaultValue = 1) {
-  return z.preprocess(
-    emptyToUndefined,
-    z.coerce.number().int().min(1).max(100000).default(defaultValue),
-  )
-}
+const optionalYmdSchema = z.preprocess(
+  (value) => {
+    const raw = s(value)
+    return raw || undefined
+  },
+  ymdSchema.optional(),
+)
 
-function queryLimit(defaultValue = 10) {
-  return z.preprocess(
-    emptyToUndefined,
-    z.coerce.number().int().min(1).max(200).default(defaultValue),
-  )
-}
+const optionalObjectIdSchema = z.preprocess(
+  (value) => {
+    const raw = s(value)
+    return raw || undefined
+  },
+  objectIdSchema.optional(),
+)
 
 const createAttendanceImportSchema = z
   .object({
-    sourceType: z.preprocess(
-      (value) => {
-        const raw = s(value).toUpperCase()
-        return raw || undefined
-      },
-      z.enum(ATTENDANCE_IMPORT_SOURCE_TYPES).default('EXCEL'),
-    ),
-
-    periodFrom: optionalYMD('periodFrom'),
-    periodTo: optionalYMD('periodTo'),
-
-    remark: z.preprocess(
-      (value) => s(value),
-      z.string().max(1000, 'remark cannot exceed 1000 characters').default(''),
-    ),
+    sourceType: optionalUpperEnum(SOURCE_TYPE, 'sourceType').default('EXCEL'),
+    periodFrom: optionalYmdSchema,
+    periodTo: optionalYmdSchema,
+    remark: optionalTrimmedString(1000),
   })
   .superRefine((data, ctx) => {
     if (data.periodFrom && data.periodTo && data.periodFrom > data.periodTo) {
@@ -94,34 +107,21 @@ const createAttendanceImportSchema = z
 
 const listAttendanceImportsQuerySchema = z
   .object({
-    page: queryPage(1),
-    limit: queryLimit(10),
-
-    status: optionalUpperEnum(ATTENDANCE_IMPORT_STATUS),
-    sourceType: optionalUpperEnum(ATTENDANCE_IMPORT_SOURCE_TYPES),
-
-    periodFrom: optionalYMD('periodFrom'),
-    periodTo: optionalYMD('periodTo'),
-
-    search: z.preprocess(
-      (value) => s(value),
-      z.string().max(100, 'search cannot exceed 100 characters').default(''),
-    ),
-
+    page: pageSchema,
+    limit: limitSchema,
+    search: optionalTrimmedString(200),
+    status: optionalUpperEnum(IMPORT_STATUS, 'status'),
+    sourceType: optionalUpperEnum(SOURCE_TYPE, 'sourceType'),
+    periodFrom: optionalYmdSchema,
+    periodTo: optionalYmdSchema,
     sortBy: z.preprocess(
-      emptyToUndefined,
-      z
-        .enum(['createdAt', 'importNo', 'periodFrom', 'periodTo', 'status', 'rowCount'])
-        .default('createdAt'),
-    ),
-
-    sortOrder: z.preprocess(
       (value) => {
-        const raw = s(value).toLowerCase()
+        const raw = s(value)
         return raw || undefined
       },
-      z.enum(['asc', 'desc']).default('desc'),
+      z.enum(IMPORT_SORT_FIELDS).optional(),
     ),
+    sortOrder: sortOrderSchema,
   })
   .superRefine((data, ctx) => {
     if (data.periodFrom && data.periodTo && data.periodFrom > data.periodTo) {
@@ -135,68 +135,37 @@ const listAttendanceImportsQuerySchema = z
 
 const listAttendanceRecordsQuerySchema = z
   .object({
-    page: queryPage(1),
-    limit: queryLimit(10),
+    page: pageSchema,
+    limit: limitSchema,
+    search: optionalTrimmedString(200),
 
-    importId: optionalObjectId('importId'),
-    employeeId: optionalObjectId('employeeId'),
-
+    importId: optionalObjectIdSchema,
+    employeeId: optionalObjectIdSchema,
     employeeNo: z.preprocess(
-      emptyToUndefined,
-      z
-        .string()
-        .max(50, 'employeeNo cannot exceed 50 characters')
-        .transform((value) => value.toUpperCase())
-        .optional(),
+      (value) => {
+        const raw = s(value)
+        return raw ? raw.toUpperCase() : undefined
+      },
+      z.string().max(50).optional(),
     ),
 
-    attendanceDateFrom: optionalYMD('attendanceDateFrom'),
-    attendanceDateTo: optionalYMD('attendanceDateTo'),
+    status: optionalUpperEnum(ATTENDANCE_STATUS, 'status'),
+    importedStatus: optionalUpperEnum(ATTENDANCE_IMPORTED_STATUS, 'importedStatus'),
+    dayType: optionalUpperEnum(ATTENDANCE_DAY_TYPE, 'dayType'),
+    matchedBy: optionalUpperEnum(ATTENDANCE_MATCHED_BY, 'matchedBy'),
+    shiftMatchStatus: optionalUpperEnum(SHIFT_MATCH_STATUS, 'shiftMatchStatus'),
 
-    status: optionalUpperEnum(ATTENDANCE_STATUS),
-    dayType: optionalUpperEnum(ATTENDANCE_DAY_TYPE),
-    matchedBy: optionalUpperEnum(ATTENDANCE_MATCHED_BY),
-    shiftMatchStatus: optionalUpperEnum(SHIFT_MATCH_STATUS),
-
-    employeeMatched: z.preprocess(
-      emptyToUndefined,
-      z
-        .union([
-          z.boolean(),
-          z.enum(['true', 'false', 'TRUE', 'FALSE']).transform((value) =>
-            String(value).toLowerCase() === 'true',
-          ),
-        ])
-        .optional(),
-    ),
-
-    search: z.preprocess(
-      (value) => s(value),
-      z.string().max(100, 'search cannot exceed 100 characters').default(''),
-    ),
+    attendanceDateFrom: optionalYmdSchema,
+    attendanceDateTo: optionalYmdSchema,
 
     sortBy: z.preprocess(
-      emptyToUndefined,
-      z
-        .enum([
-          'createdAt',
-          'attendanceDate',
-          'employeeNo',
-          'employeeName',
-          'status',
-          'dayType',
-          'shiftMatchStatus',
-        ])
-        .default('attendanceDate'),
-    ),
-
-    sortOrder: z.preprocess(
       (value) => {
-        const raw = s(value).toLowerCase()
+        const raw = s(value)
         return raw || undefined
       },
-      z.enum(['asc', 'desc']).default('desc'),
+      z.enum(RECORD_SORT_FIELDS).optional(),
     ),
+    sortOrder: sortOrderSchema,
   })
   .superRefine((data, ctx) => {
     if (
@@ -213,33 +182,30 @@ const listAttendanceRecordsQuerySchema = z
   })
 
 const attendanceImportIdParamSchema = z.object({
-  id: z.preprocess(
-    (value) => s(value),
-    z.string().min(1, 'Attendance import id is required'),
-  ),
+  id: objectIdSchema,
 })
 
-const attendanceVerifyOTParamSchema = z.object({
-  id: z.preprocess(
-    (value) => s(value),
-    z.string().min(1, 'OT request id is required'),
-  ),
+const attendanceRecordIdParamSchema = z.object({
+  id: objectIdSchema,
 })
 
-function normalizeListAttendanceImportsQuery(data) {
-  return listAttendanceImportsQuerySchema.parse(data)
-}
-
-function normalizeListAttendanceRecordsQuery(data) {
-  return listAttendanceRecordsQuerySchema.parse(data)
-}
+const verifyOTAttendanceParamSchema = z.object({
+  otRequestId: objectIdSchema,
+})
 
 module.exports = {
   createAttendanceImportSchema,
   listAttendanceImportsQuerySchema,
   listAttendanceRecordsQuerySchema,
   attendanceImportIdParamSchema,
-  attendanceVerifyOTParamSchema,
-  normalizeListAttendanceImportsQuery,
-  normalizeListAttendanceRecordsQuery,
+  attendanceRecordIdParamSchema,
+  verifyOTAttendanceParamSchema,
+
+  ATTENDANCE_STATUS,
+  ATTENDANCE_IMPORTED_STATUS,
+  ATTENDANCE_DAY_TYPE,
+  ATTENDANCE_MATCHED_BY,
+  SHIFT_MATCH_STATUS,
+  IMPORT_STATUS,
+  SOURCE_TYPE,
 }

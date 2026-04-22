@@ -3,7 +3,27 @@ const mongoose = require('mongoose')
 
 const { Schema } = mongoose
 
-const ATTENDANCE_STATUS = ['PRESENT', 'ABSENT', 'LEAVE', 'OFF', 'UNKNOWN']
+const ATTENDANCE_STATUS = [
+  'PRESENT',
+  'LATE',
+  'ABSENT',
+  'FORGET_SCAN_IN',
+  'FORGET_SCAN_OUT',
+  'SHIFT_MISMATCH',
+  'LEAVE',
+  'OFF',
+  'UNKNOWN',
+]
+
+const ATTENDANCE_IMPORTED_STATUS = [
+  'PRESENT',
+  'ABSENT',
+  'LEAVE',
+  'OFF',
+  'UNKNOWN',
+  '',
+]
+
 const ATTENDANCE_DAY_TYPE = ['WORKING_DAY', 'SUNDAY', 'HOLIDAY']
 const ATTENDANCE_MATCHED_BY = ['EMPLOYEE_NO', 'MANUAL', 'NONE']
 const SHIFT_MATCH_STATUS = ['MATCHED', 'MISMATCH', 'UNKNOWN']
@@ -31,6 +51,12 @@ function toUtcMidnightFromYMD(ymd) {
   const day = Number(match[3])
 
   return new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0))
+}
+
+function toSafeNonNegativeNumber(value, fallback = 0) {
+  const num = Number(value)
+  if (!Number.isFinite(num) || num < 0) return fallback
+  return num
 }
 
 const attendanceRecordSchema = new Schema(
@@ -187,6 +213,13 @@ const attendanceRecordSchema = new Schema(
       maxlength: 150,
     },
 
+    importedStatus: {
+      type: String,
+      enum: ATTENDANCE_IMPORTED_STATUS,
+      default: '',
+      index: true,
+    },
+
     attendanceDate: {
       type: String,
       required: true,
@@ -214,12 +247,20 @@ const attendanceRecordSchema = new Schema(
       maxlength: 5,
     },
 
+    // Backend-derived source of truth
     status: {
       type: String,
       required: true,
       enum: ATTENDANCE_STATUS,
-      default: 'PRESENT',
+      default: 'UNKNOWN',
       index: true,
+    },
+
+    derivedStatusReason: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 1000,
     },
 
     dayType: {
@@ -283,6 +324,41 @@ const attendanceRecordSchema = new Schema(
       index: true,
     },
 
+    hasClockIn: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    hasClockOut: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    isCrossMidnightShift: {
+      type: Boolean,
+      default: null,
+    },
+
+    workedMinutes: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    lateMinutes: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    earlyOutMinutes: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
     validationIssues: {
       type: [String],
       default: [],
@@ -338,11 +414,13 @@ attendanceRecordSchema.pre('validate', function preValidate(next) {
   this.importedDepartmentName = s(this.importedDepartmentName)
   this.importedPositionName = s(this.importedPositionName)
   this.importedShiftName = s(this.importedShiftName)
+  this.importedStatus = s(this.importedStatus).toUpperCase()
 
   this.attendanceDate = s(this.attendanceDate)
   this.clockIn = s(this.clockIn)
   this.clockOut = s(this.clockOut)
   this.status = s(this.status).toUpperCase()
+  this.derivedStatusReason = s(this.derivedStatusReason)
   this.dayType = s(this.dayType).toUpperCase()
   this.matchedBy = s(this.matchedBy).toUpperCase()
   this.matchRemark = s(this.matchRemark)
@@ -400,6 +478,17 @@ attendanceRecordSchema.pre('validate', function preValidate(next) {
     ),
   )
 
+  this.hasClockIn = Boolean(this.clockIn)
+  this.hasClockOut = Boolean(this.clockOut)
+
+  this.workedMinutes = Math.round(toSafeNonNegativeNumber(this.workedMinutes, 0))
+  this.lateMinutes = Math.round(toSafeNonNegativeNumber(this.lateMinutes, 0))
+  this.earlyOutMinutes = Math.round(toSafeNonNegativeNumber(this.earlyOutMinutes, 0))
+
+  if (this.rawRowNo == null || this.rawRowNo === '') {
+    this.rawRowNo = 0
+  }
+
   this.rawRowNo = Number(this.rawRowNo || 0)
   if (!Number.isInteger(this.rawRowNo) || this.rawRowNo < 1) {
     const err = new Error('rawRowNo must be a positive integer')
@@ -428,10 +517,13 @@ attendanceRecordSchema.index({ employeeId: 1, attendanceDate: -1 })
 attendanceRecordSchema.index({ employeeNo: 1, attendanceDate: -1 })
 attendanceRecordSchema.index({ importedEmployeeId: 1, attendanceDate: -1 })
 attendanceRecordSchema.index({ attendanceDate: -1, status: 1 })
+attendanceRecordSchema.index({ attendanceDate: -1, importedStatus: 1 })
 attendanceRecordSchema.index({ dayType: 1, attendanceDate: -1 })
 attendanceRecordSchema.index({ matchedBy: 1, attendanceDate: -1 })
 attendanceRecordSchema.index({ employeeMatched: 1, attendanceDate: -1 })
 attendanceRecordSchema.index({ shiftMatchStatus: 1, attendanceDate: -1 })
+attendanceRecordSchema.index({ hasClockIn: 1, attendanceDate: -1 })
+attendanceRecordSchema.index({ hasClockOut: 1, attendanceDate: -1 })
 attendanceRecordSchema.index({ createdAt: -1 })
 
 module.exports = mongoose.model('AttendanceRecord', attendanceRecordSchema)

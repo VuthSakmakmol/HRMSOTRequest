@@ -1,17 +1,20 @@
 // frontend/src/modules/attendance/attendance.api.js
 import api from '@/shared/services/api'
 
-export function importAttendanceFile(payload) {
-  return api.post('/attendance/import', payload, {
-    headers: {
-      'Content-Type': 'multipart/form-data',
-    },
-  })
-}
-
 export function downloadAttendanceImportSample() {
   return api.get('/attendance/import/sample', {
     responseType: 'blob',
+  })
+}
+
+export function importAttendanceExcel(formData, options = {}) {
+  const { onUploadProgress } = options
+
+  return api.post('/attendance/import', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+    onUploadProgress,
   })
 }
 
