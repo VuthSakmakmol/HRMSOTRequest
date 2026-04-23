@@ -176,6 +176,12 @@ const PERMISSIONS = [
     module: 'CALENDAR',
     description: 'Allow updating holiday records',
   },
+  {
+    code: 'HOLIDAY_LOOKUP',
+    name: 'Lookup Holidays',
+    module: 'CALENDAR',
+    description: 'Allow reading holiday options for selectors and dropdowns only',
+  },
 
   // Shifts
   {

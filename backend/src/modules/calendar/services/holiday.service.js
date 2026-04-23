@@ -1,8 +1,12 @@
 // backend/src/modules/calendar/services/holiday.service.js
 const Holiday = require('../models/Holiday')
 
+function s(value) {
+  return String(value ?? '').trim()
+}
+
 function buildSearchFilter(search) {
-  const q = String(search || '').trim()
+  const q = s(search)
   if (!q) return null
 
   return {
@@ -62,6 +66,52 @@ function mapDoc(doc) {
     updatedBy: doc.updatedBy ? String(doc.updatedBy) : null,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
+  }
+}
+
+function mapLookupDoc(doc) {
+  return {
+    id: String(doc._id),
+    date: doc.date ? doc.date.toISOString().slice(0, 10) : null,
+    code: doc.code || '',
+    name: doc.name || '',
+    description: doc.description || '',
+    label: [doc.date ? doc.date.toISOString().slice(0, 10) : '', doc.name].filter(Boolean).join(' - '),
+    isPaidHoliday: !!doc.isPaidHoliday,
+    isActive: !!doc.isActive,
+  }
+}
+
+async function lookup(query = {}) {
+  const limit = Math.min(Math.max(Number(query.limit || 20), 1), 50)
+
+  let isActive = true
+  if (String(query.isActive ?? '').trim().toLowerCase() === 'false') {
+    isActive = false
+  }
+
+  const filter = {
+    isActive,
+  }
+
+  const searchFilter = buildSearchFilter(query.search)
+  if (searchFilter) Object.assign(filter, searchFilter)
+
+  const dateRange = buildDateRange(query.year, query.month)
+  if (dateRange) {
+    filter.date = dateRange
+  }
+
+  const items = await Holiday.find(filter)
+    .sort({ date: 1, name: 1, _id: -1 })
+    .limit(limit)
+
+  return {
+    items: items.map(mapLookupDoc),
+    meta: {
+      limit,
+      count: items.length,
+    },
   }
 }
 
@@ -166,6 +216,7 @@ async function update(id, payload, actorId) {
 }
 
 module.exports = {
+  lookup,
   list,
   getById,
   create,

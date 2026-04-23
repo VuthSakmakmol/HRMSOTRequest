@@ -8,6 +8,8 @@ const router = express.Router()
 
 router.use(requireAuth)
 
+router.get('/lookup', requirePermission('HOLIDAY_LOOKUP'), holidayController.lookup)
+
 router.get('/', requirePermission('HOLIDAY_VIEW'), holidayController.list)
 router.get('/:id', requirePermission('HOLIDAY_VIEW'), holidayController.getById)
 router.post('/', requirePermission('HOLIDAY_CREATE'), holidayController.create)

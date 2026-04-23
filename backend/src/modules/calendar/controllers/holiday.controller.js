@@ -19,6 +19,19 @@ function parse(schema, data) {
   return result.data
 }
 
+async function lookup(req, res, next) {
+  try {
+    const data = await holidayService.lookup(req.query || {})
+
+    res.json({
+      ok: true,
+      data,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
 async function list(req, res, next) {
   try {
     const query = parse(listHolidayQuerySchema, req.query || {})
@@ -50,7 +63,7 @@ async function getById(req, res, next) {
 async function create(req, res, next) {
   try {
     const payload = parse(createHolidaySchema, req.body || {})
-    const actorId = req.user?.id || null
+    const actorId = req.user?.id || req.user?.accountId || null
     const data = await holidayService.create(payload, actorId)
 
     res.status(201).json({
@@ -66,7 +79,7 @@ async function update(req, res, next) {
   try {
     const { id } = parse(holidayIdParamSchema, req.params || {})
     const payload = parse(updateHolidaySchema, req.body || {})
-    const actorId = req.user?.id || null
+    const actorId = req.user?.id || req.user?.accountId || null
     const data = await holidayService.update(id, payload, actorId)
 
     res.json({
@@ -79,6 +92,7 @@ async function update(req, res, next) {
 }
 
 module.exports = {
+  lookup,
   list,
   getById,
   create,
