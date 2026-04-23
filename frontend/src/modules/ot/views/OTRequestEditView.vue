@@ -8,6 +8,7 @@ import Button from 'primevue/button'
 import Card from 'primevue/card'
 import DatePicker from 'primevue/datepicker'
 import Divider from 'primevue/divider'
+import Dropdown from 'primevue/dropdown'
 import InputNumber from 'primevue/inputnumber'
 import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
@@ -18,6 +19,7 @@ import Textarea from 'primevue/textarea'
 import {
   getAllowedOTApproverChain,
   getOTRequestById,
+  getShiftOTOptionsByShift,
   updateOTRequest,
 } from '@/modules/ot/ot.api'
 
@@ -27,14 +29,20 @@ const toast = useToast()
 
 const loading = ref(false)
 const saving = ref(false)
+const loadingShiftOptions = ref(false)
+
 const detail = ref(null)
 const approverOptions = ref([])
+const shiftOptions = ref([])
 
 const requestId = computed(() => String(route.params.id || '').trim())
-const employees = computed(() => (Array.isArray(detail.value?.employees) ? detail.value.employees : []))
+const employees = computed(() =>
+  Array.isArray(detail.value?.employees) ? detail.value.employees : [],
+)
 
 const form = reactive({
   otDate: null,
+  shiftOtOptionId: '',
   startTime: '',
   endTime: '',
   breakMinutes: 0,
@@ -43,8 +51,63 @@ const form = reactive({
   approverEmployeeIds: [],
 })
 
+const isLegacyManualMode = computed(() => {
+  const shiftId = String(detail.value?.shiftId || '').trim()
+  const shiftOtOptionId = String(detail.value?.shiftOtOptionId || '').trim()
+
+  return !shiftId && !shiftOtOptionId
+})
+
+const selectedOTOption = computed(() =>
+  shiftOptions.value.find((item) => item.id === form.shiftOtOptionId) || null,
+)
+
+const requestPreview = computed(() => {
+  if (isLegacyManualMode.value) return null
+  if (!selectedOTOption.value) return null
+
+  const shiftEndTime = String(detail.value?.shiftEndTime || '').trim()
+  if (!shiftEndTime) return null
+
+  const requestedMinutes = Number(selectedOTOption.value.requestedMinutes || 0)
+
+  return {
+    requestStartTime: shiftEndTime,
+    requestEndTime: addMinutesToHHmm(shiftEndTime, requestedMinutes),
+    requestedMinutes,
+    requestedHours: Number(
+      selectedOTOption.value.requestedHours ||
+        (requestedMinutes / 60).toFixed(2),
+    ),
+  }
+})
+
 function normalizePayload(res) {
   return res?.data?.data || res?.data || null
+}
+
+function normalizeShiftOptionsResponse(res) {
+  const payload = res?.data?.data || res?.data || {}
+  const rows = Array.isArray(payload?.items) ? payload.items : []
+
+  return rows
+    .map((item) => {
+      const requestedMinutes = Number(item?.requestedMinutes || 0)
+      const requestedHours = Number(
+        item?.requestedHours || (requestedMinutes / 60).toFixed(2),
+      )
+
+      return {
+        id: String(item?.id || item?._id || '').trim(),
+        label: String(item?.label || '').trim(),
+        requestedMinutes,
+        requestedHours,
+        sequence: Number(item?.sequence || 0),
+        calculationPolicy: item?.calculationPolicy || null,
+        optionLabel: `${String(item?.label || '').trim()} (${requestedMinutes} min)`,
+      }
+    })
+    .filter((item) => item.id && item.label)
 }
 
 function parseYMDToDate(value) {
@@ -71,14 +134,6 @@ function formatDateYMD(value) {
   return `${yyyy}-${mm}-${dd}`
 }
 
-function formatTimeRange(row) {
-  const start = String(row?.startTime || '').trim()
-  const end = String(row?.endTime || '').trim()
-
-  if (!start && !end) return '-'
-  return [start, end].filter(Boolean).join(' - ')
-}
-
 function timeToMinutes(value) {
   const raw = String(value || '').trim()
   const match = raw.match(/^([01]\d|2[0-3]):([0-5]\d)$/)
@@ -86,15 +141,54 @@ function timeToMinutes(value) {
   return Number(match[1]) * 60 + Number(match[2])
 }
 
+function minutesToHHmm(totalMinutes) {
+  const normalized = ((Number(totalMinutes || 0) % 1440) + 1440) % 1440
+  const hh = Math.floor(normalized / 60)
+  const mm = normalized % 60
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
+}
+
+function addMinutesToHHmm(hhmm, extraMinutes) {
+  const base = timeToMinutes(hhmm)
+  if (base === null) return ''
+  return minutesToHHmm(base + Number(extraMinutes || 0))
+}
+
+function formatMinutesLabel(value) {
+  const minutes = Number(value || 0)
+
+  if (!minutes) return '0 min'
+
+  const hh = Math.floor(minutes / 60)
+  const mm = minutes % 60
+
+  if (hh && mm) return `${hh}h ${mm}m`
+  if (hh) return `${hh}h`
+  return `${mm}m`
+}
+
+function formatTimeRange(row) {
+  const start = String(row?.requestStartTime || row?.startTime || '').trim()
+  const end = String(row?.requestEndTime || row?.endTime || '').trim()
+
+  if (!start && !end) return '-'
+  return [start, end].filter(Boolean).join(' - ')
+}
+
 function hydrateForm(data) {
   form.otDate = parseYMDToDate(data?.otDate)
+  form.shiftOtOptionId = String(data?.shiftOtOptionId || '').trim()
   form.startTime = String(data?.startTime || '').trim()
   form.endTime = String(data?.endTime || '').trim()
   form.breakMinutes = Number(data?.breakMinutes || 0)
   form.reason = String(data?.reason || '').trim()
+
   form.employeeIds = Array.isArray(data?.employees)
-    ? data.employees.map((item) => String(item?.employeeId || '').trim()).filter(Boolean)
+    ? data.employees
+        .map((item) => String(item?.employeeId || '').trim())
+        .filter(Boolean)
     : []
+
   form.approverEmployeeIds = Array.isArray(data?.approvalSteps)
     ? [...data.approvalSteps]
         .sort((a, b) => Number(a?.stepNo || 0) - Number(b?.stepNo || 0))
@@ -110,12 +204,53 @@ async function fetchApproverOptions(employeeId) {
 
   const res = await getAllowedOTApproverChain(employeeId)
   const payload = normalizePayload(res)
-  const items = Array.isArray(payload) ? payload : Array.isArray(payload?.items) ? payload.items : []
+  const items = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload?.items)
+      ? payload.items
+      : []
 
   approverOptions.value = items.map((item) => ({
     label: `${item.displayName || '-'} (${item.employeeNo || '-'})`,
     value: item.employeeId,
   }))
+}
+
+async function fetchShiftOptions(shiftId) {
+  shiftOptions.value = []
+
+  if (!shiftId) return
+
+  loadingShiftOptions.value = true
+
+  try {
+    const res = await getShiftOTOptionsByShift(shiftId)
+    shiftOptions.value = normalizeShiftOptionsResponse(res)
+
+    if (form.shiftOtOptionId) {
+      const exists = shiftOptions.value.some((item) => item.id === form.shiftOtOptionId)
+      if (!exists) {
+        form.shiftOtOptionId = ''
+      }
+    }
+
+    if (!form.shiftOtOptionId && shiftOptions.value.length === 1) {
+      form.shiftOtOptionId = shiftOptions.value[0].id
+    }
+  } catch (error) {
+    shiftOptions.value = []
+    toast.add({
+      severity: 'error',
+      summary: 'OT options failed',
+      detail:
+        error?.response?.data?.message ||
+        error?.message ||
+        'Unable to load OT options for this shift.',
+      life: 3500,
+    })
+  } finally {
+    loadingShiftOptions.value = false
+  }
 }
 
 async function fetchDetail() {
@@ -126,11 +261,16 @@ async function fetchDetail() {
   try {
     const res = await getOTRequestById(requestId.value)
     const data = normalizePayload(res)
+
     detail.value = data
     hydrateForm(data)
 
     if (data?.requesterEmployeeId) {
       await fetchApproverOptions(data.requesterEmployeeId)
+    }
+
+    if (String(data?.shiftId || '').trim()) {
+      await fetchShiftOptions(String(data.shiftId).trim())
     }
   } catch (error) {
     toast.add({
@@ -177,39 +317,6 @@ function validateForm() {
     return false
   }
 
-  const startMinutes = timeToMinutes(form.startTime)
-  const endMinutes = timeToMinutes(form.endTime)
-
-  if (startMinutes === null) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Validation',
-      detail: 'Start time must be HH:mm.',
-      life: 2500,
-    })
-    return false
-  }
-
-  if (endMinutes === null) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Validation',
-      detail: 'End time must be HH:mm.',
-      life: 2500,
-    })
-    return false
-  }
-
-  if (endMinutes <= startMinutes) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Validation',
-      detail: 'End time must be later than start time.',
-      life: 2500,
-    })
-    return false
-  }
-
   if (!String(form.reason || '').trim()) {
     toast.add({
       severity: 'warn',
@@ -250,6 +357,51 @@ function validateForm() {
     return false
   }
 
+  if (isLegacyManualMode.value) {
+    const startMinutes = timeToMinutes(form.startTime)
+    const endMinutes = timeToMinutes(form.endTime)
+
+    if (startMinutes === null) {
+      toast.add({
+        severity: 'warn',
+        summary: 'Validation',
+        detail: 'Start time must be HH:mm.',
+        life: 2500,
+      })
+      return false
+    }
+
+    if (endMinutes === null) {
+      toast.add({
+        severity: 'warn',
+        summary: 'Validation',
+        detail: 'End time must be HH:mm.',
+        life: 2500,
+      })
+      return false
+    }
+
+    if (endMinutes <= startMinutes) {
+      toast.add({
+        severity: 'warn',
+        summary: 'Validation',
+        detail: 'End time must be later than start time.',
+        life: 2500,
+      })
+      return false
+    }
+  } else {
+    if (!String(form.shiftOtOptionId || '').trim()) {
+      toast.add({
+        severity: 'warn',
+        summary: 'Validation',
+        detail: 'Please select OT option.',
+        life: 2500,
+      })
+      return false
+    }
+  }
+
   return true
 }
 
@@ -261,15 +413,22 @@ async function onSave() {
   saving.value = true
 
   try {
-    await updateOTRequest(requestId.value, {
+    const payload = {
       employeeIds: form.employeeIds,
       otDate: formatDateYMD(form.otDate),
-      startTime: String(form.startTime || '').trim(),
-      endTime: String(form.endTime || '').trim(),
-      breakMinutes: Number(form.breakMinutes || 0),
       reason: String(form.reason || '').trim(),
       approverEmployeeIds: form.approverEmployeeIds,
-    })
+    }
+
+    if (isLegacyManualMode.value) {
+      payload.startTime = String(form.startTime || '').trim()
+      payload.endTime = String(form.endTime || '').trim()
+      payload.breakMinutes = Number(form.breakMinutes || 0)
+    } else {
+      payload.shiftOtOptionId = String(form.shiftOtOptionId || '').trim()
+    }
+
+    await updateOTRequest(requestId.value, payload)
 
     toast.add({
       severity: 'success',
@@ -312,6 +471,12 @@ onMounted(() => {
             v-if="detail"
             :value="detail.status || '-'"
             :severity="detail.canEdit ? 'warning' : 'secondary'"
+          />
+
+          <Tag
+            v-if="detail"
+            :value="isLegacyManualMode ? 'LEGACY MANUAL MODE' : 'SHIFT OT OPTION MODE'"
+            :severity="isLegacyManualMode ? 'contrast' : 'info'"
           />
         </div>
 
@@ -389,43 +554,63 @@ onMounted(() => {
                 />
               </div>
 
-              <div class="space-y-2">
-                <label class="text-sm font-medium text-[color:var(--ot-text)]">
-                  Start Time
-                </label>
-                <InputText
-                  v-model.trim="form.startTime"
-                  class="w-full"
-                  placeholder="HH:mm"
-                  :disabled="!detail.canEdit"
-                />
-              </div>
+              <template v-if="isLegacyManualMode">
+                <div class="space-y-2">
+                  <label class="text-sm font-medium text-[color:var(--ot-text)]">
+                    Start Time
+                  </label>
+                  <InputText
+                    v-model.trim="form.startTime"
+                    class="w-full"
+                    placeholder="HH:mm"
+                    :disabled="!detail.canEdit"
+                  />
+                </div>
 
-              <div class="space-y-2">
-                <label class="text-sm font-medium text-[color:var(--ot-text)]">
-                  End Time
-                </label>
-                <InputText
-                  v-model.trim="form.endTime"
-                  class="w-full"
-                  placeholder="HH:mm"
-                  :disabled="!detail.canEdit"
-                />
-              </div>
+                <div class="space-y-2">
+                  <label class="text-sm font-medium text-[color:var(--ot-text)]">
+                    End Time
+                  </label>
+                  <InputText
+                    v-model.trim="form.endTime"
+                    class="w-full"
+                    placeholder="HH:mm"
+                    :disabled="!detail.canEdit"
+                  />
+                </div>
 
-              <div class="space-y-2">
-                <label class="text-sm font-medium text-[color:var(--ot-text)]">
-                  Break Minutes
-                </label>
-                <InputNumber
-                  v-model="form.breakMinutes"
-                  inputClass="w-full"
-                  class="w-full"
-                  :min="0"
-                  :useGrouping="false"
-                  :disabled="!detail.canEdit"
-                />
-              </div>
+                <div class="space-y-2">
+                  <label class="text-sm font-medium text-[color:var(--ot-text)]">
+                    Break Minutes
+                  </label>
+                  <InputNumber
+                    v-model="form.breakMinutes"
+                    inputClass="w-full"
+                    class="w-full"
+                    :min="0"
+                    :useGrouping="false"
+                    :disabled="!detail.canEdit"
+                  />
+                </div>
+              </template>
+
+              <template v-else>
+                <div class="space-y-2 md:col-span-2">
+                  <label class="text-sm font-medium text-[color:var(--ot-text)]">
+                    OT Option
+                  </label>
+                  <Dropdown
+                    v-model="form.shiftOtOptionId"
+                    :options="shiftOptions"
+                    optionLabel="optionLabel"
+                    optionValue="id"
+                    class="w-full"
+                    placeholder="Select OT option"
+                    :loading="loadingShiftOptions"
+                    :disabled="!detail.canEdit || !shiftOptions.length"
+                  />
+                </div>
+              </template>
 
               <div class="space-y-2 md:col-span-2 xl:col-span-2">
                 <label class="text-sm font-medium text-[color:var(--ot-text)]">
@@ -444,6 +629,116 @@ onMounted(() => {
                 />
               </div>
             </div>
+
+            <Divider />
+
+            <template v-if="!isLegacyManualMode">
+              <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <div class="ot-info-box">
+                  <div class="ot-info-label">Shift</div>
+                  <div class="ot-info-value">
+                    {{ detail.shiftCode || '-' }} {{ detail.shiftName ? `· ${detail.shiftName}` : '' }}
+                  </div>
+                </div>
+
+                <div class="ot-info-box">
+                  <div class="ot-info-label">Shift Type</div>
+                  <div class="ot-info-value">
+                    {{ detail.shiftType || '-' }}
+                  </div>
+                </div>
+
+                <div class="ot-info-box">
+                  <div class="ot-info-label">Shift Start</div>
+                  <div class="ot-info-value">
+                    {{ detail.shiftStartTime || '-' }}
+                  </div>
+                </div>
+
+                <div class="ot-info-box">
+                  <div class="ot-info-label">Shift End</div>
+                  <div class="ot-info-value">
+                    {{ detail.shiftEndTime || '-' }}
+                  </div>
+                </div>
+              </div>
+
+              <div
+                v-if="requestPreview"
+                class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4"
+              >
+                <div class="ot-info-box border-emerald-200 dark:border-emerald-800">
+                  <div class="ot-info-label">Requested Minutes</div>
+                  <div class="ot-info-value">
+                    {{ requestPreview.requestedMinutes }}
+                  </div>
+                </div>
+
+                <div class="ot-info-box border-sky-200 dark:border-sky-800">
+                  <div class="ot-info-label">Requested Duration</div>
+                  <div class="ot-info-value">
+                    {{ formatMinutesLabel(requestPreview.requestedMinutes) }}
+                  </div>
+                </div>
+
+                <div class="ot-info-box border-violet-200 dark:border-violet-800">
+                  <div class="ot-info-label">Request Start</div>
+                  <div class="ot-info-value">
+                    {{ requestPreview.requestStartTime || '-' }}
+                  </div>
+                </div>
+
+                <div class="ot-info-box border-amber-200 dark:border-amber-800">
+                  <div class="ot-info-label">Request End</div>
+                  <div class="ot-info-value">
+                    {{ requestPreview.requestEndTime || '-' }}
+                  </div>
+                </div>
+              </div>
+
+              <Message
+                v-if="!loadingShiftOptions && !shiftOptions.length"
+                severity="warn"
+                :closable="false"
+                class="mt-4"
+              >
+                No active OT option is configured for this shift yet.
+              </Message>
+
+              <div
+                v-if="selectedOTOption?.calculationPolicy"
+                class="mt-4 rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-bg)] p-4"
+              >
+                <div class="mb-2 flex flex-wrap items-center gap-2">
+                  <span class="text-sm font-semibold text-[color:var(--ot-text)]">
+                    Calculation Policy
+                  </span>
+                  <Tag
+                    :value="selectedOTOption.calculationPolicy.code || '—'"
+                    severity="info"
+                  />
+                </div>
+
+                <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <div class="text-sm text-[color:var(--ot-text-muted)]">
+                    <span class="font-medium text-[color:var(--ot-text)]">Name:</span>
+                    {{ selectedOTOption.calculationPolicy.name || '-' }}
+                  </div>
+                  <div class="text-sm text-[color:var(--ot-text-muted)]">
+                    <span class="font-medium text-[color:var(--ot-text)]">Min Eligible:</span>
+                    {{ selectedOTOption.calculationPolicy.minEligibleMinutes ?? 0 }} min
+                  </div>
+                  <div class="text-sm text-[color:var(--ot-text-muted)]">
+                    <span class="font-medium text-[color:var(--ot-text)]">Round Unit:</span>
+                    {{ selectedOTOption.calculationPolicy.roundUnitMinutes ?? 0 }} min
+                  </div>
+                  <div class="text-sm text-[color:var(--ot-text-muted)]">
+                    <span class="font-medium text-[color:var(--ot-text)]">Round Method:</span>
+                    {{ selectedOTOption.calculationPolicy.roundMethod || '-' }}
+                  </div>
+                </div>
+              </div>
+            </template>
 
             <Divider />
 
@@ -480,13 +775,23 @@ onMounted(() => {
               </div>
 
               <div class="ot-info-box">
-                <div class="ot-info-label">Current Time</div>
+                <div class="ot-info-label">Current Request Time</div>
                 <div class="ot-info-value">{{ formatTimeRange(detail) }}</div>
               </div>
 
               <div class="ot-info-box">
                 <div class="ot-info-label">Current Total Hours</div>
                 <div class="ot-info-value">{{ detail.totalHours ?? '-' }}</div>
+              </div>
+
+              <div class="ot-info-box">
+                <div class="ot-info-label">Current OT Option</div>
+                <div class="ot-info-value">{{ detail.shiftOtOptionLabel || '-' }}</div>
+              </div>
+
+              <div class="ot-info-box">
+                <div class="ot-info-label">Requested Minutes</div>
+                <div class="ot-info-value">{{ detail.requestedMinutes ?? 0 }}</div>
               </div>
             </div>
           </template>

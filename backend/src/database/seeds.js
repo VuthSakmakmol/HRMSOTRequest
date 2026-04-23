@@ -222,6 +222,45 @@ const PERMISSIONS = [
     module: 'ATTENDANCE',
     description: 'Allow verifying OT requests against attendance records',
   },
+  // OT Policy Master
+  {
+    code: 'OT_POLICY_VIEW',
+    name: 'View OT Policies',
+    module: 'OT',
+    description: 'Allow viewing OT calculation policies',
+  },
+  {
+    code: 'OT_POLICY_CREATE',
+    name: 'Create OT Policies',
+    module: 'OT',
+    description: 'Allow creating OT calculation policies',
+  },
+  {
+    code: 'OT_POLICY_UPDATE',
+    name: 'Update OT Policies',
+    module: 'OT',
+    description: 'Allow updating OT calculation policies',
+  },
+
+  // Shift OT Option Master
+  {
+    code: 'SHIFT_OT_OPTION_VIEW',
+    name: 'View Shift OT Options',
+    module: 'OT',
+    description: 'Allow viewing shift OT options',
+  },
+  {
+    code: 'SHIFT_OT_OPTION_CREATE',
+    name: 'Create Shift OT Options',
+    module: 'OT',
+    description: 'Allow creating shift OT options',
+  },
+  {
+    code: 'SHIFT_OT_OPTION_UPDATE',
+    name: 'Update Shift OT Options',
+    module: 'OT',
+    description: 'Allow updating shift OT options',
+  },
 
 ]
 async function seedPermissions() {

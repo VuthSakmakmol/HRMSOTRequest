@@ -1,3 +1,4 @@
+
 <!-- frontend/src/modules/ot/views/OTRequestListView.vue -->
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
@@ -317,6 +318,11 @@ function goEdit(id) {
   router.push(`/ot/requests/${id}/edit`)
 }
 
+function goVerifyAttendance(id) {
+  if (!id) return
+  router.push(`/attendance/ot-verification/${id}`)
+}
+
 function getExportFilenameFromHeaders(headers = {}) {
   const disposition =
     headers?.['content-disposition'] || headers?.['Content-Disposition'] || ''
@@ -394,7 +400,7 @@ onBeforeUnmount(() => {
           OT Requests
         </h1>
         <p class="mt-1 text-sm text-[color:var(--ot-text-muted)]">
-          Manage overtime requests with backend-driven search, filter, and approval status.
+          Search OT request by request no, requester, employee, department, or reason, then verify attendance directly.
         </p>
       </div>
 
@@ -494,7 +500,7 @@ onBeforeUnmount(() => {
         scrollHeight="500px"
         :sortField="filters.sortField"
         :sortOrder="filters.sortOrder"
-        tableStyle="min-width: 92rem"
+        tableStyle="min-width: 98rem"
         class="ot-request-table"
         :virtualScrollerOptions="useVirtualScroll ? {
           lazy: true,
@@ -598,9 +604,18 @@ onBeforeUnmount(() => {
           </template>
         </Column>
 
-        <Column header="Actions" style="width: 14rem; min-width: 14rem">
+        <Column header="Actions" style="width: 20rem; min-width: 20rem">
           <template #body="{ data }">
             <div v-if="data" class="flex flex-wrap gap-2">
+              <Button
+                label="Verify"
+                icon="pi pi-check-square"
+                size="small"
+                severity="success"
+                outlined
+                @click="goVerifyAttendance(data._id || data.id)"
+              />
+
               <Button
                 label="View"
                 icon="pi pi-eye"

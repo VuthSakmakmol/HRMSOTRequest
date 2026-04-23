@@ -194,6 +194,20 @@ async function requesterConfirmOTRequest(req, res, next) {
   }
 }
 
+async function getShiftOTOptionsByShift(req, res, next) {
+  try {
+    const shiftId = parseObjectIdParam(req.params.shiftId, 'shiftId')
+    const data = await otService.getShiftOTOptionsByShift(shiftId)
+
+    res.json({
+      ok: true,
+      data,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
 module.exports = {
   createOTRequest,
   updateOTRequest,
@@ -201,6 +215,7 @@ module.exports = {
   exportOTRequestsExcel,
   getOTRequestDetail,
   getAllowedApproverChain,
+  getShiftOTOptionsByShift,
   listMyApprovalInbox,
   exportOTApprovalInboxExcel,
   decideOTRequest,

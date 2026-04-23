@@ -5,15 +5,21 @@ import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
+import Card from 'primevue/card'
+import DatePicker from 'primevue/datepicker'
+import Dropdown from 'primevue/dropdown'
+import Message from 'primevue/message'
+import Tag from 'primevue/tag'
+import Textarea from 'primevue/textarea'
 
 import OTApproverChainView from '@/modules/ot/components/OTApproverChainView.vue'
-import OTDetailView from '@/modules/ot/components/OTDetailView.vue'
 import OTEmployeeMultiPicker from '@/modules/ot/components/OTEmployeeMultiPicker.vue'
 import OTSubmitBar from '@/modules/ot/components/OTSubmitBar.vue'
 import api from '@/shared/services/api'
 import {
   createOTRequest,
   getAllowedOTApproverChain,
+  getShiftOTOptionsByShift,
 } from '@/modules/ot/ot.api'
 
 const router = useRouter()
@@ -22,62 +28,20 @@ const toast = useToast()
 const submitting = ref(false)
 const loadingApproverChain = ref(false)
 const loadingRequester = ref(false)
+const loadingShiftOptions = ref(false)
 
 const selectedEmployees = ref([])
 const approverChain = ref([])
 const requesterEmployee = ref(null)
+const shiftOptions = ref([])
+const lastLoadedShiftId = ref('')
 
 const form = reactive({
   otDate: null,
-  startTime: buildTimeDefault(16, 0),
-  endTime: buildTimeDefault(17, 0),
-  breakMinutes: 0,
+  shiftOtOptionId: '',
   reason: '',
   approverEmployeeIds: [],
 })
-
-watch(
-  () => form.startTime,
-  (value) => {
-    if (!value) return
-
-    const start = new Date(value)
-    if (Number.isNaN(start.getTime())) return
-
-    const currentEnd = form.endTime ? new Date(form.endTime) : null
-
-    if (!currentEnd || Number.isNaN(currentEnd.getTime()) || currentEnd <= start) {
-      const nextEnd = new Date(start)
-      nextEnd.setHours(nextEnd.getHours() + 1)
-      form.endTime = nextEnd
-    }
-  },
-  { immediate: true },
-)
-
-watch(
-  () => form.endTime,
-  (value) => {
-    if (!value || !form.startTime) return
-
-    const start = new Date(form.startTime)
-    const end = new Date(value)
-
-    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return
-
-    if (end <= start) {
-      const fixedEnd = new Date(start)
-      fixedEnd.setHours(fixedEnd.getHours() + 1)
-      form.endTime = fixedEnd
-    }
-  },
-)
-
-function buildTimeDefault(hour, minute = 0) {
-  const now = new Date()
-  now.setHours(hour, minute, 0, 0)
-  return now
-}
 
 const selectedEmployeeIds = computed(() =>
   selectedEmployees.value
@@ -171,9 +135,41 @@ function normalizeMeResponse(res) {
   }
 }
 
+function normalizeShiftOptionsResponse(res) {
+  const payload = res?.data?.data || res?.data || {}
+  const shift = payload?.shift || null
+  const rows = Array.isArray(payload?.items) ? payload.items : []
+
+  return {
+    shift,
+    items: rows.map((item) => {
+      const requestedMinutes = Number(item?.requestedMinutes || 0)
+      const requestedHours = Number(
+        item?.requestedHours || (requestedMinutes / 60).toFixed(2),
+      )
+
+      return {
+        id: String(item?.id || item?._id || '').trim(),
+        label: String(item?.label || '').trim(),
+        requestedMinutes,
+        requestedHours,
+        sequence: Number(item?.sequence || 0),
+        calculationPolicy: item?.calculationPolicy || null,
+        optionLabel: `${String(item?.label || '').trim()} (${requestedMinutes} min)`,
+      }
+    }).filter((item) => item.id && item.label),
+  }
+}
+
 function clearApproverSelection() {
   approverChain.value = []
   form.approverEmployeeIds = []
+}
+
+function clearShiftOptions() {
+  shiftOptions.value = []
+  form.shiftOtOptionId = ''
+  lastLoadedShiftId.value = ''
 }
 
 async function loadRequesterEmployee() {
@@ -251,22 +247,188 @@ function formatDateYMD(value) {
   return `${yyyy}-${mm}-${dd}`
 }
 
-function formatTimeHHmm(value) {
-  if (!value) return ''
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-  const hh = String(date.getHours()).padStart(2, '0')
-  const mm = String(date.getMinutes()).padStart(2, '0')
-  return `${hh}:${mm}`
+function minutesToHHmm(totalMinutes) {
+  const normalized = ((Number(totalMinutes || 0) % 1440) + 1440) % 1440
+  const hh = Math.floor(normalized / 60)
+  const mm = normalized % 60
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
 }
+
+function addMinutesToHHmm(hhmm, extraMinutes) {
+  const match = String(hhmm || '').trim().match(/^(\d{2}):(\d{2})$/)
+  if (!match) return ''
+  const total = Number(match[1]) * 60 + Number(match[2]) + Number(extraMinutes || 0)
+  return minutesToHHmm(total)
+}
+
+function formatMinutesLabel(value) {
+  const minutes = Number(value || 0)
+
+  if (!minutes) return '0 min'
+
+  const hh = Math.floor(minutes / 60)
+  const mm = minutes % 60
+
+  if (hh && mm) return `${hh}h ${mm}m`
+  if (hh) return `${hh}h`
+  return `${mm}m`
+}
+
+function extractShiftInfo(employee) {
+  const shift =
+    employee?.shift ||
+    employee?.shiftInfo ||
+    employee?.assignedShift ||
+    {}
+
+  const shiftId = String(
+    employee?.shiftId ||
+      shift?._id ||
+      shift?.id ||
+      '',
+  ).trim()
+
+  if (!shiftId) return null
+
+  return {
+    shiftId,
+    code: String(employee?.shiftCode || shift?.code || '').trim(),
+    name: String(employee?.shiftName || shift?.name || '').trim(),
+    type: String(employee?.shiftType || shift?.type || '').trim(),
+    startTime: String(employee?.shiftStartTime || shift?.startTime || '').trim(),
+    endTime: String(employee?.shiftEndTime || shift?.endTime || '').trim(),
+    crossMidnight:
+      employee?.shiftCrossMidnight === true ||
+      shift?.crossMidnight === true,
+  }
+}
+
+const selectedShiftState = computed(() => {
+  if (!selectedEmployees.value.length) {
+    return {
+      mode: 'none',
+      shift: null,
+      message: '',
+    }
+  }
+
+  const shiftInfos = selectedEmployees.value.map(extractShiftInfo)
+  const missingShiftCount = shiftInfos.filter((item) => !item?.shiftId).length
+
+  if (missingShiftCount > 0) {
+    return {
+      mode: 'missing',
+      shift: null,
+      message: 'Some selected employees do not have assigned shift information.',
+    }
+  }
+
+  const uniqueShiftIds = Array.from(new Set(shiftInfos.map((item) => item.shiftId)))
+
+  if (uniqueShiftIds.length > 1) {
+    return {
+      mode: 'mixed',
+      shift: null,
+      message: 'Selected employees belong to different shifts. Please choose employees from the same shift.',
+    }
+  }
+
+  return {
+    mode: 'ready',
+    shift: shiftInfos[0],
+    message: '',
+  }
+})
+
+const sharedShift = computed(() => selectedShiftState.value.shift || null)
+
+const selectedOTOption = computed(() =>
+  shiftOptions.value.find((item) => item.id === form.shiftOtOptionId) || null,
+)
+
+const requestPreview = computed(() => {
+  if (!sharedShift.value || !selectedOTOption.value) return null
+
+  const requestStartTime = String(sharedShift.value.endTime || '').trim()
+  const requestEndTime = addMinutesToHHmm(
+    requestStartTime,
+    Number(selectedOTOption.value.requestedMinutes || 0),
+  )
+
+  return {
+    requestStartTime,
+    requestEndTime,
+    requestedMinutes: Number(selectedOTOption.value.requestedMinutes || 0),
+    requestedHours: Number(
+      selectedOTOption.value.requestedHours ||
+        (Number(selectedOTOption.value.requestedMinutes || 0) / 60).toFixed(2),
+    ),
+  }
+})
+
+async function loadShiftOptionsForSharedShift() {
+  const state = selectedShiftState.value
+
+  if (state.mode !== 'ready' || !state.shift?.shiftId) {
+    clearShiftOptions()
+    return
+  }
+
+  if (lastLoadedShiftId.value === state.shift.shiftId) {
+    return
+  }
+
+  loadingShiftOptions.value = true
+  form.shiftOtOptionId = ''
+
+  try {
+    const res = await getShiftOTOptionsByShift(state.shift.shiftId)
+    const normalized = normalizeShiftOptionsResponse(res)
+
+    shiftOptions.value = normalized.items
+    lastLoadedShiftId.value = state.shift.shiftId
+
+    if (shiftOptions.value.length === 1) {
+      form.shiftOtOptionId = shiftOptions.value[0].id
+    }
+  } catch (error) {
+    clearShiftOptions()
+    toast.add({
+      severity: 'error',
+      summary: 'OT options failed',
+      detail:
+        error?.response?.data?.message ||
+        error?.message ||
+        'Unable to load OT options for the selected shift.',
+      life: 3500,
+    })
+  } finally {
+    loadingShiftOptions.value = false
+  }
+}
+
+watch(
+  () => selectedShiftState.value.mode === 'ready' ? selectedShiftState.value.shift?.shiftId : '',
+  async (shiftId, oldShiftId) => {
+    if (!shiftId) {
+      clearShiftOptions()
+      return
+    }
+
+    if (shiftId !== oldShiftId) {
+      clearShiftOptions()
+    }
+
+    await loadShiftOptionsForSharedShift()
+  },
+  { immediate: true },
+)
 
 function buildPayload() {
   return {
     employeeIds: selectedEmployeeIds.value,
     otDate: formatDateYMD(form.otDate),
-    startTime: formatTimeHHmm(form.startTime),
-    endTime: formatTimeHHmm(form.endTime),
-    breakMinutes: Number(form.breakMinutes ?? 0),
+    shiftOtOptionId: String(form.shiftOtOptionId || '').trim(),
     reason: String(form.reason || '').trim(),
     approverEmployeeIds: form.approverEmployeeIds
       .map((id) => String(id).trim())
@@ -277,11 +439,13 @@ function buildPayload() {
 function validateBeforeSubmit(payload) {
   if (!payload.employeeIds.length) return 'Please select at least 1 employee.'
   if (!payload.otDate) return 'Please select OT date.'
-  if (!payload.startTime) return 'Please select start time.'
-  if (!payload.endTime) return 'Please select end time.'
-  if (!Number.isFinite(payload.breakMinutes) || payload.breakMinutes < 0) {
-    return 'Break minutes must be a valid number.'
+  if (selectedShiftState.value.mode === 'missing') {
+    return 'Some selected employees do not have assigned shift information.'
   }
+  if (selectedShiftState.value.mode === 'mixed') {
+    return 'Selected employees must belong to the same shift.'
+  }
+  if (!payload.shiftOtOptionId) return 'Please select OT option.'
   if (!payload.reason) return 'Please enter reason.'
   if (!payload.approverEmployeeIds.length) return 'Please select at least 1 approver.'
   return ''
@@ -345,6 +509,9 @@ onMounted(async () => {
         <h1 class="text-xl font-semibold text-[color:var(--ot-text)]">
           Create OT Request
         </h1>
+        <p class="mt-1 text-sm text-[color:var(--ot-text-muted)]">
+          Select employees, choose one OT option for their shared shift, then submit to the approver chain.
+        </p>
       </div>
 
       <div class="flex flex-wrap items-center gap-2">
@@ -367,6 +534,17 @@ onMounted(async () => {
           </div>
           <div class="mt-1 text-lg font-semibold leading-none text-[color:var(--ot-text)]">
             {{ selectableApproverChain.length }}
+          </div>
+        </div>
+
+        <div
+          class="flex min-w-[92px] flex-col items-center justify-center rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-3 py-2 text-center"
+        >
+          <div class="text-[11px] font-semibold uppercase tracking-[0.14em] text-[color:var(--ot-text-muted)]">
+            OT Option
+          </div>
+          <div class="mt-1 text-sm font-semibold leading-none text-[color:var(--ot-text)]">
+            {{ selectedOTOption?.label || '—' }}
           </div>
         </div>
 
@@ -395,10 +573,183 @@ onMounted(async () => {
           </div>
         </div>
 
-        <OTDetailView
-          :form="form"
-          :selected-employee-count="selectedEmployeeIds.length"
-        />
+        <Card class="ot-create-card">
+          <template #title>
+            OT Option
+          </template>
+
+          <template #content>
+            <div class="flex flex-col gap-4">
+              <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div class="space-y-2">
+                  <label class="text-sm font-medium text-[color:var(--ot-text)]">
+                    OT Date
+                  </label>
+                  <DatePicker
+                    v-model="form.otDate"
+                    dateFormat="yy-mm-dd"
+                    showIcon
+                    class="w-full"
+                    inputClass="w-full"
+                  />
+                </div>
+
+                <div class="space-y-2">
+                  <label class="text-sm font-medium text-[color:var(--ot-text)]">
+                    OT Option
+                  </label>
+                  <Dropdown
+                    v-model="form.shiftOtOptionId"
+                    :options="shiftOptions"
+                    optionLabel="optionLabel"
+                    optionValue="id"
+                    class="w-full"
+                    placeholder="Select OT option"
+                    :loading="loadingShiftOptions"
+                    :disabled="selectedShiftState.mode !== 'ready' || !shiftOptions.length"
+                  />
+                </div>
+              </div>
+
+              <Message
+                v-if="selectedShiftState.mode === 'missing'"
+                severity="warn"
+                :closable="false"
+              >
+                {{ selectedShiftState.message }}
+              </Message>
+
+              <Message
+                v-else-if="selectedShiftState.mode === 'mixed'"
+                severity="warn"
+                :closable="false"
+              >
+                {{ selectedShiftState.message }}
+              </Message>
+
+              <Message
+                v-else-if="selectedEmployeeIds.length && selectedShiftState.mode === 'ready' && !loadingShiftOptions && !shiftOptions.length"
+                severity="warn"
+                :closable="false"
+              >
+                No active OT option is configured for this shift yet.
+              </Message>
+
+              <div
+                v-if="selectedShiftState.mode === 'ready' && sharedShift"
+                class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4"
+              >
+                <div class="ot-info-box">
+                  <div class="ot-info-label">Shift</div>
+                  <div class="ot-info-value">
+                    {{ sharedShift.code || '-' }} {{ sharedShift.name ? `· ${sharedShift.name}` : '' }}
+                  </div>
+                </div>
+
+                <div class="ot-info-box">
+                  <div class="ot-info-label">Shift Type</div>
+                  <div class="ot-info-value">
+                    {{ sharedShift.type || '-' }}
+                  </div>
+                </div>
+
+                <div class="ot-info-box">
+                  <div class="ot-info-label">Shift Start</div>
+                  <div class="ot-info-value">
+                    {{ sharedShift.startTime || '-' }}
+                  </div>
+                </div>
+
+                <div class="ot-info-box">
+                  <div class="ot-info-label">Shift End</div>
+                  <div class="ot-info-value">
+                    {{ sharedShift.endTime || '-' }}
+                  </div>
+                </div>
+              </div>
+
+              <div
+                v-if="requestPreview && selectedOTOption"
+                class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4"
+              >
+                <div class="ot-info-box border-emerald-200 dark:border-emerald-800">
+                  <div class="ot-info-label">Requested Minutes</div>
+                  <div class="ot-info-value">
+                    {{ requestPreview.requestedMinutes }}
+                  </div>
+                </div>
+
+                <div class="ot-info-box border-sky-200 dark:border-sky-800">
+                  <div class="ot-info-label">Requested Duration</div>
+                  <div class="ot-info-value">
+                    {{ formatMinutesLabel(requestPreview.requestedMinutes) }}
+                  </div>
+                </div>
+
+                <div class="ot-info-box border-violet-200 dark:border-violet-800">
+                  <div class="ot-info-label">Request Start</div>
+                  <div class="ot-info-value">
+                    {{ requestPreview.requestStartTime || '-' }}
+                  </div>
+                </div>
+
+                <div class="ot-info-box border-amber-200 dark:border-amber-800">
+                  <div class="ot-info-label">Request End</div>
+                  <div class="ot-info-value">
+                    {{ requestPreview.requestEndTime || '-' }}
+                  </div>
+                </div>
+              </div>
+
+              <div
+                v-if="selectedOTOption?.calculationPolicy"
+                class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-bg)] p-4"
+              >
+                <div class="mb-2 flex flex-wrap items-center gap-2">
+                  <span class="text-sm font-semibold text-[color:var(--ot-text)]">
+                    Calculation Policy
+                  </span>
+                  <Tag
+                    :value="selectedOTOption.calculationPolicy.code || '—'"
+                    severity="info"
+                  />
+                </div>
+
+                <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <div class="text-sm text-[color:var(--ot-text-muted)]">
+                    <span class="font-medium text-[color:var(--ot-text)]">Name:</span>
+                    {{ selectedOTOption.calculationPolicy.name || '-' }}
+                  </div>
+                  <div class="text-sm text-[color:var(--ot-text-muted)]">
+                    <span class="font-medium text-[color:var(--ot-text)]">Min Eligible:</span>
+                    {{ selectedOTOption.calculationPolicy.minEligibleMinutes ?? 0 }} min
+                  </div>
+                  <div class="text-sm text-[color:var(--ot-text-muted)]">
+                    <span class="font-medium text-[color:var(--ot-text)]">Round Unit:</span>
+                    {{ selectedOTOption.calculationPolicy.roundUnitMinutes ?? 0 }} min
+                  </div>
+                  <div class="text-sm text-[color:var(--ot-text-muted)]">
+                    <span class="font-medium text-[color:var(--ot-text)]">Round Method:</span>
+                    {{ selectedOTOption.calculationPolicy.roundMethod || '-' }}
+                  </div>
+                </div>
+              </div>
+
+              <div class="space-y-2">
+                <label class="text-sm font-medium text-[color:var(--ot-text)]">
+                  Reason
+                </label>
+                <Textarea
+                  v-model.trim="form.reason"
+                  rows="5"
+                  autoResize
+                  class="w-full"
+                  placeholder="Why is OT needed?"
+                />
+              </div>
+            </div>
+          </template>
+        </Card>
       </div>
 
       <div class="flex flex-col gap-4">
@@ -414,7 +765,7 @@ onMounted(async () => {
 
         <OTSubmitBar
           :submitting="submitting"
-          :disabled="loadingRequester || loadingApproverChain"
+          :disabled="loadingRequester || loadingApproverChain || loadingShiftOptions"
           @submit="submit"
           @back="goBack"
         />
@@ -422,3 +773,38 @@ onMounted(async () => {
     </div>
   </div>
 </template>
+
+<style scoped>
+:deep(.ot-create-card .p-card-body) {
+  padding: 1rem !important;
+}
+
+:deep(.ot-create-card .p-card-title) {
+  font-size: 1rem !important;
+  font-weight: 700 !important;
+  color: var(--ot-text) !important;
+}
+
+.ot-info-box {
+  border: 1px solid var(--ot-border);
+  background: var(--ot-bg);
+  border-radius: 1rem;
+  padding: 0.9rem;
+}
+
+.ot-info-label {
+  margin-bottom: 0.3rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ot-text-muted);
+}
+
+.ot-info-value {
+  word-break: break-word;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--ot-text);
+}
+</style>

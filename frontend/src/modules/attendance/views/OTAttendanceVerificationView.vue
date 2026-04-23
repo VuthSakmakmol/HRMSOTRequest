@@ -1,3 +1,4 @@
+
 <!-- frontend/src/modules/attendance/views/OTAttendanceVerificationView.vue -->
 <script setup>
 import { computed, onMounted, ref } from 'vue'
@@ -7,20 +8,30 @@ import Button from 'primevue/button'
 import Card from 'primevue/card'
 import Column from 'primevue/column'
 import DataTable from 'primevue/datatable'
+import IconField from 'primevue/iconfield'
+import InputIcon from 'primevue/inputicon'
+import InputText from 'primevue/inputtext'
 import Tag from 'primevue/tag'
 import { useToast } from 'primevue/usetoast'
 
 import { verifyOTAttendance } from '@/modules/attendance/attendance.api'
+import { getOTRequests } from '@/modules/ot/ot.api'
 
 const route = useRoute()
 const router = useRouter()
 const toast = useToast()
 
 const loading = ref(false)
+const searchLoading = ref(false)
 const payload = ref(null)
+
+const requestNoSearch = ref('')
+const searchResults = ref([])
+const selectedOtRequestId = ref('')
 
 const otRequestId = computed(() => {
   return (
+    String(selectedOtRequestId.value || '').trim() ||
     String(route.params.otRequestId || '').trim() ||
     String(route.params.id || '').trim() ||
     String(route.query.otRequestId || '').trim() ||
@@ -38,53 +49,216 @@ const shiftMismatchEmployees = computed(() => verification.value?.shiftMismatchE
 const pendingReviewEmployees = computed(() => verification.value?.pendingReviewEmployees || [])
 const notEligibleEmployees = computed(() => verification.value?.notEligibleEmployees || [])
 
-const summaryCards = computed(() => {
-  return [
-    {
-      label: 'Requested',
-      value: Number(verification.value?.requestedEmployeeCount || 0),
-      tone: 'bg-slate-50 text-slate-700 dark:bg-slate-900/40 dark:text-slate-200',
-    },
-    {
-      label: 'Approved',
-      value: Number(verification.value?.approvedEmployeeCount || 0),
-      tone: 'bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300',
-    },
-    {
-      label: 'Attended',
-      value: Number(verification.value?.actualAttendedCount || 0),
-      tone: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300',
-    },
-    {
-      label: 'Absent From Approved',
-      value: Number(verification.value?.absentFromApprovedCount || 0),
-      tone: 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300',
-    },
-    {
-      label: 'Shift Mismatch',
-      value: Number(verification.value?.shiftMismatchCount || 0),
-      tone: 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300',
-    },
-    {
-      label: 'Pending Review',
-      value: Number(verification.value?.pendingReviewCount || 0),
-      tone: 'bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300',
-    },
-    {
-      label: 'Not Eligible',
-      value: Number(verification.value?.notEligibleCount || 0),
-      tone: 'bg-orange-50 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300',
-    },
-    {
-      label: 'Attended Not Approved',
-      value: Number(verification.value?.attendedButNotApprovedCount || 0),
-      tone: 'bg-cyan-50 text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-300',
-    },
-  ]
-})
+function toPositiveNumber(value) {
+  const n = Number(value)
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
+function normalizePayload(res) {
+  return res?.data?.data || res?.data || {}
+}
+
+function normalizeItems(payloadValue) {
+  return Array.isArray(payloadValue?.items) ? payloadValue.items : []
+}
+
+function normalizeTimeValue(value) {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+
+  const timeMatch = raw.match(/(\d{1,2}):(\d{2})(?::\d{2})?$/)
+  if (timeMatch) {
+    const hh = String(Number(timeMatch[1])).padStart(2, '0')
+    const mm = String(Number(timeMatch[2])).padStart(2, '0')
+    return `${hh}:${mm}`
+  }
+
+  const date = new Date(raw)
+  if (Number.isNaN(date.getTime())) return raw
+
+  const hh = String(date.getHours()).padStart(2, '0')
+  const mm = String(date.getMinutes()).padStart(2, '0')
+  return `${hh}:${mm}`
+}
+
+function timeToMinutes(value) {
+  const normalized = normalizeTimeValue(value)
+  const match = normalized.match(/^(\d{2}):(\d{2})$/)
+  if (!match) return null
+  return Number(match[1]) * 60 + Number(match[2])
+}
+
+function addMinutesToTime(baseTime, addedMinutes) {
+  const base = timeToMinutes(baseTime)
+  const plus = Number(addedMinutes || 0)
+
+  if (base === null || !Number.isFinite(plus)) return '-'
+
+  let total = base + plus
+  total %= 24 * 60
+  if (total < 0) total += 24 * 60
+
+  const hh = String(Math.floor(total / 60)).padStart(2, '0')
+  const mm = String(total % 60).padStart(2, '0')
+  return `${hh}:${mm}`
+}
+
+function diffMinutesFromReference(referenceTime, targetTime) {
+  const reference = timeToMinutes(referenceTime)
+  let target = timeToMinutes(targetTime)
+
+  if (reference === null || target === null) return 0
+
+  if (target < reference) {
+    target += 24 * 60
+  }
+
+  return Math.max(0, target - reference)
+}
 
 function formatNumber(value) {
   return Number(value || 0)
+}
+
+function formatMinutesLabel(value) {
+  const minutes = Math.max(0, Number(value || 0))
+
+  if (!minutes) return '0m'
+
+  const hh = Math.floor(minutes / 60)
+  const mm = minutes % 60
+
+  if (hh && mm) return `${hh}h ${mm}m`
+  if (hh) return `${hh}h`
+  return `${mm}m`
+}
+
+function firstPositiveMinuteValue(...values) {
+  for (const value of values) {
+    const minutes = toPositiveNumber(value)
+    if (minutes > 0) return minutes
+  }
+  return 0
+}
+
+function firstTimeValue(...values) {
+  for (const value of values) {
+    const normalized = normalizeTimeValue(value)
+    if (normalized) return normalized
+  }
+  return ''
+}
+
+function getRequestedOtMinutes(row = {}) {
+  return firstPositiveMinuteValue(
+    row?.requestedMinutes,
+    row?.otRequestedMinutes,
+    row?.approvedMinutes,
+    row?.requestedOtMinutes,
+    verification.value?.requestedMinutes,
+    otRequest.value?.requestedMinutes,
+    otRequest.value?.totalMinutes,
+  )
+}
+
+function getShiftStartTime(row = {}) {
+  return (
+    firstTimeValue(
+      row?.shiftStartTime,
+      row?.approvedShiftStartTime,
+      otRequest.value?.shiftStartTime,
+    ) || '-'
+  )
+}
+
+function getShiftEndTime(row = {}) {
+  return (
+    firstTimeValue(
+      row?.shiftEndTime,
+      row?.approvedShiftEndTime,
+      otRequest.value?.shiftEndTime,
+    ) || '-'
+  )
+}
+
+function getExpectedOtEndTime(row = {}) {
+  const directExpected = firstTimeValue(
+    row?.expectedOtEndTime,
+    row?.expectedEndTime,
+    row?.requestEndTime,
+    otRequest.value?.expectedOtEndTime,
+    otRequest.value?.requestEndTime,
+    otRequest.value?.endTime,
+  )
+
+  if (directExpected) return directExpected
+
+  const shiftEnd = getShiftEndTime(row)
+  const requestedMinutes = getRequestedOtMinutes(row)
+
+  if (shiftEnd === '-' || requestedMinutes <= 0) return '-'
+
+  return addMinutesToTime(shiftEnd, requestedMinutes)
+}
+
+function getClockOutTime(row = {}) {
+  return firstTimeValue(row?.clockOut) || '-'
+}
+
+function getActualOtMinutes(row = {}) {
+  const explicit = firstPositiveMinuteValue(
+    row?.actualOtMinutes,
+    row?.otWorkedMinutes,
+    row?.workedOtMinutes,
+  )
+
+  if (explicit > 0) return explicit
+
+  const shiftEnd = getShiftEndTime(row)
+  const clockOut = getClockOutTime(row)
+
+  if (shiftEnd === '-' || clockOut === '-') return 0
+
+  return diffMinutesFromReference(shiftEnd, clockOut)
+}
+
+function getOtResult(row = {}) {
+  const attendanceStatus = String(row?.attendanceStatus || '').trim().toUpperCase()
+
+  if (attendanceStatus === 'FORGET_SCAN_IN' || attendanceStatus === 'FORGET_SCAN_OUT') {
+    return 'PENDING_REVIEW'
+  }
+
+  const shiftEnd = getShiftEndTime(row)
+  const clockOut = getClockOutTime(row)
+  const requestedMinutes = getRequestedOtMinutes(row)
+  const actualOtMinutes = getActualOtMinutes(row)
+
+  if (shiftEnd === '-') return 'NO_SHIFT_END'
+  if (clockOut === '-') return 'NO_CLOCK_OUT'
+  if (requestedMinutes <= 0) return 'NO_OT_REQUEST'
+
+  if (actualOtMinutes === requestedMinutes) return 'MATCH'
+  if (actualOtMinutes < requestedMinutes) return 'SHORT'
+  return 'EXCEED'
+}
+
+function otResultSeverity(value) {
+  switch (String(value || '').toUpperCase()) {
+    case 'MATCH':
+      return 'success'
+    case 'SHORT':
+    case 'NO_CLOCK_OUT':
+    case 'NO_SHIFT_END':
+      return 'danger'
+    case 'EXCEED':
+      return 'warning'
+    case 'PENDING_REVIEW':
+    case 'NO_OT_REQUEST':
+      return 'info'
+    default:
+      return 'secondary'
+  }
 }
 
 function statusSeverity(value) {
@@ -137,14 +311,60 @@ function personLabel(row) {
   return code || name || '-'
 }
 
+const requestRequestedOtMinutes = computed(() => getRequestedOtMinutes())
+const requestRequestedOtLabel = computed(() => formatMinutesLabel(requestRequestedOtMinutes.value))
+const requestShiftStartTime = computed(() => getShiftStartTime())
+const requestShiftEndTime = computed(() => getShiftEndTime())
+const requestExpectedOtEndTime = computed(() => getExpectedOtEndTime())
+
+const summaryCards = computed(() => {
+  return [
+    {
+      label: 'Requested',
+      value: Number(verification.value?.requestedEmployeeCount || 0),
+      tone: 'bg-slate-50 text-slate-700 dark:bg-slate-900/40 dark:text-slate-200',
+    },
+    {
+      label: 'Approved',
+      value: Number(verification.value?.approvedEmployeeCount || 0),
+      tone: 'bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300',
+    },
+    {
+      label: 'Attended',
+      value: Number(verification.value?.actualAttendedCount || 0),
+      tone: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300',
+    },
+    {
+      label: 'Absent From Approved',
+      value: Number(verification.value?.absentFromApprovedCount || 0),
+      tone: 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300',
+    },
+    {
+      label: 'Shift Mismatch',
+      value: Number(verification.value?.shiftMismatchCount || 0),
+      tone: 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300',
+    },
+    {
+      label: 'Pending Review',
+      value: Number(verification.value?.pendingReviewCount || 0),
+      tone: 'bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300',
+    },
+    {
+      label: 'Not Eligible',
+      value: Number(verification.value?.notEligibleCount || 0),
+      tone: 'bg-orange-50 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300',
+    },
+    {
+      label: 'Attended Not Approved',
+      value: Number(verification.value?.attendedButNotApprovedCount || 0),
+      tone: 'bg-cyan-50 text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-300',
+    },
+  ]
+})
+
 async function loadData() {
   if (!otRequestId.value) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Missing OT request id',
-      detail: 'Cannot load OT attendance verification without OT request id.',
-      life: 3500,
-    })
+    payload.value = null
     return
   }
 
@@ -167,6 +387,85 @@ async function loadData() {
   }
 }
 
+async function searchByRequestNo() {
+  const keyword = String(requestNoSearch.value || '').trim()
+
+  if (!keyword) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Request No required',
+      detail: 'Please enter OT request number first.',
+      life: 2500,
+    })
+    return
+  }
+
+  searchLoading.value = true
+  searchResults.value = []
+
+  try {
+    const response = await getOTRequests({
+      page: 1,
+      limit: 10,
+      search: keyword,
+      sortBy: 'createdAt',
+      sortOrder: 'desc',
+    })
+
+    const payloadValue = normalizePayload(response)
+    const items = normalizeItems(payloadValue)
+
+    searchResults.value = items
+
+    const exactMatch = items.find(
+      (item) =>
+        String(item?.requestNo || '').trim().toLowerCase() === keyword.toLowerCase(),
+    )
+
+    if (exactMatch) {
+      await pickRequest(exactMatch)
+      return
+    }
+
+    if (!items.length) {
+      toast.add({
+        severity: 'warn',
+        summary: 'Not found',
+        detail: 'No OT request found for that request number.',
+        life: 3000,
+      })
+    }
+  } catch (error) {
+    toast.add({
+      severity: 'error',
+      summary: 'Search failed',
+      detail:
+        error?.response?.data?.message ||
+        error?.message ||
+        'Failed to search OT request.',
+      life: 3500,
+    })
+  } finally {
+    searchLoading.value = false
+  }
+}
+
+async function pickRequest(row) {
+  const id = String(row?._id || row?.id || '').trim()
+  if (!id) return
+
+  selectedOtRequestId.value = id
+  requestNoSearch.value = String(row?.requestNo || '').trim()
+  await loadData()
+}
+
+function clearSearch() {
+  requestNoSearch.value = ''
+  searchResults.value = []
+  selectedOtRequestId.value = ''
+  payload.value = null
+}
+
 function goBack() {
   if (window.history.length > 1) {
     router.back()
@@ -177,7 +476,9 @@ function goBack() {
 }
 
 onMounted(() => {
-  loadData()
+  if (otRequestId.value) {
+    loadData()
+  }
 })
 </script>
 
@@ -201,7 +502,7 @@ onMounted(() => {
                 OT Verification Summary
               </h1>
               <p class="mt-1 max-w-3xl text-sm leading-6 text-surface-600 dark:text-surface-300">
-                Compare OT requested and approved employees against imported attendance reality.
+                Search by OT Request No, then verify Shift End, Requested OT, Expected OT End, and Actual Clock Out together.
               </p>
             </div>
           </div>
@@ -218,12 +519,94 @@ onMounted(() => {
               label="Refresh"
               icon="pi pi-refresh"
               :loading="loading"
+              :disabled="!otRequestId"
               @click="loadData"
             />
           </div>
         </div>
+      </section>
 
-        <div class="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
+      <Card class="overflow-hidden rounded-3xl shadow-sm">
+        <template #content>
+          <div class="flex flex-col gap-4">
+            <div class="flex flex-col gap-3 lg:flex-row lg:items-center">
+              <IconField class="w-full lg:w-[360px]">
+                <InputIcon class="pi pi-search" />
+                <InputText
+                  v-model.trim="requestNoSearch"
+                  class="w-full"
+                  placeholder="Search by OT Request No"
+                  @keyup.enter="searchByRequestNo"
+                />
+              </IconField>
+
+              <div class="flex flex-wrap gap-2">
+                <Button
+                  label="Search Request No"
+                  icon="pi pi-search"
+                  :loading="searchLoading"
+                  @click="searchByRequestNo"
+                />
+                <Button
+                  label="Clear"
+                  icon="pi pi-refresh"
+                  severity="secondary"
+                  outlined
+                  @click="clearSearch"
+                />
+              </div>
+            </div>
+
+            <div class="text-sm text-surface-500 dark:text-surface-400">
+              Users can search by request number here. No need to remember Mongo ID.
+            </div>
+
+            <DataTable
+              v-if="searchResults.length"
+              :value="searchResults"
+              dataKey="_id"
+              responsiveLayout="scroll"
+              stripedRows
+              size="small"
+            >
+              <Column field="requestNo" header="Request No" style="min-width: 10rem" />
+              <Column field="otDate" header="OT Date" style="min-width: 9rem" />
+              <Column field="status" header="Status" style="min-width: 8rem">
+                <template #body="{ data }">
+                  <Tag :value="data.status || '-'" :severity="statusSeverity(data.status)" />
+                </template>
+              </Column>
+              <Column field="dayType" header="Day Type" style="min-width: 8rem">
+                <template #body="{ data }">
+                  <Tag :value="data.dayType || '-'" :severity="dayTypeSeverity(data.dayType)" />
+                </template>
+              </Column>
+              <Column header="Action" style="min-width: 10rem">
+                <template #body="{ data }">
+                  <Button
+                    label="Verify"
+                    icon="pi pi-check-square"
+                    size="small"
+                    severity="success"
+                    outlined
+                    @click="pickRequest(data)"
+                  />
+                </template>
+              </Column>
+            </DataTable>
+          </div>
+        </template>
+      </Card>
+
+      <div
+        v-if="loading && !payload"
+        class="rounded-3xl border border-surface-200 bg-white px-4 py-10 text-center text-sm text-surface-500 shadow-sm dark:border-surface-800 dark:bg-surface-900 dark:text-surface-400"
+      >
+        Loading OT attendance verification...
+      </div>
+
+      <template v-else-if="payload">
+        <section class="mt-0 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
           <div
             v-for="card in summaryCards"
             :key="card.label"
@@ -233,153 +616,78 @@ onMounted(() => {
             <div class="text-xs font-medium opacity-80">{{ card.label }}</div>
             <div class="mt-1 text-xl font-bold">{{ card.value }}</div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <Card class="overflow-hidden rounded-3xl shadow-sm">
-        <template #content>
-          <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <div class="rounded-2xl border border-surface-200 p-4 dark:border-surface-700">
-              <div class="text-xs text-surface-500 dark:text-surface-400">Request No</div>
-              <div class="mt-1 font-semibold text-surface-900 dark:text-surface-0">
-                {{ otRequest.requestNo || '-' }}
-              </div>
-            </div>
-
-            <div class="rounded-2xl border border-surface-200 p-4 dark:border-surface-700">
-              <div class="text-xs text-surface-500 dark:text-surface-400">Requester</div>
-              <div class="mt-1 font-semibold text-surface-900 dark:text-surface-0">
-                {{ otRequest.requesterEmployeeNo || '-' }} · {{ otRequest.requesterName || '-' }}
-              </div>
-            </div>
-
-            <div class="rounded-2xl border border-surface-200 p-4 dark:border-surface-700">
-              <div class="text-xs text-surface-500 dark:text-surface-400">OT Date</div>
-              <div class="mt-2 flex flex-wrap items-center gap-2">
-                <span class="font-semibold text-surface-900 dark:text-surface-0">
-                  {{ otRequest.otDate || '-' }}
-                </span>
-                <Tag
-                  :value="otRequest.dayType || '-'"
-                  :severity="dayTypeSeverity(otRequest.dayType)"
-                />
-              </div>
-            </div>
-
-            <div class="rounded-2xl border border-surface-200 p-4 dark:border-surface-700">
-              <div class="text-xs text-surface-500 dark:text-surface-400">Request Status</div>
-              <div class="mt-2 flex flex-wrap items-center gap-2">
-                <Tag
-                  :value="otRequest.status || '-'"
-                  :severity="statusSeverity(otRequest.status)"
-                />
-                <Tag
-                  v-if="otRequest.requesterConfirmationStatus"
-                  :value="otRequest.requesterConfirmationStatus"
-                  severity="info"
-                />
-              </div>
-            </div>
-          </div>
-        </template>
-      </Card>
-
-      <Card class="overflow-hidden rounded-3xl shadow-sm">
-        <template #title>
-          <div class="flex items-center justify-between gap-3">
-            <span>Attended Employees</span>
-            <Tag :value="String(formatNumber(verification.actualAttendedCount))" severity="success" />
-          </div>
-        </template>
-        <template #content>
-          <DataTable
-            :value="attendedEmployees"
-            :loading="loading"
-            responsiveLayout="scroll"
-            scrollable
-            stripedRows
-            dataKey="employeeId"
-          >
-            <template #empty>
-              <div class="py-8 text-center text-sm text-surface-500 dark:text-surface-400">
-                No attended employees found.
-              </div>
-            </template>
-
-            <Column header="Employee" style="min-width: 15rem">
-              <template #body="{ data }">
-                <div class="font-medium text-surface-900 dark:text-surface-0">
-                  {{ personLabel(data) }}
-                </div>
-              </template>
-            </Column>
-
-            <Column field="clockIn" header="Clock In" style="min-width: 7rem" />
-            <Column field="clockOut" header="Clock Out" style="min-width: 7rem" />
-
-            <Column header="Attendance Status" style="min-width: 10rem">
-              <template #body="{ data }">
-                <Tag
-                  :value="data.attendanceStatus || '-'"
-                  :severity="statusSeverity(data.attendanceStatus)"
-                />
-              </template>
-            </Column>
-
-            <Column field="shiftName" header="Shift" style="min-width: 10rem" />
-            <Column field="shiftStartTime" header="Shift Start" style="min-width: 7rem" />
-            <Column field="shiftEndTime" header="Shift End" style="min-width: 7rem" />
-            <Column field="workedMinutes" header="Worked Min" style="min-width: 7rem" />
-            <Column field="lateMinutes" header="Late Min" style="min-width: 7rem" />
-            <Column field="earlyOutMinutes" header="Early Out" style="min-width: 7rem" />
-          </DataTable>
-        </template>
-      </Card>
-
-      <div class="grid grid-cols-1 gap-5 xl:grid-cols-2">
         <Card class="overflow-hidden rounded-3xl shadow-sm">
-          <template #title>
-            <div class="flex items-center justify-between gap-3">
-              <span>Absent From Approved OT</span>
-              <Tag :value="String(formatNumber(verification.absentFromApprovedCount))" severity="danger" />
-            </div>
-          </template>
           <template #content>
-            <DataTable
-              :value="absentFromApproved"
-              :loading="loading"
-              responsiveLayout="scroll"
-              scrollable
-              stripedRows
-              dataKey="employeeId"
-            >
-              <template #empty>
-                <div class="py-8 text-center text-sm text-surface-500 dark:text-surface-400">
-                  No absent approved employees.
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
+              <div class="rounded-2xl border border-surface-200 p-4 dark:border-surface-700">
+                <div class="text-xs text-surface-500 dark:text-surface-400">Request No</div>
+                <div class="mt-1 font-semibold text-surface-900 dark:text-surface-0">
+                  {{ otRequest.requestNo || '-' }}
                 </div>
-              </template>
+              </div>
 
-              <Column header="Employee" style="min-width: 15rem">
-                <template #body="{ data }">
-                  <div class="font-medium text-surface-900 dark:text-surface-0">
-                    {{ personLabel(data) }}
-                  </div>
-                </template>
-              </Column>
-            </DataTable>
+              <div class="rounded-2xl border border-surface-200 p-4 dark:border-surface-700">
+                <div class="text-xs text-surface-500 dark:text-surface-400">Requester</div>
+                <div class="mt-1 font-semibold text-surface-900 dark:text-surface-0">
+                  {{ otRequest.requesterEmployeeNo || '-' }} · {{ otRequest.requesterName || '-' }}
+                </div>
+              </div>
+
+              <div class="rounded-2xl border border-surface-200 p-4 dark:border-surface-700">
+                <div class="text-xs text-surface-500 dark:text-surface-400">OT Date</div>
+                <div class="mt-2 flex flex-wrap items-center gap-2">
+                  <span class="font-semibold text-surface-900 dark:text-surface-0">
+                    {{ otRequest.otDate || '-' }}
+                  </span>
+                  <Tag
+                    :value="otRequest.dayType || '-'"
+                    :severity="dayTypeSeverity(otRequest.dayType)"
+                  />
+                </div>
+              </div>
+
+              <div class="rounded-2xl border border-surface-200 p-4 dark:border-surface-700">
+                <div class="text-xs text-surface-500 dark:text-surface-400">Shift</div>
+                <div class="mt-1 font-semibold text-surface-900 dark:text-surface-0">
+                  {{ requestShiftStartTime }} - {{ requestShiftEndTime }}
+                </div>
+              </div>
+
+              <div class="rounded-2xl border border-surface-200 p-4 dark:border-surface-700">
+                <div class="text-xs text-surface-500 dark:text-surface-400">Requested OT</div>
+                <div class="mt-1 font-semibold text-surface-900 dark:text-surface-0">
+                  {{ requestRequestedOtLabel }}
+                </div>
+              </div>
+
+              <div class="rounded-2xl border border-surface-200 p-4 dark:border-surface-700">
+                <div class="text-xs text-surface-500 dark:text-surface-400">Expected OT End</div>
+                <div class="mt-2 flex flex-wrap items-center gap-2">
+                  <span class="font-semibold text-surface-900 dark:text-surface-0">
+                    {{ requestExpectedOtEndTime }}
+                  </span>
+                  <Tag
+                    :value="otRequest.status || '-'"
+                    :severity="statusSeverity(otRequest.status)"
+                  />
+                </div>
+              </div>
+            </div>
           </template>
         </Card>
 
         <Card class="overflow-hidden rounded-3xl shadow-sm">
           <template #title>
             <div class="flex items-center justify-between gap-3">
-              <span>Attended But Not Approved</span>
-              <Tag :value="String(formatNumber(verification.attendedButNotApprovedCount))" severity="info" />
+              <span>Attended Employees</span>
+              <Tag :value="String(formatNumber(verification.actualAttendedCount))" severity="success" />
             </div>
           </template>
           <template #content>
             <DataTable
-              :value="attendedButNotApproved"
+              :value="attendedEmployees"
               :loading="loading"
               responsiveLayout="scroll"
               scrollable
@@ -388,7 +696,7 @@ onMounted(() => {
             >
               <template #empty>
                 <div class="py-8 text-center text-sm text-surface-500 dark:text-surface-400">
-                  No employees found in this group.
+                  No attended employees found.
                 </div>
               </template>
 
@@ -399,81 +707,267 @@ onMounted(() => {
                   </div>
                 </template>
               </Column>
-              <Column field="clockIn" header="Clock In" style="min-width: 7rem" />
-              <Column field="clockOut" header="Clock Out" style="min-width: 7rem" />
-              <Column header="Attendance Status" style="min-width: 10rem">
-                <template #body="{ data }">
-                  <Tag
-                    :value="data.attendanceStatus || '-'"
-                    :severity="statusSeverity(data.attendanceStatus)"
-                  />
-                </template>
-              </Column>
-            </DataTable>
-          </template>
-        </Card>
 
-        <Card class="overflow-hidden rounded-3xl shadow-sm">
-          <template #title>
-            <div class="flex items-center justify-between gap-3">
-              <span>Shift Mismatch</span>
-              <Tag :value="String(formatNumber(verification.shiftMismatchCount))" severity="warning" />
-            </div>
-          </template>
-          <template #content>
-            <DataTable
-              :value="shiftMismatchEmployees"
-              :loading="loading"
-              responsiveLayout="scroll"
-              scrollable
-              stripedRows
-              dataKey="employeeId"
-            >
-              <template #empty>
-                <div class="py-8 text-center text-sm text-surface-500 dark:text-surface-400">
-                  No shift mismatch employees.
-                </div>
-              </template>
-
-              <Column header="Employee" style="min-width: 15rem">
-                <template #body="{ data }">
-                  <div class="font-medium text-surface-900 dark:text-surface-0">
-                    {{ personLabel(data) }}
-                  </div>
-                </template>
-              </Column>
               <Column field="clockIn" header="Clock In" style="min-width: 7rem" />
-              <Column field="clockOut" header="Clock Out" style="min-width: 7rem" />
-              <Column field="shiftName" header="Shift" style="min-width: 10rem" />
-              <Column header="Shift Match" style="min-width: 8rem">
+
+              <Column header="Shift End" style="min-width: 7rem">
                 <template #body="{ data }">
-                  <Tag
-                    :value="data.shiftMatchStatus || '-'"
-                    :severity="statusSeverity(data.shiftMatchStatus)"
-                  />
+                  {{ getShiftEndTime(data) }}
                 </template>
               </Column>
-              <Column header="Reason" style="min-width: 16rem">
+
+              <Column header="Requested OT" style="min-width: 8rem">
                 <template #body="{ data }">
-                  <span class="text-sm text-surface-600 dark:text-surface-300">
-                    {{ (data.validationIssues || []).join(', ') || '-' }}
+                  {{ formatMinutesLabel(getRequestedOtMinutes(data)) }}
+                </template>
+              </Column>
+
+              <Column header="Expected OT End" style="min-width: 9rem">
+                <template #body="{ data }">
+                  <span class="font-semibold text-surface-900 dark:text-surface-0">
+                    {{ getExpectedOtEndTime(data) }}
                   </span>
                 </template>
               </Column>
+
+              <Column header="Actual Clock Out" style="min-width: 8rem">
+                <template #body="{ data }">
+                  <span class="font-semibold text-surface-900 dark:text-surface-0">
+                    {{ getClockOutTime(data) }}
+                  </span>
+                </template>
+              </Column>
+
+              <Column header="Actual OT" style="min-width: 8rem">
+                <template #body="{ data }">
+                  {{ formatMinutesLabel(getActualOtMinutes(data)) }}
+                </template>
+              </Column>
+
+              <Column header="OT Result" style="min-width: 9rem">
+                <template #body="{ data }">
+                  <Tag
+                    :value="getOtResult(data)"
+                    :severity="otResultSeverity(getOtResult(data))"
+                  />
+                </template>
+              </Column>
+
+              <Column header="Attendance Status" style="min-width: 10rem">
+                <template #body="{ data }">
+                  <Tag
+                    :value="data.attendanceStatus || '-'"
+                    :severity="statusSeverity(data.attendanceStatus)"
+                  />
+                </template>
+              </Column>
+
+              <Column field="shiftName" header="Shift" style="min-width: 10rem" />
+              <Column field="shiftStartTime" header="Shift Start" style="min-width: 7rem" />
+              <Column field="workedMinutes" header="Worked Min" style="min-width: 7rem" />
+              <Column field="lateMinutes" header="Late Min" style="min-width: 7rem" />
+              <Column field="earlyOutMinutes" header="Early Out" style="min-width: 7rem" />
             </DataTable>
           </template>
         </Card>
 
+        <div class="grid grid-cols-1 gap-5 xl:grid-cols-2">
+          <Card class="overflow-hidden rounded-3xl shadow-sm">
+            <template #title>
+              <div class="flex items-center justify-between gap-3">
+                <span>Absent From Approved OT</span>
+                <Tag :value="String(formatNumber(verification.absentFromApprovedCount))" severity="danger" />
+              </div>
+            </template>
+            <template #content>
+              <DataTable
+                :value="absentFromApproved"
+                :loading="loading"
+                responsiveLayout="scroll"
+                scrollable
+                stripedRows
+                dataKey="employeeId"
+              >
+                <template #empty>
+                  <div class="py-8 text-center text-sm text-surface-500 dark:text-surface-400">
+                    No absent approved employees.
+                  </div>
+                </template>
+
+                <Column header="Employee" style="min-width: 15rem">
+                  <template #body="{ data }">
+                    <div class="font-medium text-surface-900 dark:text-surface-0">
+                      {{ personLabel(data) }}
+                    </div>
+                  </template>
+                </Column>
+              </DataTable>
+            </template>
+          </Card>
+
+          <Card class="overflow-hidden rounded-3xl shadow-sm">
+            <template #title>
+              <div class="flex items-center justify-between gap-3">
+                <span>Attended But Not Approved</span>
+                <Tag :value="String(formatNumber(verification.attendedButNotApprovedCount))" severity="info" />
+              </div>
+            </template>
+            <template #content>
+              <DataTable
+                :value="attendedButNotApproved"
+                :loading="loading"
+                responsiveLayout="scroll"
+                scrollable
+                stripedRows
+                dataKey="employeeId"
+              >
+                <template #empty>
+                  <div class="py-8 text-center text-sm text-surface-500 dark:text-surface-400">
+                    No employees found in this group.
+                  </div>
+                </template>
+
+                <Column header="Employee" style="min-width: 15rem">
+                  <template #body="{ data }">
+                    <div class="font-medium text-surface-900 dark:text-surface-0">
+                      {{ personLabel(data) }}
+                    </div>
+                  </template>
+                </Column>
+                <Column field="clockIn" header="Clock In" style="min-width: 7rem" />
+                <Column field="clockOut" header="Clock Out" style="min-width: 7rem" />
+                <Column header="Attendance Status" style="min-width: 10rem">
+                  <template #body="{ data }">
+                    <Tag
+                      :value="data.attendanceStatus || '-'"
+                      :severity="statusSeverity(data.attendanceStatus)"
+                    />
+                  </template>
+                </Column>
+              </DataTable>
+            </template>
+          </Card>
+
+          <Card class="overflow-hidden rounded-3xl shadow-sm">
+            <template #title>
+              <div class="flex items-center justify-between gap-3">
+                <span>Shift Mismatch</span>
+                <Tag :value="String(formatNumber(verification.shiftMismatchCount))" severity="warning" />
+              </div>
+            </template>
+            <template #content>
+              <DataTable
+                :value="shiftMismatchEmployees"
+                :loading="loading"
+                responsiveLayout="scroll"
+                scrollable
+                stripedRows
+                dataKey="employeeId"
+              >
+                <template #empty>
+                  <div class="py-8 text-center text-sm text-surface-500 dark:text-surface-400">
+                    No shift mismatch employees.
+                  </div>
+                </template>
+
+                <Column header="Employee" style="min-width: 15rem">
+                  <template #body="{ data }">
+                    <div class="font-medium text-surface-900 dark:text-surface-0">
+                      {{ personLabel(data) }}
+                    </div>
+                  </template>
+                </Column>
+                <Column field="clockIn" header="Clock In" style="min-width: 7rem" />
+                <Column field="clockOut" header="Clock Out" style="min-width: 7rem" />
+                <Column field="shiftName" header="Shift" style="min-width: 10rem" />
+                <Column header="Shift Match" style="min-width: 8rem">
+                  <template #body="{ data }">
+                    <Tag
+                      :value="data.shiftMatchStatus || '-'"
+                      :severity="statusSeverity(data.shiftMatchStatus)"
+                    />
+                  </template>
+                </Column>
+                <Column header="Reason" style="min-width: 16rem">
+                  <template #body="{ data }">
+                    <span class="text-sm text-surface-600 dark:text-surface-300">
+                      {{ (data.validationIssues || []).join(', ') || '-' }}
+                    </span>
+                  </template>
+                </Column>
+              </DataTable>
+            </template>
+          </Card>
+
+          <Card class="overflow-hidden rounded-3xl shadow-sm">
+            <template #title>
+              <div class="flex items-center justify-between gap-3">
+                <span>Pending Review</span>
+                <Tag :value="String(formatNumber(verification.pendingReviewCount))" severity="info" />
+              </div>
+            </template>
+            <template #content>
+              <DataTable
+                :value="pendingReviewEmployees"
+                :loading="loading"
+                responsiveLayout="scroll"
+                scrollable
+                stripedRows
+                dataKey="employeeId"
+              >
+                <template #empty>
+                  <div class="py-8 text-center text-sm text-surface-500 dark:text-surface-400">
+                    No pending review employees.
+                  </div>
+                </template>
+
+                <Column header="Employee" style="min-width: 15rem">
+                  <template #body="{ data }">
+                    <div class="font-medium text-surface-900 dark:text-surface-0">
+                      {{ personLabel(data) }}
+                    </div>
+                  </template>
+                </Column>
+                <Column header="Attendance Status" style="min-width: 10rem">
+                  <template #body="{ data }">
+                    <Tag
+                      :value="data.attendanceStatus || '-'"
+                      :severity="statusSeverity(data.attendanceStatus)"
+                    />
+                  </template>
+                </Column>
+                <Column header="Has Clock In" style="min-width: 8rem">
+                  <template #body="{ data }">
+                    <Tag :value="data.hasClockIn === true ? 'YES' : 'NO'" :severity="yesNoSeverity(data.hasClockIn)" />
+                  </template>
+                </Column>
+                <Column header="Has Clock Out" style="min-width: 8rem">
+                  <template #body="{ data }">
+                    <Tag :value="data.hasClockOut === true ? 'YES' : 'NO'" :severity="yesNoSeverity(data.hasClockOut)" />
+                  </template>
+                </Column>
+                <Column header="Reason" style="min-width: 16rem">
+                  <template #body="{ data }">
+                    <span class="text-sm text-surface-600 dark:text-surface-300">
+                      {{ data.derivedStatusReason || (data.validationIssues || []).join(', ') || '-' }}
+                    </span>
+                  </template>
+                </Column>
+              </DataTable>
+            </template>
+          </Card>
+        </div>
+
         <Card class="overflow-hidden rounded-3xl shadow-sm">
           <template #title>
             <div class="flex items-center justify-between gap-3">
-              <span>Pending Review</span>
-              <Tag :value="String(formatNumber(verification.pendingReviewCount))" severity="info" />
+              <span>Not Eligible</span>
+              <Tag :value="String(formatNumber(verification.notEligibleCount))" severity="contrast" />
             </div>
           </template>
           <template #content>
             <DataTable
-              :value="pendingReviewEmployees"
+              :value="notEligibleEmployees"
               :loading="loading"
               responsiveLayout="scroll"
               scrollable
@@ -482,7 +976,7 @@ onMounted(() => {
             >
               <template #empty>
                 <div class="py-8 text-center text-sm text-surface-500 dark:text-surface-400">
-                  No pending review employees.
+                  No not-eligible employees.
                 </div>
               </template>
 
@@ -493,6 +987,7 @@ onMounted(() => {
                   </div>
                 </template>
               </Column>
+
               <Column header="Attendance Status" style="min-width: 10rem">
                 <template #body="{ data }">
                   <Tag
@@ -501,16 +996,7 @@ onMounted(() => {
                   />
                 </template>
               </Column>
-              <Column header="Has Clock In" style="min-width: 8rem">
-                <template #body="{ data }">
-                  <Tag :value="data.hasClockIn === true ? 'YES' : 'NO'" :severity="yesNoSeverity(data.hasClockIn)" />
-                </template>
-              </Column>
-              <Column header="Has Clock Out" style="min-width: 8rem">
-                <template #body="{ data }">
-                  <Tag :value="data.hasClockOut === true ? 'YES' : 'NO'" :severity="yesNoSeverity(data.hasClockOut)" />
-                </template>
-              </Column>
+
               <Column header="Reason" style="min-width: 16rem">
                 <template #body="{ data }">
                   <span class="text-sm text-surface-600 dark:text-surface-300">
@@ -521,57 +1007,14 @@ onMounted(() => {
             </DataTable>
           </template>
         </Card>
+      </template>
+
+      <div
+        v-else
+        class="rounded-3xl border border-dashed border-surface-300 bg-white px-4 py-10 text-center text-sm text-surface-500 shadow-sm dark:border-surface-700 dark:bg-surface-900 dark:text-surface-400"
+      >
+        Search OT request number to verify attendance.
       </div>
-
-      <Card class="overflow-hidden rounded-3xl shadow-sm">
-        <template #title>
-          <div class="flex items-center justify-between gap-3">
-            <span>Not Eligible</span>
-            <Tag :value="String(formatNumber(verification.notEligibleCount))" severity="contrast" />
-          </div>
-        </template>
-        <template #content>
-          <DataTable
-            :value="notEligibleEmployees"
-            :loading="loading"
-            responsiveLayout="scroll"
-            scrollable
-            stripedRows
-            dataKey="employeeId"
-          >
-            <template #empty>
-              <div class="py-8 text-center text-sm text-surface-500 dark:text-surface-400">
-                No not-eligible employees.
-              </div>
-            </template>
-
-            <Column header="Employee" style="min-width: 15rem">
-              <template #body="{ data }">
-                <div class="font-medium text-surface-900 dark:text-surface-0">
-                  {{ personLabel(data) }}
-                </div>
-              </template>
-            </Column>
-
-            <Column header="Attendance Status" style="min-width: 10rem">
-              <template #body="{ data }">
-                <Tag
-                  :value="data.attendanceStatus || '-'"
-                  :severity="statusSeverity(data.attendanceStatus)"
-                />
-              </template>
-            </Column>
-
-            <Column header="Reason" style="min-width: 16rem">
-              <template #body="{ data }">
-                <span class="text-sm text-surface-600 dark:text-surface-300">
-                  {{ data.derivedStatusReason || (data.validationIssues || []).join(', ') || '-' }}
-                </span>
-              </template>
-            </Column>
-          </DataTable>
-        </template>
-      </Card>
     </div>
   </div>
 </template>

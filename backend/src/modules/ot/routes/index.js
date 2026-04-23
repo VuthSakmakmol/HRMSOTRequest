@@ -3,6 +3,8 @@ const express = require('express')
 const otController = require('../controllers/ot.controller')
 const requireAuth = require('../../../middlewares/requireAuth')
 const requirePermission = require('../../../middlewares/requirePermission.middleware')
+const shiftOtOptionRoutes = require('./shiftOtOption.routes')
+const otPolicyRoutes = require('./otPolicy.routes')
 
 const router = express.Router()
 
@@ -63,9 +65,18 @@ router.get(
 )
 
 router.get(
+  '/shift-options/by-shift/:shiftId',
+  requirePermission('OT_REQUEST_CREATE'),
+  otController.getShiftOTOptionsByShift
+)
+
+router.get(
   '/requests/:id',
   requirePermission('OT_REQUEST_VIEW'),
   otController.getOTRequestDetail
 )
+
+router.use('/policies', otPolicyRoutes)
+router.use('/shift-options', shiftOtOptionRoutes)
 
 module.exports = router

@@ -13,14 +13,20 @@ import PositionView from '@/modules/org/views/PositionView.vue'
 import EmployeeView from '@/modules/org/views/EmployeeView.vue'
 import OrgChartView from '@/modules/org/views/OrgChartView.vue'
 import HolidayListView from '@/modules/calendar/views/HolidayListView.vue'
+import ShiftListView from '@/modules/shift/views/ShiftListView.vue'
+
 import OTRequestListView from '@/modules/ot/views/OTRequestListView.vue'
 import OTRequestCreateView from '@/modules/ot/views/OTRequestCreateView.vue'
 import OTApprovalInboxView from '@/modules/ot/views/OTApprovalInboxView.vue'
 import OTRequestDetailView from '@/modules/ot/views/OTRequestDetailView.vue'
 import OTRequestEditView from '@/modules/ot/views/OTRequestEditView.vue'
-import ShiftListView from '@/modules/shift/views/ShiftListView.vue'
+import OTCalculationPolicyListView from '@/modules/ot/views/OTCalculationPolicyListView.vue'
+import ShiftOTOptionListView from '@/modules/ot/views/ShiftOTOptionListView.vue'
+
 import AttendanceImportView from '@/modules/attendance/views/AttendanceImportView.vue'
+import AttendanceRecordsView from '@/modules/attendance/views/AttendanceRecordsView.vue'
 import OTAttendanceVerificationView from '@/modules/attendance/views/OTAttendanceVerificationView.vue'
+
 import ForbiddenView from '@/modules/errors/views/ForbiddenView.vue'
 
 let bootstrapped = false
@@ -177,9 +183,7 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'Organization Chart',
-          requiredAnyPermissions: [
-            'EMPLOYEE_VIEW',
-          ],
+          requiredAnyPermissions: ['EMPLOYEE_VIEW'],
         },
       },
       {
@@ -210,6 +214,10 @@ const routes = [
           ],
         },
       },
+
+      // =========================
+      // OT Request Workflow
+      // =========================
       {
         path: 'ot/requests',
         name: 'ot-request-list',
@@ -232,9 +240,7 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'Create OT Request',
-          requiredAnyPermissions: [
-            'OT_REQUEST_CREATE',
-          ],
+          requiredAnyPermissions: ['OT_REQUEST_CREATE'],
         },
       },
       {
@@ -244,9 +250,7 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'OT Approval Inbox',
-          requiredAnyPermissions: [
-            'OT_REQUEST_APPROVE',
-          ],
+          requiredAnyPermissions: ['OT_REQUEST_APPROVE'],
         },
       },
       {
@@ -271,33 +275,78 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'Edit OT Request',
+          requiredAnyPermissions: ['OT_REQUEST_UPDATE'],
+        },
+      },
+
+      // =========================
+      // OT Master Setup
+      // =========================
+      {
+        path: 'ot/policies',
+        name: 'ot-calculation-policies',
+        component: OTCalculationPolicyListView,
+        meta: {
+          requiresAuth: true,
+          title: 'OT Calculation Policies',
           requiredAnyPermissions: [
+            'OT_REQUEST_VIEW',
+            'OT_REQUEST_CREATE',
             'OT_REQUEST_UPDATE',
           ],
         },
       },
       {
-        path: '/attendance/imports',
+        path: 'ot/shift-options',
+        name: 'shift-ot-options',
+        component: ShiftOTOptionListView,
+        meta: {
+          requiresAuth: true,
+          title: 'Shift OT Options',
+          requiredAnyPermissions: [
+            'OT_REQUEST_VIEW',
+            'OT_REQUEST_CREATE',
+            'OT_REQUEST_UPDATE',
+          ],
+        },
+      },
+
+      // =========================
+      // Attendance
+      // =========================
+      {
+        path: 'attendance/imports',
         name: 'attendance-imports',
         component: AttendanceImportView,
         meta: {
-          title: 'Attendance Import',
           requiresAuth: true,
+          title: 'Attendance Import',
           requiredAnyPermissions: ['ATTENDANCE_VIEW'],
         },
       },
       {
-        path: '/attendance/ot-verification',
-        name: 'attendance-ot-verification',
-        component: OTAttendanceVerificationView,
+        path: 'attendance/records',
+        name: 'attendance-records',
+        component: AttendanceRecordsView,
         meta: {
-          title: 'OT Attendance Verification',
           requiresAuth: true,
-          requiredAnyPermissions: ['ATTENDANCE_VERIFY'],
+          title: 'Attendance Records',
+          requiredAnyPermissions: ['ATTENDANCE_VIEW'],
         },
       },
       {
-        path: '/403',
+        path: 'attendance/ot-verification/:otRequestId?',
+        name: 'attendance-ot-verification',
+        component: OTAttendanceVerificationView,
+        meta: {
+          requiresAuth: true,
+          title: 'OT Attendance Verification',
+          requiredAnyPermissions: ['ATTENDANCE_VERIFY'],
+        },
+      },
+
+      {
+        path: '403',
         name: 'forbidden',
         component: ForbiddenView,
         meta: {

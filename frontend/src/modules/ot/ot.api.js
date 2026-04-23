@@ -32,6 +32,10 @@ export function getAllowedOTApproverChain(employeeId) {
   return api.get(`/ot/requests/allowed-approvers/${employeeId}`)
 }
 
+export function getShiftOTOptionsByShift(shiftId) {
+  return api.get(`/ot/shift-options/by-shift/${shiftId}`)
+}
+
 export function getOTApprovalInbox(params = {}) {
   return api.get('/ot/approvals', { params })
 }

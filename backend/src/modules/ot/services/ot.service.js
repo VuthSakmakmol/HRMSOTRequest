@@ -1,10 +1,16 @@
 // backend/src/modules/ot/services/ot.service.js
 const mongoose = require('mongoose')
 const XLSX = require('xlsx')
+
 const OTRequest = require('../models/OTRequest')
+const Shift = require('../../shift/models/Shift')
+const ShiftOTOption = require('../models/ShiftOTOption')
+const OTCalculationPolicy = require('../models/OTCalculationPolicy')
+
 const Employee = require('../../org/models/Employee')
 const Department = require('../../org/models/Department')
 const Position = require('../../org/models/Position')
+
 const { getDayType } = require('../utils/dayClassifier')
 const Holiday = require('../../calendar/models/Holiday')
 
@@ -25,6 +31,17 @@ function toMinutes(hhmm) {
   const hh = Number(match[1])
   const mm = Number(match[2])
   return hh * 60 + mm
+}
+
+function minutesToHHmm(totalMinutes) {
+  const normalized = ((Number(totalMinutes || 0) % 1440) + 1440) % 1440
+  const hh = Math.floor(normalized / 60)
+  const mm = normalized % 60
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
+}
+
+function addMinutesToHHmm(hhmm, extraMinutes) {
+  return minutesToHHmm(toMinutes(hhmm) + Number(extraMinutes || 0))
 }
 
 function calculateDuration({ startTime, endTime, breakMinutes = 0 }) {
@@ -52,7 +69,6 @@ function calculateDuration({ startTime, endTime, breakMinutes = 0 }) {
   }
 }
 
-// backend/src/modules/ot/services/ot.service.js
 function parseYMDToUtcRange(ymd) {
   const raw = String(ymd || '').trim()
   const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/)
@@ -75,7 +91,7 @@ function parseYMDToUtcRange(ymd) {
 
 async function resolveHolidayDateStrings(dateStrings = []) {
   const uniqueDates = Array.from(
-    new Set((Array.isArray(dateStrings) ? dateStrings : []).map((d) => s(d)).filter(Boolean))
+    new Set((Array.isArray(dateStrings) ? dateStrings : []).map((d) => s(d)).filter(Boolean)),
   )
 
   if (!uniqueDates.length) return []
@@ -131,7 +147,7 @@ function getCollectionIds(items = []) {
 function filterEmployeeSnapshotsByIds(sourceItems = [], allowedIds = []) {
   const allowedIdSet = new Set(normalizeIdArray(allowedIds))
   return (Array.isArray(sourceItems) ? sourceItems : []).filter((item) =>
-    allowedIdSet.has(s(item?.employeeId))
+    allowedIdSet.has(s(item?.employeeId)),
   )
 }
 
@@ -179,21 +195,32 @@ function buildSearchFilter(search) {
       { requestNo: regex },
       { requesterEmployeeNo: regex },
       { requesterName: regex },
+
+      { shiftCode: regex },
+      { shiftName: regex },
+      { shiftType: regex },
+      { shiftOtOptionLabel: regex },
+
       { 'requestedEmployees.employeeCode': regex },
       { 'requestedEmployees.employeeName': regex },
       { 'requestedEmployees.departmentCode': regex },
       { 'requestedEmployees.departmentName': regex },
       { 'requestedEmployees.positionCode': regex },
       { 'requestedEmployees.positionName': regex },
+
       { 'approvedEmployees.employeeCode': regex },
       { 'approvedEmployees.employeeName': regex },
       { 'approvedEmployees.departmentCode': regex },
       { 'approvedEmployees.departmentName': regex },
       { 'approvedEmployees.positionCode': regex },
       { 'approvedEmployees.positionName': regex },
+
       { 'proposedApprovedEmployees.employeeCode': regex },
       { 'proposedApprovedEmployees.employeeName': regex },
+
       { reason: regex },
+      { 'otCalculationPolicySnapshot.code': regex },
+      { 'otCalculationPolicySnapshot.name': regex },
     ],
   }
 }
@@ -379,14 +406,36 @@ function buildRequestSheetRows(doc) {
     ['Request Owner', s(doc.requesterName)],
     ['Requester Employee No', s(doc.requesterEmployeeNo)],
     ['OT Date', s(doc.otDate)],
-    ['Start Time', s(doc.startTime)],
-    ['End Time', s(doc.endTime)],
-    ['Break Minutes', Number(doc.breakMinutes || 0)],
-    ['Total Hours', Number(doc.totalHours || 0)],
     ['Day Type', s(doc.dayType)],
     ['Status', s(doc.status)],
     ['Current Step', Number(doc.currentApprovalStep || 1)],
     ['Reason', s(doc.reason)],
+
+    ['Shift Code', s(doc.shiftCode)],
+    ['Shift Name', s(doc.shiftName)],
+    ['Shift Type', s(doc.shiftType)],
+    ['Shift Start Time', s(doc.shiftStartTime)],
+    ['Shift End Time', s(doc.shiftEndTime)],
+    ['Shift Cross Midnight', doc.shiftCrossMidnight === true ? 'YES' : doc.shiftCrossMidnight === false ? 'NO' : ''],
+
+    ['OT Option', s(doc.shiftOtOptionLabel)],
+    ['Requested Minutes', Number(doc.requestedMinutes || 0)],
+    ['Request Start Time', s(doc.requestStartTime || doc.startTime)],
+    ['Request End Time', s(doc.requestEndTime || doc.endTime)],
+
+    ['Legacy Start Time', s(doc.startTime)],
+    ['Legacy End Time', s(doc.endTime)],
+    ['Break Minutes', Number(doc.breakMinutes || 0)],
+    ['Total Minutes', Number(doc.totalMinutes || 0)],
+    ['Total Hours', Number(doc.totalHours || 0)],
+
+    ['Policy Code', s(doc.otCalculationPolicySnapshot?.code)],
+    ['Policy Name', s(doc.otCalculationPolicySnapshot?.name)],
+    ['Policy Min Eligible Minutes', Number(doc.otCalculationPolicySnapshot?.minEligibleMinutes || 0)],
+    ['Policy Round Unit Minutes', Number(doc.otCalculationPolicySnapshot?.roundUnitMinutes || 0)],
+    ['Policy Round Method', s(doc.otCalculationPolicySnapshot?.roundMethod)],
+    ['Policy Grace After Shift End', Number(doc.otCalculationPolicySnapshot?.graceAfterShiftEndMinutes || 0)],
+
     ['Requested Staff', Number(doc.requestedEmployeeCount || requestedEmployees.length)],
     ['Approved Staff', Number(doc.approvedEmployeeCount || approvedEmployees.length)],
     ['Requester Confirmation', s(doc.requesterConfirmationStatus)],
@@ -424,8 +473,8 @@ function buildRequestSheetRows(doc) {
 function applyRequestSheetLayout(worksheet) {
   worksheet['!cols'] = [
     { wch: 8 },
-    { wch: 18 },
-    { wch: 28 },
+    { wch: 20 },
+    { wch: 30 },
     { wch: 18 },
     { wch: 24 },
     { wch: 18 },
@@ -474,38 +523,252 @@ async function resolveEmployeeSnapshot(employeeId) {
     throw err
   }
 
-  const [department, position] = await Promise.all([
+  const [department, position, shift] = await Promise.all([
     employee.departmentId ? Department.findById(employee.departmentId).lean() : null,
     employee.positionId ? Position.findById(employee.positionId).lean() : null,
+    employee.shiftId ? Shift.findById(employee.shiftId).lean() : null,
   ])
 
   return {
     employee,
     department,
     position,
+    shift,
   }
 }
 
-async function resolveEmployeesSnapshots(employeeIds = []) {
+async function resolveEmployeesSnapshotsWithContext(employeeIds = []) {
   const result = []
 
   for (const employeeId of employeeIds) {
-    const { employee, department, position } = await resolveEmployeeSnapshot(employeeId)
+    const { employee, department, position, shift } = await resolveEmployeeSnapshot(employeeId)
 
     result.push({
-      employeeId: employee._id,
-      employeeCode: s(employee.employeeNo || employee.employeeCode || employee.code),
-      employeeName: s(employee.displayName || employee.employeeName || employee.name),
-      departmentId: department?._id || null,
-      departmentCode: s(department?.code),
-      departmentName: s(department?.name),
-      positionId: position?._id || null,
-      positionCode: s(position?.code),
-      positionName: s(position?.name),
+      snapshot: {
+        employeeId: employee._id,
+        employeeCode: s(employee.employeeNo || employee.employeeCode || employee.code),
+        employeeName: s(employee.displayName || employee.employeeName || employee.name),
+        departmentId: department?._id || null,
+        departmentCode: s(department?.code),
+        departmentName: s(department?.name),
+        positionId: position?._id || null,
+        positionCode: s(position?.code),
+        positionName: s(position?.name),
+      },
+      shift: shift
+        ? {
+            _id: shift._id,
+            code: s(shift.code),
+            name: s(shift.name),
+            type: s(shift.type),
+            startTime: s(shift.startTime),
+            endTime: s(shift.endTime),
+            crossMidnight: shift.crossMidnight === true,
+            isActive: shift.isActive !== false,
+          }
+        : null,
     })
   }
 
   return result
+}
+
+async function resolveEmployeesSnapshots(employeeIds = []) {
+  const items = await resolveEmployeesSnapshotsWithContext(employeeIds)
+  return items.map((item) => item.snapshot)
+}
+
+function assertSharedShiftForOptionBasedOT(employeeContexts = []) {
+  if (!Array.isArray(employeeContexts) || !employeeContexts.length) {
+    const err = new Error('Please select at least 1 employee')
+    err.status = 400
+    throw err
+  }
+
+  const firstShift = employeeContexts[0]?.shift
+
+  if (!firstShift?._id) {
+    const err = new Error('All selected employees must have an assigned shift to use OT option')
+    err.status = 400
+    throw err
+  }
+
+  const firstShiftId = String(firstShift._id)
+
+  for (const item of employeeContexts) {
+    const shift = item?.shift
+
+    if (!shift?._id) {
+      const err = new Error('All selected employees must have an assigned shift to use OT option')
+      err.status = 400
+      throw err
+    }
+
+    if (String(shift._id) !== firstShiftId) {
+      const err = new Error(
+        'All selected employees must belong to the same shift when using OT option',
+      )
+      err.status = 400
+      throw err
+    }
+
+    if (shift.isActive === false) {
+      const err = new Error('Assigned shift is inactive')
+      err.status = 400
+      throw err
+    }
+  }
+
+  return firstShift
+}
+
+async function resolveShiftOtOptionSelection(shiftOtOptionId, sharedShift) {
+  if (!s(shiftOtOptionId) || !mongoose.isValidObjectId(shiftOtOptionId)) {
+    const err = new Error('shiftOtOptionId is invalid')
+    err.status = 400
+    throw err
+  }
+
+  const shiftOtOption = await ShiftOTOption.findById(shiftOtOptionId).lean()
+
+  if (!shiftOtOption || shiftOtOption.isActive === false) {
+    const err = new Error('Selected OT option is not found or inactive')
+    err.status = 404
+    throw err
+  }
+
+  if (String(shiftOtOption.shiftId) !== String(sharedShift._id)) {
+    const err = new Error('Selected OT option does not belong to the employees assigned shift')
+    err.status = 400
+    throw err
+  }
+
+  const calculationPolicy = await OTCalculationPolicy.findById(shiftOtOption.calculationPolicyId).lean()
+
+  if (!calculationPolicy || calculationPolicy.isActive === false) {
+    const err = new Error('OT calculation policy is not found or inactive')
+    err.status = 404
+    throw err
+  }
+
+  return {
+    shiftOtOption,
+    calculationPolicy,
+  }
+}
+
+function buildPolicySnapshot(calculationPolicy) {
+  return {
+    calculationPolicyId: calculationPolicy?._id || null,
+    code: s(calculationPolicy?.code),
+    name: s(calculationPolicy?.name),
+    minEligibleMinutes: Number(calculationPolicy?.minEligibleMinutes || 0),
+    roundUnitMinutes: Number(calculationPolicy?.roundUnitMinutes || 0),
+    roundMethod: s(calculationPolicy?.roundMethod),
+    graceAfterShiftEndMinutes: Number(calculationPolicy?.graceAfterShiftEndMinutes || 0),
+    allowPreShiftOT: calculationPolicy?.allowPreShiftOT === true,
+    allowPostShiftOT: calculationPolicy?.allowPostShiftOT !== false,
+    capByRequestedMinutes: calculationPolicy?.capByRequestedMinutes !== false,
+    treatForgetScanInAsPending: calculationPolicy?.treatForgetScanInAsPending !== false,
+    treatForgetScanOutAsPending: calculationPolicy?.treatForgetScanOutAsPending !== false,
+  }
+}
+
+function buildOptionBasedTiming({ sharedShift, shiftOtOption, calculationPolicy }) {
+  const requestedMinutes = Number(shiftOtOption?.requestedMinutes || 0)
+
+  if (!Number.isInteger(requestedMinutes) || requestedMinutes <= 0) {
+    const err = new Error('Selected OT option requestedMinutes must be greater than zero')
+    err.status = 400
+    throw err
+  }
+
+  const requestStartTime = s(sharedShift?.endTime)
+  const requestEndTime = addMinutesToHHmm(requestStartTime, requestedMinutes)
+
+  return {
+    // legacy compatibility fields
+    startTime: requestStartTime,
+    endTime: requestEndTime,
+    breakMinutes: 0,
+    totalMinutes: requestedMinutes,
+    totalHours: Number((requestedMinutes / 60).toFixed(2)),
+
+    // new structured fields
+    shiftId: sharedShift?._id || null,
+    shiftCode: s(sharedShift?.code),
+    shiftName: s(sharedShift?.name),
+    shiftType: s(sharedShift?.type),
+    shiftStartTime: s(sharedShift?.startTime),
+    shiftEndTime: s(sharedShift?.endTime),
+    shiftCrossMidnight: sharedShift?.crossMidnight === true,
+
+    shiftOtOptionId: shiftOtOption?._id || null,
+    shiftOtOptionLabel: s(shiftOtOption?.label),
+    requestedMinutes,
+
+    requestStartTime,
+    requestEndTime,
+
+    otCalculationPolicyId: calculationPolicy?._id || null,
+    otCalculationPolicySnapshot: buildPolicySnapshot(calculationPolicy),
+  }
+}
+
+function buildManualTiming(payload) {
+  const duration = calculateDuration({
+    startTime: payload.startTime,
+    endTime: payload.endTime,
+    breakMinutes: payload.breakMinutes,
+  })
+
+  return {
+    // legacy/manual fields
+    startTime: s(payload.startTime),
+    endTime: s(payload.endTime),
+    breakMinutes: Number(payload.breakMinutes || 0),
+    totalMinutes: duration.totalMinutes,
+    totalHours: duration.totalHours,
+
+    // new fields cleared for backward compatibility mode
+    shiftId: null,
+    shiftCode: '',
+    shiftName: '',
+    shiftType: '',
+    shiftStartTime: '',
+    shiftEndTime: '',
+    shiftCrossMidnight: null,
+
+    shiftOtOptionId: null,
+    shiftOtOptionLabel: '',
+    requestedMinutes: duration.totalMinutes,
+
+    requestStartTime: s(payload.startTime),
+    requestEndTime: s(payload.endTime),
+
+    otCalculationPolicyId: null,
+    otCalculationPolicySnapshot: {},
+  }
+}
+
+async function buildOTTimingContext(payload, employeeContexts = []) {
+  const shiftOtOptionId = s(payload.shiftOtOptionId)
+
+  if (!shiftOtOptionId) {
+    return buildManualTiming(payload)
+  }
+
+  const sharedShift = assertSharedShiftForOptionBasedOT(employeeContexts)
+  const { shiftOtOption, calculationPolicy } = await resolveShiftOtOptionSelection(
+    shiftOtOptionId,
+    sharedShift,
+  )
+
+  return buildOptionBasedTiming({
+    sharedShift,
+    shiftOtOption,
+    calculationPolicy,
+  })
 }
 
 async function getUpwardApproverChain(employeeId, options = {}) {
@@ -594,9 +857,7 @@ async function resolveApprovalFlow(requesterEmployeeId, approverEmployeeIds = []
   }
 
   const upwardChain = await getUpwardApproverChain(requesterEmployeeId)
-  const orderIndexById = new Map(
-    upwardChain.map((employee, index) => [String(employee._id), index])
-  )
+  const orderIndexById = new Map(upwardChain.map((employee, index) => [String(employee._id), index]))
 
   let previousOrder = -1
   const steps = []
@@ -607,7 +868,7 @@ async function resolveApprovalFlow(requesterEmployeeId, approverEmployeeIds = []
 
     if (order === undefined) {
       const err = new Error(
-        'Selected approver must be from the requester upward organization chain'
+        'Selected approver must be from the requester upward organization chain',
       )
       err.status = 400
       throw err
@@ -652,14 +913,12 @@ async function resolveActorIdentity(authUser, fallback = {}) {
       return {
         employeeId: snapshot.employee._id,
         employeeNo: s(
-          snapshot.employee.employeeNo ||
-            snapshot.employee.employeeCode ||
-            snapshot.employee.code
+          snapshot.employee.employeeNo || snapshot.employee.employeeCode || snapshot.employee.code,
         ),
         employeeName: s(
           snapshot.employee.displayName ||
             snapshot.employee.employeeName ||
-            snapshot.employee.name
+            snapshot.employee.name,
         ),
       }
     } catch {
@@ -730,7 +989,7 @@ function assertCanEditOTRequest(doc, authUser) {
 
   if (hasApprovedStep(doc)) {
     const err = new Error(
-      'This OT request can no longer be edited because it already has an approved step'
+      'This OT request can no longer be edited because it already has an approved step',
     )
     err.status = 400
     throw err
@@ -796,24 +1055,45 @@ function mapListItem(doc, authUser) {
     requesterName: s(doc.requesterName),
 
     otDate: s(doc.otDate),
+
+    // legacy/manual-compatible fields
     startTime: s(doc.startTime),
     endTime: s(doc.endTime),
     breakMinutes: Number(doc.breakMinutes || 0),
     totalMinutes: Number(doc.totalMinutes || 0),
     totalHours: Number(doc.totalHours || 0),
+
+    // new option-based fields
+    shiftId: doc.shiftId ? String(doc.shiftId) : null,
+    shiftCode: s(doc.shiftCode),
+    shiftName: s(doc.shiftName),
+    shiftType: s(doc.shiftType),
+    shiftStartTime: s(doc.shiftStartTime),
+    shiftEndTime: s(doc.shiftEndTime),
+    shiftCrossMidnight: doc.shiftCrossMidnight === true,
+    shiftOtOptionId: doc.shiftOtOptionId ? String(doc.shiftOtOptionId) : null,
+    shiftOtOptionLabel: s(doc.shiftOtOptionLabel),
+    requestedMinutes: Number(doc.requestedMinutes || 0),
+    requestStartTime: s(doc.requestStartTime || doc.startTime),
+    requestEndTime: s(doc.requestEndTime || doc.endTime),
+    otCalculationPolicyId: doc.otCalculationPolicyId ? String(doc.otCalculationPolicyId) : null,
+    otCalculationPolicySnapshot: doc.otCalculationPolicySnapshot || {},
+
     dayType: s(doc.dayType),
     reason: s(doc.reason),
 
     employeeCount: effectiveEmployeeCountForDoc(doc),
     requestedEmployeeCount: Number(
-      doc.requestedEmployeeCount || (Array.isArray(doc.requestedEmployees) ? doc.requestedEmployees.length : 0)
+      doc.requestedEmployeeCount ||
+        (Array.isArray(doc.requestedEmployees) ? doc.requestedEmployees.length : 0),
     ),
     approvedEmployeeCount: Number(
-      doc.approvedEmployeeCount || (Array.isArray(doc.approvedEmployees) ? doc.approvedEmployees.length : 0)
+      doc.approvedEmployeeCount ||
+        (Array.isArray(doc.approvedEmployees) ? doc.approvedEmployees.length : 0),
     ),
     proposedApprovedEmployeeCount: Number(
       doc.proposedApprovedEmployeeCount ||
-        (Array.isArray(doc.proposedApprovedEmployees) ? doc.proposedApprovedEmployees.length : 0)
+        (Array.isArray(doc.proposedApprovedEmployees) ? doc.proposedApprovedEmployees.length : 0),
     ),
 
     status: s(doc.status),
@@ -855,11 +1135,30 @@ function mapDetail(doc, authUser) {
     requesterName: s(doc.requesterName),
 
     otDate: s(doc.otDate),
+
+    // legacy/manual-compatible fields
     startTime: s(doc.startTime),
     endTime: s(doc.endTime),
     breakMinutes: Number(doc.breakMinutes || 0),
     totalMinutes: Number(doc.totalMinutes || 0),
     totalHours: Number(doc.totalHours || 0),
+
+    // new option-based fields
+    shiftId: doc.shiftId ? String(doc.shiftId) : null,
+    shiftCode: s(doc.shiftCode),
+    shiftName: s(doc.shiftName),
+    shiftType: s(doc.shiftType),
+    shiftStartTime: s(doc.shiftStartTime),
+    shiftEndTime: s(doc.shiftEndTime),
+    shiftCrossMidnight: doc.shiftCrossMidnight === true,
+    shiftOtOptionId: doc.shiftOtOptionId ? String(doc.shiftOtOptionId) : null,
+    shiftOtOptionLabel: s(doc.shiftOtOptionLabel),
+    requestedMinutes: Number(doc.requestedMinutes || 0),
+    requestStartTime: s(doc.requestStartTime || doc.startTime),
+    requestEndTime: s(doc.requestEndTime || doc.endTime),
+    otCalculationPolicyId: doc.otCalculationPolicyId ? String(doc.otCalculationPolicyId) : null,
+    otCalculationPolicySnapshot: doc.otCalculationPolicySnapshot || {},
+
     dayType: s(doc.dayType),
     reason: s(doc.reason),
 
@@ -874,7 +1173,7 @@ function mapDetail(doc, authUser) {
     requestedEmployeeCount: Number(doc.requestedEmployeeCount || requestedEmployees.length),
     approvedEmployeeCount: Number(doc.approvedEmployeeCount || approvedEmployees.length),
     proposedApprovedEmployeeCount: Number(
-      doc.proposedApprovedEmployeeCount || proposedApprovedEmployees.length
+      doc.proposedApprovedEmployeeCount || proposedApprovedEmployees.length,
     ),
 
     comparisonSummary: buildComparisonSummary(doc),
@@ -944,13 +1243,10 @@ async function create(payload, authUser, options = {}) {
     throw err
   }
 
-  const requestedEmployees = await resolveEmployeesSnapshots(uniqueEmployeeIds)
+  const employeeContexts = await resolveEmployeesSnapshotsWithContext(uniqueEmployeeIds)
+  const requestedEmployees = employeeContexts.map((item) => item.snapshot)
 
-  const duration = calculateDuration({
-    startTime: payload.startTime,
-    endTime: payload.endTime,
-    breakMinutes: payload.breakMinutes,
-  })
+  const timingContext = await buildOTTimingContext(payload, employeeContexts)
 
   const holidayDates =
     Array.isArray(options.holidays) && options.holidays.length
@@ -963,7 +1259,7 @@ async function create(payload, authUser, options = {}) {
 
   const approvalFlow = await resolveApprovalFlow(
     requesterEmployeeId,
-    payload.approverEmployeeIds || []
+    payload.approverEmployeeIds || [],
   )
 
   const doc = await OTRequest.create({
@@ -973,12 +1269,12 @@ async function create(payload, authUser, options = {}) {
     requesterEmployeeNo: s(
       requesterSnapshot.employee.employeeNo ||
         requesterSnapshot.employee.employeeCode ||
-        requesterSnapshot.employee.code
+        requesterSnapshot.employee.code,
     ),
     requesterName: s(
       requesterSnapshot.employee.displayName ||
         requesterSnapshot.employee.employeeName ||
-        requesterSnapshot.employee.name
+        requesterSnapshot.employee.name,
     ),
 
     requestedEmployees,
@@ -991,11 +1287,29 @@ async function create(payload, authUser, options = {}) {
     proposedApprovedEmployeeCount: 0,
 
     otDate: s(payload.otDate),
-    startTime: s(payload.startTime),
-    endTime: s(payload.endTime),
-    breakMinutes: Number(payload.breakMinutes || 0),
-    totalMinutes: duration.totalMinutes,
-    totalHours: duration.totalHours,
+
+    startTime: timingContext.startTime,
+    endTime: timingContext.endTime,
+    breakMinutes: timingContext.breakMinutes,
+    totalMinutes: timingContext.totalMinutes,
+    totalHours: timingContext.totalHours,
+
+    shiftId: timingContext.shiftId,
+    shiftCode: timingContext.shiftCode,
+    shiftName: timingContext.shiftName,
+    shiftType: timingContext.shiftType,
+    shiftStartTime: timingContext.shiftStartTime,
+    shiftEndTime: timingContext.shiftEndTime,
+    shiftCrossMidnight: timingContext.shiftCrossMidnight,
+
+    shiftOtOptionId: timingContext.shiftOtOptionId,
+    shiftOtOptionLabel: timingContext.shiftOtOptionLabel,
+    requestedMinutes: timingContext.requestedMinutes,
+    requestStartTime: timingContext.requestStartTime,
+    requestEndTime: timingContext.requestEndTime,
+    otCalculationPolicyId: timingContext.otCalculationPolicyId,
+    otCalculationPolicySnapshot: timingContext.otCalculationPolicySnapshot,
+
     dayType,
     reason: s(payload.reason),
 
@@ -1047,13 +1361,10 @@ async function update(id, payload, authUser, options = {}) {
     throw err
   }
 
-  const requestedEmployees = await resolveEmployeesSnapshots(uniqueEmployeeIds)
+  const employeeContexts = await resolveEmployeesSnapshotsWithContext(uniqueEmployeeIds)
+  const requestedEmployees = employeeContexts.map((item) => item.snapshot)
 
-  const duration = calculateDuration({
-    startTime: payload.startTime,
-    endTime: payload.endTime,
-    breakMinutes: payload.breakMinutes,
-  })
+  const timingContext = await buildOTTimingContext(payload, employeeContexts)
 
   const holidayDates =
     Array.isArray(options.holidays) && options.holidays.length
@@ -1066,19 +1377,19 @@ async function update(id, payload, authUser, options = {}) {
 
   const approvalFlow = await resolveApprovalFlow(
     requesterEmployeeId,
-    payload.approverEmployeeIds || []
+    payload.approverEmployeeIds || [],
   )
 
   doc.requesterEmployeeId = requesterSnapshot.employee._id
   doc.requesterEmployeeNo = s(
     requesterSnapshot.employee.employeeNo ||
       requesterSnapshot.employee.employeeCode ||
-      requesterSnapshot.employee.code
+      requesterSnapshot.employee.code,
   )
   doc.requesterName = s(
     requesterSnapshot.employee.displayName ||
       requesterSnapshot.employee.employeeName ||
-      requesterSnapshot.employee.name
+      requesterSnapshot.employee.name,
   )
 
   doc.requestedEmployees = requestedEmployees
@@ -1091,11 +1402,29 @@ async function update(id, payload, authUser, options = {}) {
   doc.proposedApprovedEmployeeCount = 0
 
   doc.otDate = s(payload.otDate)
-  doc.startTime = s(payload.startTime)
-  doc.endTime = s(payload.endTime)
-  doc.breakMinutes = Number(payload.breakMinutes || 0)
-  doc.totalMinutes = duration.totalMinutes
-  doc.totalHours = duration.totalHours
+
+  doc.startTime = timingContext.startTime
+  doc.endTime = timingContext.endTime
+  doc.breakMinutes = timingContext.breakMinutes
+  doc.totalMinutes = timingContext.totalMinutes
+  doc.totalHours = timingContext.totalHours
+
+  doc.shiftId = timingContext.shiftId
+  doc.shiftCode = timingContext.shiftCode
+  doc.shiftName = timingContext.shiftName
+  doc.shiftType = timingContext.shiftType
+  doc.shiftStartTime = timingContext.shiftStartTime
+  doc.shiftEndTime = timingContext.shiftEndTime
+  doc.shiftCrossMidnight = timingContext.shiftCrossMidnight
+
+  doc.shiftOtOptionId = timingContext.shiftOtOptionId
+  doc.shiftOtOptionLabel = timingContext.shiftOtOptionLabel
+  doc.requestedMinutes = timingContext.requestedMinutes
+  doc.requestStartTime = timingContext.requestStartTime
+  doc.requestEndTime = timingContext.requestEndTime
+  doc.otCalculationPolicyId = timingContext.otCalculationPolicyId
+  doc.otCalculationPolicySnapshot = timingContext.otCalculationPolicySnapshot
+
   doc.dayType = dayType
   doc.reason = s(payload.reason)
 
@@ -1292,9 +1621,7 @@ async function getById(id, authUser) {
     detail.positionName = ''
   }
 
-  detail.approvalStepCount = Array.isArray(detail.approvalSteps)
-    ? detail.approvalSteps.length
-    : 0
+  detail.approvalStepCount = Array.isArray(detail.approvalSteps) ? detail.approvalSteps.length : 0
   detail.hasApprovedStep = hasApprovedStep(doc)
 
   return detail
@@ -1322,9 +1649,7 @@ async function decide(id, payload, authUser) {
   }
 
   const currentStepNo = Number(doc.currentApprovalStep || 1)
-  const stepIndex = doc.approvalSteps.findIndex(
-    (step) => Number(step.stepNo) === currentStepNo
-  )
+  const stepIndex = doc.approvalSteps.findIndex((step) => Number(step.stepNo) === currentStepNo)
 
   if (stepIndex === -1) {
     const err = new Error('Current approval step not found')
@@ -1338,9 +1663,7 @@ async function decide(id, payload, authUser) {
 
   const canActAsRoot = !!authUser?.isRootAdmin
   const canActAsAssignedApprover =
-    actorEmployeeId &&
-    currentApproverEmployeeId &&
-    actorEmployeeId === currentApproverEmployeeId
+    actorEmployeeId && currentApproverEmployeeId && actorEmployeeId === currentApproverEmployeeId
 
   if (!canActAsRoot && !canActAsAssignedApprover) {
     const err = new Error('This OT request is not waiting for your approval')
@@ -1352,9 +1675,10 @@ async function decide(id, payload, authUser) {
   const remark = s(payload.remark)
 
   if (action === 'APPROVE') {
-    const currentApprovedPool = Array.isArray(doc.approvedEmployees) && doc.approvedEmployees.length
-      ? doc.approvedEmployees
-      : doc.requestedEmployees
+    const currentApprovedPool =
+      Array.isArray(doc.approvedEmployees) && doc.approvedEmployees.length
+        ? doc.approvedEmployees
+        : doc.requestedEmployees
 
     const approvedEmployeeIds = normalizeIdArray(payload.approvedEmployeeIds)
 
@@ -1368,7 +1692,9 @@ async function decide(id, payload, authUser) {
     const invalidEmployeeId = approvedEmployeeIds.find((employeeId) => !poolIdSet.has(employeeId))
 
     if (invalidEmployeeId) {
-      const err = new Error('Approved employees must be selected from the current OT employee list')
+      const err = new Error(
+        'Approved employees must be selected from the current OT employee list',
+      )
       err.status = 400
       throw err
     }
@@ -1490,9 +1816,7 @@ async function requesterConfirm(id, payload, authUser) {
     doc.requesterConfirmationRemark = remark
 
     const currentStepNo = Number(doc.currentApprovalStep || 1)
-    const stepIndex = doc.approvalSteps.findIndex(
-      (step) => Number(step.stepNo) === currentStepNo
-    )
+    const stepIndex = doc.approvalSteps.findIndex((step) => Number(step.stepNo) === currentStepNo)
 
     if (stepIndex === -1) {
       const err = new Error('Current approval step not found')
@@ -1544,6 +1868,92 @@ async function getAllowedApproverChain(employeeId) {
   }))
 }
 
+async function getShiftOTOptionsByShift(shiftId) {
+  if (!mongoose.isValidObjectId(shiftId)) {
+    const err = new Error('Invalid shift id')
+    err.status = 400
+    throw err
+  }
+
+  const shift = await Shift.findById(shiftId).lean()
+
+  if (!shift) {
+    const err = new Error('Shift not found')
+    err.status = 404
+    throw err
+  }
+
+  const options = await ShiftOTOption.find({
+    shiftId,
+    isActive: true,
+  })
+    .populate({
+      path: 'calculationPolicyId',
+      select: {
+        _id: 1,
+        code: 1,
+        name: 1,
+        minEligibleMinutes: 1,
+        roundUnitMinutes: 1,
+        roundMethod: 1,
+        graceAfterShiftEndMinutes: 1,
+        allowPreShiftOT: 1,
+        allowPostShiftOT: 1,
+        capByRequestedMinutes: 1,
+        treatForgetScanInAsPending: 1,
+        treatForgetScanOutAsPending: 1,
+        isActive: 1,
+      },
+    })
+    .sort({ sequence: 1, requestedMinutes: 1, createdAt: 1 })
+    .lean()
+
+  return {
+    shift: {
+      id: String(shift._id),
+      code: s(shift.code),
+      name: s(shift.name),
+      type: s(shift.type),
+      startTime: s(shift.startTime),
+      breakStartTime: s(shift.breakStartTime),
+      breakEndTime: s(shift.breakEndTime),
+      endTime: s(shift.endTime),
+      crossMidnight: shift.crossMidnight === true,
+      isActive: shift.isActive !== false,
+    },
+    items: options.map((item) => ({
+      id: String(item._id),
+      shiftId: item.shiftId ? String(item.shiftId) : null,
+      label: s(item.label),
+      requestedMinutes: Number(item.requestedMinutes || 0),
+      requestedHours: Number((Number(item.requestedMinutes || 0) / 60).toFixed(2)),
+      sequence: Number(item.sequence || 0),
+      isActive: item.isActive !== false,
+      calculationPolicy: item.calculationPolicyId
+        ? {
+            id: String(item.calculationPolicyId._id),
+            code: s(item.calculationPolicyId.code),
+            name: s(item.calculationPolicyId.name),
+            minEligibleMinutes: Number(item.calculationPolicyId.minEligibleMinutes || 0),
+            roundUnitMinutes: Number(item.calculationPolicyId.roundUnitMinutes || 0),
+            roundMethod: s(item.calculationPolicyId.roundMethod),
+            graceAfterShiftEndMinutes: Number(
+              item.calculationPolicyId.graceAfterShiftEndMinutes || 0,
+            ),
+            allowPreShiftOT: item.calculationPolicyId.allowPreShiftOT === true,
+            allowPostShiftOT: item.calculationPolicyId.allowPostShiftOT !== false,
+            capByRequestedMinutes: item.calculationPolicyId.capByRequestedMinutes !== false,
+            treatForgetScanInAsPending:
+              item.calculationPolicyId.treatForgetScanInAsPending !== false,
+            treatForgetScanOutAsPending:
+              item.calculationPolicyId.treatForgetScanOutAsPending !== false,
+            isActive: item.calculationPolicyId.isActive !== false,
+          }
+        : null,
+    })),
+  }
+}
+
 module.exports = {
   create,
   update,
@@ -1556,4 +1966,5 @@ module.exports = {
   requesterConfirm,
   calculateDuration,
   getAllowedApproverChain,
+  getShiftOTOptionsByShift,
 }

@@ -108,7 +108,7 @@ const OTRequestEmployeeSchema = new mongoose.Schema(
   {
     _id: false,
     versionKey: false,
-  }
+  },
 )
 
 const OTApprovalStepSchema = new mongoose.Schema(
@@ -165,7 +165,71 @@ const OTApprovalStepSchema = new mongoose.Schema(
   {
     _id: false,
     versionKey: false,
-  }
+  },
+)
+
+const OTCalculationPolicySnapshotSchema = new mongoose.Schema(
+  {
+    calculationPolicyId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'OTCalculationPolicy',
+      default: null,
+    },
+    code: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    name: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    minEligibleMinutes: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+    roundUnitMinutes: {
+      type: Number,
+      min: 1,
+      default: 30,
+    },
+    roundMethod: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    graceAfterShiftEndMinutes: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+    allowPreShiftOT: {
+      type: Boolean,
+      default: false,
+    },
+    allowPostShiftOT: {
+      type: Boolean,
+      default: true,
+    },
+    capByRequestedMinutes: {
+      type: Boolean,
+      default: true,
+    },
+    treatForgetScanInAsPending: {
+      type: Boolean,
+      default: true,
+    },
+    treatForgetScanOutAsPending: {
+      type: Boolean,
+      default: true,
+    },
+  },
+  {
+    _id: false,
+    versionKey: false,
+  },
 )
 
 const OTRequestSchema = new mongoose.Schema(
@@ -262,6 +326,7 @@ const OTRequestSchema = new mongoose.Schema(
       index: true,
     },
 
+    // ===== old fields kept for backward compatibility =====
     startTime: {
       type: String,
       required: true,
@@ -291,6 +356,93 @@ const OTRequestSchema = new mongoose.Schema(
       type: Number,
       required: true,
       min: 0,
+    },
+
+    // ===== new shift / OT option fields =====
+    shiftId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Shift',
+      default: null,
+      index: true,
+    },
+
+    shiftCode: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
+    shiftName: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
+    shiftType: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
+    shiftStartTime: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
+    shiftEndTime: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
+    shiftCrossMidnight: {
+      type: Boolean,
+      default: null,
+    },
+
+    shiftOtOptionId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'ShiftOTOption',
+      default: null,
+      index: true,
+    },
+
+    shiftOtOptionLabel: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
+    requestedMinutes: {
+      type: Number,
+      min: 0,
+      default: 0,
+      index: true,
+    },
+
+    requestStartTime: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
+    requestEndTime: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
+    otCalculationPolicyId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'OTCalculationPolicy',
+      default: null,
+      index: true,
+    },
+
+    otCalculationPolicySnapshot: {
+      type: OTCalculationPolicySnapshotSchema,
+      default: () => ({}),
     },
 
     dayType: {
@@ -423,7 +575,7 @@ const OTRequestSchema = new mongoose.Schema(
   {
     timestamps: true,
     versionKey: false,
-  }
+  },
 )
 
 OTRequestSchema.pre('validate', function normalizeFields(next) {
@@ -431,9 +583,20 @@ OTRequestSchema.pre('validate', function normalizeFields(next) {
   this.requesterEmployeeNo = s(this.requesterEmployeeNo)
   this.requesterName = s(this.requesterName)
   this.otDate = s(this.otDate)
+
   this.startTime = s(this.startTime)
   this.endTime = s(this.endTime)
   this.reason = s(this.reason)
+
+  this.shiftCode = s(this.shiftCode).toUpperCase()
+  this.shiftName = s(this.shiftName)
+  this.shiftType = s(this.shiftType).toUpperCase()
+  this.shiftStartTime = s(this.shiftStartTime)
+  this.shiftEndTime = s(this.shiftEndTime)
+  this.shiftOtOptionLabel = s(this.shiftOtOptionLabel)
+  this.requestStartTime = s(this.requestStartTime)
+  this.requestEndTime = s(this.requestEndTime)
+
   this.status = s(this.status).toUpperCase()
   this.dayType = s(this.dayType).toUpperCase()
   this.requesterConfirmationStatus = s(this.requesterConfirmationStatus).toUpperCase()
@@ -451,6 +614,11 @@ OTRequestSchema.pre('validate', function normalizeFields(next) {
   this.proposedApprovedEmployees = normalizeEmployeeCollection(this.proposedApprovedEmployees)
   this.proposedApprovedEmployeeCount = this.proposedApprovedEmployees.length
 
+  this.breakMinutes = Number(this.breakMinutes || 0)
+  this.totalMinutes = Number(this.totalMinutes || 0)
+  this.totalHours = Number(this.totalHours || 0)
+  this.requestedMinutes = Number(this.requestedMinutes || 0)
+
   if (Array.isArray(this.approvalSteps)) {
     for (const step of this.approvalSteps) {
       step.approverCode = s(step.approverCode)
@@ -458,6 +626,24 @@ OTRequestSchema.pre('validate', function normalizeFields(next) {
       step.status = s(step.status).toUpperCase()
       step.remark = s(step.remark)
     }
+  }
+
+  if (this.otCalculationPolicySnapshot) {
+    this.otCalculationPolicySnapshot.code = s(this.otCalculationPolicySnapshot.code).toUpperCase()
+    this.otCalculationPolicySnapshot.name = s(this.otCalculationPolicySnapshot.name)
+    this.otCalculationPolicySnapshot.roundMethod = s(
+      this.otCalculationPolicySnapshot.roundMethod,
+    ).toUpperCase()
+
+    this.otCalculationPolicySnapshot.minEligibleMinutes = Number(
+      this.otCalculationPolicySnapshot.minEligibleMinutes || 0,
+    )
+    this.otCalculationPolicySnapshot.roundUnitMinutes = Number(
+      this.otCalculationPolicySnapshot.roundUnitMinutes || 0,
+    )
+    this.otCalculationPolicySnapshot.graceAfterShiftEndMinutes = Number(
+      this.otCalculationPolicySnapshot.graceAfterShiftEndMinutes || 0,
+    )
   }
 
   next()
@@ -470,6 +656,8 @@ OTRequestSchema.index({ dayType: 1, otDate: -1 })
 OTRequestSchema.index({ requesterConfirmationStatus: 1, otDate: -1 })
 OTRequestSchema.index({ currentApproverEmployeeId: 1, status: 1, otDate: -1 })
 OTRequestSchema.index({ finalApproverEmployeeId: 1, status: 1, otDate: -1 })
+OTRequestSchema.index({ shiftId: 1, otDate: -1 })
+OTRequestSchema.index({ shiftOtOptionId: 1, otDate: -1 })
 OTRequestSchema.index({ createdAt: -1 })
 
 OTRequestSchema.index({ 'requestedEmployees.employeeId': 1, otDate: -1 })

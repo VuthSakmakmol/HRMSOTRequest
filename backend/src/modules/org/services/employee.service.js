@@ -56,10 +56,62 @@ function buildAccountSummary(accountDoc) {
   }
 }
 
+function buildShiftSummary(shiftValue) {
+  const shiftId = shiftValue?._id
+    ? String(shiftValue._id)
+    : shiftValue
+      ? String(shiftValue)
+      : null
+
+  const shiftCode = shiftValue?.code || ''
+  const shiftName = shiftValue?.name || ''
+  const shiftType = shiftValue?.type || ''
+  const shiftStartTime = shiftValue?.startTime || ''
+  const shiftEndTime = shiftValue?.endTime || ''
+  const shiftBreakStartTime = shiftValue?.breakStartTime || ''
+  const shiftBreakEndTime = shiftValue?.breakEndTime || ''
+  const shiftCrossMidnight = !!shiftValue?.crossMidnight
+
+  const hasShiftPayload = Boolean(
+    shiftId ||
+      shiftCode ||
+      shiftName ||
+      shiftType ||
+      shiftStartTime ||
+      shiftEndTime,
+  )
+
+  return {
+    shiftId,
+    shiftCode,
+    shiftName,
+    shiftType,
+    shiftStartTime,
+    shiftEndTime,
+    shiftBreakStartTime,
+    shiftBreakEndTime,
+    shiftCrossMidnight,
+    shift: hasShiftPayload
+      ? {
+          _id: shiftId,
+          code: shiftCode,
+          name: shiftName,
+          type: shiftType,
+          startTime: shiftStartTime,
+          endTime: shiftEndTime,
+          breakStartTime: shiftBreakStartTime,
+          breakEndTime: shiftBreakEndTime,
+          crossMidnight: shiftCrossMidnight,
+        }
+      : null,
+  }
+}
+
 function sanitize(doc, accountDoc = null) {
   if (!doc) return null
 
   return {
+    _id: String(doc._id),
     id: String(doc._id),
     employeeNo: doc.employeeNo,
     displayName: doc.displayName,
@@ -75,14 +127,7 @@ function sanitize(doc, accountDoc = null) {
         ? String(doc.positionId)
         : null,
     positionName: doc.positionId?.name || '',
-    shiftId: doc.shiftId?._id
-      ? String(doc.shiftId._id)
-      : doc.shiftId
-        ? String(doc.shiftId)
-        : null,
-    shiftCode: doc.shiftId?.code || '',
-    shiftName: doc.shiftId?.name || '',
-    shiftType: doc.shiftId?.type || '',
+    ...buildShiftSummary(doc.shiftId),
     reportsToEmployeeId: doc.reportsToEmployeeId?._id
       ? String(doc.reportsToEmployeeId._id)
       : doc.reportsToEmployeeId
@@ -103,6 +148,7 @@ function sanitizeOrgNode(doc) {
   if (!doc) return null
 
   return {
+    _id: String(doc._id),
     id: String(doc._id),
     employeeNo: doc.employeeNo,
     displayName: doc.displayName,
@@ -118,14 +164,7 @@ function sanitizeOrgNode(doc) {
         ? String(doc.positionId)
         : null,
     positionName: doc.positionId?.name || '',
-    shiftId: doc.shiftId?._id
-      ? String(doc.shiftId._id)
-      : doc.shiftId
-        ? String(doc.shiftId)
-        : null,
-    shiftCode: doc.shiftId?.code || '',
-    shiftName: doc.shiftId?.name || '',
-    shiftType: doc.shiftId?.type || '',
+    ...buildShiftSummary(doc.shiftId),
     reportsToEmployeeId: doc.reportsToEmployeeId?._id
       ? String(doc.reportsToEmployeeId._id)
       : doc.reportsToEmployeeId
@@ -367,6 +406,8 @@ function makeOrgTreeNode(emp, children = [], expanded = false, highlighted = fal
       department: emp.departmentName || 'No department',
       shiftName: emp.shiftName || '',
       shiftCode: emp.shiftCode || '',
+      shiftStartTime: emp.shiftStartTime || '',
+      shiftEndTime: emp.shiftEndTime || '',
       isActive: !!emp.isActive,
       reportsToEmployeeId: emp.reportsToEmployeeId ? String(emp.reportsToEmployeeId) : null,
       highlighted,
@@ -497,8 +538,8 @@ function buildEmployeeExportRows(items = []) {
     No: index + 1,
     'Employee No': item.employeeNo || '',
     'Display Name': item.displayName || '',
-    'Department': item.departmentName || '',
-    'Position': item.positionName || '',
+    Department: item.departmentName || '',
+    Position: item.positionName || '',
     'Shift Code': item.shiftCode || '',
     'Shift Name': item.shiftName || '',
     'Shift Type': item.shiftType || '',
@@ -568,7 +609,7 @@ async function getOrgTree(
   )
     .populate('departmentId', 'name')
     .populate('positionId', 'name')
-    .populate('shiftId', 'code name type')
+    .populate('shiftId', 'code name type startTime endTime crossMidnight')
     .lean()
 
   const normalized = allDocs.map((doc) => ({
@@ -579,10 +620,7 @@ async function getOrgTree(
     departmentName: doc.departmentId?.name || '',
     positionId: doc.positionId?._id ? String(doc.positionId._id) : null,
     positionName: doc.positionId?.name || '',
-    shiftId: doc.shiftId?._id ? String(doc.shiftId._id) : null,
-    shiftCode: doc.shiftId?.code || '',
-    shiftName: doc.shiftId?.name || '',
-    shiftType: doc.shiftId?.type || '',
+    ...buildShiftSummary(doc.shiftId),
     reportsToEmployeeId: doc.reportsToEmployeeId ? String(doc.reportsToEmployeeId) : null,
     isActive: !!doc.isActive,
     email: doc.email || '',
@@ -663,6 +701,8 @@ async function getOrgTree(
       departmentName: emp.departmentName,
       shiftName: emp.shiftName,
       shiftCode: emp.shiftCode,
+      shiftStartTime: emp.shiftStartTime,
+      shiftEndTime: emp.shiftEndTime,
     })),
     matchedEmployeeIds: matchedIds,
     expandedEmployeeIds: Array.from(expandedIds),
@@ -697,7 +737,7 @@ async function list(
     Employee.find(filter)
       .populate('departmentId', 'name code')
       .populate('positionId', 'name code')
-      .populate('shiftId', 'code name type startTime endTime')
+      .populate('shiftId', 'code name type startTime endTime crossMidnight')
       .populate('reportsToEmployeeId', 'employeeNo displayName')
       .sort(sort)
       .skip(skip)
@@ -743,7 +783,7 @@ async function exportExcel(
     Employee.find(filter)
       .populate('departmentId', 'name code')
       .populate('positionId', 'name code')
-      .populate('shiftId', 'code name type')
+      .populate('shiftId', 'code name type startTime endTime crossMidnight')
       .populate('reportsToEmployeeId', 'employeeNo displayName')
       .sort(sort)
       .lean(),
@@ -919,7 +959,10 @@ async function importExcel(file, currentUser = null) {
   ] = await Promise.all([
     Department.find({ code: { $in: departmentCodes } }, '_id code name').lean(),
     Position.find({ code: { $in: positionCodes } }, '_id code name departmentId').lean(),
-    Shift.find({ code: { $in: shiftCodes }, isActive: true }, '_id code name type isActive').lean(),
+    Shift.find(
+      { code: { $in: shiftCodes }, isActive: true },
+      '_id code name type startTime endTime crossMidnight isActive'
+    ).lean(),
     Employee.find(
       { employeeNo: { $in: allEmployeeNosToLookup } },
       '_id employeeNo displayName email departmentId positionId shiftId reportsToEmployeeId'
@@ -1117,7 +1160,7 @@ async function getOrgChart(id) {
   const focusDoc = await Employee.findById(id)
     .populate('departmentId', 'name code')
     .populate('positionId', 'name code')
-    .populate('shiftId', 'code name type')
+    .populate('shiftId', 'code name type startTime endTime crossMidnight')
     .populate('reportsToEmployeeId', 'employeeNo displayName')
     .lean()
 
@@ -1142,7 +1185,7 @@ async function getOrgChart(id) {
     const managerDoc = await Employee.findById(currentManagerId)
       .populate('departmentId', 'name code')
       .populate('positionId', 'name code')
-      .populate('shiftId', 'code name type')
+      .populate('shiftId', 'code name type startTime endTime crossMidnight')
       .populate('reportsToEmployeeId', 'employeeNo displayName')
       .lean()
 
@@ -1164,7 +1207,7 @@ async function getOrgChart(id) {
   })
     .populate('departmentId', 'name code')
     .populate('positionId', 'name code')
-    .populate('shiftId', 'code name type')
+    .populate('shiftId', 'code name type startTime endTime crossMidnight')
     .populate('reportsToEmployeeId', 'employeeNo displayName')
     .sort({ displayName: 1, employeeNo: 1 })
     .lean()
@@ -1213,7 +1256,7 @@ async function create(payload) {
   const fresh = await Employee.findById(doc._id)
     .populate('departmentId', 'name code')
     .populate('positionId', 'name code')
-    .populate('shiftId', 'code name type startTime endTime')
+    .populate('shiftId', 'code name type startTime endTime crossMidnight')
     .populate('reportsToEmployeeId', 'employeeNo displayName')
     .lean()
 
@@ -1300,7 +1343,10 @@ async function update(id, payload) {
 
   await doc.save()
 
-  let accountDoc = await Account.findOne({ employeeId: doc._id }, 'loginId isActive employeeId').lean()
+  let accountDoc = await Account.findOne(
+    { employeeId: doc._id },
+    'loginId isActive employeeId'
+  ).lean()
 
   if (payload.provisionAccount === true) {
     if (accountDoc) {
@@ -1333,7 +1379,7 @@ async function update(id, payload) {
   const fresh = await Employee.findById(doc._id)
     .populate('departmentId', 'name code')
     .populate('positionId', 'name code')
-    .populate('shiftId', 'code name type startTime endTime')
+    .populate('shiftId', 'code name type startTime endTime crossMidnight')
     .populate('reportsToEmployeeId', 'employeeNo displayName')
     .lean()
 

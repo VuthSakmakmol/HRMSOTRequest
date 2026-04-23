@@ -16,6 +16,14 @@ const timeSchema = z
   .trim()
   .regex(/^([01]\d|2[0-3]):([0-5]\d)$/, 'Time must be HH:mm')
 
+const optionalTimeSchema = z
+  .string()
+  .trim()
+  .regex(/^([01]\d|2[0-3]):([0-5]\d)$/, 'Time must be HH:mm')
+  .optional()
+  .or(z.literal(''))
+  .transform((value) => String(value || '').trim())
+
 function hhmmToMinutes(value) {
   const [hh, mm] = String(value).split(':').map(Number)
   return hh * 60 + mm
@@ -47,14 +55,24 @@ const baseOTRequestSchema = z
       .max(200, 'You can select up to 200 employees at one time'),
 
     otDate: otDateSchema,
-    startTime: timeSchema,
-    endTime: timeSchema,
 
+    // ===== old/manual flow (temporary backward compatibility) =====
+    startTime: optionalTimeSchema,
+    endTime: optionalTimeSchema,
     breakMinutes: z.coerce
       .number()
       .int()
       .min(0, 'breakMinutes must be at least 0')
       .default(0),
+
+    // ===== new option-based flow =====
+    shiftOtOptionId: z
+      .string()
+      .trim()
+      .default('')
+      .refine((value) => !value || /^[a-fA-F0-9]{24}$/.test(value), {
+        message: 'shiftOtOptionId must be a valid id',
+      }),
 
     reason: z
       .string()
@@ -68,41 +86,55 @@ const baseOTRequestSchema = z
       .max(4, 'You can select up to 4 approvers only'),
   })
   .superRefine((data, ctx) => {
-    if (hhmmToMinutes(data.endTime) <= hhmmToMinutes(data.startTime)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['endTime'],
-        message: 'endTime must be later than startTime',
-      })
+    validateUniqueIds(data.employeeIds, ctx, 'employeeIds')
+    validateUniqueIds(data.approverEmployeeIds, ctx, 'approverEmployeeIds')
+
+    const hasShiftOtOptionId = Boolean(String(data.shiftOtOptionId || '').trim())
+    const hasStartTime = Boolean(String(data.startTime || '').trim())
+    const hasEndTime = Boolean(String(data.endTime || '').trim())
+
+    // Backward-compatible rule:
+    // - new flow: shiftOtOptionId is enough
+    // - old flow: startTime + endTime required
+    if (!hasShiftOtOptionId) {
+      if (!hasStartTime) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['startTime'],
+          message: 'startTime is required when shiftOtOptionId is not provided',
+        })
+      }
+
+      if (!hasEndTime) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['endTime'],
+          message: 'endTime is required when shiftOtOptionId is not provided',
+        })
+      }
+
+      if (hasStartTime && hasEndTime) {
+        if (hhmmToMinutes(data.endTime) <= hhmmToMinutes(data.startTime)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['endTime'],
+            message: 'endTime must be later than startTime',
+          })
+        }
+      }
     }
 
-    const seenEmployeeIds = new Set()
-    data.employeeIds.forEach((id, index) => {
-      const normalized = String(id).toLowerCase()
-      if (seenEmployeeIds.has(normalized)) {
+    // Optional consistency guard:
+    // if frontend sends both flows together, keep them logically valid
+    if (hasShiftOtOptionId && hasStartTime && hasEndTime) {
+      if (hhmmToMinutes(data.endTime) <= hhmmToMinutes(data.startTime)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          path: ['employeeIds', index],
-          message: 'Duplicate employee is not allowed',
+          path: ['endTime'],
+          message: 'endTime must be later than startTime',
         })
       }
-      seenEmployeeIds.add(normalized)
-    })
-
-    const seenApproverIds = new Set()
-    data.approverEmployeeIds.forEach((id, index) => {
-      const normalized = String(id).toLowerCase()
-
-      if (seenApproverIds.has(normalized)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['approverEmployeeIds', index],
-          message: 'Duplicate approver is not allowed',
-        })
-      }
-
-      seenApproverIds.add(normalized)
-    })
+    }
   })
 
 const createOTRequestSchema = baseOTRequestSchema

@@ -49,6 +49,7 @@ const displayedEmployees = computed(() => {
   if (!me?._id) return rows
 
   const exists = rows.some((item) => String(item?._id || '').trim() === me._id)
+
   if (exists) {
     return rows.map((item) =>
       String(item?._id || '').trim() === me._id
@@ -59,6 +60,115 @@ const displayedEmployees = computed(() => {
 
   return [{ ...me, isSelf: true }, ...rows]
 })
+
+function toTrimmedString(value) {
+  return String(value ?? '').trim()
+}
+
+function isObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function normalizeBoolean(...values) {
+  for (const value of values) {
+    if (value === true || value === false) return value
+    if (value === 1 || value === 0) return Boolean(value)
+
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase()
+      if (['true', '1', 'yes', 'y'].includes(normalized)) return true
+      if (['false', '0', 'no', 'n'].includes(normalized)) return false
+    }
+  }
+
+  return false
+}
+
+function extractShiftFields(source = {}) {
+  const shiftObj =
+    (isObject(source?.shiftId) && source.shiftId) ||
+    (isObject(source?.shift) && source.shift) ||
+    (isObject(source?.shiftInfo) && source.shiftInfo) ||
+    (isObject(source?.assignedShift) && source.assignedShift) ||
+    {}
+
+  const rawShiftId =
+    !isObject(source?.shiftId) && source?.shiftId
+      ? source.shiftId
+      : shiftObj?._id || shiftObj?.id || ''
+
+  const shiftId = toTrimmedString(rawShiftId)
+  const shiftCode = toTrimmedString(source?.shiftCode || shiftObj?.code || '')
+  const shiftName = toTrimmedString(source?.shiftName || shiftObj?.name || '')
+  const shiftType = toTrimmedString(source?.shiftType || shiftObj?.type || '')
+  const shiftStartTime = toTrimmedString(
+    source?.shiftStartTime || shiftObj?.startTime || '',
+  )
+  const shiftEndTime = toTrimmedString(
+    source?.shiftEndTime || shiftObj?.endTime || '',
+  )
+  const shiftCrossMidnight = normalizeBoolean(
+    source?.shiftCrossMidnight,
+    shiftObj?.crossMidnight,
+  )
+
+  const hasShiftPayload = Boolean(
+    shiftId ||
+      shiftCode ||
+      shiftName ||
+      shiftType ||
+      shiftStartTime ||
+      shiftEndTime,
+  )
+
+  return {
+    shiftId,
+    shiftCode,
+    shiftName,
+    shiftType,
+    shiftStartTime,
+    shiftEndTime,
+    shiftCrossMidnight,
+    shift: hasShiftPayload
+      ? {
+          _id: shiftId,
+          code: shiftCode,
+          name: shiftName,
+          type: shiftType,
+          startTime: shiftStartTime,
+          endTime: shiftEndTime,
+          crossMidnight: shiftCrossMidnight,
+        }
+      : null,
+  }
+}
+
+function normalizeEmployeeRecord(source = {}, options = {}) {
+  const { isSelf = false } = options
+
+  const _id = toTrimmedString(source?._id || source?.id || '')
+  const employeeNo = toTrimmedString(source?.employeeNo || '')
+  const displayName = toTrimmedString(source?.displayName || source?.name || '')
+  const departmentName = toTrimmedString(
+    source?.departmentName || source?.department?.name || '',
+  )
+  const positionName = toTrimmedString(
+    source?.positionName || source?.position?.name || '',
+  )
+
+  if (!_id || !displayName) return null
+
+  return {
+    _id,
+    id: _id,
+    employeeNo,
+    displayName,
+    departmentName,
+    positionName,
+    ...extractShiftFields(source),
+    isSelf,
+  }
+}
 
 function normalizeEmployeesResponse(res) {
   const rows =
@@ -73,27 +183,8 @@ function normalizeEmployeesResponse(res) {
   if (!Array.isArray(rows)) return []
 
   return rows
-    .map((item) => {
-      const _id = String(item?._id || item?.id || '').trim()
-      const employeeNo = String(item?.employeeNo || '').trim()
-      const displayName = String(item?.displayName || item?.name || '').trim()
-      const departmentName = String(
-        item?.departmentName || item?.department?.name || '',
-      ).trim()
-      const positionName = String(
-        item?.positionName || item?.position?.name || '',
-      ).trim()
-
-      return {
-        _id,
-        employeeNo,
-        displayName,
-        departmentName,
-        positionName,
-        isSelf: false,
-      }
-    })
-    .filter((item) => item._id && item.displayName)
+    .map((item) => normalizeEmployeeRecord(item, { isSelf: false }))
+    .filter(Boolean)
 }
 
 function normalizeMeResponse(res) {
@@ -110,51 +201,25 @@ function normalizeMeResponse(res) {
     user?.employeeInfo ||
     {}
 
-  const _id = String(
-    employee?._id ||
-      employee?.id ||
-      user?.employeeId ||
-      user?.employee?._id ||
-      '',
-  ).trim()
-
-  const displayName = String(
-    employee?.displayName ||
-      employee?.name ||
-      user?.displayName ||
-      user?.name ||
-      user?.loginId ||
-      '',
-  ).trim()
-
-  const employeeNo = String(
-    employee?.employeeNo || user?.employeeNo || '',
-  ).trim()
-
-  const departmentName = String(
-    employee?.departmentName ||
-      employee?.department?.name ||
-      user?.departmentName ||
-      '',
-  ).trim()
-
-  const positionName = String(
-    employee?.positionName ||
-      employee?.position?.name ||
-      user?.positionName ||
-      '',
-  ).trim()
-
-  if (!_id || !displayName) return null
-
-  return {
-    _id,
-    employeeNo,
-    displayName,
-    departmentName,
-    positionName,
-    isSelf: true,
+  const merged = {
+    ...user,
+    ...employee,
+    department: employee?.department || user?.department,
+    position: employee?.position || user?.position,
+    shiftId: employee?.shiftId || user?.shiftId,
+    shift: employee?.shift || user?.shift,
+    shiftInfo: employee?.shiftInfo || user?.shiftInfo,
+    assignedShift: employee?.assignedShift || user?.assignedShift,
+    shiftCode: employee?.shiftCode || user?.shiftCode,
+    shiftName: employee?.shiftName || user?.shiftName,
+    shiftType: employee?.shiftType || user?.shiftType,
+    shiftStartTime: employee?.shiftStartTime || user?.shiftStartTime,
+    shiftEndTime: employee?.shiftEndTime || user?.shiftEndTime,
+    shiftCrossMidnight:
+      employee?.shiftCrossMidnight ?? user?.shiftCrossMidnight,
   }
+
+  return normalizeEmployeeRecord(merged, { isSelf: true })
 }
 
 async function loadSelfEmployee() {
@@ -214,12 +279,17 @@ function emitSelected(nextRows) {
 function toggleEmployee(employee) {
   const current = Array.isArray(props.modelValue) ? [...props.modelValue] : []
   const targetId = String(employee?._id || '').trim()
+
   if (!targetId) return
 
-  const exists = current.find((item) => String(item?._id || '').trim() === targetId)
+  const exists = current.find(
+    (item) => String(item?._id || '').trim() === targetId,
+  )
 
   if (exists) {
-    emitSelected(current.filter((item) => String(item?._id || '').trim() !== targetId))
+    emitSelected(
+      current.filter((item) => String(item?._id || '').trim() !== targetId),
+    )
     return
   }
 
@@ -232,7 +302,9 @@ function clearSelected() {
 
 function selectCurrentPage() {
   const current = Array.isArray(props.modelValue) ? [...props.modelValue] : []
-  const existingIds = new Set(current.map((item) => String(item?._id || '').trim()))
+  const existingIds = new Set(
+    current.map((item) => String(item?._id || '').trim()),
+  )
   const merged = [...current]
 
   displayedEmployees.value.forEach((row) => {
@@ -246,7 +318,9 @@ function unselectCurrentPage() {
   const pageIds = new Set(displayedEmployees.value.map((item) => item._id))
   const current = Array.isArray(props.modelValue) ? [...props.modelValue] : []
 
-  emitSelected(current.filter((item) => !pageIds.has(String(item?._id || '').trim())))
+  emitSelected(
+    current.filter((item) => !pageIds.has(String(item?._id || '').trim())),
+  )
 }
 
 function goPrev() {
@@ -262,6 +336,7 @@ function goNext() {
 
 function triggerSearchHint() {
   const keyword = String(search.value || '').trim().toLowerCase()
+
   if (!keyword) {
     pulseIds.value = []
     return
@@ -274,6 +349,9 @@ function triggerSearchHint() {
         item.displayName,
         item.departmentName,
         item.positionName,
+        item.shiftCode,
+        item.shiftName,
+        item.shiftType,
         item.isSelf ? 'self me myself mine' : '',
       ]
         .join(' ')
@@ -289,6 +367,28 @@ function triggerSearchHint() {
   triggerSearchHint._timer = setTimeout(() => {
     pulseIds.value = []
   }, 1400)
+}
+
+function shiftLabel(employee) {
+  const code = toTrimmedString(employee?.shiftCode || '')
+  const name = toTrimmedString(employee?.shiftName || '')
+  const start = toTrimmedString(employee?.shiftStartTime || '')
+  const end = toTrimmedString(employee?.shiftEndTime || '')
+
+  let label = 'Shift: '
+
+  if (code || name) {
+    label += code || '-'
+    if (name) label += ` · ${name}`
+  } else {
+    label += 'Not assigned'
+  }
+
+  if (start || end) {
+    label += ` · ${start || '--:--'} - ${end || '--:--'}`
+  }
+
+  return label
 }
 
 watch(search, () => {
@@ -438,11 +538,28 @@ onMounted(async () => {
                     severity="success"
                     class="text-[10px]"
                   />
+
+                  <Tag
+                    v-if="employee.shiftCode"
+                    :value="employee.shiftCode"
+                    severity="warning"
+                    class="text-[10px]"
+                  />
                 </div>
 
                 <div class="mt-1 space-y-1 text-xs text-[color:var(--ot-text-muted)]">
                   <div v-if="employee.departmentName">{{ employee.departmentName }}</div>
                   <div v-if="employee.positionName">{{ employee.positionName }}</div>
+
+                  <div
+                    :class="
+                      employee.shiftId
+                        ? 'text-[color:var(--ot-text-muted)]'
+                        : 'font-medium text-amber-600 dark:text-amber-400'
+                    "
+                  >
+                    {{ shiftLabel(employee) }}
+                  </div>
                 </div>
               </div>
             </div>

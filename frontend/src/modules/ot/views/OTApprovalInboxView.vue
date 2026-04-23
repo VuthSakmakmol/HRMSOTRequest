@@ -140,19 +140,25 @@ function buildExportQuery() {
 }
 
 function dayTypeSeverity(value) {
-  if (value === 'HOLIDAY') return 'danger'
-  if (value === 'SUNDAY') return 'warning'
+  const normalized = String(value || '').toUpperCase()
+  if (normalized === 'HOLIDAY') return 'danger'
+  if (normalized === 'SUNDAY') return 'warning'
   return 'success'
 }
 
 function statusSeverity(value) {
-  if (value === 'APPROVED') return 'success'
-  if (value === 'REJECTED') return 'danger'
-  if (value === 'REQUESTER_DISAGREED') return 'danger'
-  if (value === 'PENDING_REQUESTER_CONFIRMATION') return 'info'
-  if (value === 'CANCELLED') return 'contrast'
-  if (value === 'PENDING') return 'warning'
+  const normalized = String(value || '').toUpperCase()
+  if (normalized === 'APPROVED') return 'success'
+  if (normalized === 'REJECTED') return 'danger'
+  if (normalized === 'REQUESTER_DISAGREED') return 'danger'
+  if (normalized === 'PENDING_REQUESTER_CONFIRMATION') return 'info'
+  if (normalized === 'CANCELLED') return 'contrast'
+  if (normalized === 'PENDING') return 'warning'
   return 'secondary'
+}
+
+function modeSeverity(value) {
+  return value === 'SHIFT_OPTION' ? 'info' : 'contrast'
 }
 
 function formatDateTime(value) {
@@ -165,11 +171,53 @@ function formatDateTime(value) {
   }
 }
 
+function isLegacyManualMode(row) {
+  const shiftId = String(row?.shiftId || '').trim()
+  const shiftOtOptionId = String(row?.shiftOtOptionId || '').trim()
+  return !shiftId && !shiftOtOptionId
+}
+
+function requestModeLabel(row) {
+  return isLegacyManualMode(row) ? 'LEGACY MANUAL' : 'SHIFT OPTION'
+}
+
 function formatTimeRange(row) {
-  const start = String(row?.startTime || '').trim()
-  const end = String(row?.endTime || '').trim()
+  const start = String(row?.requestStartTime || row?.startTime || '').trim()
+  const end = String(row?.requestEndTime || row?.endTime || '').trim()
   if (!start && !end) return '-'
   return [start, end].filter(Boolean).join(' - ')
+}
+
+function formatShiftLabel(row) {
+  const code = String(row?.shiftCode || '').trim()
+  const name = String(row?.shiftName || '').trim()
+
+  if (code && name) return `${code} · ${name}`
+  if (code) return code
+  if (name) return name
+  return '-'
+}
+
+function formatOtOptionLabel(row) {
+  const label = String(row?.shiftOtOptionLabel || '').trim()
+  if (label) return label
+  return isLegacyManualMode(row) ? 'Legacy manual' : '-'
+}
+
+function formatRequestedMinutes(row) {
+  const requestedMinutes = Number(row?.requestedMinutes || 0)
+  if (requestedMinutes > 0) return `${requestedMinutes} min`
+
+  const totalMinutes = Number(row?.totalMinutes || 0)
+  if (totalMinutes > 0) return `${totalMinutes} min`
+
+  return '-'
+}
+
+function formatHours(row) {
+  const totalHours = Number(row?.totalHours || 0)
+  if (!Number.isFinite(totalHours) || totalHours <= 0) return '-'
+  return totalHours
 }
 
 function formatRequester(row) {
@@ -592,7 +640,7 @@ onBeforeUnmount(() => {
             <InputIcon class="pi pi-search" />
             <InputText
               v-model="filters.search"
-              placeholder="Search request no, requester, employee, department, reason"
+              placeholder="Search request no, requester, employee, shift, option, reason"
               class="w-full"
               size="small"
               @input="onSearchInput"
@@ -676,12 +724,12 @@ onBeforeUnmount(() => {
         scrollHeight="500px"
         :sortField="filters.sortField"
         :sortOrder="filters.sortOrder"
-        tableStyle="min-width: 116rem"
+        tableStyle="min-width: 132rem"
         class="ot-approval-table"
         :virtualScrollerOptions="useVirtualScroll ? {
           lazy: true,
           onLazyLoad: onVirtualLazyLoad,
-          itemSize: 72,
+          itemSize: 78,
           delay: 0,
           showLoader: false,
           loading: false,
@@ -717,6 +765,17 @@ onBeforeUnmount(() => {
           </template>
         </Column>
 
+        <Column header="Mode" style="min-width: 10rem">
+          <template #body="{ data }">
+            <Tag
+              v-if="data"
+              :value="requestModeLabel(data)"
+              :severity="modeSeverity(isLegacyManualMode(data) ? 'LEGACY' : 'SHIFT_OPTION')"
+              class="ot-status-tag"
+            />
+          </template>
+        </Column>
+
         <Column header="Requested" style="min-width: 8rem">
           <template #body="{ data }">
             <Tag
@@ -745,15 +804,37 @@ onBeforeUnmount(() => {
           </template>
         </Column>
 
-        <Column header="Time" style="min-width: 11rem">
+        <Column header="Request Window" style="min-width: 12rem">
           <template #body="{ data }">
             <span v-if="data">{{ formatTimeRange(data) }}</span>
           </template>
         </Column>
 
+        <Column header="OT Option" style="min-width: 14rem">
+          <template #body="{ data }">
+            <div v-if="data" class="flex flex-col">
+              <span class="font-medium text-[color:var(--ot-text)]">
+                {{ formatOtOptionLabel(data) }}
+              </span>
+              <span
+                v-if="!isLegacyManualMode(data)"
+                class="text-xs text-[color:var(--ot-text-muted)]"
+              >
+                {{ formatShiftLabel(data) }}
+              </span>
+            </div>
+          </template>
+        </Column>
+
+        <Column header="Requested" style="min-width: 9rem">
+          <template #body="{ data }">
+            <span v-if="data">{{ formatRequestedMinutes(data) }}</span>
+          </template>
+        </Column>
+
         <Column field="totalHours" header="Hours" sortable style="min-width: 8rem">
           <template #body="{ data }">
-            <span v-if="data">{{ data.totalHours ?? '-' }}</span>
+            <span v-if="data">{{ formatHours(data) }}</span>
           </template>
         </Column>
 
@@ -865,7 +946,19 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="mt-1 text-[color:var(--ot-text-muted)]">
-            Total hours: {{ decisionDialog.row.totalHours ?? '-' }}
+            Mode: {{ requestModeLabel(decisionDialog.row) }}
+          </div>
+
+          <div class="mt-1 text-[color:var(--ot-text-muted)]">
+            OT option: {{ formatOtOptionLabel(decisionDialog.row) }}
+          </div>
+
+          <div class="mt-1 text-[color:var(--ot-text-muted)]">
+            Requested: {{ formatRequestedMinutes(decisionDialog.row) }}
+          </div>
+
+          <div class="mt-1 text-[color:var(--ot-text-muted)]">
+            Hours: {{ formatHours(decisionDialog.row) }}
           </div>
 
           <div class="mt-3 flex flex-wrap gap-2">
@@ -1015,7 +1108,7 @@ onBeforeUnmount(() => {
 
 :deep(.ot-approval-table .p-datatable-tbody > tr > td) {
   padding: 0.62rem 0.8rem !important;
-  height: 72px !important;
+  height: 78px !important;
   vertical-align: middle !important;
 }
 
