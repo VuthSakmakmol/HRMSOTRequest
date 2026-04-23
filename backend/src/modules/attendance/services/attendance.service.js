@@ -40,7 +40,9 @@ function escapeRegex(value) {
 }
 
 function normalizeIdArray(values = []) {
-  return Array.from(new Set((Array.isArray(values) ? values : []).map((id) => s(id)).filter(Boolean)))
+  return Array.from(
+    new Set((Array.isArray(values) ? values : []).map((id) => s(id)).filter(Boolean)),
+  )
 }
 
 function parseYMDToUtcRange(ymd) {
@@ -245,6 +247,107 @@ function buildAttendanceImportSampleWorkbook() {
   })
 }
 
+function buildVerificationRequestSearchFilter(search) {
+  const keyword = s(search)
+  if (!keyword) return {}
+
+  const regex = new RegExp(escapeRegex(keyword), 'i')
+
+  return {
+    $or: [
+      { requestNo: regex },
+      { requesterEmployeeNo: regex },
+      { requesterName: regex },
+      { shiftOtOptionLabel: regex },
+      { shiftName: regex },
+      { otDate: regex },
+    ],
+  }
+}
+
+function mapVerificationRequestSearchItem(doc) {
+  const requestedEmployees = Array.isArray(doc?.requestedEmployees) ? doc.requestedEmployees : []
+  const approvedEmployees = Array.isArray(doc?.approvedEmployees) ? doc.approvedEmployees : []
+  const proposedApprovedEmployees = Array.isArray(doc?.proposedApprovedEmployees)
+    ? doc.proposedApprovedEmployees
+    : []
+
+  const effectiveApprovedCount =
+    upper(doc?.status) === 'PENDING_REQUESTER_CONFIRMATION' && proposedApprovedEmployees.length
+      ? proposedApprovedEmployees.length
+      : approvedEmployees.length
+
+  return {
+    id: String(doc._id),
+    requestNo: s(doc.requestNo),
+    otDate: s(doc.otDate),
+    dayType: upper(doc.dayType),
+    status: upper(doc.status),
+
+    requesterEmployeeId: doc.requesterEmployeeId ? String(doc.requesterEmployeeId) : null,
+    requesterEmployeeNo: s(doc.requesterEmployeeNo),
+    requesterName: s(doc.requesterName),
+
+    shiftId: doc.shiftId ? String(doc.shiftId) : null,
+    shiftCode: upper(doc.shiftCode),
+    shiftName: s(doc.shiftName),
+    shiftType: upper(doc.shiftType),
+    shiftOtOptionLabel: s(doc.shiftOtOptionLabel),
+
+    requestedMinutes: Number(doc.requestedMinutes || doc.totalMinutes || 0),
+    totalMinutes: Number(doc.totalMinutes || 0),
+    totalHours: Number(doc.totalHours || 0),
+
+    requestedEmployeeCount: Number(doc.requestedEmployeeCount || requestedEmployees.length),
+    approvedEmployeeCount: Number(doc.approvedEmployeeCount || effectiveApprovedCount || 0),
+
+    createdAt: doc.createdAt || null,
+    updatedAt: doc.updatedAt || null,
+  }
+}
+
+async function searchOTRequestsForVerification(query = {}) {
+  const page = Math.max(Number(query.page || 1), 1)
+  const limit = Math.min(Math.max(Number(query.limit || 10), 1), 20)
+  const skip = (page - 1) * limit
+
+  const filter = {
+    ...buildVerificationRequestSearchFilter(query.search),
+    status: {
+      $nin: ['REJECTED', 'CANCELLED'],
+    },
+  }
+
+  if (s(query.status)) {
+    filter.status = upper(query.status)
+  }
+
+  if (s(query.otDateFrom) || s(query.otDateTo)) {
+    filter.otDate = {}
+    if (s(query.otDateFrom)) filter.otDate.$gte = s(query.otDateFrom)
+    if (s(query.otDateTo)) filter.otDate.$lte = s(query.otDateTo)
+  }
+
+  const [items, total] = await Promise.all([
+    OTRequest.find(filter)
+      .sort({ createdAt: -1, _id: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean(),
+    OTRequest.countDocuments(filter),
+  ])
+
+  return {
+    items: items.map(mapVerificationRequestSearchItem),
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit) || 1,
+    },
+  }
+}
+
 async function downloadImportSample() {
   return {
     filename: 'attendance-import-sample.xlsx',
@@ -411,6 +514,7 @@ function mapImportItem(doc) {
     successRowCount: Number(doc.successRowCount || 0),
     failedRowCount: Number(doc.failedRowCount || 0),
     duplicateRowCount: Number(doc.duplicateRowCount || 0),
+    overriddenRowCount: Number(doc.overriddenRowCount || 0),
     status: upper(doc.status),
     remark: s(doc.remark),
     importedAt: doc.importedAt || null,
@@ -533,6 +637,7 @@ async function createImportHeader(file, payload, authUser) {
     successRowCount: 0,
     failedRowCount: 0,
     duplicateRowCount: 0,
+    overriddenRowCount: 0,
     status: 'PROCESSING',
     remark: s(payload.remark),
     importedAt: new Date(),
@@ -581,6 +686,55 @@ function buildValidationIssues({
   }
 
   return Array.from(new Set(issues.map((item) => s(item)).filter(Boolean)))
+}
+
+function buildOverrideDeleteFilter(recordsPayload = [], currentImportId = null) {
+  const grouped = new Map()
+
+  for (const item of Array.isArray(recordsPayload) ? recordsPayload : []) {
+    const employeeNo = upper(item?.employeeNo)
+    const attendanceDate = s(item?.attendanceDate)
+
+    if (!employeeNo || !attendanceDate) continue
+
+    if (!grouped.has(employeeNo)) {
+      grouped.set(employeeNo, new Set())
+    }
+
+    grouped.get(employeeNo).add(attendanceDate)
+  }
+
+  const orConditions = Array.from(grouped.entries()).map(([employeeNo, dates]) => ({
+    employeeNo,
+    attendanceDate: { $in: Array.from(dates) },
+  }))
+
+  if (!orConditions.length) return null
+
+  const filter = { $or: orConditions }
+
+  if (currentImportId && mongoose.isValidObjectId(currentImportId)) {
+    filter.importId = { $ne: currentImportId }
+  }
+
+  return filter
+}
+
+async function overrideExistingAttendanceRecords(recordsPayload = [], currentImportId = null) {
+  const filter = buildOverrideDeleteFilter(recordsPayload, currentImportId)
+  if (!filter) return 0
+
+  const existingCount = await AttendanceRecord.countDocuments(filter)
+  if (!existingCount) return 0
+
+  await AttendanceRecord.deleteMany(filter)
+  return existingCount
+}
+
+function buildImportRemark(baseRemark, extraRemarks = []) {
+  return [s(baseRemark), ...extraRemarks.map((item) => s(item))]
+    .filter(Boolean)
+    .join(' | ')
 }
 
 async function importExcel(file, payload, authUser) {
@@ -762,7 +916,10 @@ async function importExcel(file, payload, authUser) {
       }
     })
 
+    let overriddenRowCount = 0
+
     if (recordsPayload.length) {
+      overriddenRowCount = await overrideExistingAttendanceRecords(recordsPayload, importDoc._id)
       await AttendanceRecord.insertMany(recordsPayload, { ordered: false })
     }
 
@@ -774,6 +931,7 @@ async function importExcel(file, payload, authUser) {
     importDoc.successRowCount = Number(recordsPayload.length || 0)
     importDoc.failedRowCount = Number((parsed.failedRows || []).length || 0)
     importDoc.duplicateRowCount = Number(parsed.duplicateRowCount || 0)
+    importDoc.overriddenRowCount = Number(overriddenRowCount || 0)
     importDoc.status = recordsPayload.length
       ? parsed.failedRows.length || parsed.duplicateRowCount
         ? 'PARTIAL_SUCCESS'
@@ -781,14 +939,24 @@ async function importExcel(file, payload, authUser) {
       : 'FAILED'
     importDoc.updatedBy = authUser?.accountId || authUser?._id || null
 
-    if (!recordsPayload.length) {
-      importDoc.remark = s(importDoc.remark || 'No valid attendance rows found')
+    const extraRemarks = []
+    if (overriddenRowCount > 0) {
+      extraRemarks.push(
+        `Overrode ${overriddenRowCount} existing attendance record(s) by employee/date`,
+      )
     }
+
+    if (!recordsPayload.length) {
+      extraRemarks.push('No valid attendance rows found')
+    }
+
+    importDoc.remark = buildImportRemark(payload.remark, extraRemarks)
 
     await importDoc.save()
 
     return {
       import: mapImportItem(importDoc.toObject()),
+      overriddenRowCount,
       failedRows: parsed.failedRows || [],
       detectedColumns: parsed.detectedColumns || {},
       sheetName: s(parsed.sheetName),
@@ -1056,6 +1224,7 @@ module.exports = {
   listImports,
   getImportById,
   listRecords,
+  searchOTRequestsForVerification,
   verifyOTRequest,
   downloadImportSample,
 }

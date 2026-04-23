@@ -137,6 +137,19 @@ async function getAttendanceRecordById(req, res, next) {
   }
 }
 
+async function searchOTRequestsForVerification(req, res, next) {
+  try {
+    const data = await attendanceService.searchOTRequestsForVerification(req.query || {})
+
+    res.json({
+      success: true,
+      data,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
 async function verifyOTAttendance(req, res, next) {
   try {
     const params = parse(verifyOTAttendanceParamSchema, req.params || {})
@@ -158,5 +171,6 @@ module.exports = {
   getAttendanceImportById,
   listAttendanceRecords,
   getAttendanceRecordById,
+  searchOTRequestsForVerification,
   verifyOTAttendance,
 }

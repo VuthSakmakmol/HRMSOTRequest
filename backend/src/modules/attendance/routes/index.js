@@ -49,6 +49,12 @@ router.get(
 )
 
 router.get(
+  '/verification/ot/search',
+  requirePermission('ATTENDANCE_VERIFY'),
+  attendanceController.searchOTRequestsForVerification,
+)
+
+router.get(
   '/verification/ot/:otRequestId',
   requirePermission('ATTENDANCE_VERIFY'),
   attendanceController.verifyOTAttendance,
