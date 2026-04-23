@@ -1,6 +1,7 @@
+
 <!-- frontend/src/modules/ot/views/OTCalculationPolicyListView.vue -->
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
@@ -16,6 +17,7 @@ import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 import Textarea from 'primevue/textarea'
 
+import { useAuthStore } from '@/modules/auth/auth.store'
 import {
   createOTCalculationPolicy,
   getOTCalculationPolicies,
@@ -23,6 +25,7 @@ import {
 } from '@/modules/ot/otMaster.api'
 
 const toast = useToast()
+const auth = useAuthStore()
 
 const PAGE_SIZE = 10
 
@@ -64,6 +67,12 @@ const form = reactive({
 })
 
 let searchTimer = null
+
+const canCreatePolicy = computed(() => auth.hasAnyPermission(['OT_POLICY_CREATE']))
+const canUpdatePolicy = computed(() => auth.hasAnyPermission(['OT_POLICY_UPDATE']))
+const canSaveDialog = computed(() =>
+  dialog.mode === 'edit' ? canUpdatePolicy.value : canCreatePolicy.value,
+)
 
 const isActiveOptions = [
   { label: 'All Status', value: '' },
@@ -183,6 +192,8 @@ async function fetchPolicies() {
 }
 
 function openCreate() {
+  if (!canCreatePolicy.value) return
+
   dialog.visible = true
   dialog.mode = 'create'
   dialog.id = ''
@@ -190,6 +201,8 @@ function openCreate() {
 }
 
 function openEdit(row) {
+  if (!canUpdatePolicy.value) return
+
   dialog.visible = true
   dialog.mode = 'edit'
   dialog.id = String(row?.id || row?._id || '').trim()
@@ -230,6 +243,19 @@ function buildPayload() {
 }
 
 async function submitForm() {
+  if (!canSaveDialog.value) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Permission denied',
+      detail:
+        dialog.mode === 'edit'
+          ? 'You do not have permission to update OT policy.'
+          : 'You do not have permission to create OT policy.',
+      life: 2500,
+    })
+    return
+  }
+
   const validationMessage = validateForm()
 
   if (validationMessage) {
@@ -336,6 +362,10 @@ watch(
 onMounted(() => {
   fetchPolicies()
 })
+
+onBeforeUnmount(() => {
+  window.clearTimeout(searchTimer)
+})
 </script>
 
 <template>
@@ -373,6 +403,7 @@ onMounted(() => {
         />
 
         <Button
+          v-if="canCreatePolicy"
           label="New Policy"
           icon="pi pi-plus"
           size="small"
@@ -515,6 +546,7 @@ onMounted(() => {
             <Column header="Actions" style="min-width: 8rem">
               <template #body="{ data }">
                 <Button
+                  v-if="canUpdatePolicy"
                   label="Edit"
                   icon="pi pi-pencil"
                   size="small"
@@ -658,6 +690,7 @@ onMounted(() => {
             @click="closeDialog"
           />
           <Button
+            v-if="canSaveDialog"
             :label="dialog.mode === 'edit' ? 'Save Changes' : 'Create Policy'"
             :icon="dialog.mode === 'edit' ? 'pi pi-save' : 'pi pi-plus'"
             :loading="saving"

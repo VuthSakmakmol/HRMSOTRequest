@@ -1,3 +1,4 @@
+// frontend/src/modules/calendar/views/HolidayListView.vue
 <!-- frontend/src/modules/calendar/views/HolidayListView.vue -->
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
@@ -10,6 +11,7 @@ import InputText from 'primevue/inputtext'
 import Tag from 'primevue/tag'
 import Textarea from 'primevue/textarea'
 
+import { useAuthStore } from '@/modules/auth/auth.store'
 import {
   createHoliday,
   getHolidays,
@@ -17,6 +19,7 @@ import {
 } from '../holiday.api'
 
 const toast = useToast()
+const auth = useAuthStore()
 
 const saving = ref(false)
 const loadingCalendar = ref(false)
@@ -36,9 +39,16 @@ const weekLabels = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
 
 const isEditMode = computed(() => !!editingId.value)
 
+const canCreateHoliday = computed(() => auth.hasAnyPermission(['HOLIDAY_CREATE']))
+const canUpdateHoliday = computed(() => auth.hasAnyPermission(['HOLIDAY_UPDATE']))
+const canSubmitForm = computed(() => {
+  return isEditMode.value ? canUpdateHoliday.value : canCreateHoliday.value
+})
+
 const isSaveDisabled = computed(() => {
   return (
     saving.value ||
+    !canSubmitForm.value ||
     !String(form.date || '').trim() ||
     !String(form.name || '').trim()
   )
@@ -266,12 +276,14 @@ function goToday() {
 }
 
 function openCreateDialog() {
+  if (!canCreateHoliday.value) return
   resetForm()
   form.date = formatYMD(selectedDate.value)
   dialogVisible.value = true
 }
 
 function openEditDialog(row) {
+  if (!canUpdateHoliday.value) return
   editingId.value = row?.id || row?._id || ''
   form.date = row?.date || ''
   form.code = row?.code || ''
@@ -283,6 +295,8 @@ function openEditDialog(row) {
 }
 
 async function submitForm() {
+  if (!canSubmitForm.value) return
+
   saving.value = true
   try {
     const payload = {
@@ -334,7 +348,6 @@ onMounted(async () => {
 
 <template>
   <div class="flex flex-col gap-4">
-    <!-- header -->
     <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
       <div class="min-w-0">
         <h1 class="text-xl font-semibold text-[color:var(--ot-text)]">
@@ -364,6 +377,7 @@ onMounted(async () => {
           @click="goToday"
         />
         <Button
+          v-if="canCreateHoliday"
           label="Create Holiday"
           icon="pi pi-plus"
           size="small"
@@ -372,9 +386,7 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- calendar + summary -->
     <div class="grid grid-cols-1 gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
-      <!-- calendar -->
       <div class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] p-4">
         <div class="mb-3 flex items-start justify-between gap-3">
           <div>
@@ -454,7 +466,6 @@ onMounted(async () => {
         </div>
       </div>
 
-      <!-- summary -->
       <div class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] p-4">
         <div class="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
           <div>
@@ -521,7 +532,7 @@ onMounted(async () => {
             {{ selectedHoliday.description }}
           </div>
 
-          <div class="mt-3 flex justify-end">
+          <div v-if="canUpdateHoliday" class="mt-3 flex justify-end">
             <Button
               label="Edit Holiday"
               icon="pi pi-pencil"
@@ -587,7 +598,6 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- dialog -->
     <Dialog
       v-model:visible="dialogVisible"
       modal
@@ -665,6 +675,7 @@ onMounted(async () => {
             @click="dialogVisible = false"
           />
           <Button
+            v-if="canSubmitForm"
             :label="isEditMode ? 'Save Changes' : 'Create Holiday'"
             :loading="saving"
             :disabled="isSaveDisabled"
@@ -720,26 +731,22 @@ onMounted(async () => {
   box-shadow: inset 0 0 0 1px var(--ot-border);
 }
 
-/* Sunday = red */
 .calendar-cell.is-sunday {
   color: #dc2626;
   font-weight: 600;
 }
 
-/* Holiday = red */
 .calendar-cell.is-holiday {
   background: rgba(220, 38, 38, 0.12);
   color: #dc2626;
   font-weight: 700;
 }
 
-/* Sunday + Holiday = a bit stronger */
 .calendar-cell.is-sunday.is-holiday {
   background: rgba(220, 38, 38, 0.16);
   color: #b91c1c;
 }
 
-/* Selected stays primary */
 .calendar-cell.is-selected {
   background: var(--p-primary-500);
   color: white;

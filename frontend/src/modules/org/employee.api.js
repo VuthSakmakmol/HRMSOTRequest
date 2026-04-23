@@ -1,5 +1,10 @@
 // frontend/src/modules/org/employee.api.js
+// frontend/src/modules/org/employee.api.js
 import api from '@/shared/services/api'
+
+export function getEmployeeLookupOptions(params = {}) {
+  return api.get('/org/employees/lookup', { params })
+}
 
 export function getEmployees(params = {}) {
   return api.get('/org/employees', { params })

@@ -1,6 +1,10 @@
 // frontend/src/modules/org/department.api.js
 import api from '@/shared/services/api'
 
+export function getDepartmentLookupOptions(params = {}) {
+  return api.get('/org/departments/lookup', { params })
+}
+
 export function getDepartments(params = {}) {
   return api.get('/org/departments', { params })
 }

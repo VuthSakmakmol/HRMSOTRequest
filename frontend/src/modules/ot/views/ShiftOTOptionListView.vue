@@ -16,6 +16,7 @@ import InputText from 'primevue/inputtext'
 import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 
+import { useAuthStore } from '@/modules/auth/auth.store'
 import { getShifts } from '@/modules/shift/shift.api'
 import {
   createShiftOTOption,
@@ -25,6 +26,7 @@ import {
 } from '@/modules/ot/otMaster.api'
 
 const toast = useToast()
+const auth = useAuthStore()
 
 const PAGE_SIZE = 10
 const SEARCH_DEBOUNCE_MS = 300
@@ -66,6 +68,16 @@ const form = reactive({
 })
 
 let searchTimer = null
+
+const canCreateShiftOTOption = computed(() =>
+  auth.hasAnyPermission(['SHIFT_OT_OPTION_CREATE']),
+)
+const canUpdateShiftOTOption = computed(() =>
+  auth.hasAnyPermission(['SHIFT_OT_OPTION_UPDATE']),
+)
+const canSaveDialog = computed(() =>
+  dialog.mode === 'edit' ? canUpdateShiftOTOption.value : canCreateShiftOTOption.value,
+)
 
 const dialogTitle = computed(() =>
   dialog.mode === 'edit' ? 'Edit Shift OT Option' : 'Create Shift OT Option',
@@ -290,6 +302,8 @@ function fillForm(row) {
 }
 
 function openCreate() {
+  if (!canCreateShiftOTOption.value) return
+
   dialog.visible = true
   dialog.mode = 'create'
   dialog.id = ''
@@ -297,6 +311,8 @@ function openCreate() {
 }
 
 function openEdit(row) {
+  if (!canUpdateShiftOTOption.value) return
+
   dialog.visible = true
   dialog.mode = 'edit'
   dialog.id = String(row?.id || row?._id || '').trim()
@@ -329,6 +345,19 @@ function buildPayload() {
 }
 
 async function submitForm() {
+  if (!canSaveDialog.value) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Permission denied',
+      detail:
+        dialog.mode === 'edit'
+          ? 'You do not have permission to update shift OT option.'
+          : 'You do not have permission to create shift OT option.',
+      life: 2500,
+    })
+    return
+  }
+
   const message = validateForm()
 
   if (message) {
@@ -477,6 +506,7 @@ onBeforeUnmount(() => {
         />
 
         <Button
+          v-if="canCreateShiftOTOption"
           label="New Shift OT Option"
           icon="pi pi-plus"
           size="small"
@@ -631,6 +661,7 @@ onBeforeUnmount(() => {
             <Column header="Actions" style="min-width: 8rem">
               <template #body="{ data }">
                 <Button
+                  v-if="canUpdateShiftOTOption"
                   label="Edit"
                   icon="pi pi-pencil"
                   size="small"
@@ -761,6 +792,7 @@ onBeforeUnmount(() => {
             @click="closeDialog"
           />
           <Button
+            v-if="canSaveDialog"
             :label="dialog.mode === 'edit' ? 'Save Changes' : 'Create Option'"
             :icon="dialog.mode === 'edit' ? 'pi pi-save' : 'pi pi-plus'"
             :loading="saving"

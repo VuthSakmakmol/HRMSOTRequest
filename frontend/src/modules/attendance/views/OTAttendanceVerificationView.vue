@@ -1,5 +1,4 @@
-
-<!-- frontend/src/modules/attendance/views/OTAttendanceVerificationView.vue -->
+// frontend/src/modules/attendance/views/OTAttendanceVerificationView.vue
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -14,8 +13,10 @@ import InputText from 'primevue/inputtext'
 import Tag from 'primevue/tag'
 import { useToast } from 'primevue/usetoast'
 
-import { verifyOTAttendance } from '@/modules/attendance/attendance.api'
-import { getOTRequests } from '@/modules/ot/ot.api'
+import {
+  searchOTVerificationRequests,
+  verifyOTAttendance,
+} from '@/modules/attendance/attendance.api'
 
 const route = useRoute()
 const router = useRouter()
@@ -325,12 +326,10 @@ async function searchByRequestNo() {
   searchResults.value = []
 
   try {
-    const response = await getOTRequests({
+    const response = await searchOTVerificationRequests({
       page: 1,
       limit: 10,
       search: keyword,
-      sortBy: 'createdAt',
-      sortOrder: 'desc',
     })
 
     const payloadValue = normalizePayload(response)
@@ -352,7 +351,7 @@ async function searchByRequestNo() {
       toast.add({
         severity: 'warn',
         summary: 'Not found',
-        detail: 'No OT request found for that request number.',
+        detail: 'No verifiable OT request found for that request number.',
         life: 3000,
       })
     }
@@ -363,7 +362,7 @@ async function searchByRequestNo() {
       detail:
         error?.response?.data?.message ||
         error?.message ||
-        'Failed to search OT request.',
+        'Failed to search OT request for attendance verification.',
       life: 3500,
     })
   } finally {
@@ -485,7 +484,7 @@ onMounted(() => {
             <DataTable
               v-if="searchResults.length"
               :value="searchResults"
-              dataKey="_id"
+              dataKey="id"
               responsiveLayout="scroll"
               stripedRows
               size="small"

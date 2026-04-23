@@ -195,7 +195,7 @@ const navGroups = computed(() => {
           label: 'Attendance Import',
           icon: 'pi pi-upload',
           to: '/attendance/imports',
-          permissions: ['ATTENDANCE_VIEW', 'ATTENDANCE_IMPORT'],
+          permissions: ['ATTENDANCE_VIEW'],
         },
         {
           key: 'attendance-records',
@@ -223,7 +223,12 @@ const navGroups = computed(() => {
           label: 'OT Requests',
           icon: 'pi pi-file-edit',
           to: '/ot/requests',
-          permissions: ['OT_REQUEST_VIEW', 'OT_REQUEST_CREATE', 'OT_REQUEST_APPROVE'],
+          permissions: [
+            'OT_REQUEST_VIEW',
+            'OT_REQUEST_CREATE',
+            'OT_REQUEST_UPDATE',
+            'OT_REQUEST_APPROVE',
+          ],
         },
         {
           key: 'ot-approvals',
@@ -237,14 +242,22 @@ const navGroups = computed(() => {
           label: 'OT Policies',
           icon: 'pi pi-sliders-h',
           to: '/ot/policies',
-          permissions: ['OT_REQUEST_VIEW', 'OT_REQUEST_CREATE', 'OT_REQUEST_UPDATE'],
+          permissions: [
+            'OT_POLICY_VIEW',
+            'OT_POLICY_CREATE',
+            'OT_POLICY_UPDATE',
+          ],
         },
         {
           key: 'shift-ot-options',
           label: 'Shift OT Options',
           icon: 'pi pi-list-check',
           to: '/ot/shift-options',
-          permissions: ['OT_REQUEST_VIEW', 'OT_REQUEST_CREATE', 'OT_REQUEST_UPDATE'],
+          permissions: [
+            'SHIFT_OT_OPTION_VIEW',
+            'SHIFT_OT_OPTION_CREATE',
+            'SHIFT_OT_OPTION_UPDATE',
+          ],
         },
       ],
     },

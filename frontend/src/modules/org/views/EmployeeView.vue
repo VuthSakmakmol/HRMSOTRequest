@@ -16,8 +16,8 @@ import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 
 import EmployeeImportDialog from '@/modules/org/components/EmployeeImportDialog.vue'
-import { getDepartments } from '@/modules/org/department.api'
-import { getPositions } from '@/modules/org/position.api'
+import { getDepartmentLookupOptions } from '@/modules/org/department.api'
+import { getPositionLookupOptions } from '@/modules/org/position.api'
 import {
   createEmployee,
   exportEmployeesExcel,
@@ -197,15 +197,13 @@ function buildQuery(page) {
   }
 }
 
-async function fetchDepartmentsForDropdown() {
+async function fetchDepartmentsForDropdown(search = '') {
   loadingDepartments.value = true
   try {
-    const res = await getDepartments({
-      page: 1,
+    const res = await getDepartmentLookupOptions({
       limit: 100,
-      search: '',
-      isActive: 'true',
-      sortField: 'name',
+      search: String(search || '').trim(),
+      isActive: true,
     })
     const payload = normalizePayload(res)
     departmentOptions.value = mapDepartmentOptions(normalizeItems(payload))
@@ -224,16 +222,14 @@ async function fetchDepartmentsForDropdown() {
   }
 }
 
-async function fetchPositionsForDropdown(departmentId = '') {
+async function fetchPositionsForDropdown(departmentId = '', search = '') {
   loadingPositions.value = true
   try {
-    const res = await getPositions({
-      page: 1,
+    const res = await getPositionLookupOptions({
       limit: 100,
-      search: '',
-      departmentId,
-      isActive: 'true',
-      sortField: 'name',
+      search: String(search || '').trim(),
+      departmentId: String(departmentId || '').trim(),
+      isActive: true,
     })
     const payload = normalizePayload(res)
     positionOptions.value = mapPositionOptions(normalizeItems(payload))

@@ -1,6 +1,6 @@
+// frontend/src/modules/org/views/PositionView.vue
 <!-- frontend/src/modules/org/views/PositionView.vue -->
 <script setup>
-// frontend/src/modules/org/views/PositionView.vue
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useToast } from 'primevue/usetoast'
 
@@ -23,7 +23,7 @@ import {
   getPositions,
   updatePosition,
 } from '@/modules/org/position.api'
-import { getDepartments } from '@/modules/org/department.api'
+import { getDepartmentLookupOptions } from '@/modules/org/department.api'
 
 const toast = useToast()
 
@@ -131,16 +131,13 @@ function getFilenameFromDisposition(disposition, fallbackName) {
   return match?.[1] || fallbackName
 }
 
-async function fetchDepartmentsForDropdown() {
+async function fetchDepartmentsForDropdown(search = '') {
   loadingDepartments.value = true
   try {
-    const res = await getDepartments({
-      page: 1,
+    const res = await getDepartmentLookupOptions({
       limit: 100,
-      search: '',
-      isActive: 'true',
-      sortField: 'name',
-      sortOrder: 1,
+      search: String(search || '').trim(),
+      isActive: true,
     })
 
     const payload = normalizePayload(res)

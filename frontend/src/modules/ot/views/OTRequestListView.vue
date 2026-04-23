@@ -1,4 +1,3 @@
-
 <!-- frontend/src/modules/ot/views/OTRequestListView.vue -->
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
@@ -14,6 +13,7 @@ import InputText from 'primevue/inputtext'
 import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 
+import { useAuthStore } from '@/modules/auth/auth.store'
 import {
   getOTRequests,
   exportOTRequestsExcel,
@@ -21,6 +21,7 @@ import {
 
 const router = useRouter()
 const toast = useToast()
+const auth = useAuthStore()
 
 const PAGE_SIZE = 10
 const SEARCH_DEBOUNCE_MS = 250
@@ -40,6 +41,10 @@ const filters = reactive({
   sortField: 'createdAt',
   sortOrder: -1,
 })
+
+const canCreateRequest = computed(() => auth.hasAnyPermission(['OT_REQUEST_CREATE']))
+const canUpdateRequest = computed(() => auth.hasAnyPermission(['OT_REQUEST_UPDATE']))
+const canVerifyAttendance = computed(() => auth.hasAnyPermission(['ATTENDANCE_VERIFY']))
 
 const statusOptions = [
   { label: 'All Status', value: '' },
@@ -166,7 +171,7 @@ function getEmployeeCount(row) {
 }
 
 function canEdit(row) {
-  return !!row?.canEdit
+  return canUpdateRequest.value && !!row?.canEdit
 }
 
 async function fetchPage(page, { replace = false, silent = false } = {}) {
@@ -305,6 +310,7 @@ async function onVirtualLazyLoad(event) {
 }
 
 function goCreate() {
+  if (!canCreateRequest.value) return
   router.push('/ot/requests/create')
 }
 
@@ -314,12 +320,12 @@ function goDetail(id) {
 }
 
 function goEdit(id) {
-  if (!id) return
+  if (!id || !canUpdateRequest.value) return
   router.push(`/ot/requests/${id}/edit`)
 }
 
 function goVerifyAttendance(id) {
-  if (!id) return
+  if (!id || !canVerifyAttendance.value) return
   router.push(`/attendance/ot-verification/${id}`)
 }
 
@@ -427,6 +433,7 @@ onBeforeUnmount(() => {
         />
 
         <Button
+          v-if="canCreateRequest"
           label="New OT Request"
           icon="pi pi-plus"
           size="small"
@@ -608,6 +615,7 @@ onBeforeUnmount(() => {
           <template #body="{ data }">
             <div v-if="data" class="flex flex-wrap gap-2">
               <Button
+                v-if="canVerifyAttendance"
                 label="Verify"
                 icon="pi pi-check-square"
                 size="small"

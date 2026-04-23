@@ -13,6 +13,7 @@ import Message from 'primevue/message'
 import Tag from 'primevue/tag'
 import Textarea from 'primevue/textarea'
 
+import { useAuthStore } from '@/modules/auth/auth.store'
 import {
   getOTRequestById,
   requesterConfirmOTRequest,
@@ -21,6 +22,7 @@ import {
 const route = useRoute()
 const router = useRouter()
 const toast = useToast()
+const auth = useAuthStore()
 
 const loading = ref(false)
 const actionLoading = ref(false)
@@ -28,6 +30,12 @@ const detail = ref(null)
 const requesterRemark = ref('')
 
 const requestId = computed(() => String(route.params.id || '').trim())
+
+const canUpdateRequest = computed(() => auth.hasAnyPermission(['OT_REQUEST_UPDATE']))
+const canVerifyAttendance = computed(() => auth.hasAnyPermission(['ATTENDANCE_VERIFY']))
+const canRequesterConfirmAction = computed(
+  () => canUpdateRequest.value && !!detail.value?.canRequesterConfirm,
+)
 
 const requestedEmployees = computed(() =>
   Array.isArray(detail.value?.requestedEmployees) ? detail.value.requestedEmployees : [],
@@ -186,18 +194,18 @@ function goBack() {
 }
 
 function goEdit() {
-  if (!requestId.value) return
+  if (!requestId.value || !canUpdateRequest.value) return
   router.push(`/ot/requests/${requestId.value}/edit`)
 }
 
 function goVerifyAttendance() {
-  if (!requestId.value) return
+  if (!requestId.value || !canVerifyAttendance.value) return
   router.push(`/attendance/ot-verification/${requestId.value}`)
 }
 
 async function submitRequesterConfirmation(action) {
   if (!requestId.value || actionLoading.value) return
-  if (!detail.value?.canRequesterConfirm) return
+  if (!canRequesterConfirmAction.value) return
 
   const remark = String(requesterRemark.value || '').trim()
 
@@ -302,6 +310,7 @@ onMounted(() => {
           @click="fetchDetail"
         />
         <Button
+          v-if="canVerifyAttendance"
           label="Verify Attendance"
           icon="pi pi-check-square"
           severity="success"
@@ -310,7 +319,7 @@ onMounted(() => {
           @click="goVerifyAttendance"
         />
         <Button
-          v-if="detail?.canEdit"
+          v-if="detail?.canEdit && canUpdateRequest"
           label="Edit"
           icon="pi pi-pencil"
           size="small"
@@ -328,7 +337,7 @@ onMounted(() => {
 
     <template v-else-if="detail">
       <Message
-        v-if="detail.canRequesterConfirm"
+        v-if="canRequesterConfirmAction"
         severity="warn"
         :closable="false"
       >
@@ -336,7 +345,7 @@ onMounted(() => {
       </Message>
 
       <div
-        v-if="detail.canRequesterConfirm"
+        v-if="canRequesterConfirmAction"
         class="rounded-2xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950/30"
       >
         <div class="mb-3 text-sm font-semibold text-amber-800 dark:text-amber-300">

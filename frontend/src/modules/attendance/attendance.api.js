@@ -30,6 +30,10 @@ export function getAttendanceRecords(params = {}) {
   return api.get('/attendance/records', { params })
 }
 
+export function searchOTVerificationRequests(params = {}) {
+  return api.get('/attendance/verification/ot/search', { params })
+}
+
 export function verifyOTAttendance(otRequestId) {
   return api.get(`/attendance/verification/ot/${otRequestId}`)
 }

@@ -1,6 +1,10 @@
 // frontend/src/modules/calendar/holiday.api.js
 import api from '@/shared/services/api'
 
+export function getHolidayLookupOptions(params = {}) {
+  return api.get('/calendar/holidays/lookup', { params })
+}
+
 export function getHolidays(params = {}) {
   return api.get('/calendar/holidays', { params })
 }

@@ -1,6 +1,10 @@
 // frontend/src/modules/org/position.api.js
 import api from '@/shared/services/api'
 
+export function getPositionLookupOptions(params = {}) {
+  return api.get('/org/positions/lookup', { params })
+}
+
 export function getPositions(params = {}) {
   return api.get('/org/positions', { params })
 }
