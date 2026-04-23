@@ -8,10 +8,14 @@ const {
   listDepartmentQuerySchema,
 } = require('../validators/department.validator')
 
+function s(value) {
+  return String(value ?? '').trim()
+}
+
 function buildListQuery(query = {}) {
   const filter = {}
 
-  const search = String(query.search || '').trim()
+  const search = s(query.search)
   if (search) {
     filter.$or = [
       { code: { $regex: search, $options: 'i' } },
@@ -51,8 +55,21 @@ function normalizeDepartment(doc) {
   }
 }
 
+function normalizeDepartmentLookupItem(doc) {
+  if (!doc) return null
+
+  return {
+    id: String(doc._id),
+    code: doc.code || '',
+    name: doc.name || '',
+    description: doc.description || '',
+    label: [doc.code, doc.name].filter(Boolean).join(' - '),
+    isActive: !!doc.isActive,
+  }
+}
+
 async function ensureUniqueCode(code, excludeId = null) {
-  const filter = { code: String(code).trim().toUpperCase() }
+  const filter = { code: s(code).toUpperCase() }
   if (excludeId) filter._id = { $ne: excludeId }
 
   const existing = await Department.findOne(filter).lean()
@@ -60,6 +77,34 @@ async function ensureUniqueCode(code, excludeId = null) {
     const error = new Error('Department code already exists')
     error.status = 409
     throw error
+  }
+}
+
+async function lookupDepartments(query = {}) {
+  const search = s(query.search)
+  const limit = Math.min(Math.max(Number(query.limit || 20), 1), 50)
+
+  let isActive = true
+  if (String(query.isActive ?? '').trim().toLowerCase() === 'false') {
+    isActive = false
+  }
+
+  const filter = buildListQuery({
+    search,
+    isActive,
+  })
+
+  const items = await Department.find(filter)
+    .sort({ name: 1, code: 1, _id: -1 })
+    .limit(limit)
+    .lean()
+
+  return {
+    items: items.map(normalizeDepartmentLookupItem),
+    meta: {
+      limit,
+      count: items.length,
+    },
   }
 }
 
@@ -252,10 +297,10 @@ async function importDepartmentsExcel(fileBuffer) {
   let updatedCount = 0
 
   for (const row of rows) {
-    const rawCode = String(row.Code || row.code || '').trim().toUpperCase()
-    const rawName = String(row.Name || row.name || '').trim()
-    const rawDescription = String(row.Description || row.description || '').trim()
-    const rawStatus = String(row.Status || row.status || '').trim().toLowerCase()
+    const rawCode = s(row.Code || row.code).toUpperCase()
+    const rawName = s(row.Name || row.name)
+    const rawDescription = s(row.Description || row.description)
+    const rawStatus = s(row.Status || row.status).toLowerCase()
 
     if (!rawCode || !rawName) continue
 
@@ -284,6 +329,7 @@ async function importDepartmentsExcel(fileBuffer) {
 }
 
 module.exports = {
+  lookupDepartments,
   createDepartment,
   listDepartments,
   getDepartmentById,

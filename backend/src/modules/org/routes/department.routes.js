@@ -1,3 +1,4 @@
+// backend/src/modules/org/routes/department.routes.js
 const express = require('express')
 const multer = require('multer')
 
@@ -9,6 +10,8 @@ const router = express.Router()
 const upload = multer({ storage: multer.memoryStorage() })
 
 router.use(requireAuth)
+
+router.get('/lookup', requirePermission('DEPARTMENT_LOOKUP'), controller.lookup)
 
 router.get('/', requirePermission('DEPARTMENT_VIEW'), controller.list)
 router.get('/export', requirePermission('DEPARTMENT_VIEW'), controller.exportExcel)

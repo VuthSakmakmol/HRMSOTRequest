@@ -1,4 +1,18 @@
+// backend/src/modules/org/controllers/department.controller.js
 const departmentService = require('../services/department.service')
+
+async function lookup(req, res, next) {
+  try {
+    const result = await departmentService.lookupDepartments(req.query)
+
+    return res.json({
+      ok: true,
+      data: result,
+    })
+  } catch (error) {
+    return next(error)
+  }
+}
 
 async function create(req, res, next) {
   try {
@@ -100,6 +114,7 @@ async function importExcel(req, res, next) {
 }
 
 module.exports = {
+  lookup,
   create,
   list,
   getById,

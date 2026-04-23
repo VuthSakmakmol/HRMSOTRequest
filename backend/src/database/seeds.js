@@ -98,6 +98,12 @@ const PERMISSIONS = [
     module: 'ORG',
     description: 'Allow updating department records',
   },
+  {
+    code: 'DEPARTMENT_LOOKUP',
+    name: 'Lookup Departments',
+    module: 'ORG',
+    description: 'Allow reading department options for selectors and dropdowns only',
+  },
 
   // Positions
   {
