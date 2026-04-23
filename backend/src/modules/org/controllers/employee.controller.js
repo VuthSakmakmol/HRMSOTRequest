@@ -1,4 +1,5 @@
 // backend/src/modules/org/controllers/employee.controller.js
+// backend/src/modules/org/controllers/employee.controller.js
 const employeeService = require('../services/employee.service')
 const {
   createEmployeeSchema,
@@ -29,6 +30,19 @@ function parseQuery(normalizer, data) {
       throw err
     }
     throw error
+  }
+}
+
+async function lookup(req, res, next) {
+  try {
+    const data = await employeeService.lookup(req.query || {}, req.user)
+
+    res.json({
+      ok: true,
+      data,
+    })
+  } catch (error) {
+    next(error)
   }
 }
 
@@ -185,6 +199,7 @@ async function update(req, res, next) {
 }
 
 module.exports = {
+  lookup,
   list,
   exportExcel,
   downloadImportSample,

@@ -1,4 +1,5 @@
 // backend/src/database/seeds.js
+// backend/src/database/seeds.js
 require('../config/env')
 
 const mongoose = require('mongoose')
@@ -126,6 +127,12 @@ const PERMISSIONS = [
     description: 'Allow viewing employee records',
   },
   {
+    code: 'EMPLOYEE_LOOKUP',
+    name: 'Lookup Employees',
+    module: 'ORG',
+    description: 'Allow reading employee options for selectors and dropdowns only',
+  },
+  {
     code: 'EMPLOYEE_CREATE',
     name: 'Create Employees',
     module: 'ORG',
@@ -203,6 +210,7 @@ const PERMISSIONS = [
     module: 'OT',
     description: 'Allow approving OT requests',
   },
+
   // Attendance
   {
     code: 'ATTENDANCE_VIEW',
@@ -222,6 +230,7 @@ const PERMISSIONS = [
     module: 'ATTENDANCE',
     description: 'Allow verifying OT requests against attendance records',
   },
+
   // OT Policy Master
   {
     code: 'OT_POLICY_VIEW',
@@ -261,8 +270,8 @@ const PERMISSIONS = [
     module: 'OT',
     description: 'Allow updating shift OT options',
   },
-
 ]
+
 async function seedPermissions() {
   const results = []
 

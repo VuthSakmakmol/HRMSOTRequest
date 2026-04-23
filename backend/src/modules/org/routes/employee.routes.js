@@ -1,4 +1,5 @@
 // backend/src/modules/org/routes/employee.routes.js
+// backend/src/modules/org/routes/employee.routes.js
 const express = require('express')
 const multer = require('multer')
 
@@ -11,11 +12,17 @@ const router = express.Router()
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10 MB
+    fileSize: 10 * 1024 * 1024,
   },
 })
 
 router.use(requireAuth)
+
+router.get(
+  '/lookup',
+  requirePermission('EMPLOYEE_LOOKUP'),
+  employeeController.lookup,
+)
 
 router.get(
   '/',

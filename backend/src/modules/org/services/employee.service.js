@@ -520,6 +520,106 @@ function buildEmployeeSort(sortBy, sortOrder) {
   }
 }
 
+function normalizeLookupQuery(query = {}) {
+  const limit = Math.min(Math.max(Number(query.limit || 20), 1), 50)
+
+  let isActive = true
+  if (String(query.isActive ?? '').trim().toLowerCase() === 'false') {
+    isActive = false
+  }
+  if (String(query.isActive ?? '').trim() === '') {
+    isActive = true
+  }
+
+  return {
+    search: s(query.search),
+    departmentId: s(query.departmentId),
+    positionId: s(query.positionId),
+    shiftId: s(query.shiftId),
+    reportsToEmployeeId: s(query.reportsToEmployeeId),
+    isActive,
+    limit,
+  }
+}
+
+function buildEmployeeLookupItem(doc) {
+  return {
+    id: String(doc._id),
+    employeeNo: doc.employeeNo || '',
+    displayName: doc.displayName || '',
+    label: [doc.employeeNo, doc.displayName].filter(Boolean).join(' - '),
+
+    departmentId: doc.departmentId?._id
+      ? String(doc.departmentId._id)
+      : doc.departmentId
+        ? String(doc.departmentId)
+        : null,
+    departmentCode: doc.departmentId?.code || '',
+    departmentName: doc.departmentId?.name || '',
+
+    positionId: doc.positionId?._id
+      ? String(doc.positionId._id)
+      : doc.positionId
+        ? String(doc.positionId)
+        : null,
+    positionCode: doc.positionId?.code || '',
+    positionName: doc.positionId?.name || '',
+
+    ...buildShiftSummary(doc.shiftId),
+
+    reportsToEmployeeId: doc.reportsToEmployeeId?._id
+      ? String(doc.reportsToEmployeeId._id)
+      : doc.reportsToEmployeeId
+        ? String(doc.reportsToEmployeeId)
+        : null,
+    reportsToEmployeeName: doc.reportsToEmployeeId?.displayName || '',
+
+    phone: doc.phone || '',
+    email: doc.email || '',
+    isActive: !!doc.isActive,
+  }
+}
+
+async function lookup(rawQuery = {}, currentUser = null) {
+  const query = normalizeLookupQuery(rawQuery)
+  const scopeFilter = await buildEmployeeScopeFilter(currentUser)
+
+  const filter = buildEmployeeListFilter(
+    {
+      search: query.search,
+      departmentId: query.departmentId,
+      positionId: query.positionId,
+      shiftId: query.shiftId,
+      isActive: query.isActive,
+    },
+    scopeFilter,
+  )
+
+  if (query.reportsToEmployeeId) {
+    const managerObjectId = toObjectId(query.reportsToEmployeeId)
+    if (managerObjectId) {
+      filter.reportsToEmployeeId = managerObjectId
+    }
+  }
+
+  const items = await Employee.find(filter)
+    .populate('departmentId', 'name code')
+    .populate('positionId', 'name code')
+    .populate('shiftId', 'code name type startTime endTime crossMidnight')
+    .populate('reportsToEmployeeId', 'employeeNo displayName')
+    .sort({ displayName: 1, employeeNo: 1 })
+    .limit(query.limit)
+    .lean()
+
+  return {
+    items: items.map(buildEmployeeLookupItem),
+    meta: {
+      limit: query.limit,
+      count: items.length,
+    },
+  }
+}
+
 async function loadAccountMapForEmployees() {
   const accounts = await Account.find({}, 'employeeId loginId isActive').lean()
   const accountByEmployeeId = new Map()
@@ -1387,6 +1487,7 @@ async function update(id, payload) {
 }
 
 module.exports = {
+  lookup,
   list,
   exportExcel,
   downloadImportSample,
