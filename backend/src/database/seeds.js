@@ -124,6 +124,12 @@ const PERMISSIONS = [
     module: 'ORG',
     description: 'Allow updating position records',
   },
+  {
+    code: 'POSITION_LOOKUP',
+    name: 'Lookup Positions',
+    module: 'ORG',
+    description: 'Allow reading position options for selectors and dropdowns only',
+  },
 
   // Employees
   {

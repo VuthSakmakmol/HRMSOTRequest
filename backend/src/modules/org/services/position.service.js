@@ -1,9 +1,14 @@
 // backend/src/modules/org/services/position.service.js
+// backend/src/modules/org/services/position.service.js
 const mongoose = require('mongoose')
 const XLSX = require('xlsx')
 
 const Position = require('../models/Position')
 const Department = require('../models/Department')
+
+function s(value) {
+  return String(value ?? '').trim()
+}
 
 function buildSort(sortBy, sortOrder) {
   return {
@@ -16,10 +21,22 @@ function escapeRegex(value) {
   return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
+function parseBooleanLike(value, defaultValue = true) {
+  if (value === undefined || value === null || value === '') return defaultValue
+  if (typeof value === 'boolean') return value
+
+  const v = String(value).trim().toLowerCase()
+
+  if (['true', '1', 'yes', 'y', 'active'].includes(v)) return true
+  if (['false', '0', 'no', 'n', 'inactive'].includes(v)) return false
+
+  return defaultValue
+}
+
 function buildFilters(query = {}) {
   const filters = {}
 
-  if (query.departmentId) {
+  if (query.departmentId && mongoose.isValidObjectId(query.departmentId)) {
     filters.departmentId = new mongoose.Types.ObjectId(query.departmentId)
   }
 
@@ -84,19 +101,6 @@ function workbookToBuffer(workbook) {
   })
 }
 
-function parseBooleanLike(value, defaultValue = true) {
-  if (value === undefined || value === null || value === '') return defaultValue
-  if (typeof value === 'boolean') return value
-
-  const v = String(value).trim().toLowerCase()
-
-  if (['true', '1', 'yes', 'y', 'active'].includes(v)) return true
-  if (['false', '0', 'no', 'n', 'inactive'].includes(v)) return false
-
-  return defaultValue
-}
-
-// backend/src/modules/org/services/position.service.js
 function buildSampleWorkbook() {
   const workbook = XLSX.utils.book_new()
 
@@ -210,6 +214,53 @@ function normalizeImportRow(row = {}) {
     name: String(row.PositionName || '').trim(),
     description: String(row.Description || '').trim(),
     isActive: parseBooleanLike(row.IsActive, true),
+  }
+}
+
+function buildLookupItem(item) {
+  return {
+    id: String(item._id),
+    code: item.code || '',
+    name: item.name || '',
+    description: item.description || '',
+    label: [item.code, item.name].filter(Boolean).join(' - '),
+    departmentId: item?.departmentId?._id
+      ? String(item.departmentId._id)
+      : item?.departmentId
+        ? String(item.departmentId)
+        : null,
+    departmentCode: item?.departmentId?.code || '',
+    departmentName: item?.departmentId?.name || '',
+    isActive: !!item.isActive,
+  }
+}
+
+async function lookup(query = {}) {
+  const limit = Math.min(Math.max(Number(query.limit || 20), 1), 50)
+
+  let isActive = true
+  if (String(query.isActive ?? '').trim().toLowerCase() === 'false') {
+    isActive = false
+  }
+
+  const filters = buildFilters({
+    search: s(query.search),
+    departmentId: s(query.departmentId),
+    isActive,
+  })
+
+  const items = await Position.find(filters)
+    .populate('departmentId', 'code name isActive')
+    .sort({ name: 1, code: 1, _id: -1 })
+    .limit(limit)
+    .lean()
+
+  return {
+    items: items.map(buildLookupItem),
+    meta: {
+      limit,
+      count: items.length,
+    },
   }
 }
 
@@ -401,6 +452,7 @@ async function importExcel(file) {
 }
 
 module.exports = {
+  lookup,
   list,
   getById,
   create,

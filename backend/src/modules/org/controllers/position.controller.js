@@ -18,6 +18,19 @@ function parseBody(schema, data) {
   return result.data
 }
 
+async function lookup(req, res, next) {
+  try {
+    const data = await positionService.lookup(req.query || {})
+
+    res.json({
+      ok: true,
+      data,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
 async function list(req, res, next) {
   try {
     const query = normalizeListQuery(req.query || {})
@@ -133,6 +146,7 @@ async function importExcel(req, res, next) {
 }
 
 module.exports = {
+  lookup,
   list,
   getOne,
   create,

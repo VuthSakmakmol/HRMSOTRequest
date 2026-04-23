@@ -1,4 +1,5 @@
 // backend/src/modules/org/routes/position.routes.js
+// backend/src/modules/org/routes/position.routes.js
 const express = require('express')
 const multer = require('multer')
 
@@ -17,8 +18,11 @@ const upload = multer({
 
 router.use(requireAuth)
 
+router.get('/lookup', requirePermission('POSITION_LOOKUP'), controller.lookup)
+
 router.get('/sample', requirePermission('POSITION_VIEW'), controller.downloadSample)
 router.get('/export', requirePermission('POSITION_VIEW'), controller.exportExcel)
+
 router.post(
   '/import',
   requirePermission('POSITION_CREATE'),
