@@ -10,25 +10,25 @@ router.use(requireAuth)
 
 router.post(
   '/',
-  requirePermission('OT_REQUEST_CREATE'),
+  requirePermission('SHIFT_OT_OPTION_CREATE'),
   shiftOtOptionController.createShiftOTOption,
 )
 
 router.get(
   '/',
-  requirePermission('OT_REQUEST_VIEW'),
+  requirePermission('SHIFT_OT_OPTION_VIEW'),
   shiftOtOptionController.listShiftOTOptions,
 )
 
 router.get(
   '/:id',
-  requirePermission('OT_REQUEST_VIEW'),
+  requirePermission('SHIFT_OT_OPTION_VIEW'),
   shiftOtOptionController.getShiftOTOptionDetail,
 )
 
 router.patch(
   '/:id',
-  requirePermission('OT_REQUEST_UPDATE'),
+  requirePermission('SHIFT_OT_OPTION_UPDATE'),
   shiftOtOptionController.updateShiftOTOption,
 )
 

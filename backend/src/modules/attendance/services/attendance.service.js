@@ -877,6 +877,112 @@ async function listRecords(query) {
   }
 }
 
+function mapPolicySnapshotForVerification(snapshot = {}) {
+  return {
+    calculationPolicyId: snapshot?.calculationPolicyId
+      ? String(snapshot.calculationPolicyId)
+      : null,
+    code: upper(snapshot?.code),
+    name: s(snapshot?.name),
+    minEligibleMinutes: Number(snapshot?.minEligibleMinutes || 0),
+    roundUnitMinutes: Number(snapshot?.roundUnitMinutes || 0),
+    roundMethod: upper(snapshot?.roundMethod),
+    graceAfterShiftEndMinutes: Number(snapshot?.graceAfterShiftEndMinutes || 0),
+    allowPreShiftOT: snapshot?.allowPreShiftOT === true,
+    allowPostShiftOT: snapshot?.allowPostShiftOT !== false,
+    capByRequestedMinutes: snapshot?.capByRequestedMinutes !== false,
+    treatForgetScanInAsPending: snapshot?.treatForgetScanInAsPending !== false,
+    treatForgetScanOutAsPending: snapshot?.treatForgetScanOutAsPending !== false,
+  }
+}
+
+function getEffectiveApprovedEmployeesForVerification(otRequest) {
+  const status = upper(otRequest?.status)
+
+  if (
+    status === 'PENDING_REQUESTER_CONFIRMATION' &&
+    Array.isArray(otRequest?.proposedApprovedEmployees) &&
+    otRequest.proposedApprovedEmployees.length
+  ) {
+    return otRequest.proposedApprovedEmployees
+  }
+
+  if (Array.isArray(otRequest?.approvedEmployees) && otRequest.approvedEmployees.length) {
+    return otRequest.approvedEmployees
+  }
+
+  return Array.isArray(otRequest?.requestedEmployees) ? otRequest.requestedEmployees : []
+}
+
+function buildVerificationOTRequestPayload(otRequest, approvedEmployees = []) {
+  const requestedEmployees = Array.isArray(otRequest?.requestedEmployees)
+    ? otRequest.requestedEmployees
+    : []
+
+  const effectiveApprovedEmployees = Array.isArray(approvedEmployees) ? approvedEmployees : []
+
+  const requestedMinutes = Number(otRequest?.requestedMinutes || otRequest?.totalMinutes || 0)
+
+  return {
+    id: String(otRequest._id),
+    requestNo: s(otRequest.requestNo),
+
+    requesterEmployeeId: otRequest.requesterEmployeeId
+      ? String(otRequest.requesterEmployeeId)
+      : null,
+    requesterEmployeeNo: s(otRequest.requesterEmployeeNo),
+    requesterName: s(otRequest.requesterName),
+
+    otDate: s(otRequest.otDate),
+    dayType: upper(otRequest.dayType),
+    status: upper(otRequest.status),
+
+    shiftId: otRequest.shiftId ? String(otRequest.shiftId) : null,
+    shiftCode: upper(otRequest.shiftCode),
+    shiftName: s(otRequest.shiftName),
+    shiftType: upper(otRequest.shiftType),
+    shiftStartTime: s(otRequest.shiftStartTime),
+    shiftEndTime: s(otRequest.shiftEndTime),
+    shiftCrossMidnight: otRequest.shiftCrossMidnight === true,
+
+    shiftOtOptionId: otRequest.shiftOtOptionId ? String(otRequest.shiftOtOptionId) : null,
+    shiftOtOptionLabel: s(otRequest.shiftOtOptionLabel),
+
+    requestedMinutes,
+    totalMinutes: Number(otRequest.totalMinutes || 0),
+    totalHours: Number(otRequest.totalHours || 0),
+
+    requestStartTime: s(otRequest.requestStartTime || otRequest.startTime),
+    requestEndTime: s(otRequest.requestEndTime || otRequest.endTime),
+    expectedOtStartTime: s(otRequest.requestStartTime || otRequest.startTime),
+    expectedOtEndTime: s(otRequest.requestEndTime || otRequest.endTime),
+
+    otCalculationPolicyId: otRequest.otCalculationPolicyId
+      ? String(otRequest.otCalculationPolicyId)
+      : null,
+    otCalculationPolicySnapshot: mapPolicySnapshotForVerification(
+      otRequest.otCalculationPolicySnapshot || {},
+    ),
+
+    requestedEmployeeCount: Number(
+      otRequest.requestedEmployeeCount || requestedEmployees.length,
+    ),
+    approvedEmployeeCount: Number(
+      effectiveApprovedEmployees.length || otRequest.approvedEmployeeCount || 0,
+    ),
+    proposedApprovedEmployeeCount: Number(
+      otRequest.proposedApprovedEmployeeCount ||
+        (Array.isArray(otRequest.proposedApprovedEmployees)
+          ? otRequest.proposedApprovedEmployees.length
+          : 0),
+    ),
+
+    requesterConfirmationStatus: upper(otRequest.requesterConfirmationStatus),
+    requestedEmployees,
+    approvedEmployees: effectiveApprovedEmployees,
+  }
+}
+
 async function verifyOTRequest(otRequestId) {
   if (!mongoose.isValidObjectId(otRequestId)) {
     const err = new Error('Invalid OT request id')
@@ -903,9 +1009,7 @@ async function verifyOTRequest(otRequestId) {
     ? otRequest.requestedEmployees
     : []
 
-  const approvedEmployees = Array.isArray(otRequest.approvedEmployees)
-    ? otRequest.approvedEmployees
-    : []
+  const effectiveApprovedEmployees = getEffectiveApprovedEmployeesForVerification(otRequest)
 
   const requestedEmployeeIds = normalizeIdArray(requestedEmployees.map((item) => item?.employeeId))
   const requestedEmployeeCodes = Array.from(
@@ -929,32 +1033,20 @@ async function verifyOTRequest(otRequestId) {
         .lean()
     : []
 
+  const verificationOtRequest = buildVerificationOTRequestPayload(
+    otRequest,
+    effectiveApprovedEmployees,
+  )
+
   const verification = verifyAttendanceAgainstOT({
+    otRequest: verificationOtRequest,
     requestedEmployees,
-    approvedEmployees,
+    approvedEmployees: effectiveApprovedEmployees,
     attendanceRecords,
   })
 
   return {
-    otRequest: {
-      id: String(otRequest._id),
-      requestNo: s(otRequest.requestNo),
-      requesterEmployeeId: otRequest.requesterEmployeeId ? String(otRequest.requesterEmployeeId) : null,
-      requesterEmployeeNo: s(otRequest.requesterEmployeeNo),
-      requesterName: s(otRequest.requesterName),
-      otDate: s(otRequest.otDate),
-      dayType: upper(otRequest.dayType),
-      status,
-      requestedEmployeeCount: Number(otRequest.requestedEmployeeCount || requestedEmployees.length),
-      approvedEmployeeCount: Number(otRequest.approvedEmployeeCount || approvedEmployees.length),
-      proposedApprovedEmployeeCount: Number(
-        otRequest.proposedApprovedEmployeeCount ||
-          (Array.isArray(otRequest.proposedApprovedEmployees)
-            ? otRequest.proposedApprovedEmployees.length
-            : 0),
-      ),
-      requesterConfirmationStatus: upper(otRequest.requesterConfirmationStatus),
-    },
+    otRequest: verificationOtRequest,
     verification,
   }
 }

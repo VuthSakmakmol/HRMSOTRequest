@@ -49,11 +49,6 @@ const shiftMismatchEmployees = computed(() => verification.value?.shiftMismatchE
 const pendingReviewEmployees = computed(() => verification.value?.pendingReviewEmployees || [])
 const notEligibleEmployees = computed(() => verification.value?.notEligibleEmployees || [])
 
-function toPositiveNumber(value) {
-  const n = Number(value)
-  return Number.isFinite(n) && n > 0 ? n : 0
-}
-
 function normalizePayload(res) {
   return res?.data?.data || res?.data || {}
 }
@@ -81,41 +76,6 @@ function normalizeTimeValue(value) {
   return `${hh}:${mm}`
 }
 
-function timeToMinutes(value) {
-  const normalized = normalizeTimeValue(value)
-  const match = normalized.match(/^(\d{2}):(\d{2})$/)
-  if (!match) return null
-  return Number(match[1]) * 60 + Number(match[2])
-}
-
-function addMinutesToTime(baseTime, addedMinutes) {
-  const base = timeToMinutes(baseTime)
-  const plus = Number(addedMinutes || 0)
-
-  if (base === null || !Number.isFinite(plus)) return '-'
-
-  let total = base + plus
-  total %= 24 * 60
-  if (total < 0) total += 24 * 60
-
-  const hh = String(Math.floor(total / 60)).padStart(2, '0')
-  const mm = String(total % 60).padStart(2, '0')
-  return `${hh}:${mm}`
-}
-
-function diffMinutesFromReference(referenceTime, targetTime) {
-  const reference = timeToMinutes(referenceTime)
-  let target = timeToMinutes(targetTime)
-
-  if (reference === null || target === null) return 0
-
-  if (target < reference) {
-    target += 24 * 60
-  }
-
-  return Math.max(0, target - reference)
-}
-
 function formatNumber(value) {
   return Number(value || 0)
 }
@@ -131,134 +91,6 @@ function formatMinutesLabel(value) {
   if (hh && mm) return `${hh}h ${mm}m`
   if (hh) return `${hh}h`
   return `${mm}m`
-}
-
-function firstPositiveMinuteValue(...values) {
-  for (const value of values) {
-    const minutes = toPositiveNumber(value)
-    if (minutes > 0) return minutes
-  }
-  return 0
-}
-
-function firstTimeValue(...values) {
-  for (const value of values) {
-    const normalized = normalizeTimeValue(value)
-    if (normalized) return normalized
-  }
-  return ''
-}
-
-function getRequestedOtMinutes(row = {}) {
-  return firstPositiveMinuteValue(
-    row?.requestedMinutes,
-    row?.otRequestedMinutes,
-    row?.approvedMinutes,
-    row?.requestedOtMinutes,
-    verification.value?.requestedMinutes,
-    otRequest.value?.requestedMinutes,
-    otRequest.value?.totalMinutes,
-  )
-}
-
-function getShiftStartTime(row = {}) {
-  return (
-    firstTimeValue(
-      row?.shiftStartTime,
-      row?.approvedShiftStartTime,
-      otRequest.value?.shiftStartTime,
-    ) || '-'
-  )
-}
-
-function getShiftEndTime(row = {}) {
-  return (
-    firstTimeValue(
-      row?.shiftEndTime,
-      row?.approvedShiftEndTime,
-      otRequest.value?.shiftEndTime,
-    ) || '-'
-  )
-}
-
-function getExpectedOtEndTime(row = {}) {
-  const directExpected = firstTimeValue(
-    row?.expectedOtEndTime,
-    row?.expectedEndTime,
-    row?.requestEndTime,
-    otRequest.value?.expectedOtEndTime,
-    otRequest.value?.requestEndTime,
-    otRequest.value?.endTime,
-  )
-
-  if (directExpected) return directExpected
-
-  const shiftEnd = getShiftEndTime(row)
-  const requestedMinutes = getRequestedOtMinutes(row)
-
-  if (shiftEnd === '-' || requestedMinutes <= 0) return '-'
-
-  return addMinutesToTime(shiftEnd, requestedMinutes)
-}
-
-function getClockOutTime(row = {}) {
-  return firstTimeValue(row?.clockOut) || '-'
-}
-
-function getActualOtMinutes(row = {}) {
-  const explicit = firstPositiveMinuteValue(
-    row?.actualOtMinutes,
-    row?.otWorkedMinutes,
-    row?.workedOtMinutes,
-  )
-
-  if (explicit > 0) return explicit
-
-  const shiftEnd = getShiftEndTime(row)
-  const clockOut = getClockOutTime(row)
-
-  if (shiftEnd === '-' || clockOut === '-') return 0
-
-  return diffMinutesFromReference(shiftEnd, clockOut)
-}
-
-function getOtResult(row = {}) {
-  const attendanceStatus = String(row?.attendanceStatus || '').trim().toUpperCase()
-
-  if (attendanceStatus === 'FORGET_SCAN_IN' || attendanceStatus === 'FORGET_SCAN_OUT') {
-    return 'PENDING_REVIEW'
-  }
-
-  const shiftEnd = getShiftEndTime(row)
-  const clockOut = getClockOutTime(row)
-  const requestedMinutes = getRequestedOtMinutes(row)
-  const actualOtMinutes = getActualOtMinutes(row)
-
-  if (shiftEnd === '-') return 'NO_SHIFT_END'
-  if (clockOut === '-') return 'NO_CLOCK_OUT'
-  if (requestedMinutes <= 0) return 'NO_OT_REQUEST'
-
-  if (actualOtMinutes === requestedMinutes) return 'MATCH'
-  if (actualOtMinutes < requestedMinutes) return 'SHORT'
-  return 'EXCEED'
-}
-
-function otResultSeverity(value) {
-  switch (String(value || '').toUpperCase()) {
-    case 'MATCH':
-      return 'success'
-    case 'SHORT':
-    case 'NO_CLOCK_OUT':
-    case 'NO_SHIFT_END':
-      return 'danger'
-    case 'EXCEED':
-      return 'warning'
-    case 'PENDING_REVIEW':
-    case 'NO_OT_REQUEST':
-      return 'info'
-    default:
-      return 'secondary'
-  }
 }
 
 function statusSeverity(value) {
@@ -303,6 +135,14 @@ function yesNoSeverity(value) {
   return value === true ? 'success' : value === false ? 'danger' : 'secondary'
 }
 
+function verificationResult(value) {
+  return String(value || '').trim().toUpperCase() === 'MATCH' ? 'MATCH' : 'MISMATCH'
+}
+
+function verificationSeverity(value) {
+  return verificationResult(value) === 'MATCH' ? 'success' : 'danger'
+}
+
 function personLabel(row) {
   const code = String(row?.employeeCode || row?.employeeNo || '').trim()
   const name = String(row?.employeeName || '').trim()
@@ -311,11 +151,92 @@ function personLabel(row) {
   return code || name || '-'
 }
 
-const requestRequestedOtMinutes = computed(() => getRequestedOtMinutes())
-const requestRequestedOtLabel = computed(() => formatMinutesLabel(requestRequestedOtMinutes.value))
-const requestShiftStartTime = computed(() => getShiftStartTime())
-const requestShiftEndTime = computed(() => getShiftEndTime())
-const requestExpectedOtEndTime = computed(() => getExpectedOtEndTime())
+function displayTime(...values) {
+  for (const value of values) {
+    const normalized = normalizeTimeValue(value)
+    if (normalized) return normalized
+  }
+  return '-'
+}
+
+function rowShiftEndTime(row = {}) {
+  return displayTime(row?.shiftEndTime, otRequest.value?.shiftEndTime)
+}
+
+function rowRequestedOtLabel(row = {}) {
+  return formatMinutesLabel(
+    row?.requestedMinutes ??
+      row?.requestedOtMinutes ??
+      verification.value?.requestedMinutes ??
+      otRequest.value?.requestedMinutes ??
+      otRequest.value?.totalMinutes ??
+      0,
+  )
+}
+
+function rowExpectedOtEndTime(row = {}) {
+  return displayTime(
+    row?.expectedOtEndTime,
+    verification.value?.expectedOtEndTime,
+    otRequest.value?.expectedOtEndTime,
+    otRequest.value?.requestEndTime,
+    otRequest.value?.endTime,
+  )
+}
+
+function rowActualClockOut(row = {}) {
+  return displayTime(row?.clockOut)
+}
+
+function rowActualOtLabel(row = {}) {
+  return formatMinutesLabel(
+    row?.roundedOtMinutes ??
+      row?.actualOtMinutes ??
+      0,
+  )
+}
+
+const requestRequestedOtLabel = computed(() =>
+  formatMinutesLabel(
+    verification.value?.requestedMinutes ??
+      otRequest.value?.requestedMinutes ??
+      otRequest.value?.totalMinutes ??
+      0,
+  ),
+)
+
+const requestShiftStartTime = computed(() =>
+  displayTime(otRequest.value?.shiftStartTime),
+)
+
+const requestShiftEndTime = computed(() =>
+  displayTime(otRequest.value?.shiftEndTime),
+)
+
+const requestExpectedOtEndTime = computed(() =>
+  displayTime(
+    verification.value?.expectedOtEndTime,
+    otRequest.value?.expectedOtEndTime,
+    otRequest.value?.requestEndTime,
+    otRequest.value?.endTime,
+  ),
+)
+
+const requestPolicyLabel = computed(() => {
+  const code = String(
+    verification.value?.policyCode ||
+      otRequest.value?.otCalculationPolicySnapshot?.code ||
+      '',
+  ).trim()
+  const name = String(
+    verification.value?.policyName ||
+      otRequest.value?.otCalculationPolicySnapshot?.name ||
+      '',
+  ).trim()
+
+  if (code && name) return `${code} · ${name}`
+  return code || name || '-'
+})
 
 const summaryCards = computed(() => {
   return [
@@ -502,7 +423,7 @@ onMounted(() => {
                 OT Verification Summary
               </h1>
               <p class="mt-1 max-w-3xl text-sm leading-6 text-surface-600 dark:text-surface-300">
-                Search by OT Request No, then verify Shift End, Requested OT, Expected OT End, and Actual Clock Out together.
+                Search by OT Request No, then verify approved OT from backend with a simple MATCH or MISMATCH result.
               </p>
             </div>
           </div>
@@ -620,7 +541,7 @@ onMounted(() => {
 
         <Card class="overflow-hidden rounded-3xl shadow-sm">
           <template #content>
-            <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-8">
               <div class="rounded-2xl border border-surface-200 p-4 dark:border-surface-700">
                 <div class="text-xs text-surface-500 dark:text-surface-400">Request No</div>
                 <div class="mt-1 font-semibold text-surface-900 dark:text-surface-0">
@@ -652,6 +573,20 @@ onMounted(() => {
                 <div class="text-xs text-surface-500 dark:text-surface-400">Shift</div>
                 <div class="mt-1 font-semibold text-surface-900 dark:text-surface-0">
                   {{ requestShiftStartTime }} - {{ requestShiftEndTime }}
+                </div>
+              </div>
+
+              <div class="rounded-2xl border border-surface-200 p-4 dark:border-surface-700">
+                <div class="text-xs text-surface-500 dark:text-surface-400">OT Option</div>
+                <div class="mt-1 font-semibold text-surface-900 dark:text-surface-0">
+                  {{ otRequest.shiftOtOptionLabel || '-' }}
+                </div>
+              </div>
+
+              <div class="rounded-2xl border border-surface-200 p-4 dark:border-surface-700">
+                <div class="text-xs text-surface-500 dark:text-surface-400">Policy</div>
+                <div class="mt-1 font-semibold text-surface-900 dark:text-surface-0">
+                  {{ requestPolicyLabel }}
                 </div>
               </div>
 
@@ -712,20 +647,20 @@ onMounted(() => {
 
               <Column header="Shift End" style="min-width: 7rem">
                 <template #body="{ data }">
-                  {{ getShiftEndTime(data) }}
+                  {{ rowShiftEndTime(data) }}
                 </template>
               </Column>
 
               <Column header="Requested OT" style="min-width: 8rem">
                 <template #body="{ data }">
-                  {{ formatMinutesLabel(getRequestedOtMinutes(data)) }}
+                  {{ rowRequestedOtLabel(data) }}
                 </template>
               </Column>
 
               <Column header="Expected OT End" style="min-width: 9rem">
                 <template #body="{ data }">
                   <span class="font-semibold text-surface-900 dark:text-surface-0">
-                    {{ getExpectedOtEndTime(data) }}
+                    {{ rowExpectedOtEndTime(data) }}
                   </span>
                 </template>
               </Column>
@@ -733,22 +668,22 @@ onMounted(() => {
               <Column header="Actual Clock Out" style="min-width: 8rem">
                 <template #body="{ data }">
                   <span class="font-semibold text-surface-900 dark:text-surface-0">
-                    {{ getClockOutTime(data) }}
+                    {{ rowActualClockOut(data) }}
                   </span>
                 </template>
               </Column>
 
               <Column header="Actual OT" style="min-width: 8rem">
                 <template #body="{ data }">
-                  {{ formatMinutesLabel(getActualOtMinutes(data)) }}
+                  {{ rowActualOtLabel(data) }}
                 </template>
               </Column>
 
-              <Column header="OT Result" style="min-width: 9rem">
+              <Column header="Verification" style="min-width: 9rem">
                 <template #body="{ data }">
                   <Tag
-                    :value="getOtResult(data)"
-                    :severity="otResultSeverity(getOtResult(data))"
+                    :value="verificationResult(data.otResult)"
+                    :severity="verificationSeverity(data.otResult)"
                   />
                 </template>
               </Column>
@@ -938,12 +873,18 @@ onMounted(() => {
                 </Column>
                 <Column header="Has Clock In" style="min-width: 8rem">
                   <template #body="{ data }">
-                    <Tag :value="data.hasClockIn === true ? 'YES' : 'NO'" :severity="yesNoSeverity(data.hasClockIn)" />
+                    <Tag
+                      :value="data.hasClockIn === true ? 'YES' : 'NO'"
+                      :severity="yesNoSeverity(data.hasClockIn)"
+                    />
                   </template>
                 </Column>
                 <Column header="Has Clock Out" style="min-width: 8rem">
                   <template #body="{ data }">
-                    <Tag :value="data.hasClockOut === true ? 'YES' : 'NO'" :severity="yesNoSeverity(data.hasClockOut)" />
+                    <Tag
+                      :value="data.hasClockOut === true ? 'YES' : 'NO'"
+                      :severity="yesNoSeverity(data.hasClockOut)"
+                    />
                   </template>
                 </Column>
                 <Column header="Reason" style="min-width: 16rem">

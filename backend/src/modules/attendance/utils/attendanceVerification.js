@@ -1,5 +1,4 @@
 // backend/src/modules/attendance/utils/attendanceVerification.js
-
 function s(value) {
   return String(value ?? '').trim()
 }
@@ -18,6 +17,50 @@ function toMinutes(hhmm) {
 
   if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null
   return hh * 60 + mm
+}
+
+function minutesToHHmm(totalMinutes) {
+  const normalized = ((Number(totalMinutes || 0) % 1440) + 1440) % 1440
+  const hh = Math.floor(normalized / 60)
+  const mm = normalized % 60
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
+}
+
+function safeNumber(value, fallback = 0) {
+  const num = Number(value)
+  if (!Number.isFinite(num)) return fallback
+  return num
+}
+
+function safeNonNegativeInt(value, fallback = 0) {
+  const num = Math.round(safeNumber(value, fallback))
+  return num < 0 ? fallback : num
+}
+
+function roundMinutesByPolicy(minutes, unitMinutes, roundMethod) {
+  const rawMinutes = safeNonNegativeInt(minutes, 0)
+  const unit = safeNonNegativeInt(unitMinutes, 0)
+
+  if (!unit || rawMinutes <= 0) return rawMinutes
+
+  const factor = rawMinutes / unit
+  const method = upper(roundMethod)
+
+  if (method === 'FLOOR') {
+    return Math.floor(factor) * unit
+  }
+
+  if (method === 'NEAREST') {
+    return Math.round(factor) * unit
+  }
+
+  return Math.ceil(factor) * unit
+}
+
+function overlapMinutes(startA, endA, startB, endB) {
+  const start = Math.max(safeNumber(startA, 0), safeNumber(startB, 0))
+  const end = Math.min(safeNumber(endA, 0), safeNumber(endB, 0))
+  return Math.max(0, end - start)
 }
 
 function buildShiftWindow(shiftStartTime, shiftEndTime) {
@@ -365,40 +408,462 @@ function getRequestedEmployeeKey(record, requestedIndex) {
   return ''
 }
 
-function buildVerificationItem(requested, attendanceRecord) {
+function normalizePolicySnapshot(snapshot = {}) {
+  return {
+    calculationPolicyId: snapshot?.calculationPolicyId
+      ? String(snapshot.calculationPolicyId)
+      : null,
+    code: upper(snapshot?.code),
+    name: s(snapshot?.name),
+    minEligibleMinutes: safeNonNegativeInt(snapshot?.minEligibleMinutes, 0),
+    roundUnitMinutes: safeNonNegativeInt(snapshot?.roundUnitMinutes, 30) || 30,
+    roundMethod: upper(snapshot?.roundMethod || 'CEIL'),
+    graceAfterShiftEndMinutes: safeNonNegativeInt(snapshot?.graceAfterShiftEndMinutes, 0),
+    allowPreShiftOT: snapshot?.allowPreShiftOT === true,
+    allowPostShiftOT: snapshot?.allowPostShiftOT !== false,
+    capByRequestedMinutes: snapshot?.capByRequestedMinutes !== false,
+    treatForgetScanInAsPending: snapshot?.treatForgetScanInAsPending !== false,
+    treatForgetScanOutAsPending: snapshot?.treatForgetScanOutAsPending !== false,
+  }
+}
+
+function normalizeScheduleMinute(rawMinutes, anchorMinutes, isCrossMidnight) {
+  if (rawMinutes == null) return null
+
+  let normalized = rawMinutes
+
+  if (isCrossMidnight && anchorMinutes != null && normalized < anchorMinutes) {
+    normalized += 24 * 60
+  }
+
+  return normalized
+}
+
+function chooseNearestMinute(rawMinutes, anchorMinutes) {
+  if (rawMinutes == null) return null
+
+  const candidates = [rawMinutes - 24 * 60, rawMinutes, rawMinutes + 24 * 60]
+
+  let best = candidates[0]
+  let bestDiff = Math.abs(best - anchorMinutes)
+
+  for (let i = 1; i < candidates.length; i += 1) {
+    const candidate = candidates[i]
+    const diff = Math.abs(candidate - anchorMinutes)
+
+    if (diff < bestDiff) {
+      best = candidate
+      bestDiff = diff
+    }
+  }
+
+  return best
+}
+
+function normalizeOtRequestContext(otRequest = {}) {
+  const policy = normalizePolicySnapshot(otRequest?.otCalculationPolicySnapshot || {})
+
+  const shiftStartTime = s(otRequest?.shiftStartTime)
+  const shiftEndTime = s(otRequest?.shiftEndTime)
+  const requestStartTime = s(
+    otRequest?.requestStartTime || otRequest?.expectedOtStartTime || otRequest?.startTime,
+  )
+  let requestEndTime = s(
+    otRequest?.requestEndTime || otRequest?.expectedOtEndTime || otRequest?.endTime,
+  )
+
+  const requestedMinutes = safeNonNegativeInt(
+    otRequest?.requestedMinutes || otRequest?.totalMinutes,
+    0,
+  )
+
+  const shiftStartMinutesRaw = toMinutes(shiftStartTime)
+  const shiftEndMinutesRaw = toMinutes(shiftEndTime)
+
+  const derivedShiftCrossMidnight =
+    shiftStartMinutesRaw != null &&
+    shiftEndMinutesRaw != null &&
+    shiftEndMinutesRaw <= shiftStartMinutesRaw
+
+  const shiftCrossMidnight =
+    typeof otRequest?.shiftCrossMidnight === 'boolean'
+      ? otRequest.shiftCrossMidnight
+      : derivedShiftCrossMidnight
+
+  const shiftStartMinutes = shiftStartMinutesRaw
+  let shiftEndMinutes = normalizeScheduleMinute(
+    shiftEndMinutesRaw,
+    shiftStartMinutes,
+    shiftCrossMidnight,
+  )
+
+  const requestStartMinutesRaw = toMinutes(requestStartTime)
+  let requestStartMinutes = normalizeScheduleMinute(
+    requestStartMinutesRaw,
+    shiftStartMinutes,
+    shiftCrossMidnight,
+  )
+
+  if (requestStartMinutes == null && shiftEndMinutes != null) {
+    requestStartMinutes = shiftEndMinutes
+  }
+
+  let requestEndMinutesRaw = toMinutes(requestEndTime)
+
+  if (requestEndMinutesRaw == null && requestStartMinutes != null && requestedMinutes > 0) {
+    requestEndMinutesRaw = ((requestStartMinutes % 1440) + requestedMinutes) % 1440
+    requestEndTime = minutesToHHmm(requestStartMinutes + requestedMinutes)
+  }
+
+  let requestEndMinutes = normalizeScheduleMinute(
+    requestEndMinutesRaw,
+    shiftStartMinutes,
+    shiftCrossMidnight,
+  )
+
+  if (requestEndMinutes != null && requestStartMinutes != null && requestEndMinutes < requestStartMinutes) {
+    requestEndMinutes += 24 * 60
+  }
+
+  if (!requestEndTime && requestEndMinutes != null) {
+    requestEndTime = minutesToHHmm(requestEndMinutes)
+  }
+
+  return {
+    id: otRequest?.id ? String(otRequest.id) : null,
+    requestNo: s(otRequest?.requestNo),
+    status: upper(otRequest?.status),
+    dayType: upper(otRequest?.dayType),
+
+    shiftId: otRequest?.shiftId ? String(otRequest.shiftId) : null,
+    shiftCode: upper(otRequest?.shiftCode),
+    shiftName: s(otRequest?.shiftName),
+    shiftType: upper(otRequest?.shiftType),
+    shiftStartTime,
+    shiftEndTime,
+    shiftCrossMidnight: shiftCrossMidnight === true,
+    shiftStartMinutes,
+    shiftEndMinutes,
+
+    shiftOtOptionId: otRequest?.shiftOtOptionId ? String(otRequest.shiftOtOptionId) : null,
+    shiftOtOptionLabel: s(otRequest?.shiftOtOptionLabel),
+
+    requestedMinutes,
+    requestStartTime: requestStartTime || (requestStartMinutes != null ? minutesToHHmm(requestStartMinutes) : ''),
+    requestEndTime: requestEndTime || (requestEndMinutes != null ? minutesToHHmm(requestEndMinutes) : ''),
+    requestStartMinutes,
+    requestEndMinutes,
+
+    totalMinutes: safeNonNegativeInt(otRequest?.totalMinutes, requestedMinutes),
+    totalHours: safeNumber(otRequest?.totalHours, 0),
+
+    otCalculationPolicyId: otRequest?.otCalculationPolicyId
+      ? String(otRequest.otCalculationPolicyId)
+      : null,
+    otCalculationPolicySnapshot: policy,
+  }
+}
+
+function buildAttendanceWindow(attendanceRecord, anchorMinutes) {
+  const clockInRaw = toMinutes(attendanceRecord?.clockIn)
+  const clockOutRaw = toMinutes(attendanceRecord?.clockOut)
+
+  if (clockInRaw == null || clockOutRaw == null) {
+    return {
+      clockInMinutes: null,
+      clockOutMinutes: null,
+      isValid: false,
+    }
+  }
+
+  const clockInMinutes = chooseNearestMinute(clockInRaw, anchorMinutes)
+  let clockOutMinutes = chooseNearestMinute(clockOutRaw, anchorMinutes)
+
+  if (clockOutMinutes < clockInMinutes) {
+    clockOutMinutes += 24 * 60
+  }
+
+  return {
+    clockInMinutes,
+    clockOutMinutes,
+    isValid: clockOutMinutes >= clockInMinutes,
+  }
+}
+
+function buildMismatchResponse(base, reason, overrides = {}) {
+  return {
+    ...base,
+    actualOtMinutes: Number(overrides.actualOtMinutes || 0),
+    eligibleOtMinutes: Number(overrides.eligibleOtMinutes || 0),
+    roundedOtMinutes: Number(overrides.roundedOtMinutes || 0),
+    rawOtDecision: upper(overrides.rawOtDecision || 'MISMATCH'),
+    otResult: 'MISMATCH',
+    otResultReason: s(reason),
+  }
+}
+
+function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
+  const normalizedOtRequest = normalizeOtRequestContext(otRequest)
+  const attendanceStatus = upper(attendanceRecord?.status)
+
+  const base = {
+    requestedMinutes: normalizedOtRequest.requestedMinutes,
+    requestedOtMinutes: normalizedOtRequest.requestedMinutes,
+    approvedMinutes: normalizedOtRequest.requestedMinutes,
+
+    expectedOtStartTime: s(normalizedOtRequest.requestStartTime),
+    expectedOtEndTime: s(normalizedOtRequest.requestEndTime),
+
+    actualOtMinutes: 0,
+    eligibleOtMinutes: 0,
+    roundedOtMinutes: 0,
+
+    rawOtDecision: 'MISMATCH',
+    otResult: 'MISMATCH',
+    otResultReason: '',
+
+    policyCode: s(normalizedOtRequest.otCalculationPolicySnapshot.code),
+    policyName: s(normalizedOtRequest.otCalculationPolicySnapshot.name),
+    policyRoundMethod: s(normalizedOtRequest.otCalculationPolicySnapshot.roundMethod),
+    policyRoundUnitMinutes: Number(
+      normalizedOtRequest.otCalculationPolicySnapshot.roundUnitMinutes || 0,
+    ),
+    policyMinEligibleMinutes: Number(
+      normalizedOtRequest.otCalculationPolicySnapshot.minEligibleMinutes || 0,
+    ),
+    policyGraceAfterShiftEndMinutes: Number(
+      normalizedOtRequest.otCalculationPolicySnapshot.graceAfterShiftEndMinutes || 0,
+    ),
+  }
+
+  if (normalizedOtRequest.requestedMinutes <= 0) {
+    return buildMismatchResponse(base, 'No OT minutes found on approved OT request', {
+      rawOtDecision: 'NO_OT_REQUEST',
+    })
+  }
+
+  if (
+    attendanceStatus === 'FORGET_SCAN_IN' &&
+    normalizedOtRequest.otCalculationPolicySnapshot.treatForgetScanInAsPending
+  ) {
+    return buildMismatchResponse(base, 'Forget scan in is pending review by OT policy', {
+      rawOtDecision: 'PENDING_REVIEW',
+    })
+  }
+
+  if (
+    attendanceStatus === 'FORGET_SCAN_OUT' &&
+    normalizedOtRequest.otCalculationPolicySnapshot.treatForgetScanOutAsPending
+  ) {
+    return buildMismatchResponse(base, 'Forget scan out is pending review by OT policy', {
+      rawOtDecision: 'PENDING_REVIEW',
+    })
+  }
+
+  if (
+    normalizedOtRequest.requestStartMinutes == null ||
+    normalizedOtRequest.requestEndMinutes == null
+  ) {
+    return buildMismatchResponse(base, 'OT request time window is missing or invalid', {
+      rawOtDecision: 'NO_REQUEST_WINDOW',
+    })
+  }
+
+  const attendanceWindow = buildAttendanceWindow(
+    attendanceRecord,
+    normalizedOtRequest.requestStartMinutes,
+  )
+
+  if (!attendanceWindow.isValid) {
+    return buildMismatchResponse(base, 'Clock in/out window is missing or invalid', {
+      rawOtDecision: 'NO_ATTENDANCE_WINDOW',
+    })
+  }
+
+  const actualOtMinutesWithinRequest = overlapMinutes(
+    normalizedOtRequest.requestStartMinutes,
+    normalizedOtRequest.requestEndMinutes,
+    attendanceWindow.clockInMinutes,
+    attendanceWindow.clockOutMinutes,
+  )
+
+  let eligibleOtMinutes = 0
+  const policy = normalizedOtRequest.otCalculationPolicySnapshot
+
+  const shiftStartMinutes = normalizedOtRequest.shiftStartMinutes
+  const shiftEndMinutes = normalizedOtRequest.shiftEndMinutes
+
+  if (policy.allowPreShiftOT) {
+    const preShiftEnd =
+      shiftStartMinutes != null
+        ? Math.min(normalizedOtRequest.requestEndMinutes, shiftStartMinutes)
+        : normalizedOtRequest.requestEndMinutes
+
+    if (preShiftEnd > normalizedOtRequest.requestStartMinutes) {
+      eligibleOtMinutes += overlapMinutes(
+        normalizedOtRequest.requestStartMinutes,
+        preShiftEnd,
+        attendanceWindow.clockInMinutes,
+        attendanceWindow.clockOutMinutes,
+      )
+    }
+  }
+
+  if (policy.allowPostShiftOT) {
+    const rawPostStart =
+      shiftEndMinutes != null
+        ? shiftEndMinutes + safeNonNegativeInt(policy.graceAfterShiftEndMinutes, 0)
+        : normalizedOtRequest.requestStartMinutes
+
+    const postShiftStart = Math.max(normalizedOtRequest.requestStartMinutes, rawPostStart)
+
+    if (normalizedOtRequest.requestEndMinutes > postShiftStart) {
+      eligibleOtMinutes += overlapMinutes(
+        postShiftStart,
+        normalizedOtRequest.requestEndMinutes,
+        attendanceWindow.clockInMinutes,
+        attendanceWindow.clockOutMinutes,
+      )
+    }
+  }
+
+  if (!policy.allowPreShiftOT && !policy.allowPostShiftOT) {
+    eligibleOtMinutes = 0
+  }
+
+  eligibleOtMinutes = Math.max(0, Math.min(eligibleOtMinutes, actualOtMinutesWithinRequest))
+
+  if (eligibleOtMinutes <= 0) {
+    return buildMismatchResponse(base, 'No eligible OT minutes after applying OT policy window', {
+      rawOtDecision: 'NOT_ELIGIBLE',
+      actualOtMinutes: actualOtMinutesWithinRequest,
+      eligibleOtMinutes: 0,
+      roundedOtMinutes: 0,
+    })
+  }
+
+  if (eligibleOtMinutes < safeNonNegativeInt(policy.minEligibleMinutes, 0)) {
+    return buildMismatchResponse(base, 'Eligible OT is below minimum OT policy threshold', {
+      rawOtDecision: 'BELOW_MIN',
+      actualOtMinutes: actualOtMinutesWithinRequest,
+      eligibleOtMinutes,
+      roundedOtMinutes: 0,
+    })
+  }
+
+  let roundedOtMinutes = roundMinutesByPolicy(
+    eligibleOtMinutes,
+    policy.roundUnitMinutes,
+    policy.roundMethod,
+  )
+
+  if (policy.capByRequestedMinutes && normalizedOtRequest.requestedMinutes > 0) {
+    roundedOtMinutes = Math.min(roundedOtMinutes, normalizedOtRequest.requestedMinutes)
+  }
+
+  if (roundedOtMinutes === normalizedOtRequest.requestedMinutes) {
+    return {
+      ...base,
+      actualOtMinutes: actualOtMinutesWithinRequest,
+      eligibleOtMinutes,
+      roundedOtMinutes,
+      rawOtDecision: 'MATCH',
+      otResult: 'MATCH',
+      otResultReason: 'Actual eligible OT matches approved OT request by policy',
+    }
+  }
+
+  if (roundedOtMinutes < normalizedOtRequest.requestedMinutes) {
+    return buildMismatchResponse(base, 'Actual eligible OT is shorter than approved OT request', {
+      rawOtDecision: 'SHORT',
+      actualOtMinutes: actualOtMinutesWithinRequest,
+      eligibleOtMinutes,
+      roundedOtMinutes,
+    })
+  }
+
+  return buildMismatchResponse(base, 'Actual eligible OT does not match approved OT request', {
+    rawOtDecision: 'EXCEED',
+    actualOtMinutes: actualOtMinutesWithinRequest,
+    eligibleOtMinutes,
+    roundedOtMinutes,
+  })
+}
+
+function buildVerificationItem(requested, attendanceRecord, otRequest) {
+  const normalizedOtRequest = normalizeOtRequestContext(otRequest)
+  const metrics = calculatePolicyDrivenOtMetrics({
+    otRequest: normalizedOtRequest,
+    attendanceRecord,
+  })
+
   return {
     ...requested,
     attendanceRecordId: attendanceRecord.id,
     importId: attendanceRecord.importId,
+
     clockIn: attendanceRecord.clockIn,
     clockOut: attendanceRecord.clockOut,
     attendanceStatus: attendanceRecord.status,
     importedStatus: attendanceRecord.importedStatus,
     derivedStatusReason: attendanceRecord.derivedStatusReason,
     attendanceDayType: attendanceRecord.dayType,
-    shiftCode: attendanceRecord.shiftCode,
-    shiftName: attendanceRecord.shiftName,
-    shiftType: attendanceRecord.shiftType,
-    shiftStartTime: attendanceRecord.shiftStartTime,
-    shiftEndTime: attendanceRecord.shiftEndTime,
+
+    shiftId: normalizedOtRequest.shiftId || attendanceRecord.shiftId,
+    shiftCode: normalizedOtRequest.shiftCode || attendanceRecord.shiftCode,
+    shiftName: normalizedOtRequest.shiftName || attendanceRecord.shiftName,
+    shiftType: normalizedOtRequest.shiftType || attendanceRecord.shiftType,
+    shiftStartTime: normalizedOtRequest.shiftStartTime || attendanceRecord.shiftStartTime,
+    shiftEndTime: normalizedOtRequest.shiftEndTime || attendanceRecord.shiftEndTime,
     shiftMatched: attendanceRecord.shiftMatched,
     shiftTimeMatched: attendanceRecord.shiftTimeMatched,
     shiftMatchStatus: attendanceRecord.shiftMatchStatus,
     hasClockIn: attendanceRecord.hasClockIn,
     hasClockOut: attendanceRecord.hasClockOut,
-    isCrossMidnightShift: attendanceRecord.isCrossMidnightShift,
+    isCrossMidnightShift:
+      typeof normalizedOtRequest.shiftCrossMidnight === 'boolean'
+        ? normalizedOtRequest.shiftCrossMidnight
+        : attendanceRecord.isCrossMidnightShift,
+
     workedMinutes: attendanceRecord.workedMinutes,
     lateMinutes: attendanceRecord.lateMinutes,
     earlyOutMinutes: attendanceRecord.earlyOutMinutes,
     validationIssues: attendanceRecord.validationIssues,
+
+    shiftOtOptionId: normalizedOtRequest.shiftOtOptionId,
+    shiftOtOptionLabel: normalizedOtRequest.shiftOtOptionLabel,
+
+    requestedMinutes: metrics.requestedMinutes,
+    requestedOtMinutes: metrics.requestedOtMinutes,
+    approvedMinutes: metrics.approvedMinutes,
+
+    expectedOtStartTime: metrics.expectedOtStartTime,
+    expectedOtEndTime: metrics.expectedOtEndTime,
+
+    actualOtMinutes: metrics.actualOtMinutes,
+    eligibleOtMinutes: metrics.eligibleOtMinutes,
+    roundedOtMinutes: metrics.roundedOtMinutes,
+
+    rawOtDecision: metrics.rawOtDecision,
+    otResult: metrics.otResult,
+    otResultReason: metrics.otResultReason,
+
+    policyCode: metrics.policyCode,
+    policyName: metrics.policyName,
+    policyRoundMethod: metrics.policyRoundMethod,
+    policyRoundUnitMinutes: metrics.policyRoundUnitMinutes,
+    policyMinEligibleMinutes: metrics.policyMinEligibleMinutes,
+    policyGraceAfterShiftEndMinutes: metrics.policyGraceAfterShiftEndMinutes,
   }
 }
 
 function verifyAttendanceAgainstOT({
+  otRequest = {},
   requestedEmployees = [],
   approvedEmployees = [],
   attendanceRecords = [],
 }) {
+  const normalizedOtRequest = normalizeOtRequestContext(otRequest)
   const requestedList = requestedEmployees.map(mapEmployeeSnapshot)
   const approvedList = approvedEmployees.map(mapEmployeeSnapshot)
   const requestedIndex = buildRequestedIndex(requestedList)
@@ -434,7 +899,7 @@ function verifyAttendanceAgainstOT({
       continue
     }
 
-    const item = buildVerificationItem(requested, attendanceRecord)
+    const item = buildVerificationItem(requested, attendanceRecord, normalizedOtRequest)
 
     if (!isShiftValidRecord(attendanceRecord)) {
       shiftMismatchEmployees.push(item)
@@ -491,6 +956,12 @@ function verifyAttendanceAgainstOT({
   }
 
   return {
+    requestedMinutes: normalizedOtRequest.requestedMinutes,
+    expectedOtStartTime: normalizedOtRequest.requestStartTime,
+    expectedOtEndTime: normalizedOtRequest.requestEndTime,
+    policyCode: normalizedOtRequest.otCalculationPolicySnapshot.code,
+    policyName: normalizedOtRequest.otCalculationPolicySnapshot.name,
+
     requestedEmployeeCount: requestedList.length,
     approvedEmployeeCount: approvedList.length,
     actualAttendedCount: attendedEmployees.length,
@@ -499,6 +970,7 @@ function verifyAttendanceAgainstOT({
     shiftMismatchCount: shiftMismatchEmployees.length,
     pendingReviewCount: pendingReviewEmployees.length,
     notEligibleCount: notEligibleEmployees.length,
+
     attendedEmployees,
     absentFromApproved,
     attendedButNotApproved,

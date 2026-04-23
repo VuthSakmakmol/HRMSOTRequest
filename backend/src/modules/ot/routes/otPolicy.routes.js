@@ -10,25 +10,25 @@ router.use(requireAuth)
 
 router.post(
   '/',
-  requirePermission('OT_REQUEST_CREATE'),
+  requirePermission('OT_POLICY_CREATE'),
   otPolicyController.createOTCalculationPolicy,
 )
 
 router.get(
   '/',
-  requirePermission('OT_REQUEST_VIEW'),
+  requirePermission('OT_POLICY_VIEW'),
   otPolicyController.listOTCalculationPolicies,
 )
 
 router.get(
   '/:id',
-  requirePermission('OT_REQUEST_VIEW'),
+  requirePermission('OT_POLICY_VIEW'),
   otPolicyController.getOTCalculationPolicyDetail,
 )
 
 router.patch(
   '/:id',
-  requirePermission('OT_REQUEST_UPDATE'),
+  requirePermission('OT_POLICY_UPDATE'),
   otPolicyController.updateOTCalculationPolicy,
 )
 
