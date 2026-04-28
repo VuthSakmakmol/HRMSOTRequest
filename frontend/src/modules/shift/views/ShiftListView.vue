@@ -1,49 +1,55 @@
 <!-- frontend/src/modules/shift/views/ShiftListView.vue -->
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useToast } from 'primevue/usetoast'
+
 import Button from 'primevue/button'
-import Card from 'primevue/card'
 import Column from 'primevue/column'
 import DataTable from 'primevue/datatable'
 import Dialog from 'primevue/dialog'
-import Dropdown from 'primevue/dropdown'
+import IconField from 'primevue/iconfield'
+import InputIcon from 'primevue/inputicon'
 import InputSwitch from 'primevue/inputswitch'
 import InputText from 'primevue/inputtext'
+import Select from 'primevue/select'
 import Tag from 'primevue/tag'
-import Toast from 'primevue/toast'
 
 import {
   createShift,
+  exportShiftsExcel,
   getShifts,
   updateShift,
-} from '../shift.api'
+} from '@/modules/shift/shift.api'
+import ShiftImportDialog from '@/modules/shift/components/ShiftImportDialog.vue'
 import { useAuthStore } from '@/modules/auth/auth.store'
 
 const toast = useToast()
 const authStore = useAuthStore()
 
-const loading = ref(false)
-const submitting = ref(false)
-const items = ref([])
+const PAGE_SIZE = 10
+const SEARCH_DEBOUNCE_MS = 250
+
+const saving = ref(false)
+const exporting = ref(false)
+const importDialogVisible = ref(false)
+
+const rows = ref([])
 const totalRecords = ref(0)
+const loadedPages = ref(new Set())
+
+const bootstrapped = ref(false)
+const backgroundLoading = ref(false)
+
+const shiftDialogVisible = ref(false)
+const editingShiftId = ref('')
 
 const filters = reactive({
   search: '',
   type: '',
   isActive: '',
+  sortField: 'createdAt',
+  sortOrder: -1,
 })
-
-const pagination = reactive({
-  page: 1,
-  limit: 10,
-  sortBy: 'createdAt',
-  sortOrder: 'desc',
-})
-
-const dialogVisible = ref(false)
-const dialogMode = ref('create')
-const editingId = ref('')
 
 const form = reactive({
   code: '',
@@ -64,8 +70,8 @@ const typeOptions = [
 
 const statusOptions = [
   { label: 'All Status', value: '' },
-  { label: 'Active', value: true },
-  { label: 'Inactive', value: false },
+  { label: 'Active', value: 'true' },
+  { label: 'Inactive', value: 'false' },
 ]
 
 const shiftTypeOptions = [
@@ -75,22 +81,192 @@ const shiftTypeOptions = [
 
 const canView = computed(() =>
   authStore.user?.isRootAdmin ||
-  authStore.user?.effectivePermissionCodes?.includes('SHIFT_VIEW')
+  authStore.user?.effectivePermissionCodes?.includes('SHIFT_VIEW'),
 )
 
 const canCreate = computed(() =>
   authStore.user?.isRootAdmin ||
-  authStore.user?.effectivePermissionCodes?.includes('SHIFT_CREATE')
+  authStore.user?.effectivePermissionCodes?.includes('SHIFT_CREATE'),
 )
 
 const canUpdate = computed(() =>
   authStore.user?.isRootAdmin ||
-  authStore.user?.effectivePermissionCodes?.includes('SHIFT_UPDATE')
+  authStore.user?.effectivePermissionCodes?.includes('SHIFT_UPDATE'),
 )
 
-const first = computed(() => (pagination.page - 1) * pagination.limit)
+const isEditMode = computed(() => !!editingShiftId.value)
+const totalShifts = computed(() => Number(totalRecords.value || 0))
+const loadedCount = computed(() => rows.value.filter(Boolean).length)
+const summaryText = computed(() => `${loadedCount.value} of ${totalShifts.value}`)
+
+const isSaveDisabled = computed(() => {
+  return (
+    saving.value ||
+    !String(form.code || '').trim() ||
+    !String(form.name || '').trim() ||
+    !String(form.type || '').trim() ||
+    !String(form.startTime || '').trim() ||
+    !String(form.breakStartTime || '').trim() ||
+    !String(form.breakEndTime || '').trim() ||
+    !String(form.endTime || '').trim()
+  )
+})
+
+const hasAnyData = computed(() => rows.value.some(Boolean))
+const useVirtualScroll = computed(() => totalShifts.value > PAGE_SIZE)
+
+let searchTimer = null
+let currentRequestId = 0
+
+function normalizePayload(res) {
+  return res?.data?.data || res?.data || {}
+}
+
+function normalizeItems(payload) {
+  return Array.isArray(payload?.items) ? payload.items : []
+}
+
+function buildQuery(page) {
+  return {
+    page,
+    limit: PAGE_SIZE,
+    search: String(filters.search || '').trim(),
+    type: filters.type,
+    isActive: filters.isActive,
+    sortField: filters.sortField,
+    sortOrder: filters.sortOrder,
+  }
+}
+
+async function fetchPage(page, { replace = false, silent = false } = {}) {
+  if (!canView.value) {
+    bootstrapped.value = true
+    return
+  }
+
+  if (!replace && loadedPages.value.has(page)) return
+
+  const requestId = ++currentRequestId
+
+  if (silent) {
+    backgroundLoading.value = true
+  }
+
+  try {
+    const res = await getShifts(buildQuery(page))
+    if (requestId !== currentRequestId) return
+
+    const payload = normalizePayload(res)
+    const items = normalizeItems(payload)
+    const total = Number(payload?.pagination?.total || 0)
+
+    totalRecords.value = total
+
+    if (replace) {
+      const nextRows = Array.from({ length: total }, () => null)
+      const startIndex = (page - 1) * PAGE_SIZE
+
+      for (let i = 0; i < items.length; i += 1) {
+        nextRows[startIndex + i] = items[i]
+      }
+
+      rows.value = total === 0 ? [] : nextRows
+      loadedPages.value = new Set([page])
+    } else {
+      if (!rows.value.length && total > 0) {
+        rows.value = Array.from({ length: total }, () => null)
+      }
+
+      const startIndex = (page - 1) * PAGE_SIZE
+
+      for (let i = 0; i < items.length; i += 1) {
+        rows.value[startIndex + i] = items[i]
+      }
+
+      loadedPages.value.add(page)
+    }
+
+    bootstrapped.value = true
+  } catch (error) {
+    toast.add({
+      severity: 'error',
+      summary: 'Load failed',
+      detail:
+        error?.response?.data?.message ||
+        error?.message ||
+        'Failed to load shifts',
+      life: 3000,
+    })
+  } finally {
+    backgroundLoading.value = false
+  }
+}
+
+async function reloadFirstPage({ keepVisible = true } = {}) {
+  if (!keepVisible) {
+    rows.value = []
+    totalRecords.value = 0
+    loadedPages.value = new Set()
+  }
+
+  await fetchPage(1, {
+    replace: true,
+    silent: true,
+  })
+}
+
+function runSearchSoon() {
+  window.clearTimeout(searchTimer)
+  searchTimer = window.setTimeout(() => {
+    reloadFirstPage({ keepVisible: true })
+  }, SEARCH_DEBOUNCE_MS)
+}
+
+function onSearchInput() {
+  runSearchSoon()
+}
+
+function onTypeChange() {
+  reloadFirstPage({ keepVisible: true })
+}
+
+function onStatusChange() {
+  reloadFirstPage({ keepVisible: true })
+}
+
+function clearFilters() {
+  filters.search = ''
+  filters.type = ''
+  filters.isActive = ''
+  filters.sortField = 'createdAt'
+  filters.sortOrder = -1
+  reloadFirstPage({ keepVisible: true })
+}
+
+function onSort(event) {
+  filters.sortField = event.sortField || 'createdAt'
+  filters.sortOrder = typeof event.sortOrder === 'number' ? event.sortOrder : -1
+  reloadFirstPage({ keepVisible: true })
+}
+
+async function onVirtualLazyLoad(event) {
+  if (!useVirtualScroll.value) return
+
+  const first = Number(event?.first || 0)
+  const last = Number(event?.last || first + PAGE_SIZE)
+
+  const startPage = Math.floor(first / PAGE_SIZE) + 1
+  const endPage = Math.floor(Math.max(last - 1, first) / PAGE_SIZE) + 1
+
+  for (let page = startPage; page <= endPage; page += 1) {
+    if (!loadedPages.value.has(page)) {
+      await fetchPage(page, { silent: true })
+    }
+  }
+}
 
 function resetForm() {
+  editingShiftId.value = ''
   form.code = ''
   form.name = ''
   form.type = 'DAY'
@@ -99,355 +275,534 @@ function resetForm() {
   form.breakEndTime = ''
   form.endTime = ''
   form.isActive = true
-  editingId.value = ''
 }
 
 function openCreateDialog() {
   resetForm()
-  dialogMode.value = 'create'
-  dialogVisible.value = true
+  shiftDialogVisible.value = true
 }
 
 function openEditDialog(row) {
-  form.code = row.code || ''
-  form.name = row.name || ''
-  form.type = row.type || 'DAY'
-  form.startTime = row.startTime || ''
-  form.breakStartTime = row.breakStartTime || ''
-  form.breakEndTime = row.breakEndTime || ''
-  form.endTime = row.endTime || ''
-  form.isActive = !!row.isActive
-  editingId.value = row._id
-  dialogMode.value = 'edit'
-  dialogVisible.value = true
+  editingShiftId.value = row?.id || row?._id || ''
+  form.code = row?.code || ''
+  form.name = row?.name || ''
+  form.type = row?.type || 'DAY'
+  form.startTime = row?.startTime || ''
+  form.breakStartTime = row?.breakStartTime || ''
+  form.breakEndTime = row?.breakEndTime || ''
+  form.endTime = row?.endTime || ''
+  form.isActive = !!row?.isActive
+  shiftDialogVisible.value = true
 }
 
-function onPage(event) {
-  pagination.page = Math.floor(event.first / event.rows) + 1
-  pagination.limit = event.rows
-  fetchShifts()
-}
+async function submitShift() {
+  saving.value = true
 
-function clearFilters() {
-  filters.search = ''
-  filters.type = ''
-  filters.isActive = ''
-  pagination.page = 1
-  fetchShifts()
-}
-
-async function fetchShifts() {
-  if (!canView.value) return
-
-  loading.value = true
-  try {
-    const params = {
-      page: pagination.page,
-      limit: pagination.limit,
-      search: filters.search || undefined,
-      type: filters.type || undefined,
-      isActive: filters.isActive === '' ? undefined : filters.isActive,
-      sortBy: pagination.sortBy,
-      sortOrder: pagination.sortOrder,
-    }
-
-    const { data } = await getShifts(params)
-    items.value = data?.data?.items || []
-    totalRecords.value = data?.data?.pagination?.total || 0
-  } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Error',
-      detail: error?.response?.data?.message || 'Failed to load shifts',
-      life: 3000,
-    })
-  } finally {
-    loading.value = false
-  }
-}
-
-async function submitForm() {
-  submitting.value = true
   try {
     const payload = {
-      code: form.code,
-      name: form.name,
-      type: form.type,
-      startTime: form.startTime,
-      breakStartTime: form.breakStartTime,
-      breakEndTime: form.breakEndTime,
-      endTime: form.endTime,
-      isActive: form.isActive,
+      code: String(form.code || '').trim().toUpperCase(),
+      name: String(form.name || '').trim(),
+      type: String(form.type || '').trim().toUpperCase(),
+      startTime: String(form.startTime || '').trim(),
+      breakStartTime: String(form.breakStartTime || '').trim(),
+      breakEndTime: String(form.breakEndTime || '').trim(),
+      endTime: String(form.endTime || '').trim(),
+      isActive: !!form.isActive,
     }
 
-    if (dialogMode.value === 'create') {
-      await createShift(payload)
+    if (editingShiftId.value) {
+      await updateShift(editingShiftId.value, payload)
+
       toast.add({
         severity: 'success',
-        summary: 'Success',
-        detail: 'Shift created successfully',
-        life: 3000,
+        summary: 'Updated',
+        detail: 'Shift updated successfully',
+        life: 2500,
       })
     } else {
-      await updateShift(editingId.value, payload)
+      await createShift(payload)
+
       toast.add({
         severity: 'success',
-        summary: 'Success',
-        detail: 'Shift updated successfully',
-        life: 3000,
+        summary: 'Created',
+        detail: 'Shift created successfully',
+        life: 2500,
       })
     }
 
-    dialogVisible.value = false
+    shiftDialogVisible.value = false
     resetForm()
-    fetchShifts()
+    await reloadFirstPage({ keepVisible: false })
   } catch (error) {
     toast.add({
       severity: 'error',
-      summary: 'Error',
-      detail: error?.response?.data?.message || 'Failed to save shift',
+      summary: isEditMode.value ? 'Save failed' : 'Create failed',
+      detail:
+        error?.response?.data?.message ||
+        error?.message ||
+        'Failed to save shift',
       life: 3500,
     })
   } finally {
-    submitting.value = false
+    saving.value = false
   }
 }
 
-function statusSeverity(value) {
-  return value ? 'success' : 'danger'
+function statusSeverity(active) {
+  return active ? 'success' : 'contrast'
 }
 
-function typeSeverity(value) {
-  return value === 'NIGHT' ? 'warning' : 'info'
+function typeSeverity(type) {
+  return type === 'NIGHT' ? 'warning' : 'info'
 }
 
-watch(
-  () => [filters.type, filters.isActive],
-  () => {
-    pagination.page = 1
-    fetchShifts()
-  },
-)
+function crossMidnightSeverity(value) {
+  return value ? 'warning' : 'contrast'
+}
 
-let searchTimer = null
-watch(
-  () => filters.search,
-  () => {
-    pagination.page = 1
-    clearTimeout(searchTimer)
-    searchTimer = setTimeout(() => {
-      fetchShifts()
-    }, 400)
-  },
-)
+function formatDateTime(value) {
+  if (!value) return '-'
+  return new Date(value).toLocaleString()
+}
+
+function formatWorkingHours(minutes) {
+  const total = Number(minutes || 0)
+  if (!total) return '-'
+
+  const hours = Math.floor(total / 60)
+  const mins = total % 60
+
+  if (!mins) return `${hours}h`
+  return `${hours}h ${mins}m`
+}
+
+function downloadBlob(blob, filename) {
+  const url = window.URL.createObjectURL(blob)
+  const link = document.createElement('a')
+
+  link.href = url
+  link.download = filename
+
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+
+  window.URL.revokeObjectURL(url)
+}
+
+async function handleExport() {
+  exporting.value = true
+
+  try {
+    const res = await exportShiftsExcel({
+      search: String(filters.search || '').trim(),
+      type: filters.type,
+      isActive: filters.isActive,
+      sortField: filters.sortField,
+      sortOrder: filters.sortOrder,
+    })
+
+    const blob = new Blob([res.data], {
+      type:
+        res?.headers?.['content-type'] ||
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+
+    downloadBlob(blob, `shifts-${Date.now()}.xlsx`)
+
+    toast.add({
+      severity: 'success',
+      summary: 'Exported',
+      detail: 'Shift excel exported successfully',
+      life: 2500,
+    })
+  } catch (error) {
+    toast.add({
+      severity: 'error',
+      summary: 'Export failed',
+      detail:
+        error?.response?.data?.message ||
+        error?.message ||
+        'Failed to export excel',
+      life: 3500,
+    })
+  } finally {
+    exporting.value = false
+  }
+}
+
+async function handleImportSuccess(payload) {
+  toast.add({
+    severity: 'success',
+    summary: 'Imported',
+    detail: `Import completed. Created: ${payload?.createdCount || 0}, Updated: ${payload?.updatedCount || 0}`,
+    life: 3500,
+  })
+
+  await reloadFirstPage({ keepVisible: false })
+}
 
 onMounted(() => {
-  fetchShifts()
+  reloadFirstPage({ keepVisible: false })
+})
+
+onBeforeUnmount(() => {
+  window.clearTimeout(searchTimer)
 })
 </script>
 
 <template>
-  <div class="space-y-6">
-    <Toast />
+  <div class="flex flex-col gap-4">
+    <ShiftImportDialog
+      v-model:visible="importDialogVisible"
+      @success="handleImportSuccess"
+    />
 
-    <section
-      class="rounded-3xl border border-surface-200 bg-white p-5 shadow-sm dark:border-surface-800 dark:bg-surface-900"
-    >
-      <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <div class="text-sm font-semibold uppercase tracking-[0.2em] text-primary">
-            Shift Management
-          </div>
-          <h1 class="mt-1 text-2xl font-bold text-surface-900 dark:text-surface-0">
-            Shift Master
-          </h1>
-          <p class="mt-2 text-sm text-surface-600 dark:text-surface-300">
-            Manage shift definitions for later employee assignment.
-          </p>
-        </div>
-
-        <div class="flex flex-wrap gap-2">
-          <Button
-            icon="pi pi-refresh"
-            label="Refresh"
-            severity="secondary"
-            outlined
-            @click="fetchShifts"
-          />
-          <Button
-            v-if="canCreate"
-            icon="pi pi-plus"
-            label="New Shift"
-            @click="openCreateDialog"
-          />
-        </div>
+    <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+      <div class="min-w-0">
+        <h1 class="text-xl font-semibold text-[color:var(--ot-text)]">
+          Shifts
+        </h1>
+        <p class="mt-1 text-sm text-[color:var(--ot-text-muted)]">
+          Manage shift master records for employee assignment and OT calculation.
+        </p>
       </div>
-    </section>
 
-    <Card class="rounded-3xl border border-surface-200 shadow-sm dark:border-surface-800">
-      <template #content>
-        <div class="space-y-4">
-          <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <span class="p-input-icon-left">
-              <i class="pi pi-search" />
-              <InputText
-                v-model="filters.search"
-                placeholder="Search code or name"
-                class="w-full"
-              />
-            </span>
+      <div class="flex flex-wrap items-center gap-2">
+        <div
+          class="flex min-w-[92px] flex-col items-center justify-center rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-3 py-2 text-center"
+        >
+          <div class="text-[11px] font-semibold uppercase tracking-[0.14em] text-[color:var(--ot-text-muted)]">
+            Total
+          </div>
+          <div class="mt-1 text-lg font-semibold leading-none text-[color:var(--ot-text)]">
+            {{ totalShifts }}
+          </div>
+        </div>
 
-            <Dropdown
+        <Button
+          v-if="canCreate"
+          label="Import Excel"
+          icon="pi pi-upload"
+          severity="secondary"
+          outlined
+          size="small"
+          @click="importDialogVisible = true"
+        />
+
+        <Button
+          label="Export Excel"
+          icon="pi pi-download"
+          severity="secondary"
+          outlined
+          size="small"
+          :loading="exporting"
+          @click="handleExport"
+        />
+
+        <Button
+          v-if="canCreate"
+          label="New Shift"
+          icon="pi pi-plus"
+          size="small"
+          @click="openCreateDialog"
+        />
+      </div>
+    </div>
+
+    <div
+      v-if="!canView"
+      class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-4 py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
+    >
+      You do not have permission to view shifts.
+    </div>
+
+    <div
+      v-else
+      class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]"
+    >
+      <div class="border-b border-[color:var(--ot-border)] px-3 py-3">
+        <div class="flex flex-col gap-2 xl:flex-row xl:items-center">
+          <IconField class="w-full xl:w-[280px] xl:shrink-0">
+            <InputIcon class="pi pi-search" />
+            <InputText
+              v-model="filters.search"
+              placeholder="Search code or name"
+              class="w-full"
+              size="small"
+              @input="onSearchInput"
+            />
+          </IconField>
+
+          <div class="w-full xl:w-[150px] xl:shrink-0">
+            <Select
               v-model="filters.type"
               :options="typeOptions"
-              option-label="label"
-              option-value="value"
-              placeholder="Filter by type"
+              optionLabel="label"
+              optionValue="value"
+              placeholder="Type"
               class="w-full"
+              size="small"
+              @change="onTypeChange"
             />
+          </div>
 
-            <Dropdown
+          <div class="w-full xl:w-[160px] xl:shrink-0">
+            <Select
               v-model="filters.isActive"
               :options="statusOptions"
-              option-label="label"
-              option-value="value"
-              placeholder="Filter by status"
+              optionLabel="label"
+              optionValue="value"
+              placeholder="Status"
               class="w-full"
+              size="small"
+              @change="onStatusChange"
             />
+          </div>
+
+          <div class="flex items-center gap-2 xl:ml-auto xl:shrink-0">
+            <div class="rounded-lg border border-[color:var(--ot-border)] px-3 py-1.5 text-xs font-medium text-[color:var(--ot-text-muted)]">
+              Loaded {{ summaryText }}
+            </div>
 
             <Button
-              icon="pi pi-filter-slash"
               label="Clear"
+              icon="pi pi-refresh"
               severity="secondary"
               outlined
-              class="w-full"
+              size="small"
               @click="clearFilters"
             />
           </div>
-
-          <DataTable
-            :value="items"
-            :loading="loading"
-            :lazy="true"
-            paginator
-            :rows="pagination.limit"
-            :total-records="totalRecords"
-            :first="first"
-            responsive-layout="scroll"
-            striped-rows
-            show-gridlines
-            class="p-datatable-sm"
-            @page="onPage"
-          >
-            <template #empty>
-              <div class="py-8 text-center text-sm text-surface-500 dark:text-surface-400">
-                No shifts found.
-              </div>
-            </template>
-
-            <Column field="code" header="Shift Code" style="min-width: 10rem" />
-            <Column field="name" header="Shift Name" style="min-width: 14rem" />
-
-            <Column header="Type" style="min-width: 8rem">
-              <template #body="{ data }">
-                <Tag :value="data.type" :severity="typeSeverity(data.type)" />
-              </template>
-            </Column>
-
-            <Column field="startTime" header="Start" style="min-width: 8rem" />
-            <Column field="breakStartTime" header="Break Start" style="min-width: 9rem" />
-            <Column field="breakEndTime" header="Break End" style="min-width: 9rem" />
-            <Column field="endTime" header="End" style="min-width: 8rem" />
-
-            <Column header="Cross Night" style="min-width: 9rem">
-              <template #body="{ data }">
-                <Tag
-                  :value="data.crossMidnight ? 'Yes' : 'No'"
-                  :severity="data.crossMidnight ? 'warning' : 'contrast'"
-                />
-              </template>
-            </Column>
-
-            <Column header="Status" style="min-width: 8rem">
-              <template #body="{ data }">
-                <Tag
-                  :value="data.isActive ? 'Active' : 'Inactive'"
-                  :severity="statusSeverity(data.isActive)"
-                />
-              </template>
-            </Column>
-
-            <Column header="Actions" style="min-width: 9rem">
-              <template #body="{ data }">
-                <div class="flex gap-2">
-                  <Button
-                    v-if="canUpdate"
-                    icon="pi pi-pencil"
-                    severity="secondary"
-                    text
-                    rounded
-                    @click="openEditDialog(data)"
-                  />
-                </div>
-              </template>
-            </Column>
-          </DataTable>
         </div>
-      </template>
-    </Card>
+      </div>
+
+      <DataTable
+        :value="rows"
+        lazy
+        removableSort
+        scrollable
+        scrollHeight="500px"
+        :sortField="filters.sortField"
+        :sortOrder="filters.sortOrder"
+        tableStyle="min-width: 72rem"
+        class="shift-table"
+        :virtualScrollerOptions="useVirtualScroll ? {
+          lazy: true,
+          onLazyLoad: onVirtualLazyLoad,
+          itemSize: 72,
+          delay: 0,
+          showLoader: false,
+          loading: false,
+          numToleratedItems: 12,
+        } : null"
+        @sort="onSort"
+      >
+        <template #empty>
+          <div
+            v-if="bootstrapped"
+            class="py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
+          >
+            No shifts found.
+          </div>
+        </template>
+
+        <Column field="code" header="Code" sortable style="min-width: 10rem">
+          <template #body="{ data }">
+            <span v-if="data">{{ data.code || '-' }}</span>
+          </template>
+        </Column>
+
+        <Column field="name" header="Name" sortable style="min-width: 15rem">
+          <template #body="{ data }">
+            <span v-if="data">{{ data.name || '-' }}</span>
+          </template>
+        </Column>
+
+        <Column field="type" header="Type" sortable style="min-width: 8rem">
+          <template #body="{ data }">
+            <Tag
+              v-if="data"
+              :value="data.type || '-'"
+              :severity="typeSeverity(data.type)"
+              class="ot-shift-tag"
+            />
+          </template>
+        </Column>
+
+        <Column field="startTime" header="Start" sortable style="min-width: 8rem">
+          <template #body="{ data }">
+            <span v-if="data">{{ data.startTime || '-' }}</span>
+          </template>
+        </Column>
+
+        <Column field="breakStartTime" header="Break Start" style="min-width: 9rem">
+          <template #body="{ data }">
+            <span v-if="data">{{ data.breakStartTime || '-' }}</span>
+          </template>
+        </Column>
+
+        <Column field="breakEndTime" header="Break End" style="min-width: 9rem">
+          <template #body="{ data }">
+            <span v-if="data">{{ data.breakEndTime || '-' }}</span>
+          </template>
+        </Column>
+
+        <Column field="endTime" header="End" sortable style="min-width: 8rem">
+          <template #body="{ data }">
+            <span v-if="data">{{ data.endTime || '-' }}</span>
+          </template>
+        </Column>
+
+        <Column header="Cross Night" style="min-width: 9rem">
+          <template #body="{ data }">
+            <Tag
+              v-if="data"
+              :value="data.crossMidnight ? 'Yes' : 'No'"
+              :severity="crossMidnightSeverity(data.crossMidnight)"
+              class="ot-shift-tag"
+            />
+          </template>
+        </Column>
+
+        <Column header="Working" style="min-width: 8rem">
+          <template #body="{ data }">
+            <span v-if="data">{{ formatWorkingHours(data.workingMinutes) }}</span>
+          </template>
+        </Column>
+
+        <Column field="isActive" header="Status" sortable style="min-width: 8rem">
+          <template #body="{ data }">
+            <Tag
+              v-if="data"
+              :value="data.isActive ? 'Active' : 'Inactive'"
+              :severity="statusSeverity(data.isActive)"
+              class="ot-shift-tag"
+            />
+          </template>
+        </Column>
+
+        <Column field="createdAt" header="Created At" sortable style="min-width: 13rem">
+          <template #body="{ data }">
+            <span v-if="data">{{ formatDateTime(data.createdAt) }}</span>
+          </template>
+        </Column>
+
+        <Column header="Actions" style="width: 7rem; min-width: 7rem">
+          <template #body="{ data }">
+            <Button
+              v-if="data && canUpdate"
+              label="Edit"
+              icon="pi pi-pencil"
+              size="small"
+              outlined
+              @click="openEditDialog(data)"
+            />
+          </template>
+        </Column>
+      </DataTable>
+
+      <div
+        v-if="backgroundLoading && hasAnyData"
+        class="flex items-center justify-center border-t border-[color:var(--ot-border)] px-3 py-2 text-xs text-[color:var(--ot-text-muted)]"
+      >
+        Updating...
+      </div>
+    </div>
 
     <Dialog
-      v-model:visible="dialogVisible"
-      :header="dialogMode === 'create' ? 'Create Shift' : 'Edit Shift'"
+      v-model:visible="shiftDialogVisible"
       modal
-      :style="{ width: '52rem', maxWidth: '95vw' }"
-      :draggable="false"
+      :header="isEditMode ? 'Edit Shift' : 'Create Shift'"
+      :style="{ width: '48rem', maxWidth: '96vw' }"
+      @hide="resetForm"
     >
       <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <div class="flex flex-col gap-2">
-          <label class="text-sm font-medium">Shift Code</label>
-          <InputText v-model="form.code" placeholder="OFFICE" />
-        </div>
-
-        <div class="flex flex-col gap-2">
-          <label class="text-sm font-medium">Shift Name</label>
-          <InputText v-model="form.name" placeholder="Office Shift" />
-        </div>
-
-        <div class="flex flex-col gap-2">
-          <label class="text-sm font-medium">Shift Type</label>
-          <Dropdown
-            v-model="form.type"
-            :options="shiftTypeOptions"
-            option-label="label"
-            option-value="value"
-            placeholder="Select type"
+        <div class="space-y-2">
+          <label class="text-sm font-medium text-[color:var(--ot-text)]">
+            Shift Code
+          </label>
+          <InputText
+            v-model="form.code"
+            class="w-full"
+            placeholder="Example: DAY-0700"
           />
         </div>
 
-        <div class="flex items-end gap-3 rounded-2xl border border-surface-200 px-4 py-3 dark:border-surface-700">
+        <div class="space-y-2">
+          <label class="text-sm font-medium text-[color:var(--ot-text)]">
+            Shift Name
+          </label>
+          <InputText
+            v-model="form.name"
+            class="w-full"
+            placeholder="Example: Day Shift 07:00 - 16:00"
+          />
+        </div>
+
+        <div class="space-y-2">
+          <label class="text-sm font-medium text-[color:var(--ot-text)]">
+            Shift Type
+          </label>
+          <Select
+            v-model="form.type"
+            :options="shiftTypeOptions"
+            optionLabel="label"
+            optionValue="value"
+            placeholder="Select type"
+            class="w-full"
+          />
+        </div>
+
+        <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] px-4 py-3">
+          <span class="text-sm font-medium text-[color:var(--ot-text)]">
+            Active Status
+          </span>
           <InputSwitch v-model="form.isActive" />
-          <span class="text-sm font-medium">Active</span>
         </div>
 
-        <div class="flex flex-col gap-2">
-          <label class="text-sm font-medium">Start Time</label>
-          <InputText v-model="form.startTime" placeholder="08:00" />
+        <div class="space-y-2">
+          <label class="text-sm font-medium text-[color:var(--ot-text)]">
+            Start Time
+          </label>
+          <InputText
+            v-model="form.startTime"
+            class="w-full"
+            placeholder="07:00"
+          />
         </div>
 
-        <div class="flex flex-col gap-2">
-          <label class="text-sm font-medium">Break Start</label>
-          <InputText v-model="form.breakStartTime" placeholder="12:00" />
+        <div class="space-y-2">
+          <label class="text-sm font-medium text-[color:var(--ot-text)]">
+            Break Start
+          </label>
+          <InputText
+            v-model="form.breakStartTime"
+            class="w-full"
+            placeholder="12:00"
+          />
         </div>
 
-        <div class="flex flex-col gap-2">
-          <label class="text-sm font-medium">Break End</label>
-          <InputText v-model="form.breakEndTime" placeholder="13:00" />
+        <div class="space-y-2">
+          <label class="text-sm font-medium text-[color:var(--ot-text)]">
+            Break End
+          </label>
+          <InputText
+            v-model="form.breakEndTime"
+            class="w-full"
+            placeholder="13:00"
+          />
         </div>
 
-        <div class="flex flex-col gap-2">
-          <label class="text-sm font-medium">End Time</label>
-          <InputText v-model="form.endTime" placeholder="17:00" />
+        <div class="space-y-2">
+          <label class="text-sm font-medium text-[color:var(--ot-text)]">
+            End Time
+          </label>
+          <InputText
+            v-model="form.endTime"
+            class="w-full"
+            placeholder="16:00"
+          />
         </div>
       </div>
 
@@ -455,17 +810,40 @@ onMounted(() => {
         <div class="flex justify-end gap-2">
           <Button
             label="Cancel"
-            severity="secondary"
-            outlined
-            @click="dialogVisible = false"
+            text
+            size="small"
+            @click="shiftDialogVisible = false"
           />
+
           <Button
-            :label="dialogMode === 'create' ? 'Create' : 'Update'"
-            :loading="submitting"
-            @click="submitForm"
+            :label="isEditMode ? 'Save Changes' : 'Create Shift'"
+            :loading="saving"
+            :disabled="isSaveDisabled"
+            size="small"
+            @click="submitShift"
           />
         </div>
       </template>
     </Dialog>
   </div>
 </template>
+
+<style scoped>
+:deep(.shift-table .p-datatable-thead > tr > th) {
+  padding: 0.72rem 0.9rem !important;
+}
+
+:deep(.shift-table .p-datatable-tbody > tr > td) {
+  padding: 0.72rem 0.9rem !important;
+  height: 72px !important;
+}
+
+:deep(.shift-table .p-tag.ot-shift-tag) {
+  min-height: 1.35rem !important;
+  padding: 0.12rem 0.45rem !important;
+  font-size: 0.7rem !important;
+  font-weight: 600 !important;
+  line-height: 1 !important;
+  border-radius: 999px !important;
+}
+</style>

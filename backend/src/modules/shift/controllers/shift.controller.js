@@ -1,81 +1,131 @@
 // backend/src/modules/shift/controllers/shift.controller.js
 const shiftService = require('../services/shift.service')
-const {
-  createShiftSchema,
-  updateShiftSchema,
-  listShiftQuerySchema,
-} = require('../validators/shift.validation')
 
-function parse(schema, data) {
-  const result = schema.safeParse(data)
+async function lookup(req, res, next) {
+  try {
+    const result = await shiftService.lookupShifts(req.query)
 
-  if (!result.success) {
-    const err = new Error(result.error.issues[0]?.message || 'Validation error')
-    err.status = 400
-    throw err
+    return res.json({
+      ok: true,
+      data: result,
+    })
+  } catch (error) {
+    return next(error)
   }
-
-  return result.data
 }
 
 async function list(req, res, next) {
   try {
-    const query = parse(listShiftQuerySchema, req.query || {})
-    const data = await shiftService.list(query)
-
-    res.json({
-      ok: true,
-      data,
-    })
+    const result = await shiftService.listShifts(req.query)
+    return res.json(result)
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function getById(req, res, next) {
   try {
-    const data = await shiftService.getById(req.params.id)
+    const result = await shiftService.getShiftById(req.params.id)
 
-    res.json({
+    return res.json({
       ok: true,
-      data,
+      item: result,
+      data: result,
     })
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function create(req, res, next) {
   try {
-    const payload = parse(createShiftSchema, req.body || {})
-    const data = await shiftService.create(payload)
+    const result = await shiftService.createShift(req.body)
 
-    res.status(201).json({
+    return res.status(201).json({
       ok: true,
-      data,
+      message: 'Shift created successfully',
+      item: result,
+      data: result,
     })
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function update(req, res, next) {
   try {
-    const payload = parse(updateShiftSchema, req.body || {})
-    const data = await shiftService.update(req.params.id, payload)
+    const result = await shiftService.updateShift(req.params.id, req.body)
 
-    res.json({
+    return res.json({
       ok: true,
-      data,
+      message: 'Shift updated successfully',
+      item: result,
+      data: result,
     })
   } catch (error) {
-    next(error)
+    return next(error)
+  }
+}
+
+async function exportExcel(req, res, next) {
+  try {
+    const buffer = await shiftService.exportShiftsExcel(req.query)
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="shifts-${Date.now()}.xlsx"`,
+    )
+
+    return res.send(buffer)
+  } catch (error) {
+    return next(error)
+  }
+}
+
+async function downloadImportSample(req, res, next) {
+  try {
+    const buffer = await shiftService.downloadShiftImportSample()
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename="shift-import-sample.xlsx"',
+    )
+
+    return res.send(buffer)
+  } catch (error) {
+    return next(error)
+  }
+}
+
+async function importExcel(req, res, next) {
+  try {
+    const result = await shiftService.importShiftsExcel(req.file?.buffer)
+
+    return res.json({
+      ok: true,
+      message: 'Shift excel imported successfully',
+      ...result,
+    })
+  } catch (error) {
+    return next(error)
   }
 }
 
 module.exports = {
+  lookup,
   list,
   getById,
   create,
   update,
+  exportExcel,
+  downloadImportSample,
+  importExcel,
 }
