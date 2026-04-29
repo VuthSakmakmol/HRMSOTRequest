@@ -1,5 +1,7 @@
 <!-- frontend/src/modules/ot/components/OTDetailView.vue -->
 <script setup>
+// frontend/src/modules/ot/components/OTDetailView.vue
+
 import { computed, onMounted, ref, watch } from 'vue'
 import { useToast } from 'primevue/usetoast'
 
@@ -39,9 +41,11 @@ const monthTitle = computed(() => {
 
 const holidayMap = computed(() => {
   const map = new Map()
+
   for (const item of monthHolidayRows.value) {
     if (item?.date) map.set(item.date, item)
   }
+
   return map
 })
 
@@ -115,28 +119,34 @@ const calendarDays = computed(() => {
 
 function resolveInitialMonth() {
   const source = props.form?.otDate ? new Date(props.form.otDate) : new Date()
+
   if (Number.isNaN(source.getTime())) {
     return new Date(new Date().getFullYear(), new Date().getMonth(), 1)
   }
+
   return new Date(source.getFullYear(), source.getMonth(), 1)
 }
 
-function pad2(v) {
-  return String(v).padStart(2, '0')
+function pad2(value) {
+  return String(value).padStart(2, '0')
 }
 
 function formatYMD(value) {
   if (!value) return ''
-  const d = value instanceof Date ? value : new Date(value)
-  if (Number.isNaN(d.getTime())) return ''
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
 }
 
 function formatPrettyDate(value) {
   if (!value) return '-'
-  const d = value instanceof Date ? value : new Date(value)
-  if (Number.isNaN(d.getTime())) return '-'
-  return d.toLocaleDateString('en-US', {
+
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return '-'
+
+  return date.toLocaleDateString('en-US', {
     weekday: 'short',
     month: 'long',
     day: 'numeric',
@@ -179,6 +189,7 @@ function buildCalendarCell(date, inCurrentMonth) {
 
 async function fetchMonthHolidays() {
   loadingCalendar.value = true
+
   try {
     const year = currentMonth.value.getFullYear()
     const month = currentMonth.value.getMonth() + 1
@@ -198,6 +209,7 @@ async function fetchMonthHolidays() {
     monthHolidayRows.value = normalizeItems(payload)
   } catch (error) {
     monthHolidayRows.value = []
+
     toast.add({
       severity: 'error',
       summary: 'Holiday load failed',
@@ -214,9 +226,11 @@ async function fetchMonthHolidays() {
 
 function syncMonthFromFormDate(value) {
   if (!value) return
-  const d = new Date(value)
-  if (Number.isNaN(d.getTime())) return
-  currentMonth.value = new Date(d.getFullYear(), d.getMonth(), 1)
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return
+
+  currentMonth.value = new Date(date.getFullYear(), date.getMonth(), 1)
 }
 
 function selectDate(cell) {
@@ -271,7 +285,6 @@ onMounted(async () => {
 
 <template>
   <div class="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.2fr)_320px]">
-    <!-- left -->
     <div class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]">
       <div class="border-b border-[color:var(--ot-border)] px-4 py-3">
         <div class="text-sm font-medium text-[color:var(--ot-text)]">
@@ -282,9 +295,10 @@ onMounted(async () => {
       <div class="p-4">
         <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div class="space-y-2">
-            <label class="text-sm font-medium text-[color:var(--ot-text)]">
-              OT Date <span class="text-red-500">*</span>
+            <label class="ot-field-label">
+              OT Date <span class="ot-required-star">*</span>
             </label>
+
             <DatePicker
               v-model="form.otDate"
               dateFormat="yy-mm-dd"
@@ -298,9 +312,10 @@ onMounted(async () => {
           </div>
 
           <div class="space-y-2">
-            <label class="text-sm font-medium text-[color:var(--ot-text)]">
+            <label class="ot-field-label">
               Break Minutes
             </label>
+
             <InputNumber
               v-model="form.breakMinutes"
               :min="0"
@@ -312,9 +327,10 @@ onMounted(async () => {
           </div>
 
           <div class="space-y-2">
-            <label class="text-sm font-medium text-[color:var(--ot-text)]">
-              Start Time <span class="text-red-500">*</span>
+            <label class="ot-field-label">
+              Start Time <span class="ot-required-star">*</span>
             </label>
+
             <DatePicker
               v-model="form.startTime"
               timeOnly
@@ -329,9 +345,10 @@ onMounted(async () => {
           </div>
 
           <div class="space-y-2">
-            <label class="text-sm font-medium text-[color:var(--ot-text)]">
-              End Time <span class="text-red-500">*</span>
+            <label class="ot-field-label">
+              End Time <span class="ot-required-star">*</span>
             </label>
+
             <DatePicker
               v-model="form.endTime"
               timeOnly
@@ -346,9 +363,10 @@ onMounted(async () => {
           </div>
 
           <div class="space-y-2 md:col-span-2">
-            <label class="text-sm font-medium text-[color:var(--ot-text)]">
-              Reason <span class="text-red-500">*</span>
+            <label class="ot-field-label">
+              Reason <span class="ot-required-star">*</span>
             </label>
+
             <Textarea
               v-model.trim="form.reason"
               rows="4"
@@ -361,14 +379,14 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- right -->
-    <div class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] self-start">
+    <div class="self-start overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]">
       <div class="border-b border-[color:var(--ot-border)] px-4 py-3">
         <div class="flex items-start justify-between gap-2">
           <div>
             <div class="text-sm font-medium text-[color:var(--ot-text)]">
               OT Calendar
             </div>
+
             <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
               Estimate OT day type
             </div>
@@ -396,7 +414,7 @@ onMounted(async () => {
               <i class="pi pi-chevron-left text-xs" />
             </button>
 
-            <div class="text-center text-base font-semibold text-[color:var(--ot-text)]">
+            <div class="text-center text-base font-medium text-[color:var(--ot-text)]">
               {{ monthTitle }}
             </div>
 
@@ -413,7 +431,7 @@ onMounted(async () => {
             <div
               v-for="label in weekLabels"
               :key="label"
-              class="pb-1 text-center text-[11px] font-semibold text-[color:var(--ot-text-muted)]"
+              class="pb-1 text-center text-[11px] font-medium text-[color:var(--ot-text-muted)]"
             >
               {{ label }}
             </div>
@@ -433,16 +451,20 @@ onMounted(async () => {
               @click="selectDate(cell)"
             >
               <span class="calendar-number">{{ cell.day }}</span>
-              <span v-if="cell.isHoliday" class="calendar-dot" />
+              <span
+                v-if="cell.isHoliday"
+                class="calendar-dot"
+              />
             </button>
           </div>
         </div>
 
         <div class="mt-3 space-y-2">
           <div class="rounded-xl border border-[color:var(--ot-border)] px-3 py-2">
-            <div class="text-[11px] font-semibold uppercase tracking-[0.12em] text-[color:var(--ot-text-muted)]">
+            <div class="ot-info-label">
               Selected Date
             </div>
+
             <div class="mt-1 text-sm font-medium text-[color:var(--ot-text)]">
               {{ formatPrettyDate(form.otDate) }}
             </div>
@@ -450,18 +472,20 @@ onMounted(async () => {
 
           <div class="grid grid-cols-2 gap-2">
             <div class="rounded-xl border border-[color:var(--ot-border)] px-3 py-2">
-              <div class="text-[11px] font-semibold uppercase tracking-[0.12em] text-[color:var(--ot-text-muted)]">
+              <div class="ot-info-label">
                 Day Type
               </div>
+
               <div class="mt-1 text-sm font-medium text-[color:var(--ot-text)]">
                 {{ estimatedDayType }}
               </div>
             </div>
 
             <div class="rounded-xl border border-[color:var(--ot-border)] px-3 py-2">
-              <div class="text-[11px] font-semibold uppercase tracking-[0.12em] text-[color:var(--ot-text-muted)]">
+              <div class="ot-info-label">
                 Hours
               </div>
+
               <div class="mt-1 text-sm font-medium text-[color:var(--ot-text)]">
                 {{ estimatedHours }}
               </div>
@@ -469,9 +493,10 @@ onMounted(async () => {
           </div>
 
           <div class="rounded-xl border border-[color:var(--ot-border)] px-3 py-2">
-            <div class="text-[11px] font-semibold uppercase tracking-[0.12em] text-[color:var(--ot-text-muted)]">
+            <div class="ot-info-label">
               Staff
             </div>
+
             <div class="mt-1 text-sm font-medium text-[color:var(--ot-text)]">
               {{ selectedEmployeeCount }}
             </div>
@@ -482,9 +507,10 @@ onMounted(async () => {
           v-if="selectedHoliday"
           class="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/20 dark:text-red-300"
         >
-          <div class="font-semibold">
+          <div class="font-medium">
             Holiday: {{ selectedHoliday.name }}
           </div>
+
           <div class="mt-1">
             {{ selectedHoliday.date }}
           </div>
@@ -502,6 +528,25 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.ot-field-label {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--ot-text);
+}
+
+.ot-required-star {
+  color: #ef4444;
+  font-weight: 600;
+}
+
+.ot-info-label {
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ot-text-muted);
+}
+
 :deep(.ot-compact-picker .p-inputtext),
 :deep(.ot-compact-picker .p-datepicker-input) {
   min-height: 2.625rem !important;
@@ -551,13 +596,13 @@ onMounted(async () => {
 
 .calendar-cell.is-sunday {
   color: #dc2626;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .calendar-cell.is-holiday {
   background: rgba(220, 38, 38, 0.12);
   color: #dc2626;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .calendar-cell.is-sunday.is-holiday {
@@ -568,7 +613,7 @@ onMounted(async () => {
 .calendar-cell.is-selected {
   background: var(--p-primary-500);
   color: white;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .calendar-cell.is-selected.is-holiday,

@@ -1,5 +1,7 @@
 <!-- frontend/src/modules/ot/components/OTApproverChainView.vue -->
 <script setup>
+// frontend/src/modules/ot/components/OTApproverChainView.vue
+
 import { computed } from 'vue'
 
 import Tag from 'primevue/tag'
@@ -57,7 +59,7 @@ function onApproverToggle(index, checked) {
     <div class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]">
       <div class="border-b border-[color:var(--ot-border)] px-3 py-3">
         <div class="text-sm font-medium text-[color:var(--ot-text)]">
-          Approver Chain
+          Approver Chain <span class="ot-required-star">*</span>
         </div>
       </div>
 
@@ -92,12 +94,14 @@ function onApproverToggle(index, checked) {
           </div>
 
           <div class="mb-3 rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface-2,var(--ot-surface))] px-4 py-3">
-            <div class="text-xs uppercase tracking-[0.12em] text-[color:var(--ot-text-muted)]">
+            <div class="ot-soft-label">
               Request Owner
             </div>
+
             <div class="mt-1 text-sm font-medium text-[color:var(--ot-text)]">
               {{ requesterEmployee?.displayName || '-' }}
             </div>
+
             <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
               {{ requesterEmployee?.employeeNo || 'No employee number' }}
             </div>
@@ -118,7 +122,12 @@ function onApproverToggle(index, checked) {
 
               <div class="min-w-0 flex-1">
                 <div class="flex flex-wrap items-center gap-2">
-                  <Tag :value="`Step ${index + 1}`" severity="info" class="ot-status-tag" />
+                  <Tag
+                    :value="`Step ${index + 1}`"
+                    severity="info"
+                    class="ot-status-tag"
+                  />
+
                   <span class="text-sm font-medium text-[color:var(--ot-text)]">
                     {{ approver.displayName }}
                   </span>
@@ -142,16 +151,25 @@ function onApproverToggle(index, checked) {
       </div>
 
       <div class="p-4">
-        <div v-if="selectedApprovers.length" class="space-y-2">
+        <div
+          v-if="selectedApprovers.length"
+          class="space-y-2"
+        >
           <div
             v-for="(approver, index) in selectedApprovers"
             :key="approver.employeeId"
             class="flex flex-wrap items-center gap-2 text-sm"
           >
-            <Tag :value="`Step ${index + 1}`" severity="success" class="ot-status-tag" />
+            <Tag
+              :value="`Step ${index + 1}`"
+              severity="success"
+              class="ot-status-tag"
+            />
+
             <span class="font-medium text-[color:var(--ot-text)]">
               {{ approver.displayName }}
             </span>
+
             <span class="text-[color:var(--ot-text-muted)]">
               {{ approver.employeeNo }}
             </span>
@@ -162,7 +180,7 @@ function onApproverToggle(index, checked) {
             class="mt-3 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-primary dark:border-primary/30 dark:bg-primary/10"
           >
             Final approver:
-            <span class="font-semibold">
+            <span class="font-medium">
               {{ finalApprover.displayName }}
             </span>
           </div>
@@ -180,11 +198,24 @@ function onApproverToggle(index, checked) {
 </template>
 
 <style scoped>
+.ot-required-star {
+  color: #ef4444;
+  font-weight: 600;
+}
+
+.ot-soft-label {
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ot-text-muted);
+}
+
 :deep(.p-tag.ot-status-tag) {
   min-height: 1.35rem !important;
   padding: 0.12rem 0.45rem !important;
   font-size: 0.7rem !important;
-  font-weight: 600 !important;
+  font-weight: 500 !important;
   line-height: 1 !important;
   border-radius: 999px !important;
 }
