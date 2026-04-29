@@ -88,22 +88,16 @@ const optionalObjectIdSchema = z.preprocess(
   objectIdSchema.optional(),
 )
 
-const createAttendanceImportSchema = z
-  .object({
-    sourceType: optionalUpperEnum(SOURCE_TYPE, 'sourceType').default('EXCEL'),
-    periodFrom: optionalYmdSchema,
-    periodTo: optionalYmdSchema,
-    remark: optionalTrimmedString(1000),
-  })
-  .superRefine((data, ctx) => {
-    if (data.periodFrom && data.periodTo && data.periodFrom > data.periodTo) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['periodTo'],
-        message: 'periodTo must be greater than or equal to periodFrom',
-      })
-    }
-  })
+const createAttendanceImportSchema = z.object({
+  sourceType: optionalUpperEnum(SOURCE_TYPE, 'sourceType').default('EXCEL'),
+
+  // ✅ REQUIRED: selected once from import dialog
+  // Excel rows no longer need Attendance Date column.
+  attendanceDate: ymdSchema,
+
+  // Kept optional for backend compatibility, but frontend will not send it.
+  remark: optionalTrimmedString(1000),
+})
 
 const listAttendanceImportsQuerySchema = z
   .object({

@@ -1,15 +1,18 @@
 <!-- frontend/src/modules/attendance/views/AttendanceImportView.vue -->
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
-import Card from 'primevue/card'
 import Column from 'primevue/column'
 import DataTable from 'primevue/datatable'
+import DatePicker from 'primevue/datepicker'
 import Dialog from 'primevue/dialog'
-import Dropdown from 'primevue/dropdown'
+import IconField from 'primevue/iconfield'
+import InputIcon from 'primevue/inputicon'
 import InputText from 'primevue/inputtext'
+import Message from 'primevue/message'
+import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 
 import { useAuthStore } from '@/modules/auth/auth.store'
@@ -22,26 +25,30 @@ import {
 const toast = useToast()
 const auth = useAuthStore()
 
-const loading = ref(false)
+const PAGE_SIZE = 10
+const SEARCH_DEBOUNCE_MS = 250
+
+const rows = ref([])
+const totalRecords = ref(0)
+const loadedPages = ref(new Set())
+
+const bootstrapped = ref(false)
+const backgroundLoading = ref(false)
+
 const detailLoading = ref(false)
 const importDialogVisible = ref(false)
-
-const imports = ref([])
-const totalRecords = ref(0)
+const detailVisible = ref(false)
 
 const selectedImportDetail = ref(null)
-const detailVisible = ref(false)
 const latestImportResult = ref(null)
 
 const filters = reactive({
   search: '',
   status: '',
-  periodFrom: '',
-  periodTo: '',
-  page: 1,
-  limit: 10,
-  sortBy: 'createdAt',
-  sortOrder: 'desc',
+  periodFrom: null,
+  periodTo: null,
+  sortField: 'createdAt',
+  sortOrder: -1,
 })
 
 const statusOptions = [
@@ -52,25 +59,88 @@ const statusOptions = [
   { label: 'Failed', value: 'FAILED' },
 ]
 
-const rowsPerPageOptions = [10, 20, 50, 100]
+const totalImports = computed(() => Number(totalRecords.value || 0))
+const loadedCount = computed(() => rows.value.filter(Boolean).length)
+const summaryText = computed(() => `${loadedCount.value} of ${totalImports.value}`)
 
-const first = computed(() => (filters.page - 1) * filters.limit)
-
-const failedRowsPreview = computed(() => {
-  return Array.isArray(latestImportResult.value?.failedRows)
-    ? latestImportResult.value.failedRows.slice(0, 8)
-    : []
-})
+const hasAnyData = computed(() => rows.value.some(Boolean))
+const useVirtualScroll = computed(() => totalImports.value > PAGE_SIZE)
 
 const canImportAttendance = computed(() => {
-  if (auth.isRootAdmin) return true
+  if (auth.user?.isRootAdmin || auth.isRootAdmin) return true
   return auth.hasAnyPermission?.(['ATTENDANCE_IMPORT']) ?? false
 })
 
+const latestImportInfo = computed(() => {
+  return (
+    latestImportResult.value?.import ||
+    latestImportResult.value?.item ||
+    latestImportResult.value ||
+    null
+  )
+})
+
+const latestFailedRowsPreview = computed(() => {
+  const rows =
+    latestImportResult.value?.failedRows ||
+    latestImportResult.value?.failedRowPreview ||
+    latestImportResult.value?.errors ||
+    []
+
+  return Array.isArray(rows) ? rows.slice(0, 8) : []
+})
+
+const detailImport = computed(() => {
+  return (
+    selectedImportDetail.value?.import ||
+    selectedImportDetail.value?.item ||
+    selectedImportDetail.value ||
+    null
+  )
+})
+
+const detailFailedRows = computed(() => {
+  const rows =
+    selectedImportDetail.value?.failedRows ||
+    selectedImportDetail.value?.failedRowPreview ||
+    selectedImportDetail.value?.errors ||
+    []
+
+  return Array.isArray(rows) ? rows : []
+})
+
+const detailRecords = computed(() => {
+  const rows =
+    selectedImportDetail.value?.records ||
+    selectedImportDetail.value?.items ||
+    selectedImportDetail.value?.attendanceRecords ||
+    []
+
+  return Array.isArray(rows) ? rows : []
+})
+
 let searchTimer = null
+let currentRequestId = 0
 
 function normalizePayload(res) {
-  return res?.data?.data || res?.data || null
+  return res?.data?.data || res?.data || {}
+}
+
+function normalizeItems(payload) {
+  return Array.isArray(payload?.items) ? payload.items : []
+}
+
+function formatDateYMD(value) {
+  if (!value) return undefined
+
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return undefined
+
+  const yyyy = date.getFullYear()
+  const mm = String(date.getMonth() + 1).padStart(2, '0')
+  const dd = String(date.getDate()).padStart(2, '0')
+
+  return `${yyyy}-${mm}-${dd}`
 }
 
 function formatDateTime(value) {
@@ -96,438 +166,578 @@ function formatPeriod(row) {
   if (from && to) return `${from} → ${to}`
   if (from) return from
   if (to) return to
+
   return '—'
 }
 
 function formatIssues(value) {
   if (Array.isArray(value) && value.length) return value.join(', ')
+  if (typeof value === 'string' && value.trim()) return value.trim()
   return '—'
 }
 
 function getImportStatusSeverity(status) {
-  switch (String(status || '').toUpperCase()) {
-    case 'SUCCESS':
-      return 'success'
-    case 'PARTIAL_SUCCESS':
-      return 'warning'
-    case 'FAILED':
-      return 'danger'
-    case 'PROCESSING':
-      return 'info'
-    default:
-      return 'secondary'
-  }
-}
+  const normalized = String(status || '').toUpperCase()
 
-function getMatchSeverity(value) {
-  if (value === true) return 'success'
-  if (value === false) return 'danger'
+  if (normalized === 'SUCCESS') return 'success'
+  if (normalized === 'PARTIAL_SUCCESS') return 'warning'
+  if (normalized === 'FAILED') return 'danger'
+  if (normalized === 'PROCESSING') return 'info'
+
   return 'secondary'
 }
 
-function getShiftStatusSeverity(value) {
-  switch (String(value || '').toUpperCase()) {
-    case 'MATCHED':
-      return 'success'
-    case 'MISMATCH':
-      return 'danger'
-    default:
-      return 'secondary'
+function formatImportNo(row) {
+  return String(row?.importNo || row?.attendanceImportNo || '').trim() || '—'
+}
+
+function formatFileName(row) {
+  return String(row?.fileName || '').trim() || '—'
+}
+
+function buildQuery(page) {
+  return {
+    page,
+    limit: PAGE_SIZE,
+    search: String(filters.search || '').trim() || undefined,
+    status: filters.status || undefined,
+    periodFrom: formatDateYMD(filters.periodFrom),
+    periodTo: formatDateYMD(filters.periodTo),
+    sortBy: filters.sortField,
+    sortOrder: filters.sortOrder === 1 ? 'asc' : 'desc',
   }
 }
 
-function displayResolvedEmployee(row) {
-  const code = String(row?.employeeNo || '').trim()
-  const name = String(row?.employeeName || '').trim()
+async function fetchPage(page, { replace = false, silent = false } = {}) {
+  if (!replace && loadedPages.value.has(page)) return
 
-  if (code && name) return `${code} - ${name}`
-  if (code) return code
-  if (name) return name
-  return '—'
+  const requestId = ++currentRequestId
+
+  if (silent) {
+    backgroundLoading.value = true
+  }
+
+  try {
+    const res = await getAttendanceImports(buildQuery(page))
+    if (requestId !== currentRequestId) return
+
+    const payload = normalizePayload(res)
+    const items = normalizeItems(payload)
+    const total = Number(payload?.pagination?.total || 0)
+
+    totalRecords.value = total
+
+    if (replace) {
+      const nextRows = Array.from({ length: total }, () => null)
+      const startIndex = (page - 1) * PAGE_SIZE
+
+      for (let i = 0; i < items.length; i += 1) {
+        nextRows[startIndex + i] = items[i]
+      }
+
+      rows.value = total === 0 ? [] : nextRows
+      loadedPages.value = new Set([page])
+    } else {
+      if (!rows.value.length && total > 0) {
+        rows.value = Array.from({ length: total }, () => null)
+      }
+
+      const startIndex = (page - 1) * PAGE_SIZE
+
+      for (let i = 0; i < items.length; i += 1) {
+        rows.value[startIndex + i] = items[i]
+      }
+
+      loadedPages.value.add(page)
+    }
+
+    bootstrapped.value = true
+  } catch (error) {
+    toast.add({
+      severity: 'error',
+      summary: 'Load failed',
+      detail:
+        error?.response?.data?.message ||
+        error?.message ||
+        'Failed to load attendance imports.',
+      life: 3000,
+    })
+  } finally {
+    backgroundLoading.value = false
+  }
 }
 
-function displayShift(row) {
-  const code = String(row?.shiftCode || '').trim()
-  const name = String(row?.shiftName || '').trim()
+async function reloadFirstPage({ keepVisible = true } = {}) {
+  if (!keepVisible) {
+    rows.value = []
+    totalRecords.value = 0
+    loadedPages.value = new Set()
+  }
 
-  if (code && name) return `${code} - ${name}`
-  if (code) return code
-  if (name) return name
-  return '—'
+  await fetchPage(1, {
+    replace: true,
+    silent: true,
+  })
+}
+
+function runSearchSoon() {
+  window.clearTimeout(searchTimer)
+  searchTimer = window.setTimeout(() => {
+    reloadFirstPage({ keepVisible: true })
+  }, SEARCH_DEBOUNCE_MS)
+}
+
+function onSearchInput() {
+  runSearchSoon()
+}
+
+function onFilterChange() {
+  reloadFirstPage({ keepVisible: true })
+}
+
+function onSort(event) {
+  const fieldMap = {
+    importNo: 'importNo',
+    fileName: 'fileName',
+    status: 'status',
+    importedAt: 'importedAt',
+    createdAt: 'createdAt',
+    updatedAt: 'updatedAt',
+  }
+
+  filters.sortField = fieldMap[event.sortField] || 'createdAt'
+  filters.sortOrder = typeof event.sortOrder === 'number' ? event.sortOrder : -1
+
+  reloadFirstPage({ keepVisible: true })
+}
+
+async function onVirtualLazyLoad(event) {
+  if (!useVirtualScroll.value) return
+
+  const first = Number(event?.first || 0)
+  const last = Number(event?.last || first + PAGE_SIZE)
+
+  const startPage = Math.floor(first / PAGE_SIZE) + 1
+  const endPage = Math.floor(Math.max(last - 1, first) / PAGE_SIZE) + 1
+
+  for (let page = startPage; page <= endPage; page += 1) {
+    if (!loadedPages.value.has(page)) {
+      await fetchPage(page, { silent: true })
+    }
+  }
 }
 
 function clearFilters() {
   filters.search = ''
   filters.status = ''
-  filters.periodFrom = ''
-  filters.periodTo = ''
-  filters.page = 1
-  filters.limit = 10
-  filters.sortBy = 'createdAt'
-  filters.sortOrder = 'desc'
-  fetchImports()
+  filters.periodFrom = null
+  filters.periodTo = null
+  filters.sortField = 'createdAt'
+  filters.sortOrder = -1
+
+  reloadFirstPage({ keepVisible: true })
 }
 
-async function fetchImports() {
-  loading.value = true
-
-  try {
-    const response = await getAttendanceImports({
-      page: filters.page,
-      limit: filters.limit,
-      search: filters.search || undefined,
-      status: filters.status || undefined,
-      periodFrom: filters.periodFrom || undefined,
-      periodTo: filters.periodTo || undefined,
-      sortBy: filters.sortBy,
-      sortOrder: filters.sortOrder,
-    })
-
-    const payload = normalizePayload(response) || {}
-
-    imports.value = Array.isArray(payload.items) ? payload.items : []
-    totalRecords.value = Number(payload.pagination?.total || 0)
-  } catch (error) {
-    console.error(error)
-    toast.add({
-      severity: 'error',
-      summary: 'Load failed',
-      detail: error?.response?.data?.message || 'Unable to load attendance imports',
-      life: 3000,
-    })
-  } finally {
-    loading.value = false
-  }
+function refresh() {
+  reloadFirstPage({ keepVisible: true })
 }
 
 async function openImportDetail(row) {
-  if (!row?.id) return
+  const importId = String(row?.id || row?._id || '').trim()
+
+  if (!importId) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Missing import ID',
+      detail: 'Cannot open this import detail because ID is missing.',
+      life: 2500,
+    })
+    return
+  }
 
   detailVisible.value = true
   detailLoading.value = true
   selectedImportDetail.value = null
 
   try {
-    const response = await getAttendanceImportById(row.id)
-    selectedImportDetail.value = normalizePayload(response)
+    const res = await getAttendanceImportById(importId)
+    selectedImportDetail.value = normalizePayload(res)
   } catch (error) {
-    console.error(error)
     toast.add({
       severity: 'error',
-      summary: 'Detail failed',
-      detail: error?.response?.data?.message || 'Unable to load attendance import detail',
+      summary: 'Detail load failed',
+      detail:
+        error?.response?.data?.message ||
+        error?.message ||
+        'Failed to load attendance import detail.',
       life: 3000,
     })
-    detailVisible.value = false
   } finally {
     detailLoading.value = false
   }
 }
 
-async function handleImportSuccess(payload) {
-  latestImportResult.value = normalizePayload(payload)
-  filters.page = 1
-  await fetchImports()
-}
-
-function onPage(event) {
-  filters.page = Math.floor(event.first / event.rows) + 1
-  filters.limit = event.rows
-  fetchImports()
-}
-
-function onSort(event) {
-  filters.sortBy = event.sortField || 'createdAt'
-  filters.sortOrder = event.sortOrder === 1 ? 'asc' : 'desc'
-  filters.page = 1
-  fetchImports()
+function onImportSuccess(payload) {
+  latestImportResult.value = payload
+  reloadFirstPage({ keepVisible: false })
 }
 
 watch(
-  () => filters.status,
+  () => [filters.status, filters.periodFrom, filters.periodTo],
   () => {
-    filters.page = 1
-    fetchImports()
-  },
-)
-
-watch(
-  () => [filters.periodFrom, filters.periodTo],
-  () => {
-    filters.page = 1
-    fetchImports()
-  },
-)
-
-watch(
-  () => filters.search,
-  () => {
-    filters.page = 1
-    clearTimeout(searchTimer)
-    searchTimer = setTimeout(() => {
-      fetchImports()
-    }, 400)
+    onFilterChange()
   },
 )
 
 onMounted(() => {
-  fetchImports()
+  reloadFirstPage({ keepVisible: false })
+})
+
+onBeforeUnmount(() => {
+  window.clearTimeout(searchTimer)
 })
 </script>
 
 <template>
-  <div class="flex flex-col gap-4 p-3 md:p-4">
+  <div class="flex flex-col gap-4">
     <section
-      class="overflow-hidden rounded-3xl border border-[color:var(--ot-border)] bg-gradient-to-r from-sky-50 via-white to-emerald-50 shadow-sm dark:from-surface-900 dark:via-surface-900 dark:to-surface-800"
+      class="overflow-hidden rounded-3xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] shadow-sm"
     >
-      <div class="flex flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between md:px-5">
-        <div class="min-w-0">
-          <div class="flex items-center gap-3">
-            <span
-              class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white/80 text-sky-600 shadow-sm ring-1 ring-black/5 dark:bg-surface-800 dark:text-sky-400"
-            >
-              <i class="pi pi-upload text-base" />
-            </span>
-
-            <div class="min-w-0">
-              <div class="flex flex-wrap items-center gap-2">
-                <h1 class="text-xl font-semibold tracking-tight text-[color:var(--ot-text)]">
-                  Attendance Import
-                </h1>
-                <Tag value="Attendance" severity="info" rounded />
-              </div>
-
-              <p class="mt-1 text-sm text-[color:var(--ot-text-muted)]">
-                Import attendance files with sample guidance, review history, and inspect validation results.
-              </p>
+      <div class="p-4 sm:p-5">
+        <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-center gap-2">
+              <h1 class="text-xl font-semibold tracking-tight text-[color:var(--ot-text)]">
+                Attendance Import
+              </h1>
+              <Tag value="Attendance" severity="info" rounded />
             </div>
-          </div>
-        </div>
 
-        <div class="flex flex-wrap items-center gap-2">
-          <Button
-            v-if="canImportAttendance"
-            label="Import Attendance"
-            icon="pi pi-upload"
-            size="small"
-            @click="importDialogVisible = true"
-          />
-          <Button
-            label="Refresh"
-            icon="pi pi-refresh"
-            outlined
-            size="small"
-            :loading="loading"
-            @click="fetchImports"
-          />
-          <Button
-            label="Clear Filters"
-            icon="pi pi-filter-slash"
-            severity="secondary"
-            outlined
-            size="small"
-            @click="clearFilters"
-          />
+            <p class="mt-1 text-sm text-[color:var(--ot-text-muted)]">
+              Import attendance punch data, keep batch history, and review validation results.
+            </p>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-2">
+            <div
+              class="flex min-w-[92px] flex-col items-center justify-center rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-bg)] px-3 py-2 text-center"
+            >
+              <div class="text-[11px] font-semibold uppercase tracking-[0.14em] text-[color:var(--ot-text-muted)]">
+                Total
+              </div>
+              <div class="mt-1 text-lg font-semibold leading-none text-[color:var(--ot-text)]">
+                {{ totalImports }}
+              </div>
+            </div>
+
+            <Button
+              v-if="canImportAttendance"
+              label="Import Attendance"
+              icon="pi pi-upload"
+              size="small"
+              @click="importDialogVisible = true"
+            />
+
+            <Button
+              label="Refresh"
+              icon="pi pi-refresh"
+              severity="secondary"
+              outlined
+              size="small"
+              :loading="backgroundLoading"
+              @click="refresh"
+            />
+
+            <Button
+              label="Clear"
+              icon="pi pi-filter-slash"
+              severity="secondary"
+              outlined
+              size="small"
+              @click="clearFilters"
+            />
+          </div>
         </div>
       </div>
     </section>
 
-    <Card
-      v-if="latestImportResult"
-      class="compact-card rounded-3xl border border-emerald-200 shadow-sm dark:border-emerald-800"
+    <section
+      v-if="latestImportInfo"
+      class="rounded-3xl border border-emerald-200 bg-emerald-50/60 p-4 shadow-sm dark:border-emerald-800 dark:bg-emerald-950/20"
     >
-      <template #title>
-        <div class="flex items-center gap-2 text-base">
-          <i class="pi pi-check-circle text-emerald-500" />
-          <span>Latest Import Result</span>
+      <div class="flex flex-col gap-4">
+        <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div class="flex items-center gap-2 text-base font-semibold text-[color:var(--ot-text)]">
+              <i class="pi pi-check-circle text-emerald-500" />
+              <span>Latest Import Result</span>
+            </div>
+            <p class="mt-1 text-sm text-[color:var(--ot-text-muted)]">
+              Latest uploaded file has been processed by the backend import engine.
+            </p>
+          </div>
+
+          <Tag
+            :value="latestImportInfo.status || 'UNKNOWN'"
+            :severity="getImportStatusSeverity(latestImportInfo.status)"
+          />
         </div>
-      </template>
 
-      <template #content>
-        <div class="flex flex-col gap-3">
-          <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <div class="attendance-metric-box">
-              <div class="attendance-metric-label">Import No</div>
-              <div class="attendance-metric-value">
-                {{ latestImportResult.import?.importNo || '—' }}
-              </div>
-            </div>
-
-            <div class="attendance-metric-box">
-              <div class="attendance-metric-label">Status</div>
-              <div class="mt-1">
-                <Tag
-                  :value="latestImportResult.import?.status || '—'"
-                  :severity="getImportStatusSeverity(latestImportResult.import?.status)"
-                />
-              </div>
-            </div>
-
-            <div class="attendance-metric-box">
-              <div class="attendance-metric-label">Sheet</div>
-              <div class="attendance-metric-value">
-                {{ latestImportResult.sheetName || '—' }}
-              </div>
-            </div>
-
-            <div class="attendance-metric-box">
-              <div class="attendance-metric-label">Failed Rows</div>
-              <div class="attendance-metric-value">
-                {{ latestImportResult.import?.failedRowCount || 0 }}
-              </div>
+        <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <div class="attendance-stat-box">
+            <div class="attendance-stat-label">Import No</div>
+            <div class="attendance-stat-value text-sm">
+              {{ latestImportInfo.importNo || '—' }}
             </div>
           </div>
 
-          <div
-            v-if="failedRowsPreview.length"
-            class="rounded-2xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/40"
-          >
-            <div class="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-amber-700 dark:text-amber-300">
-              Failed Row Preview
+          <div class="attendance-stat-box">
+            <div class="attendance-stat-label">Total Rows</div>
+            <div class="attendance-stat-value">
+              {{ Number(latestImportInfo.rowCount || 0) }}
             </div>
+          </div>
 
-            <div class="grid gap-2 md:grid-cols-2">
-              <div
-                v-for="row in failedRowsPreview"
-                :key="`${row.rawRowNo}-${row.message}`"
-                class="rounded-xl bg-white px-3 py-2 text-sm dark:bg-surface-900"
-              >
-                <div class="font-semibold">Row {{ row.rawRowNo }}</div>
-                <div class="mt-0.5 text-xs text-[color:var(--ot-text-muted)]">
-                  {{ row.message }}
-                </div>
+          <div class="attendance-stat-box border-emerald-200 dark:border-emerald-800">
+            <div class="attendance-stat-label">Success</div>
+            <div class="attendance-stat-value text-emerald-600 dark:text-emerald-400">
+              {{ Number(latestImportInfo.successRowCount || 0) }}
+            </div>
+          </div>
+
+          <div class="attendance-stat-box border-amber-200 dark:border-amber-800">
+            <div class="attendance-stat-label">Failed</div>
+            <div class="attendance-stat-value text-amber-600 dark:text-amber-400">
+              {{ Number(latestImportInfo.failedRowCount || 0) }}
+            </div>
+          </div>
+
+          <div class="attendance-stat-box border-sky-200 dark:border-sky-800">
+            <div class="attendance-stat-label">Duplicate</div>
+            <div class="attendance-stat-value text-sky-600 dark:text-sky-400">
+              {{ Number(latestImportInfo.duplicateRowCount || 0) }}
+            </div>
+          </div>
+        </div>
+
+        <Message
+          v-if="latestImportInfo.status === 'PARTIAL_SUCCESS'"
+          severity="warn"
+          :closable="false"
+        >
+          Attendance was imported with some skipped, duplicated, or invalid rows. Please review the detail result.
+        </Message>
+
+        <div
+          v-if="latestFailedRowsPreview.length"
+          class="rounded-2xl border border-amber-200 bg-white/80 p-3 dark:border-amber-800 dark:bg-surface-900"
+        >
+          <div class="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-amber-700 dark:text-amber-300">
+            Failed Row Preview
+          </div>
+
+          <div class="grid gap-2 md:grid-cols-2">
+            <div
+              v-for="row in latestFailedRowsPreview"
+              :key="`${row.rawRowNo || row.rowNo || row.row || ''}-${row.message || row.reason || ''}`"
+              class="rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-3 py-2 text-sm"
+            >
+              <div class="font-semibold text-[color:var(--ot-text)]">
+                Row {{ row.rawRowNo || row.rowNo || row.row || '—' }}
+              </div>
+              <div class="mt-0.5 text-xs text-[color:var(--ot-text-muted)]">
+                {{ row.message || row.reason || formatIssues(row.issues) }}
               </div>
             </div>
           </div>
         </div>
-      </template>
-    </Card>
+      </div>
+    </section>
 
-    <Card class="compact-card rounded-3xl shadow-sm">
-      <template #title>
-        <div class="flex items-center gap-2 text-base">
-          <i class="pi pi-history text-sky-500" />
-          <span>Import History</span>
-        </div>
-      </template>
-
-      <template #content>
-        <div class="flex flex-col gap-3">
-          <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(0,1.6fr),180px,160px,160px]">
+    <section
+      class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]"
+    >
+      <div class="border-b border-[color:var(--ot-border)] px-3 py-3">
+        <div class="flex flex-col gap-2 xl:flex-row xl:items-center">
+          <IconField class="w-full xl:w-[360px] xl:shrink-0">
+            <InputIcon class="pi pi-search" />
             <InputText
               v-model="filters.search"
-              placeholder="Search import no, file name, remark..."
+              placeholder="Search import no, file name, remark"
               class="w-full"
+              size="small"
+              @input="onSearchInput"
             />
+          </IconField>
 
-            <Dropdown
+          <div class="w-full xl:w-[180px] xl:shrink-0">
+            <Select
               v-model="filters.status"
               :options="statusOptions"
               optionLabel="label"
               optionValue="value"
               placeholder="Status"
               class="w-full"
+              size="small"
             />
-
-            <input
-              v-model="filters.periodFrom"
-              type="date"
-              class="h-10 rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-3 text-sm text-[color:var(--ot-text)] outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-200 dark:focus:ring-sky-900"
-            >
-
-            <input
-              v-model="filters.periodTo"
-              type="date"
-              class="h-10 rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-3 text-sm text-[color:var(--ot-text)] outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-200 dark:focus:ring-sky-900"
-            >
           </div>
 
-          <DataTable
-            :value="imports"
-            dataKey="id"
-            lazy
-            paginator
-            size="small"
-            :rows="filters.limit"
-            :first="first"
-            :totalRecords="totalRecords"
-            :rowsPerPageOptions="rowsPerPageOptions"
-            :loading="loading"
-            removableSort
-            sortMode="single"
-            :sortField="filters.sortBy"
-            :sortOrder="filters.sortOrder === 'asc' ? 1 : -1"
-            responsiveLayout="scroll"
-            stripedRows
-            class="attendance-table"
-            @page="onPage"
-            @sort="onSort"
-          >
-            <template #empty>
-              <div class="py-8 text-center text-sm text-[color:var(--ot-text-muted)]">
-                No attendance imports found.
-              </div>
-            </template>
+          <div class="w-full xl:w-[180px] xl:shrink-0">
+            <DatePicker
+              v-model="filters.periodFrom"
+              dateFormat="yy-mm-dd"
+              showIcon
+              class="w-full"
+              inputClass="w-full"
+              placeholder="Period From"
+            />
+          </div>
 
-            <Column field="importNo" header="Import No" sortable style="min-width: 11rem" />
+          <div class="w-full xl:w-[180px] xl:shrink-0">
+            <DatePicker
+              v-model="filters.periodTo"
+              dateFormat="yy-mm-dd"
+              showIcon
+              class="w-full"
+              inputClass="w-full"
+              placeholder="Period To"
+            />
+          </div>
 
-            <Column field="fileName" header="File Name" sortable style="min-width: 14rem">
-              <template #body="{ data }">
-                <div class="min-w-0">
-                  <div class="truncate font-medium text-[color:var(--ot-text)]">
-                    {{ data.fileName || '—' }}
-                  </div>
-                </div>
-              </template>
-            </Column>
-
-            <Column header="Period" style="min-width: 11rem">
-              <template #body="{ data }">
-                <span class="text-sm">{{ formatPeriod(data) }}</span>
-              </template>
-            </Column>
-
-            <Column header="Rows" style="min-width: 16rem">
-              <template #body="{ data }">
-                <div class="flex flex-wrap gap-1.5">
-                  <Tag :value="`T ${Number(data?.rowCount || 0)}`" severity="secondary" />
-                  <Tag :value="`S ${Number(data?.successRowCount || 0)}`" severity="success" />
-                  <Tag :value="`F ${Number(data?.failedRowCount || 0)}`" severity="warning" />
-                  <Tag :value="`D ${Number(data?.duplicateRowCount || 0)}`" severity="info" />
-                </div>
-              </template>
-            </Column>
-
-            <Column field="status" header="Status" sortable style="min-width: 9rem">
-              <template #body="{ data }">
-                <Tag
-                  :value="data.status"
-                  :severity="getImportStatusSeverity(data.status)"
-                />
-              </template>
-            </Column>
-
-            <Column field="createdAt" header="Created" sortable style="min-width: 12rem">
-              <template #body="{ data }">
-                <span class="text-sm">{{ formatDateTime(data.createdAt) }}</span>
-              </template>
-            </Column>
-
-            <Column header="Action" style="width: 7rem; min-width: 7rem">
-              <template #body="{ data }">
-                <Button
-                  label="View"
-                  icon="pi pi-eye"
-                  text
-                  size="small"
-                  @click="openImportDetail(data)"
-                />
-              </template>
-            </Column>
-          </DataTable>
+          <div class="flex items-center gap-2 xl:ml-auto xl:shrink-0">
+            <div class="rounded-lg border border-[color:var(--ot-border)] px-3 py-1.5 text-xs font-medium text-[color:var(--ot-text-muted)]">
+              Loaded {{ summaryText }}
+            </div>
+          </div>
         </div>
-      </template>
-    </Card>
+      </div>
+
+      <DataTable
+        :value="rows"
+        lazy
+        removableSort
+        scrollable
+        scrollHeight="500px"
+        :sortField="filters.sortField"
+        :sortOrder="filters.sortOrder"
+        tableStyle="min-width: 96rem"
+        class="attendance-import-table"
+        :virtualScrollerOptions="useVirtualScroll ? {
+          lazy: true,
+          onLazyLoad: onVirtualLazyLoad,
+          itemSize: 76,
+          delay: 0,
+          showLoader: false,
+          loading: false,
+          numToleratedItems: 12,
+        } : null"
+        @sort="onSort"
+      >
+        <template #empty>
+          <div
+            v-if="bootstrapped"
+            class="py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
+          >
+            No attendance imports found.
+          </div>
+        </template>
+
+        <Column field="importNo" header="Import No" sortable style="min-width: 12rem">
+          <template #body="{ data }">
+            <span v-if="data" class="font-medium text-[color:var(--ot-text)]">
+              {{ formatImportNo(data) }}
+            </span>
+          </template>
+        </Column>
+
+        <Column field="fileName" header="File Name" sortable style="min-width: 18rem">
+          <template #body="{ data }">
+            <div v-if="data" class="min-w-0">
+              <div
+                class="truncate font-medium text-[color:var(--ot-text)]"
+                :title="formatFileName(data)"
+              >
+                {{ formatFileName(data) }}
+              </div>
+              <div class="mt-0.5 text-xs text-[color:var(--ot-text-muted)]">
+                {{ data.mimeType || 'Excel file' }}
+              </div>
+            </div>
+          </template>
+        </Column>
+
+        <Column header="Period" style="min-width: 13rem">
+          <template #body="{ data }">
+            <span v-if="data" class="text-sm">
+              {{ formatPeriod(data) }}
+            </span>
+          </template>
+        </Column>
+
+        <Column header="Rows" style="min-width: 18rem">
+          <template #body="{ data }">
+            <div v-if="data" class="flex flex-wrap gap-1.5">
+              <Tag :value="`T ${Number(data.rowCount || 0)}`" severity="secondary" class="attendance-tag" />
+              <Tag :value="`S ${Number(data.successRowCount || 0)}`" severity="success" class="attendance-tag" />
+              <Tag :value="`F ${Number(data.failedRowCount || 0)}`" severity="warning" class="attendance-tag" />
+              <Tag :value="`D ${Number(data.duplicateRowCount || 0)}`" severity="info" class="attendance-tag" />
+            </div>
+          </template>
+        </Column>
+
+        <Column field="status" header="Status" sortable style="min-width: 10rem">
+          <template #body="{ data }">
+            <Tag
+              v-if="data"
+              :value="data.status || '-'"
+              :severity="getImportStatusSeverity(data.status)"
+              class="attendance-tag"
+            />
+          </template>
+        </Column>
+
+        <Column field="importedAt" header="Imported At" sortable style="min-width: 14rem">
+          <template #body="{ data }">
+            <span v-if="data" class="text-sm">
+              {{ formatDateTime(data.importedAt || data.createdAt) }}
+            </span>
+          </template>
+        </Column>
+
+        <Column field="createdAt" header="Created" sortable style="min-width: 14rem">
+          <template #body="{ data }">
+            <span v-if="data" class="text-sm">
+              {{ formatDateTime(data.createdAt) }}
+            </span>
+          </template>
+        </Column>
+
+        <Column header="Action" style="width: 8rem; min-width: 8rem">
+          <template #body="{ data }">
+            <Button
+              v-if="data"
+              label="View"
+              icon="pi pi-eye"
+              size="small"
+              outlined
+              @click="openImportDetail(data)"
+            />
+          </template>
+        </Column>
+      </DataTable>
+
+      <div
+        v-if="backgroundLoading && hasAnyData"
+        class="flex items-center justify-center border-t border-[color:var(--ot-border)] px-3 py-2 text-xs text-[color:var(--ot-text-muted)]"
+      >
+        Updating...
+      </div>
+    </section>
+
+    <AttendanceImportDialog
+      v-model:visible="importDialogVisible"
+      @success="onImportSuccess"
+    />
 
     <Dialog
       v-model:visible="detailVisible"
@@ -536,224 +746,229 @@ onMounted(() => {
       :style="{ width: '96vw', maxWidth: '1280px' }"
       header="Attendance Import Detail"
     >
-      <div v-if="detailLoading" class="py-10 text-center text-sm text-[color:var(--ot-text-muted)]">
+      <div
+        v-if="detailLoading"
+        class="py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
+      >
         Loading import detail...
       </div>
 
-      <div v-else-if="selectedImportDetail" class="flex flex-col gap-4">
+      <div
+        v-else-if="detailImport"
+        class="flex flex-col gap-4"
+      >
         <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <div class="attendance-metric-box">
             <div class="attendance-metric-label">Import No</div>
-            <div class="attendance-metric-value">{{ selectedImportDetail.importNo }}</div>
+            <div class="attendance-metric-value">
+              {{ detailImport.importNo || '—' }}
+            </div>
           </div>
 
           <div class="attendance-metric-box">
             <div class="attendance-metric-label">Status</div>
             <div class="mt-1">
               <Tag
-                :value="selectedImportDetail.status"
-                :severity="getImportStatusSeverity(selectedImportDetail.status)"
+                :value="detailImport.status || '-'"
+                :severity="getImportStatusSeverity(detailImport.status)"
               />
             </div>
           </div>
 
           <div class="attendance-metric-box">
             <div class="attendance-metric-label">Period</div>
-            <div class="attendance-metric-value">{{ formatPeriod(selectedImportDetail) }}</div>
+            <div class="attendance-metric-value">
+              {{ formatPeriod(detailImport) }}
+            </div>
           </div>
 
           <div class="attendance-metric-box">
             <div class="attendance-metric-label">File Name</div>
-            <div class="attendance-metric-value break-all">{{ selectedImportDetail.fileName }}</div>
+            <div class="attendance-metric-value break-all">
+              {{ detailImport.fileName || '—' }}
+            </div>
           </div>
         </div>
 
         <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <div class="attendance-stat-box">
             <div class="attendance-stat-label">Total Rows</div>
-            <div class="attendance-stat-value">{{ selectedImportDetail.rowCount || 0 }}</div>
+            <div class="attendance-stat-value">
+              {{ Number(detailImport.rowCount || 0) }}
+            </div>
           </div>
 
           <div class="attendance-stat-box border-emerald-200 dark:border-emerald-800">
             <div class="attendance-stat-label">Success Rows</div>
             <div class="attendance-stat-value text-emerald-600 dark:text-emerald-400">
-              {{ selectedImportDetail.successRowCount || 0 }}
+              {{ Number(detailImport.successRowCount || 0) }}
             </div>
           </div>
 
           <div class="attendance-stat-box border-amber-200 dark:border-amber-800">
             <div class="attendance-stat-label">Failed Rows</div>
             <div class="attendance-stat-value text-amber-600 dark:text-amber-400">
-              {{ selectedImportDetail.failedRowCount || 0 }}
+              {{ Number(detailImport.failedRowCount || 0) }}
             </div>
           </div>
 
           <div class="attendance-stat-box border-sky-200 dark:border-sky-800">
             <div class="attendance-stat-label">Duplicate Rows</div>
             <div class="attendance-stat-value text-sky-600 dark:text-sky-400">
-              {{ selectedImportDetail.duplicateRowCount || 0 }}
+              {{ Number(detailImport.duplicateRowCount || 0) }}
             </div>
           </div>
         </div>
 
-        <Card class="compact-card rounded-3xl shadow-sm">
-          <template #title>
-            <div class="flex items-center gap-2 text-base">
-              <i class="pi pi-table text-sky-500" />
-              <span>Imported Row Preview</span>
-            </div>
-          </template>
+        <div
+          v-if="detailImport.remark"
+          class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-bg)] p-4"
+        >
+          <div class="mb-1 text-sm font-semibold text-[color:var(--ot-text)]">
+            Remark
+          </div>
+          <div class="text-sm text-[color:var(--ot-text-muted)]">
+            {{ detailImport.remark }}
+          </div>
+        </div>
 
-          <template #content>
-            <DataTable
-              :value="selectedImportDetail.previewRecords || []"
-              dataKey="id"
-              responsiveLayout="scroll"
-              stripedRows
-              size="small"
-              class="attendance-table"
+        <section
+          v-if="detailFailedRows.length"
+          class="rounded-2xl border border-amber-200 bg-amber-50/60 p-4 dark:border-amber-800 dark:bg-amber-950/20"
+        >
+          <div class="mb-3 text-sm font-semibold text-[color:var(--ot-text)]">
+            Failed Rows
+          </div>
+
+          <div class="grid gap-2 md:grid-cols-2">
+            <div
+              v-for="row in detailFailedRows"
+              :key="`${row.rawRowNo || row.rowNo || row.row || ''}-${row.message || row.reason || ''}`"
+              class="rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-3 py-2 text-sm"
             >
-              <template #empty>
-                <div class="py-8 text-center text-sm text-[color:var(--ot-text-muted)]">
-                  No preview records found.
+              <div class="font-semibold text-[color:var(--ot-text)]">
+                Row {{ row.rawRowNo || row.rowNo || row.row || '—' }}
+              </div>
+              <div class="mt-0.5 text-xs text-[color:var(--ot-text-muted)]">
+                {{ row.message || row.reason || formatIssues(row.issues) }}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section
+          v-if="detailRecords.length"
+          class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]"
+        >
+          <div class="border-b border-[color:var(--ot-border)] px-4 py-3 text-sm font-semibold text-[color:var(--ot-text)]">
+            Imported Record Preview
+          </div>
+
+          <DataTable
+            :value="detailRecords"
+            scrollable
+            scrollHeight="360px"
+            tableStyle="min-width: 70rem"
+            class="attendance-import-detail-table"
+          >
+            <Column field="attendanceDate" header="Date" style="min-width: 9rem" />
+            <Column field="employeeNo" header="Employee No" style="min-width: 10rem" />
+            <Column field="employeeName" header="Employee Name" style="min-width: 14rem" />
+            <Column field="clockIn" header="Clock In" style="min-width: 8rem" />
+            <Column field="clockOut" header="Clock Out" style="min-width: 8rem" />
+            <Column field="status" header="Status" style="min-width: 10rem">
+              <template #body="{ data }">
+                <Tag
+                  :value="data.status || '-'"
+                  :severity="getImportStatusSeverity(data.status)"
+                  class="attendance-tag"
+                />
+              </template>
+            </Column>
+            <Column header="Issues" style="min-width: 22rem">
+              <template #body="{ data }">
+                <div class="line-clamp-2 text-sm text-[color:var(--ot-text-muted)]">
+                  {{ formatIssues(data.validationIssues) }}
                 </div>
               </template>
+            </Column>
+          </DataTable>
+        </section>
+      </div>
 
-              <Column field="rawRowNo" header="Row" style="min-width: 5rem" />
-              <Column field="importedEmployeeId" header="Imported ID" style="min-width: 9rem" />
-              <Column field="importedEmployeeName" header="Imported Name" style="min-width: 12rem" />
-              <Column field="attendanceDate" header="Date" style="min-width: 9rem" />
-              <Column field="clockIn" header="In" style="min-width: 6rem" />
-              <Column field="clockOut" header="Out" style="min-width: 6rem" />
-              <Column field="status" header="Status" style="min-width: 8rem">
-                <template #body="{ data }">
-                  <Tag :value="data.status || '—'" />
-                </template>
-              </Column>
-              <Column field="importedDepartmentName" header="Imported Department" style="min-width: 11rem" />
-              <Column field="importedPositionName" header="Imported Position" style="min-width: 11rem" />
-              <Column field="importedShiftName" header="Imported Shift" style="min-width: 10rem" />
-              <Column header="Resolved Employee" style="min-width: 13rem">
-                <template #body="{ data }">
-                  {{ displayResolvedEmployee(data) }}
-                </template>
-              </Column>
-              <Column header="Matched" style="min-width: 8rem">
-                <template #body="{ data }">
-                  <Tag
-                    :value="data.employeeMatched ? 'MATCHED' : 'NOT FOUND'"
-                    :severity="getMatchSeverity(data.employeeMatched)"
-                  />
-                </template>
-              </Column>
-              <Column header="Shift" style="min-width: 10rem">
-                <template #body="{ data }">
-                  {{ displayShift(data) }}
-                </template>
-              </Column>
-              <Column field="shiftMatchStatus" header="Shift Status" style="min-width: 9rem">
-                <template #body="{ data }">
-                  <Tag
-                    :value="data.shiftMatchStatus || 'UNKNOWN'"
-                    :severity="getShiftStatusSeverity(data.shiftMatchStatus)"
-                  />
-                </template>
-              </Column>
-              <Column header="Issues" style="min-width: 18rem">
-                <template #body="{ data }">
-                  <span class="text-xs text-[color:var(--ot-text-muted)]">
-                    {{ formatIssues(data.validationIssues) }}
-                  </span>
-                </template>
-              </Column>
-            </DataTable>
-          </template>
-        </Card>
+      <div
+        v-else
+        class="py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
+      >
+        No import detail found.
       </div>
     </Dialog>
-
-    <AttendanceImportDialog
-      v-model:visible="importDialogVisible"
-      @success="handleImportSuccess"
-    />
   </div>
 </template>
 
 <style scoped>
-:deep(.compact-card .p-card-body) {
-  padding: 0.95rem !important;
+:deep(.attendance-import-table .p-datatable-thead > tr > th),
+:deep(.attendance-import-detail-table .p-datatable-thead > tr > th) {
+  padding: 0.72rem 0.9rem !important;
 }
 
-:deep(.compact-card .p-card-title) {
-  font-size: 1rem !important;
-  font-weight: 700 !important;
-}
-
-:deep(.attendance-table .p-datatable-thead > tr > th) {
-  padding: 0.65rem 0.75rem !important;
-  font-size: 0.8rem !important;
-  white-space: nowrap;
-}
-
-:deep(.attendance-table .p-datatable-tbody > tr > td) {
-  padding: 0.65rem 0.75rem !important;
+:deep(.attendance-import-table .p-datatable-tbody > tr > td) {
+  padding: 0.62rem 0.8rem !important;
+  height: 76px !important;
   vertical-align: middle !important;
 }
 
-.attendance-metric-box {
+:deep(.attendance-import-detail-table .p-datatable-tbody > tr > td) {
+  padding: 0.62rem 0.8rem !important;
+  vertical-align: middle !important;
+}
+
+:deep(.p-tag.attendance-tag) {
+  min-height: 1.35rem !important;
+  padding: 0.12rem 0.45rem !important;
+  font-size: 0.7rem !important;
+  font-weight: 600 !important;
+  line-height: 1 !important;
+  border-radius: 999px !important;
+}
+
+.attendance-metric-box,
+.attendance-stat-box {
   border: 1px solid var(--ot-border);
   background: var(--ot-bg);
   border-radius: 1rem;
   padding: 0.9rem;
 }
 
-.attendance-metric-label {
+.attendance-metric-label,
+.attendance-stat-label {
+  margin-bottom: 0.3rem;
   font-size: 0.72rem;
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--ot-text-muted);
 }
 
 .attendance-metric-value {
-  margin-top: 0.35rem;
-  font-size: 0.9rem;
+  word-break: break-word;
+  font-size: 0.92rem;
   font-weight: 600;
   color: var(--ot-text);
-  word-break: break-word;
-}
-
-.attendance-stat-box {
-  border: 1px solid var(--ot-border);
-  background: var(--ot-surface);
-  border-radius: 1rem;
-  padding: 0.95rem;
-}
-
-.attendance-stat-label {
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--ot-text-muted);
 }
 
 .attendance-stat-value {
-  margin-top: 0.4rem;
+  word-break: break-word;
   font-size: 1.35rem;
   font-weight: 700;
   line-height: 1.1;
   color: var(--ot-text);
 }
 
-@media (max-width: 640px) {
-  :deep(.compact-card .p-card-body) {
-    padding: 0.8rem !important;
-  }
-
-  .attendance-metric-box,
-  .attendance-stat-box {
-    padding: 0.8rem;
-  }
+.line-clamp-2 {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 </style>

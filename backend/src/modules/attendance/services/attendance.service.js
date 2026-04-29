@@ -8,6 +8,8 @@ const AttendanceRecord = require('../models/AttendanceRecord')
 const Employee = require('../../org/models/Employee')
 const OTRequest = require('../../ot/models/OTRequest')
 const Holiday = require('../../calendar/models/Holiday')
+const OTCalculationPolicy = require('../../ot/models/OTCalculationPolicy')
+const ShiftOTOption = require('../../ot/models/ShiftOTOption')
 const { getDayType } = require('../../ot/utils/dayClassifier')
 const { parseAttendanceWorkbook } = require('../utils/attendanceParser')
 const {
@@ -190,56 +192,21 @@ function buildAttendanceImportSampleWorkbook() {
   const workbook = XLSX.utils.book_new()
 
   const sampleRows = [
-    [
-      'Employee ID',
-      'Employee Name',
-      'Attendance Date',
-      'Clock In',
-      'Clock Out',
-      'Status',
-      'Position',
-      'Department',
-      'Shift',
-    ],
-    ['52520351', 'Sakmakmol', '2026-04-21', '08:00', '17:30', 'PRESENT', 'Leader', 'IT', 'DAY'],
-    ['52520352', 'Sok Dara', '2026-04-21', '18:00', '03:00', 'PRESENT', 'Operator', 'Sewing', 'NIGHT'],
-    ['52520353', 'Chan Rithy', '2026-04-21', '', '', 'ABSENT', 'Staff', 'HR', 'DAY'],
-  ]
-
-  const guideRows = [
-    ['Attendance Import Guide'],
-    [],
-    ['1. Download this sample file.'],
-    ['2. Fill your attendance rows in the same column format as the Sample sheet.'],
-    [
-      '3. Required columns: Employee ID, Employee Name, Attendance Date, Clock In, Clock Out, Status, Position, Department, Shift.',
-    ],
-    ['4. Employee ID maps to employeeNo in Employee master.'],
-    ['5. Attendance Date format: YYYY-MM-DD'],
-    ['6. Time format: HH:mm'],
-    ['7. Imported Status is only a hint. Backend derives final attendance status from punches + assigned shift.'],
-    ['8. Department / Position / Shift are validated against Employee master, not used as source of truth.'],
-    ['9. Night shift rows are validated against assigned shift time logic.'],
+    ['Employee ID', 'Clock In', 'Clock Out'],
+    ['52520351', '06:45', '16:00'],
+    ['52520352', '07:10', '16:00'],
+    ['52520353', '07:00', '15:30'],
   ]
 
   const sampleSheet = XLSX.utils.aoa_to_sheet(sampleRows)
+
   sampleSheet['!cols'] = [
-    { wch: 14 },
-    { wch: 22 },
-    { wch: 18 },
-    { wch: 10 },
-    { wch: 10 },
+    { wch: 16 },
     { wch: 12 },
-    { wch: 18 },
-    { wch: 18 },
     { wch: 12 },
   ]
 
-  const guideSheet = XLSX.utils.aoa_to_sheet(guideRows)
-  guideSheet['!cols'] = [{ wch: 110 }]
-
   XLSX.utils.book_append_sheet(workbook, sampleSheet, 'Sample')
-  XLSX.utils.book_append_sheet(workbook, guideSheet, 'Guide')
 
   return XLSX.write(workbook, {
     type: 'buffer',
@@ -292,11 +259,29 @@ function mapVerificationRequestSearchItem(doc) {
     shiftCode: upper(doc.shiftCode),
     shiftName: s(doc.shiftName),
     shiftType: upper(doc.shiftType),
+    shiftStartTime: s(doc.shiftStartTime),
+    shiftEndTime: s(doc.shiftEndTime),
+
+    shiftOtOptionId: doc.shiftOtOptionId ? String(doc.shiftOtOptionId) : null,
     shiftOtOptionLabel: s(doc.shiftOtOptionLabel),
+
+    // ✅ important for dropdown / frontend display
+    shiftOtOptionTimingMode: upper(doc.shiftOtOptionTimingMode),
+    shiftOtOptionStartAfterShiftEndMinutes: Number(
+      doc.shiftOtOptionStartAfterShiftEndMinutes || 0,
+    ),
+    shiftOtOptionFixedStartTime: s(doc.shiftOtOptionFixedStartTime),
+    shiftOtOptionFixedEndTime: s(doc.shiftOtOptionFixedEndTime),
+
+    requestStartTime: s(doc.requestStartTime || doc.startTime),
+    requestEndTime: s(doc.requestEndTime || doc.endTime),
 
     requestedMinutes: Number(doc.requestedMinutes || doc.totalMinutes || 0),
     totalMinutes: Number(doc.totalMinutes || 0),
     totalHours: Number(doc.totalHours || 0),
+
+    otCalculationPolicyId: doc.otCalculationPolicyId ? String(doc.otCalculationPolicyId) : null,
+    otCalculationPolicySnapshot: doc.otCalculationPolicySnapshot || {},
 
     requestedEmployeeCount: Number(doc.requestedEmployeeCount || requestedEmployees.length),
     approvedEmployeeCount: Number(doc.approvedEmployeeCount || effectiveApprovedCount || 0),
@@ -625,14 +610,19 @@ async function createImportHeader(file, payload, authUser) {
       ? authUser.employeeId
       : null
 
+  const attendanceDate = s(payload.attendanceDate)
+
   return AttendanceImport.create({
     importNo: await generateImportNo(),
     sourceType: upper(payload.sourceType || 'EXCEL'),
     fileName: s(file.originalname),
     storedFileName: s(file.filename),
     mimeType: s(file.mimetype),
-    periodFrom: s(payload.periodFrom),
-    periodTo: s(payload.periodTo),
+
+    // ✅ one-day import
+    periodFrom: attendanceDate,
+    periodTo: attendanceDate,
+
     rowCount: 0,
     successRowCount: 0,
     failedRowCount: 0,
@@ -761,6 +751,7 @@ async function importExcel(file, payload, authUser) {
   try {
     const parsed = parseAttendanceWorkbook(file.buffer, {
       fileName: file.originalname,
+      attendanceDate: payload.attendanceDate,
     })
 
     const employeeNos = Array.from(
@@ -923,10 +914,8 @@ async function importExcel(file, payload, authUser) {
       await AttendanceRecord.insertMany(recordsPayload, { ordered: false })
     }
 
-    const periodRange = getPeriodRangeFromRows(parsed.rows)
-
-    importDoc.periodFrom = s(payload.periodFrom) || periodRange.periodFrom
-    importDoc.periodTo = s(payload.periodTo) || periodRange.periodTo
+    importDoc.periodFrom = s(payload.attendanceDate)
+    importDoc.periodTo = s(payload.attendanceDate)
     importDoc.rowCount = Number(parsed.rowCount || 0)
     importDoc.successRowCount = Number(recordsPayload.length || 0)
     importDoc.failedRowCount = Number((parsed.failedRows || []).length || 0)
@@ -1045,22 +1034,76 @@ async function listRecords(query) {
   }
 }
 
-function mapPolicySnapshotForVerification(snapshot = {}) {
+function mapPolicySnapshotForVerification(snapshot = {}, fallbackPolicy = null) {
+  const hasOwn = (obj, key) =>
+    Object.prototype.hasOwnProperty.call(obj || {}, key)
+
+  const pickString = (snapshotKey, fallbackKey = snapshotKey) => {
+    const fromSnapshot = s(snapshot?.[snapshotKey])
+    if (fromSnapshot) return fromSnapshot
+    return s(fallbackPolicy?.[fallbackKey])
+  }
+
+  const pickNumber = (snapshotKey, fallbackKey = snapshotKey, defaultValue = 0) => {
+    if (hasOwn(snapshot, snapshotKey)) return Number(snapshot?.[snapshotKey] || defaultValue)
+    if (fallbackPolicy && hasOwn(fallbackPolicy, fallbackKey)) {
+      return Number(fallbackPolicy?.[fallbackKey] || defaultValue)
+    }
+    return Number(defaultValue || 0)
+  }
+
+  const pickBoolean = (snapshotKey, fallbackKey = snapshotKey, defaultValue = false) => {
+    if (hasOwn(snapshot, snapshotKey)) return snapshot?.[snapshotKey] === true
+    if (fallbackPolicy && hasOwn(fallbackPolicy, fallbackKey)) {
+      return fallbackPolicy?.[fallbackKey] === true
+    }
+    return defaultValue
+  }
+
   return {
-    calculationPolicyId: snapshot?.calculationPolicyId
-      ? String(snapshot.calculationPolicyId)
-      : null,
-    code: upper(snapshot?.code),
-    name: s(snapshot?.name),
-    minEligibleMinutes: Number(snapshot?.minEligibleMinutes || 0),
-    roundUnitMinutes: Number(snapshot?.roundUnitMinutes || 0),
-    roundMethod: upper(snapshot?.roundMethod),
-    graceAfterShiftEndMinutes: Number(snapshot?.graceAfterShiftEndMinutes || 0),
-    allowPreShiftOT: snapshot?.allowPreShiftOT === true,
-    allowPostShiftOT: snapshot?.allowPostShiftOT !== false,
-    capByRequestedMinutes: snapshot?.capByRequestedMinutes !== false,
-    treatForgetScanInAsPending: snapshot?.treatForgetScanInAsPending !== false,
-    treatForgetScanOutAsPending: snapshot?.treatForgetScanOutAsPending !== false,
+    calculationPolicyId:
+      snapshot?.calculationPolicyId
+        ? String(snapshot.calculationPolicyId)
+        : fallbackPolicy?._id
+          ? String(fallbackPolicy._id)
+          : null,
+
+    code: upper(pickString('code')),
+    name: s(pickString('name')),
+
+    minEligibleMinutes: pickNumber('minEligibleMinutes', 'minEligibleMinutes', 0),
+    roundUnitMinutes: pickNumber('roundUnitMinutes', 'roundUnitMinutes', 30),
+    roundMethod: upper(pickString('roundMethod') || 'CEIL'),
+    graceAfterShiftEndMinutes: pickNumber(
+      'graceAfterShiftEndMinutes',
+      'graceAfterShiftEndMinutes',
+      0,
+    ),
+
+    // ✅ REQUIRED for "Match Without Exact Clock-Out"
+    allowApprovedOtWithoutExactClockOut: pickBoolean(
+      'allowApprovedOtWithoutExactClockOut',
+      'allowApprovedOtWithoutExactClockOut',
+      false,
+    ),
+
+    allowPreShiftOT: pickBoolean('allowPreShiftOT', 'allowPreShiftOT', false),
+    allowPostShiftOT: pickBoolean('allowPostShiftOT', 'allowPostShiftOT', true),
+    capByRequestedMinutes: pickBoolean(
+      'capByRequestedMinutes',
+      'capByRequestedMinutes',
+      true,
+    ),
+    treatForgetScanInAsPending: pickBoolean(
+      'treatForgetScanInAsPending',
+      'treatForgetScanInAsPending',
+      true,
+    ),
+    treatForgetScanOutAsPending: pickBoolean(
+      'treatForgetScanOutAsPending',
+      'treatForgetScanOutAsPending',
+      true,
+    ),
   }
 }
 
@@ -1082,14 +1125,50 @@ function getEffectiveApprovedEmployeesForVerification(otRequest) {
   return Array.isArray(otRequest?.requestedEmployees) ? otRequest.requestedEmployees : []
 }
 
-function buildVerificationOTRequestPayload(otRequest, approvedEmployees = []) {
+function buildVerificationOTRequestPayload(otRequest, approvedEmployees = [], options = {}) {
   const requestedEmployees = Array.isArray(otRequest?.requestedEmployees)
     ? otRequest.requestedEmployees
     : []
 
   const effectiveApprovedEmployees = Array.isArray(approvedEmployees) ? approvedEmployees : []
 
+  const currentPolicy = options.currentPolicy || null
+  const currentShiftOtOption = options.currentShiftOtOption || null
+
   const requestedMinutes = Number(otRequest?.requestedMinutes || otRequest?.totalMinutes || 0)
+
+  const timingMode = upper(
+    otRequest?.shiftOtOptionTimingMode ||
+      currentShiftOtOption?.timingMode ||
+      '',
+  )
+
+  const shiftOtOptionStartAfterShiftEndMinutes = Number(
+    otRequest?.shiftOtOptionStartAfterShiftEndMinutes ??
+      currentShiftOtOption?.startAfterShiftEndMinutes ??
+      0,
+  )
+
+  const requestStartTime = s(otRequest.requestStartTime || otRequest.startTime)
+  const requestEndTime = s(otRequest.requestEndTime || otRequest.endTime)
+
+  const fixedStartTime =
+    timingMode === 'FIXED_TIME'
+      ? s(
+          otRequest?.shiftOtOptionFixedStartTime ||
+            currentShiftOtOption?.fixedStartTime ||
+            requestStartTime,
+        )
+      : ''
+
+  const fixedEndTime =
+    timingMode === 'FIXED_TIME'
+      ? s(
+          otRequest?.shiftOtOptionFixedEndTime ||
+            currentShiftOtOption?.fixedEndTime ||
+            requestEndTime,
+        )
+      : ''
 
   return {
     id: String(otRequest._id),
@@ -1114,22 +1193,34 @@ function buildVerificationOTRequestPayload(otRequest, approvedEmployees = []) {
     shiftCrossMidnight: otRequest.shiftCrossMidnight === true,
 
     shiftOtOptionId: otRequest.shiftOtOptionId ? String(otRequest.shiftOtOptionId) : null,
-    shiftOtOptionLabel: s(otRequest.shiftOtOptionLabel),
+    shiftOtOptionLabel: s(
+      otRequest.shiftOtOptionLabel || currentShiftOtOption?.label,
+    ),
+
+    // ✅ REQUIRED for Fixed OT / After Shift verification display and logic
+    shiftOtOptionTimingMode: timingMode,
+    shiftOtOptionStartAfterShiftEndMinutes,
+    shiftOtOptionFixedStartTime: fixedStartTime,
+    shiftOtOptionFixedEndTime: fixedEndTime,
 
     requestedMinutes,
     totalMinutes: Number(otRequest.totalMinutes || 0),
     totalHours: Number(otRequest.totalHours || 0),
 
-    requestStartTime: s(otRequest.requestStartTime || otRequest.startTime),
-    requestEndTime: s(otRequest.requestEndTime || otRequest.endTime),
-    expectedOtStartTime: s(otRequest.requestStartTime || otRequest.startTime),
-    expectedOtEndTime: s(otRequest.requestEndTime || otRequest.endTime),
+    requestStartTime,
+    requestEndTime,
+    expectedOtStartTime: requestStartTime,
+    expectedOtEndTime: requestEndTime,
 
     otCalculationPolicyId: otRequest.otCalculationPolicyId
       ? String(otRequest.otCalculationPolicyId)
-      : null,
+      : currentPolicy?._id
+        ? String(currentPolicy._id)
+        : null,
+
     otCalculationPolicySnapshot: mapPolicySnapshotForVerification(
       otRequest.otCalculationPolicySnapshot || {},
+      currentPolicy,
     ),
 
     requestedEmployeeCount: Number(
@@ -1167,29 +1258,154 @@ async function verifyOTRequest(otRequestId) {
   }
 
   const status = upper(otRequest.status)
+
   if (['REJECTED', 'CANCELLED'].includes(status)) {
     const err = new Error(`Cannot verify attendance for OT request status: ${status}`)
     err.status = 400
     throw err
   }
 
+  console.log('[ATT_VERIFY_OT_REQUEST_SNAPSHOT_DEBUG]', {
+    requestNo: otRequest?.requestNo,
+    otRequestId: String(otRequest?._id || ''),
+
+    dayType: otRequest?.dayType,
+    status: otRequest?.status,
+
+    shiftOtOptionId: String(otRequest?.shiftOtOptionId || ''),
+    shiftOtOptionLabel: otRequest?.shiftOtOptionLabel,
+    shiftOtOptionTimingMode: otRequest?.shiftOtOptionTimingMode,
+    shiftOtOptionStartAfterShiftEndMinutes:
+      otRequest?.shiftOtOptionStartAfterShiftEndMinutes,
+    shiftOtOptionFixedStartTime: otRequest?.shiftOtOptionFixedStartTime,
+    shiftOtOptionFixedEndTime: otRequest?.shiftOtOptionFixedEndTime,
+
+    requestStartTime: otRequest?.requestStartTime,
+    requestEndTime: otRequest?.requestEndTime,
+    requestedMinutes: otRequest?.requestedMinutes,
+
+    otCalculationPolicyId: String(otRequest?.otCalculationPolicyId || ''),
+    policySnapshot: otRequest?.otCalculationPolicySnapshot,
+  })
+
+  let currentPolicy = null
+
+  if (
+    otRequest?.otCalculationPolicyId &&
+    mongoose.isValidObjectId(otRequest.otCalculationPolicyId)
+  ) {
+    currentPolicy = await OTCalculationPolicy.findById(
+      otRequest.otCalculationPolicyId,
+    ).lean()
+  }
+
+  let currentShiftOtOption = null
+
+  if (
+    otRequest?.shiftOtOptionId &&
+    mongoose.isValidObjectId(otRequest.shiftOtOptionId)
+  ) {
+    currentShiftOtOption = await ShiftOTOption.findById(
+      otRequest.shiftOtOptionId,
+    ).lean()
+  }
+
+  // ✅ fallback: if old OT request has policyId missing but option still knows policy
+  if (
+    !currentPolicy &&
+    currentShiftOtOption?.calculationPolicyId &&
+    mongoose.isValidObjectId(currentShiftOtOption.calculationPolicyId)
+  ) {
+    currentPolicy = await OTCalculationPolicy.findById(
+      currentShiftOtOption.calculationPolicyId,
+    ).lean()
+  }
+
+  console.log('[ATT_VERIFY_CURRENT_POLICY_DB_DEBUG]', {
+    requestNo: otRequest?.requestNo,
+    policyId: String(
+      otRequest?.otCalculationPolicyId ||
+        currentShiftOtOption?.calculationPolicyId ||
+        '',
+    ),
+    found: Boolean(currentPolicy),
+
+    code: currentPolicy?.code,
+    name: currentPolicy?.name,
+
+    allowApprovedOtWithoutExactClockOut:
+      currentPolicy?.allowApprovedOtWithoutExactClockOut,
+
+    allowPreShiftOT: currentPolicy?.allowPreShiftOT,
+    allowPostShiftOT: currentPolicy?.allowPostShiftOT,
+    capByRequestedMinutes: currentPolicy?.capByRequestedMinutes,
+    treatForgetScanInAsPending: currentPolicy?.treatForgetScanInAsPending,
+    treatForgetScanOutAsPending: currentPolicy?.treatForgetScanOutAsPending,
+
+    roundMethod: currentPolicy?.roundMethod,
+    roundUnitMinutes: currentPolicy?.roundUnitMinutes,
+    minEligibleMinutes: currentPolicy?.minEligibleMinutes,
+    graceAfterShiftEndMinutes: currentPolicy?.graceAfterShiftEndMinutes,
+
+    createdAt: currentPolicy?.createdAt,
+    updatedAt: currentPolicy?.updatedAt,
+  })
+
+  console.log('[ATT_VERIFY_CURRENT_SHIFT_OT_OPTION_DB_DEBUG]', {
+    requestNo: otRequest?.requestNo,
+    shiftOtOptionId: String(otRequest?.shiftOtOptionId || ''),
+    found: Boolean(currentShiftOtOption),
+
+    label: currentShiftOtOption?.label,
+    timingMode: currentShiftOtOption?.timingMode,
+    startAfterShiftEndMinutes:
+      currentShiftOtOption?.startAfterShiftEndMinutes,
+    fixedStartTime: currentShiftOtOption?.fixedStartTime,
+    fixedEndTime: currentShiftOtOption?.fixedEndTime,
+    requestedMinutes: currentShiftOtOption?.requestedMinutes,
+
+    calculationPolicyId: String(currentShiftOtOption?.calculationPolicyId || ''),
+    isActive: currentShiftOtOption?.isActive,
+
+    createdAt: currentShiftOtOption?.createdAt,
+    updatedAt: currentShiftOtOption?.updatedAt,
+  })
+
   const requestedEmployees = Array.isArray(otRequest.requestedEmployees)
     ? otRequest.requestedEmployees
     : []
 
-  const effectiveApprovedEmployees = getEffectiveApprovedEmployeesForVerification(otRequest)
+  const effectiveApprovedEmployees =
+    getEffectiveApprovedEmployeesForVerification(otRequest)
 
-  const requestedEmployeeIds = normalizeIdArray(requestedEmployees.map((item) => item?.employeeId))
+  const requestedEmployeeIds = normalizeIdArray(
+    requestedEmployees.map((item) => item?.employeeId),
+  )
+
   const requestedEmployeeCodes = Array.from(
-    new Set(requestedEmployees.map((item) => upper(item?.employeeCode)).filter(Boolean)),
+    new Set(
+      requestedEmployees
+        .map((item) => upper(item?.employeeCode))
+        .filter(Boolean),
+    ),
   )
 
   const attendanceOrConditions = []
+
   if (requestedEmployeeIds.length) {
-    attendanceOrConditions.push({ employeeId: { $in: requestedEmployeeIds } })
+    attendanceOrConditions.push({
+      employeeId: {
+        $in: requestedEmployeeIds,
+      },
+    })
   }
+
   if (requestedEmployeeCodes.length) {
-    attendanceOrConditions.push({ employeeNo: { $in: requestedEmployeeCodes } })
+    attendanceOrConditions.push({
+      employeeNo: {
+        $in: requestedEmployeeCodes,
+      },
+    })
   }
 
   const attendanceRecords = attendanceOrConditions.length
@@ -1197,14 +1413,49 @@ async function verifyOTRequest(otRequestId) {
         attendanceDate: s(otRequest.otDate),
         $or: attendanceOrConditions,
       })
-        .sort({ createdAt: -1 })
+        .sort({
+          createdAt: -1,
+        })
         .lean()
     : []
+
+  console.log('[ATT_VERIFY_ATTENDANCE_RECORDS_DEBUG]', {
+    requestNo: otRequest?.requestNo,
+    otDate: s(otRequest.otDate),
+    requestedEmployeeCount: requestedEmployees.length,
+    approvedEmployeeCount: effectiveApprovedEmployees.length,
+    attendanceRecordCount: attendanceRecords.length,
+  })
 
   const verificationOtRequest = buildVerificationOTRequestPayload(
     otRequest,
     effectiveApprovedEmployees,
+    {
+      currentPolicy,
+      currentShiftOtOption,
+    },
   )
+
+  console.log('[ATT_VERIFY_FINAL_PAYLOAD_DEBUG]', {
+    requestNo: verificationOtRequest?.requestNo,
+    dayType: verificationOtRequest?.dayType,
+
+    shiftOtOptionId: String(verificationOtRequest?.shiftOtOptionId || ''),
+    shiftOtOptionLabel: verificationOtRequest?.shiftOtOptionLabel,
+    shiftOtOptionTimingMode: verificationOtRequest?.shiftOtOptionTimingMode,
+    shiftOtOptionStartAfterShiftEndMinutes:
+      verificationOtRequest?.shiftOtOptionStartAfterShiftEndMinutes,
+    shiftOtOptionFixedStartTime:
+      verificationOtRequest?.shiftOtOptionFixedStartTime,
+    shiftOtOptionFixedEndTime:
+      verificationOtRequest?.shiftOtOptionFixedEndTime,
+
+    requestStartTime: verificationOtRequest?.requestStartTime,
+    requestEndTime: verificationOtRequest?.requestEndTime,
+    requestedMinutes: verificationOtRequest?.requestedMinutes,
+
+    policySnapshot: verificationOtRequest?.otCalculationPolicySnapshot,
+  })
 
   const verification = verifyAttendanceAgainstOT({
     otRequest: verificationOtRequest,

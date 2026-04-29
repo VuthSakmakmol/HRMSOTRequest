@@ -668,6 +668,7 @@ function buildPolicySnapshot(calculationPolicy) {
     roundMethod: s(calculationPolicy?.roundMethod),
     graceAfterShiftEndMinutes: Number(calculationPolicy?.graceAfterShiftEndMinutes || 0),
 
+    //REQUIRED for your special rule
     allowApprovedOtWithoutExactClockOut:
       calculationPolicy?.allowApprovedOtWithoutExactClockOut === true,
 
@@ -789,6 +790,10 @@ function buildManualTiming(payload) {
 
     shiftOtOptionId: null,
     shiftOtOptionLabel: '',
+    shiftOtOptionTimingMode: '',
+    shiftOtOptionStartAfterShiftEndMinutes: 0,
+    shiftOtOptionFixedStartTime: '',
+    shiftOtOptionFixedEndTime: '',
     requestedMinutes: duration.totalMinutes,
 
     requestStartTime: s(payload.startTime),
@@ -1121,6 +1126,12 @@ function mapListItem(doc, authUser) {
     shiftCrossMidnight: doc.shiftCrossMidnight === true,
     shiftOtOptionId: doc.shiftOtOptionId ? String(doc.shiftOtOptionId) : null,
     shiftOtOptionLabel: s(doc.shiftOtOptionLabel),
+    shiftOtOptionTimingMode: s(doc.shiftOtOptionTimingMode),
+    shiftOtOptionStartAfterShiftEndMinutes: Number(
+      doc.shiftOtOptionStartAfterShiftEndMinutes || 0,
+    ),
+    shiftOtOptionFixedStartTime: s(doc.shiftOtOptionFixedStartTime),
+    shiftOtOptionFixedEndTime: s(doc.shiftOtOptionFixedEndTime),
     requestedMinutes: Number(doc.requestedMinutes || 0),
     requestStartTime: s(doc.requestStartTime || doc.startTime),
     requestEndTime: s(doc.requestEndTime || doc.endTime),
@@ -1191,7 +1202,7 @@ function mapDetail(doc, authUser) {
     totalMinutes: Number(doc.totalMinutes || 0),
     totalHours: Number(doc.totalHours || 0),
 
-    // new option-based fields
+    // shift snapshot
     shiftId: doc.shiftId ? String(doc.shiftId) : null,
     shiftCode: s(doc.shiftCode),
     shiftName: s(doc.shiftName),
@@ -1199,11 +1210,23 @@ function mapDetail(doc, authUser) {
     shiftStartTime: s(doc.shiftStartTime),
     shiftEndTime: s(doc.shiftEndTime),
     shiftCrossMidnight: doc.shiftCrossMidnight === true,
+
+    // OT option snapshot
     shiftOtOptionId: doc.shiftOtOptionId ? String(doc.shiftOtOptionId) : null,
     shiftOtOptionLabel: s(doc.shiftOtOptionLabel),
+
+    // ✅ REQUIRED: timing mode fields
+    shiftOtOptionTimingMode: s(doc.shiftOtOptionTimingMode),
+    shiftOtOptionStartAfterShiftEndMinutes: Number(
+      doc.shiftOtOptionStartAfterShiftEndMinutes || 0,
+    ),
+    shiftOtOptionFixedStartTime: s(doc.shiftOtOptionFixedStartTime),
+    shiftOtOptionFixedEndTime: s(doc.shiftOtOptionFixedEndTime),
+
     requestedMinutes: Number(doc.requestedMinutes || 0),
     requestStartTime: s(doc.requestStartTime || doc.startTime),
     requestEndTime: s(doc.requestEndTime || doc.endTime),
+
     otCalculationPolicyId: doc.otCalculationPolicyId ? String(doc.otCalculationPolicyId) : null,
     otCalculationPolicySnapshot: doc.otCalculationPolicySnapshot || {},
 
@@ -1352,6 +1375,14 @@ async function create(payload, authUser, options = {}) {
 
     shiftOtOptionId: timingContext.shiftOtOptionId,
     shiftOtOptionLabel: timingContext.shiftOtOptionLabel,
+
+    //save OT option timing snapshot
+    shiftOtOptionTimingMode: timingContext.shiftOtOptionTimingMode,
+    shiftOtOptionStartAfterShiftEndMinutes:
+      timingContext.shiftOtOptionStartAfterShiftEndMinutes,
+    shiftOtOptionFixedStartTime: timingContext.shiftOtOptionFixedStartTime,
+    shiftOtOptionFixedEndTime: timingContext.shiftOtOptionFixedEndTime,
+
     requestedMinutes: timingContext.requestedMinutes,
     requestStartTime: timingContext.requestStartTime,
     requestEndTime: timingContext.requestEndTime,
@@ -1467,6 +1498,14 @@ async function update(id, payload, authUser, options = {}) {
 
   doc.shiftOtOptionId = timingContext.shiftOtOptionId
   doc.shiftOtOptionLabel = timingContext.shiftOtOptionLabel
+
+  // save OT option timing snapshot
+  doc.shiftOtOptionTimingMode = timingContext.shiftOtOptionTimingMode
+  doc.shiftOtOptionStartAfterShiftEndMinutes =
+    timingContext.shiftOtOptionStartAfterShiftEndMinutes
+  doc.shiftOtOptionFixedStartTime = timingContext.shiftOtOptionFixedStartTime
+  doc.shiftOtOptionFixedEndTime = timingContext.shiftOtOptionFixedEndTime
+
   doc.requestedMinutes = timingContext.requestedMinutes
   doc.requestStartTime = timingContext.requestStartTime
   doc.requestEndTime = timingContext.requestEndTime

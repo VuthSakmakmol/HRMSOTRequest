@@ -238,6 +238,14 @@ function hasMeaningfulValue(row = []) {
 }
 
 function parseAttendanceWorkbook(buffer, options = {}) {
+  const fixedAttendanceDate = s(options.attendanceDate)
+
+  if (!isYMD(fixedAttendanceDate)) {
+    const err = new Error('Attendance date is required and must be in YYYY-MM-DD format')
+    err.status = 400
+    throw err
+  }
+
   if (!buffer || !Buffer.isBuffer(buffer) || !buffer.length) {
     const err = new Error('Attendance file is empty or invalid')
     err.status = 400
@@ -290,8 +298,14 @@ function parseAttendanceWorkbook(buffer, options = {}) {
     throw err
   }
 
-  if (columnIndexes.attendanceDate === -1) {
-    const err = new Error('Attendance file must contain an Attendance Date column')
+  if (columnIndexes.clockIn === -1) {
+    const err = new Error('Attendance file must contain a Clock In column')
+    err.status = 400
+    throw err
+  }
+
+  if (columnIndexes.clockOut === -1) {
+    const err = new Error('Attendance file must contain a Clock Out column')
     err.status = 400
     throw err
   }
@@ -312,42 +326,17 @@ function parseAttendanceWorkbook(buffer, options = {}) {
     const rawData = buildRawRowObject(headerRow, row)
 
     const importedEmployeeId = normalizeEmployeeId(row[columnIndexes.employeeId])
-    const importedEmployeeName =
-      columnIndexes.employeeName >= 0 ? s(row[columnIndexes.employeeName]) : ''
-    const attendanceDate = parseDateValue(row[columnIndexes.attendanceDate])
 
     const clockIn =
       columnIndexes.clockIn >= 0 ? parseTimeValue(row[columnIndexes.clockIn]) : ''
+
     const clockOut =
       columnIndexes.clockOut >= 0 ? parseTimeValue(row[columnIndexes.clockOut]) : ''
-
-    const status =
-      columnIndexes.status >= 0
-        ? normalizeAttendanceStatus(row[columnIndexes.status])
-        : 'PRESENT'
-
-    const importedPositionName =
-      columnIndexes.position >= 0 ? s(row[columnIndexes.position]) : ''
-
-    const importedDepartmentName =
-      columnIndexes.department >= 0 ? s(row[columnIndexes.department]) : ''
-
-    const importedShiftName =
-      columnIndexes.shift >= 0 ? s(row[columnIndexes.shift]) : ''
 
     if (!importedEmployeeId) {
       failedRows.push({
         rawRowNo,
         message: 'Employee ID is required',
-        rawData,
-      })
-      continue
-    }
-
-    if (!attendanceDate) {
-      failedRows.push({
-        rawRowNo,
-        message: 'Attendance Date is missing or invalid',
         rawData,
       })
       continue
@@ -371,7 +360,8 @@ function parseAttendanceWorkbook(buffer, options = {}) {
       continue
     }
 
-    const duplicateKey = `${importedEmployeeId}|${attendanceDate}`
+    const duplicateKey = `${importedEmployeeId}|${fixedAttendanceDate}`
+
     if (duplicateKeySet.has(duplicateKey)) {
       duplicateRowCount += 1
       continue
@@ -382,14 +372,22 @@ function parseAttendanceWorkbook(buffer, options = {}) {
     parsedRows.push({
       rawRowNo,
       importedEmployeeId,
-      importedEmployeeName,
-      importedDepartmentName,
-      importedPositionName,
-      importedShiftName,
-      attendanceDate,
+
+      // ✅ no longer imported from Excel
+      importedEmployeeName: '',
+      importedDepartmentName: '',
+      importedPositionName: '',
+      importedShiftName: '',
+
+      // ✅ selected once from dialog
+      attendanceDate: fixedAttendanceDate,
+
       clockIn,
       clockOut,
-      status,
+
+      // Backend still derives final status using shift + clock.
+      status: 'PRESENT',
+
       rawData,
     })
   }
@@ -397,6 +395,7 @@ function parseAttendanceWorkbook(buffer, options = {}) {
   return {
     fileName: s(options.fileName),
     sheetName: firstSheetName,
+    attendanceDate: fixedAttendanceDate,
     rowCount,
     duplicateRowCount,
     failedRows,

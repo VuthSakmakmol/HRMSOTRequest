@@ -4,7 +4,6 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
-import Card from 'primevue/card'
 import Column from 'primevue/column'
 import DataTable from 'primevue/datatable'
 import DatePicker from 'primevue/datepicker'
@@ -19,11 +18,14 @@ import { getAttendanceRecords } from '@/modules/attendance/attendance.api'
 const toast = useToast()
 
 const PAGE_SIZE = 10
-const SEARCH_DEBOUNCE_MS = 300
+const SEARCH_DEBOUNCE_MS = 250
 
-const loading = ref(false)
 const rows = ref([])
 const totalRecords = ref(0)
+const loadedPages = ref(new Set())
+
+const bootstrapped = ref(false)
+const backgroundLoading = ref(false)
 
 const filters = reactive({
   search: '',
@@ -34,13 +36,12 @@ const filters = reactive({
   dayType: '',
   attendanceDateFrom: null,
   attendanceDateTo: null,
-  page: 1,
-  limit: PAGE_SIZE,
   sortField: 'attendanceDate',
   sortOrder: -1,
 })
 
 let searchTimer = null
+let currentRequestId = 0
 
 const statusOptions = [
   { label: 'All Derived Status', value: '' },
@@ -79,9 +80,17 @@ const dayTypeOptions = [
 ]
 
 const totalRows = computed(() => Number(totalRecords.value || 0))
+const loadedCount = computed(() => rows.value.filter(Boolean).length)
+const summaryText = computed(() => `${loadedCount.value} of ${totalRows.value}`)
+const hasAnyData = computed(() => rows.value.some(Boolean))
+const useVirtualScroll = computed(() => totalRows.value > PAGE_SIZE)
 
 function normalizePayload(res) {
   return res?.data?.data || res?.data || {}
+}
+
+function normalizeItems(payload) {
+  return Array.isArray(payload?.items) ? payload.items : []
 }
 
 function formatDateYMD(value) {
@@ -97,10 +106,10 @@ function formatDateYMD(value) {
   return `${yyyy}-${mm}-${dd}`
 }
 
-function buildQuery() {
+function buildQuery(page) {
   return {
-    page: filters.page,
-    limit: filters.limit,
+    page,
+    limit: PAGE_SIZE,
     search: String(filters.search || '').trim() || undefined,
     employeeNo: String(filters.employeeNo || '').trim() || undefined,
     status: filters.status || undefined,
@@ -114,81 +123,50 @@ function buildQuery() {
   }
 }
 
-function statusSeverity(value) {
-  const normalized = String(value || '').toUpperCase()
+async function fetchPage(page, { replace = false, silent = false } = {}) {
+  if (!replace && loadedPages.value.has(page)) return
 
-  if (normalized === 'PRESENT') return 'success'
-  if (normalized === 'LATE') return 'warning'
-  if (normalized === 'ABSENT') return 'danger'
-  if (normalized === 'FORGET_SCAN_IN' || normalized === 'FORGET_SCAN_OUT') return 'info'
-  if (normalized === 'SHIFT_MISMATCH') return 'danger'
-  if (normalized === 'LEAVE') return 'help'
-  if (normalized === 'OFF') return 'secondary'
-  if (normalized === 'UNKNOWN') return 'contrast'
-  return 'secondary'
-}
+  const requestId = ++currentRequestId
 
-function shiftMatchSeverity(value) {
-  const normalized = String(value || '').toUpperCase()
-
-  if (normalized === 'MATCHED') return 'success'
-  if (normalized === 'MISMATCH') return 'danger'
-  return 'secondary'
-}
-
-function dayTypeSeverity(value) {
-  const normalized = String(value || '').toUpperCase()
-
-  if (normalized === 'HOLIDAY') return 'danger'
-  if (normalized === 'SUNDAY') return 'warning'
-  if (normalized === 'WORKING_DAY') return 'success'
-  return 'secondary'
-}
-
-function formatEmployee(row) {
-  const employeeNo = String(row?.employeeNo || '').trim()
-  const employeeName = String(row?.employeeName || '').trim()
-
-  if (employeeNo && employeeName) return `${employeeNo} - ${employeeName}`
-  if (employeeNo) return employeeNo
-  if (employeeName) return employeeName
-  return '-'
-}
-
-function formatImportedEmployee(row) {
-  const employeeNo = String(row?.importedEmployeeId || '').trim()
-  const employeeName = String(row?.importedEmployeeName || '').trim()
-
-  if (employeeNo && employeeName) return `${employeeNo} - ${employeeName}`
-  if (employeeNo) return employeeNo
-  if (employeeName) return employeeName
-  return '-'
-}
-
-function formatShift(row) {
-  const shiftCode = String(row?.shiftCode || '').trim()
-  const shiftName = String(row?.shiftName || '').trim()
-
-  if (shiftCode && shiftName) return `${shiftCode} - ${shiftName}`
-  if (shiftCode) return shiftCode
-  if (shiftName) return shiftName
-  return '-'
-}
-
-function formatIssues(value) {
-  if (Array.isArray(value) && value.length) return value.join(', ')
-  return ''
-}
-
-async function fetchAttendanceRecords() {
-  loading.value = true
+  if (silent) {
+    backgroundLoading.value = true
+  }
 
   try {
-    const res = await getAttendanceRecords(buildQuery())
-    const payload = normalizePayload(res)
+    const res = await getAttendanceRecords(buildQuery(page))
+    if (requestId !== currentRequestId) return
 
-    rows.value = Array.isArray(payload?.items) ? payload.items : []
-    totalRecords.value = Number(payload?.pagination?.total || 0)
+    const payload = normalizePayload(res)
+    const items = normalizeItems(payload)
+    const total = Number(payload?.pagination?.total || 0)
+
+    totalRecords.value = total
+
+    if (replace) {
+      const nextRows = Array.from({ length: total }, () => null)
+      const startIndex = (page - 1) * PAGE_SIZE
+
+      for (let i = 0; i < items.length; i += 1) {
+        nextRows[startIndex + i] = items[i]
+      }
+
+      rows.value = total === 0 ? [] : nextRows
+      loadedPages.value = new Set([page])
+    } else {
+      if (!rows.value.length && total > 0) {
+        rows.value = Array.from({ length: total }, () => null)
+      }
+
+      const startIndex = (page - 1) * PAGE_SIZE
+
+      for (let i = 0; i < items.length; i += 1) {
+        rows.value[startIndex + i] = items[i]
+      }
+
+      loadedPages.value.add(page)
+    }
+
+    bootstrapped.value = true
   } catch (error) {
     toast.add({
       severity: 'error',
@@ -200,23 +178,36 @@ async function fetchAttendanceRecords() {
       life: 3000,
     })
   } finally {
-    loading.value = false
+    backgroundLoading.value = false
   }
 }
 
-function onSearchInput() {
-  filters.page = 1
+async function reloadFirstPage({ keepVisible = true } = {}) {
+  if (!keepVisible) {
+    rows.value = []
+    totalRecords.value = 0
+    loadedPages.value = new Set()
+  }
 
+  await fetchPage(1, {
+    replace: true,
+    silent: true,
+  })
+}
+
+function runSearchSoon() {
   window.clearTimeout(searchTimer)
   searchTimer = window.setTimeout(() => {
-    fetchAttendanceRecords()
+    reloadFirstPage({ keepVisible: true })
   }, SEARCH_DEBOUNCE_MS)
 }
 
-function onPage(event) {
-  filters.page = Math.floor(Number(event.first || 0) / Number(event.rows || PAGE_SIZE)) + 1
-  filters.limit = Number(event.rows || PAGE_SIZE)
-  fetchAttendanceRecords()
+function onSearchInput() {
+  runSearchSoon()
+}
+
+function onFilterChange() {
+  reloadFirstPage({ keepVisible: true })
 }
 
 function onSort(event) {
@@ -229,12 +220,30 @@ function onSort(event) {
     workedMinutes: 'workedMinutes',
     lateMinutes: 'lateMinutes',
     earlyOutMinutes: 'earlyOutMinutes',
+    createdAt: 'createdAt',
+    updatedAt: 'updatedAt',
   }
 
   filters.sortField = fieldMap[event.sortField] || 'attendanceDate'
   filters.sortOrder = typeof event.sortOrder === 'number' ? event.sortOrder : -1
-  filters.page = 1
-  fetchAttendanceRecords()
+
+  reloadFirstPage({ keepVisible: true })
+}
+
+async function onVirtualLazyLoad(event) {
+  if (!useVirtualScroll.value) return
+
+  const first = Number(event?.first || 0)
+  const last = Number(event?.last || first + PAGE_SIZE)
+
+  const startPage = Math.floor(first / PAGE_SIZE) + 1
+  const endPage = Math.floor(Math.max(last - 1, first) / PAGE_SIZE) + 1
+
+  for (let page = startPage; page <= endPage; page += 1) {
+    if (!loadedPages.value.has(page)) {
+      await fetchPage(page, { silent: true })
+    }
+  }
 }
 
 function clearFilters() {
@@ -246,11 +255,108 @@ function clearFilters() {
   filters.dayType = ''
   filters.attendanceDateFrom = null
   filters.attendanceDateTo = null
-  filters.page = 1
-  filters.limit = PAGE_SIZE
   filters.sortField = 'attendanceDate'
   filters.sortOrder = -1
-  fetchAttendanceRecords()
+
+  reloadFirstPage({ keepVisible: true })
+}
+
+function refresh() {
+  reloadFirstPage({ keepVisible: true })
+}
+
+function statusSeverity(value) {
+  const normalized = String(value || '').toUpperCase()
+
+  if (normalized === 'PRESENT') return 'success'
+  if (normalized === 'LATE') return 'warning'
+  if (normalized === 'ABSENT') return 'danger'
+  if (normalized === 'FORGET_SCAN_IN' || normalized === 'FORGET_SCAN_OUT') return 'info'
+  if (normalized === 'SHIFT_MISMATCH') return 'danger'
+  if (normalized === 'LEAVE') return 'help'
+  if (normalized === 'OFF') return 'secondary'
+  if (normalized === 'UNKNOWN') return 'contrast'
+
+  return 'secondary'
+}
+
+function shiftMatchSeverity(value) {
+  const normalized = String(value || '').toUpperCase()
+
+  if (normalized === 'MATCHED') return 'success'
+  if (normalized === 'MISMATCH') return 'danger'
+
+  return 'secondary'
+}
+
+function dayTypeSeverity(value) {
+  const normalized = String(value || '').toUpperCase()
+
+  if (normalized === 'HOLIDAY') return 'danger'
+  if (normalized === 'SUNDAY') return 'warning'
+  if (normalized === 'WORKING_DAY') return 'success'
+
+  return 'secondary'
+}
+
+function formatEmployee(row) {
+  const employeeNo = String(row?.employeeNo || '').trim()
+  const employeeName = String(row?.employeeName || '').trim()
+
+  if (employeeNo && employeeName) return `${employeeNo} - ${employeeName}`
+  if (employeeNo) return employeeNo
+  if (employeeName) return employeeName
+
+  return '-'
+}
+
+function formatImportedEmployee(row) {
+  const employeeNo = String(row?.importedEmployeeId || '').trim()
+  const employeeName = String(row?.importedEmployeeName || '').trim()
+
+  if (employeeNo && employeeName) return `${employeeNo} - ${employeeName}`
+  if (employeeNo) return employeeNo
+  if (employeeName) return employeeName
+
+  return '-'
+}
+
+function formatShift(row) {
+  const shiftCode = String(row?.shiftCode || '').trim()
+  const shiftName = String(row?.shiftName || '').trim()
+
+  if (shiftCode && shiftName) return `${shiftCode} - ${shiftName}`
+  if (shiftCode) return shiftCode
+  if (shiftName) return shiftName
+
+  return '-'
+}
+
+function formatImportNo(row) {
+  return (
+    String(row?.attendanceImportNo || '').trim() ||
+    String(row?.importNo || '').trim() ||
+    '-'
+  )
+}
+
+function formatMinutes(value) {
+  const minutes = Number(value || 0)
+
+  if (!minutes) return '0m'
+
+  const hours = Math.floor(minutes / 60)
+  const mins = minutes % 60
+
+  if (hours && mins) return `${hours}h ${mins}m`
+  if (hours) return `${hours}h`
+
+  return `${mins}m`
+}
+
+function formatIssues(value) {
+  if (Array.isArray(value) && value.length) return value.join(', ')
+  return ''
 }
 
 watch(
@@ -263,25 +369,19 @@ watch(
     filters.attendanceDateTo,
   ],
   () => {
-    filters.page = 1
-    fetchAttendanceRecords()
+    onFilterChange()
   },
 )
 
 watch(
   () => filters.employeeNo,
   () => {
-    filters.page = 1
-
-    window.clearTimeout(searchTimer)
-    searchTimer = window.setTimeout(() => {
-      fetchAttendanceRecords()
-    }, SEARCH_DEBOUNCE_MS)
+    runSearchSoon()
   },
 )
 
 onMounted(() => {
-  fetchAttendanceRecords()
+  reloadFirstPage({ keepVisible: false })
 })
 
 onBeforeUnmount(() => {
@@ -297,7 +397,7 @@ onBeforeUnmount(() => {
           Attendance Records
         </h1>
         <p class="mt-1 text-sm text-[color:var(--ot-text-muted)]">
-          Review backend-derived attendance results, imported status, shift matching, and worked minutes.
+          Review backend-derived attendance results using employee master shift assignment as source of truth.
         </p>
       </div>
 
@@ -319,8 +419,8 @@ onBeforeUnmount(() => {
           severity="secondary"
           outlined
           size="small"
-          :loading="loading"
-          @click="fetchAttendanceRecords"
+          :loading="backgroundLoading"
+          @click="refresh"
         />
 
         <Button
@@ -334,9 +434,9 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <Card class="attendance-records-card">
-      <template #content>
-        <div class="flex flex-col gap-4">
+    <div class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]">
+      <div class="border-b border-[color:var(--ot-border)] px-3 py-3">
+        <div class="flex flex-col gap-2">
           <div class="grid grid-cols-1 gap-2 xl:grid-cols-7">
             <IconField class="w-full xl:col-span-2">
               <InputIcon class="pi pi-search" />
@@ -397,14 +497,14 @@ onBeforeUnmount(() => {
             />
           </div>
 
-          <div class="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-4">
+          <div class="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-[180px,180px,1fr]">
             <DatePicker
               v-model="filters.attendanceDateFrom"
               dateFormat="yy-mm-dd"
               showIcon
               class="w-full"
               inputClass="w-full"
-              placeholder="Attendance Date From"
+              placeholder="Date From"
             />
 
             <DatePicker
@@ -413,146 +513,216 @@ onBeforeUnmount(() => {
               showIcon
               class="w-full"
               inputClass="w-full"
-              placeholder="Attendance Date To"
+              placeholder="Date To"
             />
-          </div>
 
-          <DataTable
-            :value="rows"
-            lazy
-            paginator
-            removableSort
-            :rows="filters.limit"
-            :first="(filters.page - 1) * filters.limit"
-            :totalRecords="totalRecords"
-            :rowsPerPageOptions="[10, 20, 50]"
-            responsiveLayout="scroll"
-            scrollable
-            tableStyle="min-width: 120rem"
-            class="attendance-records-table"
-            @page="onPage"
-            @sort="onSort"
-          >
-            <template #empty>
-              <div class="py-10 text-center text-sm text-[color:var(--ot-text-muted)]">
-                No attendance records found.
+            <div class="flex items-center justify-end">
+              <div class="rounded-lg border border-[color:var(--ot-border)] px-3 py-1.5 text-xs font-medium text-[color:var(--ot-text-muted)]">
+                Loaded {{ summaryText }}
               </div>
-            </template>
-
-            <Column field="attendanceDate" header="Date" sortable style="min-width: 9rem" />
-
-            <Column header="Employee" style="min-width: 16rem">
-              <template #body="{ data }">
-                <div class="font-medium text-[color:var(--ot-text)]">
-                  {{ formatEmployee(data) }}
-                </div>
-              </template>
-            </Column>
-
-            <Column header="Imported Employee" style="min-width: 16rem">
-              <template #body="{ data }">
-                <div class="text-sm text-[color:var(--ot-text-muted)]">
-                  {{ formatImportedEmployee(data) }}
-                </div>
-              </template>
-            </Column>
-
-            <Column field="clockIn" header="Clock In" style="min-width: 7rem" />
-            <Column field="clockOut" header="Clock Out" style="min-width: 7rem" />
-
-            <Column field="importedStatus" header="Imported Status" sortable style="min-width: 10rem">
-              <template #body="{ data }">
-                <Tag
-                  :value="data.importedStatus || '-'"
-                  :severity="statusSeverity(data.importedStatus)"
-                />
-              </template>
-            </Column>
-
-            <Column field="status" header="Derived Status" sortable style="min-width: 10rem">
-              <template #body="{ data }">
-                <Tag
-                  :value="data.status || '-'"
-                  :severity="statusSeverity(data.status)"
-                />
-              </template>
-            </Column>
-
-            <Column field="dayType" header="Day Type" sortable style="min-width: 9rem">
-              <template #body="{ data }">
-                <Tag
-                  :value="data.dayType || '-'"
-                  :severity="dayTypeSeverity(data.dayType)"
-                />
-              </template>
-            </Column>
-
-            <Column header="Shift" style="min-width: 12rem">
-              <template #body="{ data }">
-                {{ formatShift(data) }}
-              </template>
-            </Column>
-
-            <Column field="shiftMatchStatus" header="Shift Status" sortable style="min-width: 10rem">
-              <template #body="{ data }">
-                <Tag
-                  :value="data.shiftMatchStatus || 'UNKNOWN'"
-                  :severity="shiftMatchSeverity(data.shiftMatchStatus)"
-                />
-              </template>
-            </Column>
-
-            <Column field="workedMinutes" header="Worked" sortable style="min-width: 7rem">
-              <template #body="{ data }">
-                {{ Number(data.workedMinutes || 0) }}
-              </template>
-            </Column>
-
-            <Column field="lateMinutes" header="Late" sortable style="min-width: 7rem">
-              <template #body="{ data }">
-                {{ Number(data.lateMinutes || 0) }}
-              </template>
-            </Column>
-
-            <Column field="earlyOutMinutes" header="Early Out" sortable style="min-width: 8rem">
-              <template #body="{ data }">
-                {{ Number(data.earlyOutMinutes || 0) }}
-              </template>
-            </Column>
-
-            <Column header="Reason" style="min-width: 20rem">
-              <template #body="{ data }">
-                <div class="space-y-1">
-                  <div class="text-xs text-[color:var(--ot-text-muted)]">
-                    {{ data.derivedStatusReason || '-' }}
-                  </div>
-                  <div
-                    v-if="formatIssues(data.validationIssues)"
-                    class="text-[11px] text-amber-600 dark:text-amber-400"
-                  >
-                    {{ formatIssues(data.validationIssues) }}
-                  </div>
-                </div>
-              </template>
-            </Column>
-          </DataTable>
+            </div>
+          </div>
         </div>
-      </template>
-    </Card>
+      </div>
+
+      <DataTable
+        :value="rows"
+        lazy
+        removableSort
+        scrollable
+        scrollHeight="500px"
+        :sortField="filters.sortField"
+        :sortOrder="filters.sortOrder"
+        tableStyle="min-width: 126rem"
+        class="attendance-records-table"
+        :virtualScrollerOptions="useVirtualScroll ? {
+          lazy: true,
+          onLazyLoad: onVirtualLazyLoad,
+          itemSize: 76,
+          delay: 0,
+          showLoader: false,
+          loading: false,
+          numToleratedItems: 12,
+        } : null"
+        @sort="onSort"
+      >
+        <template #empty>
+          <div
+            v-if="bootstrapped"
+            class="py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
+          >
+            No attendance records found.
+          </div>
+        </template>
+
+        <Column field="attendanceDate" header="Date" sortable style="min-width: 9rem">
+          <template #body="{ data }">
+            <span v-if="data">{{ data.attendanceDate || '-' }}</span>
+          </template>
+        </Column>
+
+        <Column header="Employee" style="min-width: 17rem">
+          <template #body="{ data }">
+            <div v-if="data" class="flex flex-col">
+              <span class="font-medium text-[color:var(--ot-text)]">
+                {{ formatEmployee(data) }}
+              </span>
+              <span class="text-xs text-[color:var(--ot-text-muted)]">
+                Imported: {{ formatImportedEmployee(data) }}
+              </span>
+            </div>
+          </template>
+        </Column>
+
+        <Column header="Shift" style="min-width: 16rem">
+          <template #body="{ data }">
+            <div v-if="data" class="flex flex-col">
+              <span class="font-medium text-[color:var(--ot-text)]">
+                {{ formatShift(data) }}
+              </span>
+              <span class="text-xs text-[color:var(--ot-text-muted)]">
+                {{ data.shiftStartTime || '-' }} - {{ data.shiftEndTime || '-' }}
+              </span>
+            </div>
+          </template>
+        </Column>
+
+        <Column header="Clock" style="min-width: 12rem">
+          <template #body="{ data }">
+            <div v-if="data" class="flex flex-col text-sm">
+              <span>
+                In:
+                <span class="font-medium text-[color:var(--ot-text)]">
+                  {{ data.clockIn || '-' }}
+                </span>
+              </span>
+              <span>
+                Out:
+                <span class="font-medium text-[color:var(--ot-text)]">
+                  {{ data.clockOut || '-' }}
+                </span>
+              </span>
+            </div>
+          </template>
+        </Column>
+
+        <Column field="importedStatus" header="Imported Status" sortable style="min-width: 10rem">
+          <template #body="{ data }">
+            <Tag
+              v-if="data"
+              :value="data.importedStatus || '-'"
+              :severity="statusSeverity(data.importedStatus)"
+              class="attendance-tag"
+            />
+          </template>
+        </Column>
+
+        <Column field="status" header="Derived Status" sortable style="min-width: 11rem">
+          <template #body="{ data }">
+            <Tag
+              v-if="data"
+              :value="data.status || '-'"
+              :severity="statusSeverity(data.status)"
+              class="attendance-tag"
+            />
+          </template>
+        </Column>
+
+        <Column field="dayType" header="Day Type" sortable style="min-width: 10rem">
+          <template #body="{ data }">
+            <Tag
+              v-if="data"
+              :value="data.dayType || '-'"
+              :severity="dayTypeSeverity(data.dayType)"
+              class="attendance-tag"
+            />
+          </template>
+        </Column>
+
+        <Column field="shiftMatchStatus" header="Shift Match" sortable style="min-width: 10rem">
+          <template #body="{ data }">
+            <Tag
+              v-if="data"
+              :value="data.shiftMatchStatus || '-'"
+              :severity="shiftMatchSeverity(data.shiftMatchStatus)"
+              class="attendance-tag"
+            />
+          </template>
+        </Column>
+
+        <Column field="workedMinutes" header="Worked" sortable style="min-width: 8rem">
+          <template #body="{ data }">
+            <span v-if="data">{{ formatMinutes(data.workedMinutes) }}</span>
+          </template>
+        </Column>
+
+        <Column field="lateMinutes" header="Late" sortable style="min-width: 8rem">
+          <template #body="{ data }">
+            <span v-if="data">{{ formatMinutes(data.lateMinutes) }}</span>
+          </template>
+        </Column>
+
+        <Column field="earlyOutMinutes" header="Early Out" sortable style="min-width: 8rem">
+          <template #body="{ data }">
+            <span v-if="data">{{ formatMinutes(data.earlyOutMinutes) }}</span>
+          </template>
+        </Column>
+
+        <Column header="Import" style="min-width: 12rem">
+          <template #body="{ data }">
+            <span v-if="data" class="text-sm text-[color:var(--ot-text-muted)]">
+              {{ formatImportNo(data) }}
+            </span>
+          </template>
+        </Column>
+
+        <Column header="Issues" style="min-width: 24rem">
+          <template #body="{ data }">
+            <div
+              v-if="data"
+              class="line-clamp-2 text-sm text-[color:var(--ot-text-muted)]"
+              :title="formatIssues(data.validationIssues)"
+            >
+              {{ formatIssues(data.validationIssues) || '—' }}
+            </div>
+          </template>
+        </Column>
+      </DataTable>
+
+      <div
+        v-if="backgroundLoading && hasAnyData"
+        class="flex items-center justify-center border-t border-[color:var(--ot-border)] px-3 py-2 text-xs text-[color:var(--ot-text-muted)]"
+      >
+        Updating...
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
-:deep(.attendance-records-card .p-card-body) {
-  padding: 1rem !important;
-}
-
 :deep(.attendance-records-table .p-datatable-thead > tr > th) {
   padding: 0.72rem 0.9rem !important;
 }
 
 :deep(.attendance-records-table .p-datatable-tbody > tr > td) {
   padding: 0.62rem 0.8rem !important;
+  height: 76px !important;
   vertical-align: middle !important;
+}
+
+:deep(.attendance-records-table .p-tag.attendance-tag) {
+  min-height: 1.35rem !important;
+  padding: 0.12rem 0.45rem !important;
+  font-size: 0.7rem !important;
+  font-weight: 600 !important;
+  line-height: 1 !important;
+  border-radius: 999px !important;
+}
+
+.line-clamp-2 {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 </style>

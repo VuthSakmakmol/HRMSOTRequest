@@ -378,6 +378,23 @@ function isShiftValidRecord(item) {
   return upper(item?.shiftMatchStatus) !== 'MISMATCH'
 }
 
+function isNormalAttendancePresentForApprovedOt(status) {
+  const normalized = upper(status)
+  return ['PRESENT', 'LATE'].includes(normalized)
+}
+
+function isAttendanceBlockedForApprovedOt(status) {
+  const normalized = upper(status)
+
+  return [
+    'ABSENT',
+    'LEAVE',
+    'OFF',
+    'SHIFT_MISMATCH',
+    'UNKNOWN',
+  ].includes(normalized)
+}
+
 function buildRequestedIndex(requestedEmployees = []) {
   const byEmployeeId = new Map()
   const byEmployeeCode = new Map()
@@ -469,11 +486,17 @@ function normalizeOtRequestContext(otRequest = {}) {
 
   const shiftStartTime = s(otRequest?.shiftStartTime)
   const shiftEndTime = s(otRequest?.shiftEndTime)
+
   const requestStartTime = s(
-    otRequest?.requestStartTime || otRequest?.expectedOtStartTime || otRequest?.startTime,
+    otRequest?.requestStartTime ||
+      otRequest?.expectedOtStartTime ||
+      otRequest?.startTime,
   )
+
   let requestEndTime = s(
-    otRequest?.requestEndTime || otRequest?.expectedOtEndTime || otRequest?.endTime,
+    otRequest?.requestEndTime ||
+      otRequest?.expectedOtEndTime ||
+      otRequest?.endTime,
   )
 
   const requestedMinutes = safeNonNegativeInt(
@@ -495,7 +518,7 @@ function normalizeOtRequestContext(otRequest = {}) {
       : derivedShiftCrossMidnight
 
   const shiftStartMinutes = shiftStartMinutesRaw
-  let shiftEndMinutes = normalizeScheduleMinute(
+  const shiftEndMinutes = normalizeScheduleMinute(
     shiftEndMinutesRaw,
     shiftStartMinutes,
     shiftCrossMidnight,
@@ -525,13 +548,24 @@ function normalizeOtRequestContext(otRequest = {}) {
     shiftCrossMidnight,
   )
 
-  if (requestEndMinutes != null && requestStartMinutes != null && requestEndMinutes < requestStartMinutes) {
+  if (
+    requestEndMinutes != null &&
+    requestStartMinutes != null &&
+    requestEndMinutes < requestStartMinutes
+  ) {
     requestEndMinutes += 24 * 60
   }
 
   if (!requestEndTime && requestEndMinutes != null) {
     requestEndTime = minutesToHHmm(requestEndMinutes)
   }
+
+  const shiftOtOptionTimingMode = upper(
+    otRequest?.shiftOtOptionTimingMode ||
+      otRequest?.timingMode ||
+      otRequest?.shiftOtOptionSnapshot?.timingMode ||
+      '',
+  )
 
   return {
     id: otRequest?.id ? String(otRequest.id) : null,
@@ -551,10 +585,19 @@ function normalizeOtRequestContext(otRequest = {}) {
 
     shiftOtOptionId: otRequest?.shiftOtOptionId ? String(otRequest.shiftOtOptionId) : null,
     shiftOtOptionLabel: s(otRequest?.shiftOtOptionLabel),
+    shiftOtOptionTimingMode,
+    shiftOtOptionStartAfterShiftEndMinutes: safeNonNegativeInt(
+      otRequest?.shiftOtOptionStartAfterShiftEndMinutes,
+      0,
+    ),
+    shiftOtOptionFixedStartTime: s(otRequest?.shiftOtOptionFixedStartTime),
+    shiftOtOptionFixedEndTime: s(otRequest?.shiftOtOptionFixedEndTime),
 
     requestedMinutes,
-    requestStartTime: requestStartTime || (requestStartMinutes != null ? minutesToHHmm(requestStartMinutes) : ''),
-    requestEndTime: requestEndTime || (requestEndMinutes != null ? minutesToHHmm(requestEndMinutes) : ''),
+    requestStartTime:
+      requestStartTime || (requestStartMinutes != null ? minutesToHHmm(requestStartMinutes) : ''),
+    requestEndTime:
+      requestEndTime || (requestEndMinutes != null ? minutesToHHmm(requestEndMinutes) : ''),
     requestStartMinutes,
     requestEndMinutes,
 
@@ -606,6 +649,31 @@ function buildMismatchResponse(base, reason, overrides = {}) {
   }
 }
 
+function buildApprovedOtWithoutExactOutResponse(base, normalizedOtRequest, attendanceStatus) {
+  const requestedMinutes = Number(normalizedOtRequest.requestedMinutes || 0)
+  const timingMode = upper(normalizedOtRequest.shiftOtOptionTimingMode)
+
+  const isFixedTime = timingMode === 'FIXED_TIME'
+
+  return {
+    ...base,
+    actualOtMinutes: requestedMinutes,
+    eligibleOtMinutes: requestedMinutes,
+    roundedOtMinutes: requestedMinutes,
+    rawOtDecision: isFixedTime
+      ? 'FIXED_OT_APPROVED_WITHOUT_EXACT_CLOCK_OUT'
+      : 'APPROVED_WITHOUT_EXACT_CLOCK_OUT',
+    otResult: 'MATCH',
+    otResultReason: isFixedTime
+      ? attendanceStatus === 'LATE'
+        ? 'Fixed OT credited by policy. Employee was late but attended normal shift. Exact OT end scan is not required.'
+        : 'Fixed OT credited by policy. Employee attended normal shift. Exact OT end scan is not required.'
+      : attendanceStatus === 'LATE'
+        ? 'Approved OT credited by policy. Employee was late but attended normal shift. Exact OT end scan is not required.'
+        : 'Approved OT credited by policy. Employee attended normal shift. Exact OT end scan is not required.',
+  }
+}
+
 function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
   const normalizedOtRequest = normalizeOtRequestContext(otRequest)
   const attendanceStatus = upper(attendanceRecord?.status)
@@ -627,6 +695,9 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
     otResult: 'MISMATCH',
     otResultReason: '',
 
+    shiftOtOptionTimingMode: normalizedOtRequest.shiftOtOptionTimingMode,
+    isFixedTimeOt: normalizedOtRequest.shiftOtOptionTimingMode === 'FIXED_TIME',
+
     policyCode: s(policy.code),
     policyName: s(policy.name),
     policyAllowApprovedOtWithoutExactClockOut:
@@ -637,6 +708,18 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
     policyGraceAfterShiftEndMinutes: Number(policy.graceAfterShiftEndMinutes || 0),
   }
 
+  console.log('[OT_VERIFY_POLICY_DEBUG]', {
+    requestNo: normalizedOtRequest.requestNo,
+    dayType: normalizedOtRequest.dayType,
+    timingMode: normalizedOtRequest.shiftOtOptionTimingMode,
+    policyCode: policy.code,
+    allowNoExactOut: policy.allowApprovedOtWithoutExactClockOut,
+    attendanceStatus,
+    requestedMinutes: normalizedOtRequest.requestedMinutes,
+    expectedStart: normalizedOtRequest.requestStartTime,
+    expectedEnd: normalizedOtRequest.requestEndTime,
+  })
+
   if (normalizedOtRequest.requestedMinutes <= 0) {
     return buildMismatchResponse(base, 'No OT minutes found on approved OT request', {
       rawOtDecision: 'NO_OT_REQUEST',
@@ -644,16 +727,15 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
   }
 
   /*
-    ✅ SPECIAL COMPANY RULE
+    Company rule:
+    Working-day OT can be credited without exact OT end clock-out
+    only when the policy allows it.
 
-    This rule is ONLY for WORKING_DAY OT.
+    This supports both:
+    - AFTER_SHIFT_END OT
+    - FIXED_TIME OT, for example 18:00 - 20:00
 
-    If policy allows approved OT without exact clock-out,
-    and employee is PRESENT/LATE for normal shift,
-    system credits approved OT minutes even when clock-out does not reach OT end.
-
-    Sunday/Holiday will NOT use this rule.
-    They continue to strict scan comparison below.
+    Sunday/Holiday remains strict scan verification below.
   */
   if (
     upper(normalizedOtRequest.dayType) === 'WORKING_DAY' &&
@@ -705,9 +787,9 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
   }
 
   /*
-    ✅ STRICT SCAN LOGIC
-    Sunday/Holiday/non-working-day OT stays here.
-    Also used when allowApprovedOtWithoutExactClockOut = false.
+    Strict scan logic:
+    - Sunday/Holiday OT
+    - Working-day OT when policy does not allow no-exact-clock-out
   */
   if (
     attendanceStatus === 'FORGET_SCAN_IN' &&
@@ -754,11 +836,6 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
     attendanceWindow.clockOutMinutes,
   )
 
-  /*
-    For SUNDAY/HOLIDAY OT:
-    There is no normal working shift window to compare.
-    We verify against the approved OT request window directly.
-  */
   if (['SUNDAY', 'HOLIDAY'].includes(upper(normalizedOtRequest.dayType))) {
     const eligibleOtMinutes = actualOtMinutesWithinRequest
 
@@ -963,6 +1040,8 @@ function buildVerificationItem(requested, attendanceRecord, otRequest) {
 
     shiftOtOptionId: normalizedOtRequest.shiftOtOptionId,
     shiftOtOptionLabel: normalizedOtRequest.shiftOtOptionLabel,
+    shiftOtOptionTimingMode: metrics.shiftOtOptionTimingMode,
+    isFixedTimeOt: metrics.isFixedTimeOt,
 
     requestedMinutes: metrics.requestedMinutes,
     requestedOtMinutes: metrics.requestedOtMinutes,
@@ -981,7 +1060,7 @@ function buildVerificationItem(requested, attendanceRecord, otRequest) {
 
     policyCode: metrics.policyCode,
     policyName: metrics.policyName,
-     policyAllowApprovedOtWithoutExactClockOut:
+    policyAllowApprovedOtWithoutExactClockOut:
       metrics.policyAllowApprovedOtWithoutExactClockOut,
     policyRoundMethod: metrics.policyRoundMethod,
     policyRoundUnitMinutes: metrics.policyRoundUnitMinutes,
@@ -1092,6 +1171,8 @@ function verifyAttendanceAgainstOT({
     requestedMinutes: normalizedOtRequest.requestedMinutes,
     expectedOtStartTime: normalizedOtRequest.requestStartTime,
     expectedOtEndTime: normalizedOtRequest.requestEndTime,
+    shiftOtOptionTimingMode: normalizedOtRequest.shiftOtOptionTimingMode,
+    isFixedTimeOt: normalizedOtRequest.shiftOtOptionTimingMode === 'FIXED_TIME',
     policyCode: normalizedOtRequest.otCalculationPolicySnapshot.code,
     policyName: normalizedOtRequest.otCalculationPolicySnapshot.name,
 
