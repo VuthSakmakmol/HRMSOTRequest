@@ -1,6 +1,6 @@
 <!-- frontend/src/modules/ot/views/ShiftOTOptionListView.vue -->
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
@@ -50,6 +50,7 @@ const filters = reactive({
   search: '',
   shiftId: '',
   calculationPolicyId: '',
+  timingMode: '',
   isActive: '',
   sortField: 'sequence',
   sortOrder: 1,
@@ -58,6 +59,10 @@ const filters = reactive({
 const form = reactive({
   shiftId: '',
   label: '',
+  timingMode: 'AFTER_SHIFT_END',
+  startAfterShiftEndMinutes: 0,
+  fixedStartTime: '',
+  fixedEndTime: '',
   requestedMinutes: 120,
   calculationPolicyId: '',
   sequence: 1,
@@ -68,6 +73,23 @@ const statusOptions = [
   { label: 'All Status', value: '' },
   { label: 'Active', value: 'true' },
   { label: 'Inactive', value: 'false' },
+]
+
+const timingModeOptions = [
+  { label: 'All Timing Modes', value: '' },
+  { label: 'After Shift End', value: 'AFTER_SHIFT_END' },
+  { label: 'Fixed Time', value: 'FIXED_TIME' },
+]
+
+const formTimingModeOptions = [
+  {
+    label: 'After Shift End',
+    value: 'AFTER_SHIFT_END',
+  },
+  {
+    label: 'Fixed Time',
+    value: 'FIXED_TIME',
+  },
 ]
 
 const filterShiftOptions = computed(() => [
@@ -113,16 +135,49 @@ const selectedPolicyOption = computed(() =>
   policySelectOptions.value.find((item) => item.value === form.calculationPolicyId) || null,
 )
 
+const isAfterShiftEndMode = computed(() => form.timingMode === 'AFTER_SHIFT_END')
+const isFixedTimeMode = computed(() => form.timingMode === 'FIXED_TIME')
+
+const previewWindow = computed(() => {
+  if (isAfterShiftEndMode.value) {
+    const shiftEnd = selectedShiftOption.value?.endTime || ''
+    const start = addMinutesToHHmm(shiftEnd, Number(form.startAfterShiftEndMinutes || 0))
+    const end = addMinutesToHHmm(start, Number(form.requestedMinutes || 0))
+
+    return {
+      start,
+      end,
+    }
+  }
+
+  return {
+    start: form.fixedStartTime || '',
+    end: form.fixedEndTime || '',
+  }
+})
+
 const isSaveDisabled = computed(() => {
-  return (
+  const baseInvalid =
     saving.value ||
     !canSaveDialog.value ||
     !String(form.shiftId || '').trim() ||
     !String(form.label || '').trim() ||
+    !String(form.timingMode || '').trim() ||
     !String(form.calculationPolicyId || '').trim() ||
     Number(form.requestedMinutes || 0) < 1 ||
     Number(form.sequence || 0) < 1
-  )
+
+  if (baseInvalid) return true
+
+  if (form.timingMode === 'AFTER_SHIFT_END') {
+    return Number(form.startAfterShiftEndMinutes || 0) < 0
+  }
+
+  if (form.timingMode === 'FIXED_TIME') {
+    return !isValidHHmm(form.fixedStartTime) || !isValidHHmm(form.fixedEndTime)
+  }
+
+  return true
 })
 
 let searchTimer = null
@@ -161,6 +216,54 @@ function normalizeLookupItems(res) {
     .filter(Boolean)
 }
 
+function pad2(value) {
+  return String(value).padStart(2, '0')
+}
+
+function isValidHHmm(value) {
+  return /^([01]\d|2[0-3]):([0-5]\d)$/.test(String(value || '').trim())
+}
+
+function toMinutes(value) {
+  const raw = String(value || '').trim()
+
+  if (!isValidHHmm(raw)) return null
+
+  const [hours, minutes] = raw.split(':').map(Number)
+  return hours * 60 + minutes
+}
+
+function fromMinutes(value) {
+  const total = ((Number(value || 0) % 1440) + 1440) % 1440
+  const hours = Math.floor(total / 60)
+  const minutes = total % 60
+
+  return `${pad2(hours)}:${pad2(minutes)}`
+}
+
+function addMinutesToHHmm(time, minutesToAdd) {
+  const base = toMinutes(time)
+
+  if (base === null) return ''
+
+  return fromMinutes(base + Number(minutesToAdd || 0))
+}
+
+function durationBetweenTimes(startTime, endTime) {
+  const start = toMinutes(startTime)
+  const end = toMinutes(endTime)
+
+  if (start === null || end === null) return 0
+
+  let diff = end - start
+
+  if (diff <= 0) {
+    diff += 1440
+  }
+
+  return diff
+}
+
 function buildQuery(page) {
   return {
     page,
@@ -168,6 +271,7 @@ function buildQuery(page) {
     search: String(filters.search || '').trim(),
     shiftId: filters.shiftId,
     calculationPolicyId: filters.calculationPolicyId,
+    timingMode: filters.timingMode,
     isActive: filters.isActive,
     sortField: filters.sortField,
     sortOrder: filters.sortOrder,
@@ -223,10 +327,7 @@ async function fetchPolicyLookup() {
 }
 
 async function fetchLookups() {
-  await Promise.all([
-    fetchShiftLookup(),
-    fetchPolicyLookup(),
-  ])
+  await Promise.all([fetchShiftLookup(), fetchPolicyLookup()])
 }
 
 async function fetchPage(page, { replace = false, silent = false } = {}) {
@@ -325,6 +426,10 @@ function onPolicyChange() {
   reloadFirstPage({ keepVisible: true })
 }
 
+function onTimingModeFilterChange() {
+  reloadFirstPage({ keepVisible: true })
+}
+
 function onStatusChange() {
   reloadFirstPage({ keepVisible: true })
 }
@@ -333,6 +438,7 @@ function clearFilters() {
   filters.search = ''
   filters.shiftId = ''
   filters.calculationPolicyId = ''
+  filters.timingMode = ''
   filters.isActive = ''
   filters.sortField = 'sequence'
   filters.sortOrder = 1
@@ -343,7 +449,9 @@ function clearFilters() {
 function onSort(event) {
   const fieldMap = {
     label: 'label',
+    timingMode: 'timingMode',
     requestedMinutes: 'requestedMinutes',
+    startAfterShiftEndMinutes: 'startAfterShiftEndMinutes',
     sequence: 'sequence',
     isActive: 'isActive',
     createdAt: 'createdAt',
@@ -376,6 +484,10 @@ function resetForm() {
   editingOptionId.value = ''
   form.shiftId = ''
   form.label = ''
+  form.timingMode = 'AFTER_SHIFT_END'
+  form.startAfterShiftEndMinutes = 0
+  form.fixedStartTime = ''
+  form.fixedEndTime = ''
   form.requestedMinutes = 120
   form.calculationPolicyId = ''
   form.sequence = 1
@@ -395,6 +507,10 @@ function openEditDialog(row) {
   editingOptionId.value = String(row?.id || row?._id || '').trim()
   form.shiftId = String(row?.shiftId || row?.shift?.id || row?.shift?._id || '').trim()
   form.label = String(row?.label || '').trim()
+  form.timingMode = String(row?.timingMode || 'AFTER_SHIFT_END').trim().toUpperCase()
+  form.startAfterShiftEndMinutes = Number(row?.startAfterShiftEndMinutes || 0)
+  form.fixedStartTime = String(row?.fixedStartTime || '').trim()
+  form.fixedEndTime = String(row?.fixedEndTime || '').trim()
   form.requestedMinutes = Number(row?.requestedMinutes || 120)
   form.calculationPolicyId = String(
     row?.calculationPolicyId ||
@@ -411,12 +527,36 @@ function openEditDialog(row) {
 function validateForm() {
   if (!String(form.shiftId || '').trim()) return 'Shift is required.'
   if (!String(form.label || '').trim()) return 'Label is required.'
+  if (!String(form.timingMode || '').trim()) return 'Timing mode is required.'
+
+  if (form.timingMode === 'AFTER_SHIFT_END') {
+    if (Number(form.startAfterShiftEndMinutes || 0) < 0) {
+      return 'Start after shift end minutes must be at least 0.'
+    }
+  }
+
+  if (form.timingMode === 'FIXED_TIME') {
+    if (!isValidHHmm(form.fixedStartTime)) {
+      return 'Fixed start time must be in HH:mm format.'
+    }
+
+    if (!isValidHHmm(form.fixedEndTime)) {
+      return 'Fixed end time must be in HH:mm format.'
+    }
+
+    if (form.fixedStartTime === form.fixedEndTime) {
+      return 'Fixed start time and fixed end time cannot be the same.'
+    }
+  }
+
   if (Number(form.requestedMinutes || 0) < 1) {
     return 'Requested minutes must be at least 1.'
   }
+
   if (!String(form.calculationPolicyId || '').trim()) {
     return 'Calculation policy is required.'
   }
+
   if (Number(form.sequence || 0) < 1) {
     return 'Sequence must be at least 1.'
   }
@@ -425,9 +565,24 @@ function validateForm() {
 }
 
 function buildPayload() {
+  const timingMode = String(form.timingMode || 'AFTER_SHIFT_END').trim().toUpperCase()
+
   return {
     shiftId: String(form.shiftId || '').trim(),
     label: String(form.label || '').trim(),
+    timingMode,
+    startAfterShiftEndMinutes:
+      timingMode === 'AFTER_SHIFT_END'
+        ? Number(form.startAfterShiftEndMinutes || 0)
+        : 0,
+    fixedStartTime:
+      timingMode === 'FIXED_TIME'
+        ? String(form.fixedStartTime || '').trim()
+        : '',
+    fixedEndTime:
+      timingMode === 'FIXED_TIME'
+        ? String(form.fixedEndTime || '').trim()
+        : '',
     requestedMinutes: Number(form.requestedMinutes || 0),
     calculationPolicyId: String(form.calculationPolicyId || '').trim(),
     sequence: Number(form.sequence || 0),
@@ -508,6 +663,13 @@ function activeSeverity(value) {
   return value ? 'success' : 'contrast'
 }
 
+function timingModeSeverity(value) {
+  const normalized = String(value || '').toUpperCase()
+
+  if (normalized === 'FIXED_TIME') return 'warning'
+  return 'info'
+}
+
 function formatDateTime(value) {
   if (!value) return '-'
 
@@ -550,10 +712,7 @@ function shiftSubLabel(row) {
   const start = String(shift?.startTime || '').trim()
   const end = String(shift?.endTime || '').trim()
 
-  return [
-    type,
-    start && end ? `${start} - ${end}` : '',
-  ]
+  return [type, start && end ? `${start} - ${end}` : '']
     .filter(Boolean)
     .join(' · ') || '-'
 }
@@ -573,15 +732,87 @@ function policyLabel(row) {
 function policySubLabel(row) {
   const policy = row?.calculationPolicy || {}
 
+  const exactOutLabel =
+    policy?.allowApprovedOtWithoutExactClockOut === true
+      ? 'No exact out allowed'
+      : 'Strict scan'
+
   return [
     String(policy?.roundMethod || '').trim(),
     Number(policy?.roundUnitMinutes || 0)
       ? `${Number(policy?.roundUnitMinutes || 0)} min`
       : '',
+    exactOutLabel,
   ]
     .filter(Boolean)
     .join(' · ') || '-'
 }
+
+function timingModeLabel(value) {
+  const normalized = String(value || '').toUpperCase()
+
+  if (normalized === 'FIXED_TIME') return 'Fixed Time'
+  return 'After Shift End'
+}
+
+function optionTimeWindow(row) {
+  const timingMode = String(row?.timingMode || 'AFTER_SHIFT_END').toUpperCase()
+
+  if (timingMode === 'FIXED_TIME') {
+    const start = String(row?.fixedStartTime || '').trim()
+    const end = String(row?.fixedEndTime || '').trim()
+
+    if (start && end) return `${start} - ${end}`
+    return '-'
+  }
+
+  const shiftEnd = String(row?.shift?.endTime || '').trim()
+  const start = addMinutesToHHmm(shiftEnd, Number(row?.startAfterShiftEndMinutes || 0))
+  const end = addMinutesToHHmm(start, Number(row?.requestedMinutes || 0))
+
+  if (start && end) return `${start} - ${end}`
+  return '-'
+}
+
+function optionTimingSubLabel(row) {
+  const timingMode = String(row?.timingMode || 'AFTER_SHIFT_END').toUpperCase()
+
+  if (timingMode === 'FIXED_TIME') {
+    return 'Uses fixed start/end time'
+  }
+
+  return `Starts ${Number(row?.startAfterShiftEndMinutes || 0)} min after shift end`
+}
+
+watch(
+  () => form.timingMode,
+  (value) => {
+    const mode = String(value || '').toUpperCase()
+
+    if (mode === 'AFTER_SHIFT_END') {
+      form.fixedStartTime = ''
+      form.fixedEndTime = ''
+    }
+
+    if (mode === 'FIXED_TIME') {
+      form.startAfterShiftEndMinutes = 0
+
+      if (isValidHHmm(form.fixedStartTime) && isValidHHmm(form.fixedEndTime)) {
+        form.requestedMinutes = durationBetweenTimes(form.fixedStartTime, form.fixedEndTime)
+      }
+    }
+  },
+)
+
+watch(
+  () => [form.fixedStartTime, form.fixedEndTime, form.timingMode],
+  () => {
+    if (form.timingMode !== 'FIXED_TIME') return
+    if (!isValidHHmm(form.fixedStartTime) || !isValidHHmm(form.fixedEndTime)) return
+
+    form.requestedMinutes = durationBetweenTimes(form.fixedStartTime, form.fixedEndTime)
+  },
+)
 
 onMounted(async () => {
   await fetchLookups()
@@ -601,7 +832,7 @@ onBeforeUnmount(() => {
           Shift OT Options
         </h1>
         <p class="mt-1 text-sm text-[color:var(--ot-text-muted)]">
-          Manage selectable OT durations per shift and assign the calculation policy used by requester flow.
+          Manage OT options per shift, including delayed post-shift OT and fixed-time Sunday/Holiday OT.
         </p>
       </div>
 
@@ -640,7 +871,7 @@ onBeforeUnmount(() => {
     >
       <div class="border-b border-[color:var(--ot-border)] px-3 py-3">
         <div class="flex flex-col gap-2 xl:flex-row xl:items-center">
-          <IconField class="w-full xl:w-[300px] xl:shrink-0">
+          <IconField class="w-full xl:w-[270px] xl:shrink-0">
             <InputIcon class="pi pi-search" />
             <InputText
               v-model="filters.search"
@@ -651,7 +882,7 @@ onBeforeUnmount(() => {
             />
           </IconField>
 
-          <div class="w-full xl:w-[250px] xl:shrink-0">
+          <div class="w-full xl:w-[230px] xl:shrink-0">
             <Select
               v-model="filters.shiftId"
               :options="filterShiftOptions"
@@ -665,7 +896,7 @@ onBeforeUnmount(() => {
             />
           </div>
 
-          <div class="w-full xl:w-[270px] xl:shrink-0">
+          <div class="w-full xl:w-[245px] xl:shrink-0">
             <Select
               v-model="filters.calculationPolicyId"
               :options="filterPolicyOptions"
@@ -679,7 +910,20 @@ onBeforeUnmount(() => {
             />
           </div>
 
-          <div class="w-full xl:w-[160px] xl:shrink-0">
+          <div class="w-full xl:w-[185px] xl:shrink-0">
+            <Select
+              v-model="filters.timingMode"
+              :options="timingModeOptions"
+              optionLabel="label"
+              optionValue="value"
+              placeholder="Timing Mode"
+              class="w-full"
+              size="small"
+              @change="onTimingModeFilterChange"
+            />
+          </div>
+
+          <div class="w-full xl:w-[145px] xl:shrink-0">
             <Select
               v-model="filters.isActive"
               :options="statusOptions"
@@ -717,7 +961,7 @@ onBeforeUnmount(() => {
         scrollHeight="500px"
         :sortField="filters.sortField"
         :sortOrder="filters.sortOrder"
-        tableStyle="min-width: 104rem"
+        tableStyle="min-width: 118rem"
         class="shift-ot-option-table"
         :virtualScrollerOptions="useVirtualScroll ? {
           lazy: true,
@@ -760,13 +1004,31 @@ onBeforeUnmount(() => {
           </template>
         </Column>
 
-        <Column field="requestedMinutes" header="Requested Minutes" sortable style="min-width: 11rem">
+        <Column field="timingMode" header="Timing Mode" sortable style="min-width: 11rem">
           <template #body="{ data }">
-            <span v-if="data">{{ Number(data.requestedMinutes || 0) }} min</span>
+            <Tag
+              v-if="data"
+              :value="timingModeLabel(data.timingMode)"
+              :severity="timingModeSeverity(data.timingMode)"
+              class="shift-ot-tag"
+            />
           </template>
         </Column>
 
-        <Column header="Duration" style="min-width: 9rem">
+        <Column header="OT Window" style="min-width: 14rem">
+          <template #body="{ data }">
+            <div v-if="data" class="flex flex-col">
+              <span class="font-semibold text-[color:var(--ot-text)]">
+                {{ optionTimeWindow(data) }}
+              </span>
+              <span class="text-xs text-[color:var(--ot-text-muted)]">
+                {{ optionTimingSubLabel(data) }}
+              </span>
+            </div>
+          </template>
+        </Column>
+
+        <Column field="requestedMinutes" header="Requested" sortable style="min-width: 10rem">
           <template #body="{ data }">
             <Tag
               v-if="data"
@@ -777,7 +1039,7 @@ onBeforeUnmount(() => {
           </template>
         </Column>
 
-        <Column header="Calculation Policy" style="min-width: 20rem">
+        <Column header="Calculation Policy" style="min-width: 22rem">
           <template #body="{ data }">
             <div v-if="data" class="flex flex-col">
               <span class="font-medium text-[color:var(--ot-text)]">
@@ -840,7 +1102,7 @@ onBeforeUnmount(() => {
       modal
       :closable="!saving"
       :header="isEditMode ? 'Edit Shift OT Option' : 'Create Shift OT Option'"
-      :style="{ width: '64rem', maxWidth: '96vw' }"
+      :style="{ width: '70rem', maxWidth: '96vw' }"
       @hide="resetForm"
     >
       <div class="grid grid-cols-1 gap-4 xl:grid-cols-2">
@@ -867,11 +1129,44 @@ onBeforeUnmount(() => {
             <InputText
               v-model="form.label"
               class="w-full"
-              placeholder="2 Hours / 3 Hours / 4 Hours"
+              placeholder="Evening OT 18:00 - 20:00"
             />
           </div>
 
-          <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div class="space-y-2">
+            <label class="text-sm font-medium text-[color:var(--ot-text)]">
+              Timing Mode
+            </label>
+            <Select
+              v-model="form.timingMode"
+              :options="formTimingModeOptions"
+              optionLabel="label"
+              optionValue="value"
+              class="w-full"
+              placeholder="Select timing mode"
+            />
+          </div>
+
+          <div
+            v-if="isAfterShiftEndMode"
+            class="grid grid-cols-1 gap-4 md:grid-cols-2"
+          >
+            <div class="space-y-2">
+              <label class="text-sm font-medium text-[color:var(--ot-text)]">
+                Start After Shift End Minutes
+              </label>
+              <InputNumber
+                v-model="form.startAfterShiftEndMinutes"
+                inputClass="w-full"
+                class="w-full"
+                :min="0"
+                :useGrouping="false"
+              />
+              <p class="text-xs text-[color:var(--ot-text-muted)]">
+                Example: shift end 16:00 + 120 min = OT starts 18:00.
+              </p>
+            </div>
+
             <div class="space-y-2">
               <label class="text-sm font-medium text-[color:var(--ot-text)]">
                 Requested Minutes
@@ -884,18 +1179,48 @@ onBeforeUnmount(() => {
                 :useGrouping="false"
               />
             </div>
+          </div>
+
+          <div
+            v-if="isFixedTimeMode"
+            class="grid grid-cols-1 gap-4 md:grid-cols-3"
+          >
+            <div class="space-y-2">
+              <label class="text-sm font-medium text-[color:var(--ot-text)]">
+                Fixed Start Time
+              </label>
+              <InputText
+                v-model="form.fixedStartTime"
+                class="w-full"
+                placeholder="08:00"
+              />
+            </div>
 
             <div class="space-y-2">
               <label class="text-sm font-medium text-[color:var(--ot-text)]">
-                Sequence
+                Fixed End Time
+              </label>
+              <InputText
+                v-model="form.fixedEndTime"
+                class="w-full"
+                placeholder="17:00"
+              />
+            </div>
+
+            <div class="space-y-2">
+              <label class="text-sm font-medium text-[color:var(--ot-text)]">
+                Requested Minutes
               </label>
               <InputNumber
-                v-model="form.sequence"
+                v-model="form.requestedMinutes"
                 inputClass="w-full"
                 class="w-full"
                 :min="1"
                 :useGrouping="false"
               />
+              <p class="text-xs text-[color:var(--ot-text-muted)]">
+                Auto-calculated from fixed time.
+              </p>
             </div>
           </div>
 
@@ -913,18 +1238,51 @@ onBeforeUnmount(() => {
               placeholder="Select policy"
             />
           </div>
+
+          <div class="space-y-2">
+            <label class="text-sm font-medium text-[color:var(--ot-text)]">
+              Sequence
+            </label>
+            <InputNumber
+              v-model="form.sequence"
+              inputClass="w-full"
+              class="w-full"
+              :min="1"
+              :useGrouping="false"
+            />
+          </div>
         </div>
 
         <div class="space-y-4">
           <div class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-bg)] p-4">
             <div class="mb-3 text-sm font-semibold text-[color:var(--ot-text)]">
-              Quick Summary
+              Preview
             </div>
 
             <div class="grid grid-cols-1 gap-2 text-sm text-[color:var(--ot-text-muted)]">
               <div>
                 <span class="font-medium text-[color:var(--ot-text)]">Shift:</span>
                 {{ selectedShiftOption?.label || '-' }}
+              </div>
+
+              <div>
+                <span class="font-medium text-[color:var(--ot-text)]">Shift Time:</span>
+                {{ selectedShiftOption?.startTime || '-' }} - {{ selectedShiftOption?.endTime || '-' }}
+              </div>
+
+              <div>
+                <span class="font-medium text-[color:var(--ot-text)]">Timing Mode:</span>
+                {{ timingModeLabel(form.timingMode) }}
+              </div>
+
+              <div v-if="isAfterShiftEndMode">
+                <span class="font-medium text-[color:var(--ot-text)]">Start Offset:</span>
+                {{ Number(form.startAfterShiftEndMinutes || 0) }} minutes after shift end
+              </div>
+
+              <div>
+                <span class="font-medium text-[color:var(--ot-text)]">OT Window:</span>
+                {{ previewWindow.start || '-' }} - {{ previewWindow.end || '-' }}
               </div>
 
               <div>
@@ -941,13 +1299,34 @@ onBeforeUnmount(() => {
               </div>
 
               <div>
-                <span class="font-medium text-[color:var(--ot-text)]">Sequence:</span>
-                {{ Number(form.sequence || 0) }}
-              </div>
-
-              <div>
                 <span class="font-medium text-[color:var(--ot-text)]">Status:</span>
                 {{ form.isActive ? 'Active' : 'Inactive' }}
+              </div>
+            </div>
+          </div>
+
+          <div class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] p-4">
+            <div class="mb-3 text-sm font-semibold text-[color:var(--ot-text)]">
+              Recommended Setup
+            </div>
+
+            <div class="space-y-3 text-sm text-[color:var(--ot-text-muted)]">
+              <div class="rounded-xl border border-[color:var(--ot-border)] px-3 py-2">
+                <div class="font-semibold text-[color:var(--ot-text)]">
+                  Working Day: 18:00 - 20:00
+                </div>
+                <div class="mt-1">
+                  Timing Mode = After Shift End, Start Offset = 120, Requested = 120.
+                </div>
+              </div>
+
+              <div class="rounded-xl border border-[color:var(--ot-border)] px-3 py-2">
+                <div class="font-semibold text-[color:var(--ot-text)]">
+                  Sunday/Holiday: 08:00 - 17:00
+                </div>
+                <div class="mt-1">
+                  Timing Mode = Fixed Time, Fixed Start = 08:00, Fixed End = 17:00.
+                </div>
               </div>
             </div>
           </div>

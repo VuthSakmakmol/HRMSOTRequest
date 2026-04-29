@@ -13,6 +13,14 @@ const {
 function s(value) {
   return String(value ?? '').trim()
 }
+function normalizeObjectIdInput(value) {
+  if (!value) return ''
+  return String(value).trim()
+}
+
+function upper(value) {
+  return s(value).toUpperCase()
+}
 
 function createHttpError(message, status = 400) {
   const error = new Error(message)
@@ -43,9 +51,7 @@ function buildListQuery(query = {}) {
   if (search) {
     const keyword = escapeRegex(search)
 
-    filter.$or = [
-      { label: { $regex: keyword, $options: 'i' } },
-    ]
+    filter.$or = [{ label: { $regex: keyword, $options: 'i' } }]
   }
 
   if (query.shiftId) {
@@ -54,6 +60,10 @@ function buildListQuery(query = {}) {
 
   if (query.calculationPolicyId) {
     filter.calculationPolicyId = query.calculationPolicyId
+  }
+
+  if (query.timingMode) {
+    filter.timingMode = upper(query.timingMode)
   }
 
   if (query.isActive !== undefined && query.isActive !== '') {
@@ -67,8 +77,12 @@ function buildSort(sortField = 'sequence', sortOrder = 1) {
   const direction = Number(sortOrder) === -1 ? -1 : 1
 
   if (sortField === 'label') return { label: direction, sequence: 1, _id: -1 }
+  if (sortField === 'timingMode') return { timingMode: direction, sequence: 1, _id: -1 }
   if (sortField === 'requestedMinutes') {
     return { requestedMinutes: direction, sequence: 1, _id: -1 }
+  }
+  if (sortField === 'startAfterShiftEndMinutes') {
+    return { startAfterShiftEndMinutes: direction, sequence: 1, _id: -1 }
   }
   if (sortField === 'isActive') return { isActive: direction, sequence: 1, _id: -1 }
   if (sortField === 'createdAt') return { createdAt: direction, _id: -1 }
@@ -113,6 +127,7 @@ function normalizePolicySnapshot(policy) {
       roundUnitMinutes: 0,
       minEligibleMinutes: 0,
       graceAfterShiftEndMinutes: 0,
+      allowApprovedOtWithoutExactClockOut: false,
       isActive: false,
     }
   }
@@ -125,6 +140,8 @@ function normalizePolicySnapshot(policy) {
     roundUnitMinutes: Number(policy.roundUnitMinutes || 0),
     minEligibleMinutes: Number(policy.minEligibleMinutes || 0),
     graceAfterShiftEndMinutes: Number(policy.graceAfterShiftEndMinutes || 0),
+    allowApprovedOtWithoutExactClockOut:
+      policy.allowApprovedOtWithoutExactClockOut === true,
     isActive: policy.isActive !== false,
   }
 }
@@ -139,6 +156,7 @@ function normalizeShiftOTOption(doc) {
       : null
 
   const requestedMinutes = Number(doc.requestedMinutes || 0)
+  const timingMode = upper(doc.timingMode || 'AFTER_SHIFT_END')
 
   return {
     id: String(doc._id),
@@ -153,6 +171,12 @@ function normalizeShiftOTOption(doc) {
     shift: normalizeShiftSnapshot(shift),
 
     label: s(doc.label),
+
+    timingMode,
+    startAfterShiftEndMinutes: Number(doc.startAfterShiftEndMinutes || 0),
+    fixedStartTime: s(doc.fixedStartTime),
+    fixedEndTime: s(doc.fixedEndTime),
+
     requestedMinutes,
     requestedHours: Number((requestedMinutes / 60).toFixed(2)),
 
@@ -190,6 +214,11 @@ function normalizeLookupItem(doc) {
 
     label: item.label,
     optionLabel: `${item.label} (${item.requestedMinutes} min)`,
+
+    timingMode: item.timingMode,
+    startAfterShiftEndMinutes: item.startAfterShiftEndMinutes,
+    fixedStartTime: item.fixedStartTime,
+    fixedEndTime: item.fixedEndTime,
 
     requestedMinutes: item.requestedMinutes,
     requestedHours: item.requestedHours,
@@ -232,13 +261,14 @@ function populateQuery(query) {
         roundUnitMinutes: 1,
         minEligibleMinutes: 1,
         graceAfterShiftEndMinutes: 1,
+        allowApprovedOtWithoutExactClockOut: 1,
         isActive: 1,
       },
     })
 }
 
 async function assertShiftExists(shiftId) {
-  const id = parseSchema(objectIdSchema, shiftId)
+  const id = parseSchema(objectIdSchema, normalizeObjectIdInput(shiftId))
 
   const shift = await Shift.findById(id).lean()
 
@@ -250,7 +280,7 @@ async function assertShiftExists(shiftId) {
 }
 
 async function assertPolicyExists(policyId) {
-  const id = parseSchema(objectIdSchema, policyId)
+  const id = parseSchema(objectIdSchema, normalizeObjectIdInput(policyId))
 
   const policy = await OTCalculationPolicy.findById(id).lean()
 
@@ -345,7 +375,7 @@ async function create(payload, authUser) {
     updatedBy: actorAccountId(authUser),
   })
 
-  return getById(doc._id)
+  return getById(String(doc._id))
 }
 
 async function update(id, payload, authUser) {
@@ -392,7 +422,7 @@ async function update(id, payload, authUser) {
 
   await doc.save()
 
-  return getById(doc._id)
+  return getById(String(doc._id))
 }
 
 async function list(query = {}) {
@@ -430,7 +460,7 @@ async function list(query = {}) {
 }
 
 async function getById(id) {
-  const optionId = parseSchema(objectIdSchema, id)
+  const optionId = parseSchema(objectIdSchema, normalizeObjectIdInput(id))
 
   const doc = await populateQuery(ShiftOTOption.findById(optionId)).lean()
 

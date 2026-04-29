@@ -148,14 +148,48 @@ function normalizeShiftOptionsResponse(res) {
         item?.requestedHours || (requestedMinutes / 60).toFixed(2),
       )
 
+      const timingMode = String(item?.timingMode || 'AFTER_SHIFT_END')
+        .trim()
+        .toUpperCase()
+
+      const requestStartTime = String(
+        item?.requestStartTime ||
+          item?.fixedStartTime ||
+          '',
+      ).trim()
+
+      const requestEndTime = String(
+        item?.requestEndTime ||
+          item?.fixedEndTime ||
+          '',
+      ).trim()
+
+      const label = String(item?.label || '').trim()
+      const windowLabel =
+        requestStartTime && requestEndTime
+          ? `${requestStartTime} - ${requestEndTime}`
+          : ''
+
       return {
         id: String(item?.id || item?._id || '').trim(),
-        label: String(item?.label || '').trim(),
+        label,
+
+        timingMode,
+        startAfterShiftEndMinutes: Number(item?.startAfterShiftEndMinutes || 0),
+        fixedStartTime: String(item?.fixedStartTime || '').trim(),
+        fixedEndTime: String(item?.fixedEndTime || '').trim(),
+
+        requestStartTime,
+        requestEndTime,
+
         requestedMinutes,
         requestedHours,
         sequence: Number(item?.sequence || 0),
         calculationPolicy: item?.calculationPolicy || null,
-        optionLabel: `${String(item?.label || '').trim()} (${requestedMinutes} min)`,
+
+        optionLabel: windowLabel
+          ? `${label} · ${windowLabel} · ${formatMinutesLabel(requestedMinutes)}`
+          : `${label} (${requestedMinutes} min)`,
       }
     }).filter((item) => item.id && item.label),
   }
@@ -274,6 +308,14 @@ function formatMinutesLabel(value) {
   return `${mm}m`
 }
 
+function timingModeLabel(value) {
+  const normalized = String(value || '').trim().toUpperCase()
+
+  if (normalized === 'FIXED_TIME') return 'Fixed Time'
+
+  return 'After Shift End'
+}
+
 function extractShiftInfo(employee) {
   const shift =
     employee?.shift ||
@@ -349,19 +391,24 @@ const selectedOTOption = computed(() =>
 const requestPreview = computed(() => {
   if (!sharedShift.value || !selectedOTOption.value) return null
 
-  const requestStartTime = String(sharedShift.value.endTime || '').trim()
-  const requestEndTime = addMinutesToHHmm(
-    requestStartTime,
-    Number(selectedOTOption.value.requestedMinutes || 0),
-  )
+  const requestedMinutes = Number(selectedOTOption.value.requestedMinutes || 0)
 
   return {
-    requestStartTime,
-    requestEndTime,
-    requestedMinutes: Number(selectedOTOption.value.requestedMinutes || 0),
+    timingMode: String(selectedOTOption.value.timingMode || 'AFTER_SHIFT_END')
+      .trim()
+      .toUpperCase(),
+
+    requestStartTime: String(selectedOTOption.value.requestStartTime || '').trim(),
+    requestEndTime: String(selectedOTOption.value.requestEndTime || '').trim(),
+
+    requestedMinutes,
     requestedHours: Number(
       selectedOTOption.value.requestedHours ||
-        (Number(selectedOTOption.value.requestedMinutes || 0) / 60).toFixed(2),
+        (requestedMinutes / 60).toFixed(2),
+    ),
+
+    startAfterShiftEndMinutes: Number(
+      selectedOTOption.value.startAfterShiftEndMinutes || 0,
     ),
   }
 })
@@ -672,6 +719,12 @@ onMounted(async () => {
                 v-if="requestPreview && selectedOTOption"
                 class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4"
               >
+                <div class="ot-info-box border-indigo-200 dark:border-indigo-800">
+                  <div class="ot-info-label">Timing Mode</div>
+                  <div class="ot-info-value">
+                    {{ timingModeLabel(requestPreview.timingMode) }}
+                  </div>
+                </div>
                 <div class="ot-info-box border-emerald-200 dark:border-emerald-800">
                   <div class="ot-info-label">Requested Minutes</div>
                   <div class="ot-info-value">

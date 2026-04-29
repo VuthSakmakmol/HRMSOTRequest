@@ -754,6 +754,71 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
     attendanceWindow.clockOutMinutes,
   )
 
+  /*
+    For SUNDAY/HOLIDAY OT:
+    There is no normal working shift window to compare.
+    We verify against the approved OT request window directly.
+  */
+  if (['SUNDAY', 'HOLIDAY'].includes(upper(normalizedOtRequest.dayType))) {
+    const eligibleOtMinutes = actualOtMinutesWithinRequest
+
+    if (eligibleOtMinutes <= 0) {
+      return buildMismatchResponse(base, 'No attendance time overlaps approved Sunday/Holiday OT window', {
+        rawOtDecision: 'NOT_ELIGIBLE',
+        actualOtMinutes: actualOtMinutesWithinRequest,
+        eligibleOtMinutes: 0,
+        roundedOtMinutes: 0,
+      })
+    }
+
+    if (eligibleOtMinutes < safeNonNegativeInt(policy.minEligibleMinutes, 0)) {
+      return buildMismatchResponse(base, 'Eligible Sunday/Holiday OT is below minimum OT policy threshold', {
+        rawOtDecision: 'BELOW_MIN',
+        actualOtMinutes: actualOtMinutesWithinRequest,
+        eligibleOtMinutes,
+        roundedOtMinutes: 0,
+      })
+    }
+
+    let roundedOtMinutes = roundMinutesByPolicy(
+      eligibleOtMinutes,
+      policy.roundUnitMinutes,
+      policy.roundMethod,
+    )
+
+    if (policy.capByRequestedMinutes && normalizedOtRequest.requestedMinutes > 0) {
+      roundedOtMinutes = Math.min(roundedOtMinutes, normalizedOtRequest.requestedMinutes)
+    }
+
+    if (roundedOtMinutes === normalizedOtRequest.requestedMinutes) {
+      return {
+        ...base,
+        actualOtMinutes: actualOtMinutesWithinRequest,
+        eligibleOtMinutes,
+        roundedOtMinutes,
+        rawOtDecision: 'MATCH',
+        otResult: 'MATCH',
+        otResultReason: 'Sunday/Holiday actual attendance matches approved OT request by policy',
+      }
+    }
+
+    if (roundedOtMinutes < normalizedOtRequest.requestedMinutes) {
+      return buildMismatchResponse(base, 'Sunday/Holiday actual OT is shorter than approved OT request', {
+        rawOtDecision: 'SHORT',
+        actualOtMinutes: actualOtMinutesWithinRequest,
+        eligibleOtMinutes,
+        roundedOtMinutes,
+      })
+    }
+
+    return buildMismatchResponse(base, 'Sunday/Holiday actual OT does not match approved OT request', {
+      rawOtDecision: 'EXCEED',
+      actualOtMinutes: actualOtMinutesWithinRequest,
+      eligibleOtMinutes,
+      roundedOtMinutes,
+    })
+  }
+
   let eligibleOtMinutes = 0
 
   const shiftStartMinutes = normalizedOtRequest.shiftStartMinutes

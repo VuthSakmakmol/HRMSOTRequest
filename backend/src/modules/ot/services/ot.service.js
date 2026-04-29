@@ -69,6 +69,7 @@ function calculateDuration({ startTime, endTime, breakMinutes = 0 }) {
   }
 }
 
+
 function parseYMDToUtcRange(ymd) {
   const raw = String(ymd || '').trim()
   const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/)
@@ -687,8 +688,42 @@ function buildOptionBasedTiming({ sharedShift, shiftOtOption, calculationPolicy 
     throw err
   }
 
-  const requestStartTime = s(sharedShift?.endTime)
-  const requestEndTime = addMinutesToHHmm(requestStartTime, requestedMinutes)
+  const timingMode = s(shiftOtOption?.timingMode || 'AFTER_SHIFT_END').toUpperCase()
+  const startAfterShiftEndMinutes = Number(shiftOtOption?.startAfterShiftEndMinutes || 0)
+
+  let requestStartTime = ''
+  let requestEndTime = ''
+
+  if (timingMode === 'FIXED_TIME') {
+    requestStartTime = s(shiftOtOption?.fixedStartTime)
+    requestEndTime = s(shiftOtOption?.fixedEndTime)
+
+    if (!requestStartTime || !requestEndTime) {
+      const err = new Error('Selected fixed-time OT option must have fixed start and end time')
+      err.status = 400
+      throw err
+    }
+  } else {
+    const shiftEndTime = s(sharedShift?.endTime)
+
+    if (!shiftEndTime) {
+      const err = new Error('Selected shift has no end time')
+      err.status = 400
+      throw err
+    }
+
+    if (
+      !Number.isInteger(startAfterShiftEndMinutes) ||
+      startAfterShiftEndMinutes < 0
+    ) {
+      const err = new Error('Selected OT option startAfterShiftEndMinutes is invalid')
+      err.status = 400
+      throw err
+    }
+
+    requestStartTime = addMinutesToHHmm(shiftEndTime, startAfterShiftEndMinutes)
+    requestEndTime = addMinutesToHHmm(requestStartTime, requestedMinutes)
+  }
 
   return {
     // legacy compatibility fields
@@ -698,7 +733,7 @@ function buildOptionBasedTiming({ sharedShift, shiftOtOption, calculationPolicy 
     totalMinutes: requestedMinutes,
     totalHours: Number((requestedMinutes / 60).toFixed(2)),
 
-    // new structured fields
+    // shift snapshot
     shiftId: sharedShift?._id || null,
     shiftCode: s(sharedShift?.code),
     shiftName: s(sharedShift?.name),
@@ -707,8 +742,17 @@ function buildOptionBasedTiming({ sharedShift, shiftOtOption, calculationPolicy 
     shiftEndTime: s(sharedShift?.endTime),
     shiftCrossMidnight: sharedShift?.crossMidnight === true,
 
+    // OT option snapshot
     shiftOtOptionId: shiftOtOption?._id || null,
     shiftOtOptionLabel: s(shiftOtOption?.label),
+    shiftOtOptionTimingMode: timingMode,
+    shiftOtOptionStartAfterShiftEndMinutes:
+      timingMode === 'AFTER_SHIFT_END' ? startAfterShiftEndMinutes : 0,
+    shiftOtOptionFixedStartTime:
+      timingMode === 'FIXED_TIME' ? requestStartTime : '',
+    shiftOtOptionFixedEndTime:
+      timingMode === 'FIXED_TIME' ? requestEndTime : '',
+
     requestedMinutes,
 
     requestStartTime,
@@ -1901,6 +1945,7 @@ async function getShiftOTOptionsByShift(shiftId) {
         roundUnitMinutes: 1,
         roundMethod: 1,
         graceAfterShiftEndMinutes: 1,
+        allowApprovedOtWithoutExactClockOut: 1,
         allowPreShiftOT: 1,
         allowPostShiftOT: 1,
         capByRequestedMinutes: 1,
@@ -1925,36 +1970,72 @@ async function getShiftOTOptionsByShift(shiftId) {
       crossMidnight: shift.crossMidnight === true,
       isActive: shift.isActive !== false,
     },
-    items: options.map((item) => ({
-      id: String(item._id),
-      shiftId: item.shiftId ? String(item.shiftId) : null,
-      label: s(item.label),
-      requestedMinutes: Number(item.requestedMinutes || 0),
-      requestedHours: Number((Number(item.requestedMinutes || 0) / 60).toFixed(2)),
-      sequence: Number(item.sequence || 0),
-      isActive: item.isActive !== false,
-      calculationPolicy: item.calculationPolicyId
-        ? {
-            id: String(item.calculationPolicyId._id),
-            code: s(item.calculationPolicyId.code),
-            name: s(item.calculationPolicyId.name),
-            minEligibleMinutes: Number(item.calculationPolicyId.minEligibleMinutes || 0),
-            roundUnitMinutes: Number(item.calculationPolicyId.roundUnitMinutes || 0),
-            roundMethod: s(item.calculationPolicyId.roundMethod),
-            graceAfterShiftEndMinutes: Number(
-              item.calculationPolicyId.graceAfterShiftEndMinutes || 0,
-            ),
-            allowPreShiftOT: item.calculationPolicyId.allowPreShiftOT === true,
-            allowPostShiftOT: item.calculationPolicyId.allowPostShiftOT !== false,
-            capByRequestedMinutes: item.calculationPolicyId.capByRequestedMinutes !== false,
-            treatForgetScanInAsPending:
-              item.calculationPolicyId.treatForgetScanInAsPending !== false,
-            treatForgetScanOutAsPending:
-              item.calculationPolicyId.treatForgetScanOutAsPending !== false,
-            isActive: item.calculationPolicyId.isActive !== false,
-          }
-        : null,
-    })),
+
+    items: options.map((item) => {
+      const requestedMinutes = Number(item.requestedMinutes || 0)
+      const timingMode = s(item.timingMode || 'AFTER_SHIFT_END').toUpperCase()
+      const startAfterShiftEndMinutes = Number(item.startAfterShiftEndMinutes || 0)
+
+      let requestStartTime = ''
+      let requestEndTime = ''
+
+      if (timingMode === 'FIXED_TIME') {
+        requestStartTime = s(item.fixedStartTime)
+        requestEndTime = s(item.fixedEndTime)
+      } else {
+        requestStartTime = addMinutesToHHmm(s(shift.endTime), startAfterShiftEndMinutes)
+        requestEndTime = addMinutesToHHmm(requestStartTime, requestedMinutes)
+      }
+
+      const policy = item.calculationPolicyId || null
+
+      return {
+        id: String(item._id),
+        _id: String(item._id),
+
+        shiftId: item.shiftId ? String(item.shiftId) : null,
+
+        label: s(item.label),
+        optionLabel: `${s(item.label)} (${requestedMinutes} min)`,
+
+        // ✅ important timing fields for frontend
+        timingMode,
+        startAfterShiftEndMinutes,
+        fixedStartTime: s(item.fixedStartTime),
+        fixedEndTime: s(item.fixedEndTime),
+
+        requestStartTime,
+        requestEndTime,
+
+        requestedMinutes,
+        requestedHours: Number((requestedMinutes / 60).toFixed(2)),
+
+        sequence: Number(item.sequence || 0),
+        isActive: item.isActive !== false,
+
+        calculationPolicy: policy
+          ? {
+              id: String(policy._id),
+              code: s(policy.code),
+              name: s(policy.name),
+              minEligibleMinutes: Number(policy.minEligibleMinutes || 0),
+              roundUnitMinutes: Number(policy.roundUnitMinutes || 0),
+              roundMethod: s(policy.roundMethod),
+              graceAfterShiftEndMinutes: Number(policy.graceAfterShiftEndMinutes || 0),
+              allowApprovedOtWithoutExactClockOut:
+                policy.allowApprovedOtWithoutExactClockOut === true,
+              allowPreShiftOT: policy.allowPreShiftOT === true,
+              allowPostShiftOT: policy.allowPostShiftOT !== false,
+              capByRequestedMinutes: policy.capByRequestedMinutes !== false,
+              treatForgetScanInAsPending:
+                policy.treatForgetScanInAsPending !== false,
+              treatForgetScanOutAsPending:
+                policy.treatForgetScanOutAsPending !== false,
+              isActive: policy.isActive !== false,
+            }
+          : null,
+      }
+    }),
   }
 }
 

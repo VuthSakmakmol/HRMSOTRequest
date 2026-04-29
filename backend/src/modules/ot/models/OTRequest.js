@@ -437,6 +437,32 @@ const OTRequestSchema = new mongoose.Schema(
       default: '',
     },
 
+    shiftOtOptionTimingMode: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      enum: ['AFTER_SHIFT_END', 'FIXED_TIME', ''],
+      default: '',
+    },
+
+    shiftOtOptionStartAfterShiftEndMinutes: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
+    shiftOtOptionFixedStartTime: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
+    shiftOtOptionFixedEndTime: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
     otCalculationPolicyId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'OTCalculationPolicy',
@@ -617,6 +643,13 @@ OTRequestSchema.pre('validate', function normalizeFields(next) {
 
   this.proposedApprovedEmployees = normalizeEmployeeCollection(this.proposedApprovedEmployees)
   this.proposedApprovedEmployeeCount = this.proposedApprovedEmployees.length
+
+  this.shiftOtOptionTimingMode = s(this.shiftOtOptionTimingMode).toUpperCase()
+  this.shiftOtOptionStartAfterShiftEndMinutes = Number(
+    this.shiftOtOptionStartAfterShiftEndMinutes || 0,
+  )
+  this.shiftOtOptionFixedStartTime = s(this.shiftOtOptionFixedStartTime)
+  this.shiftOtOptionFixedEndTime = s(this.shiftOtOptionFixedEndTime)
 
   this.breakMinutes = Number(this.breakMinutes || 0)
   this.totalMinutes = Number(this.totalMinutes || 0)
