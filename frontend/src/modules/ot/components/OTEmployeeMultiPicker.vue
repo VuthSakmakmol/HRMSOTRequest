@@ -86,7 +86,9 @@ const selectedPreview = computed(() => selectedRows.value.slice(0, 12))
 const localShiftOptions = computed(() => {
   const map = new Map()
 
-  for (const row of [...employees.value, ...selectedRows.value]) {
+  for (const row of [...employees.value, ...selectedRows.value, selfEmployee.value]) {
+    if (!row) continue
+
     const shift = extractShiftFields(row)
     if (!shift.shiftId) continue
 
@@ -240,10 +242,12 @@ function normalizeEmployeeRecord(source = {}, options = {}) {
   const { isSelf = false } = options
 
   const _id = toTrimmedString(source?._id || source?.id || source?.employeeId || '')
+
   const employeeNo = toTrimmedString(
     source?.employeeNo ||
       source?.employeeCode ||
       source?.code ||
+      source?.loginId ||
       '',
   )
 
@@ -321,7 +325,7 @@ function normalizeEmployeesResponse(res) {
   }
 }
 
-function normalizeMeResponse(res) {
+function normalizeAuthMeUser(res) {
   const user =
     res?.data?.data?.user ||
     res?.data?.data ||
@@ -335,27 +339,56 @@ function normalizeMeResponse(res) {
     user?.employeeInfo ||
     {}
 
-  const merged = {
-    ...user,
-    ...employee,
+  return {
+    employeeId: toTrimmedString(
+      employee?._id ||
+        employee?.id ||
+        user?.employeeId ||
+        '',
+    ),
 
-    position: employee?.position || user?.position,
-    positionName: employee?.positionName || user?.positionName,
+    employeeNo: toTrimmedString(
+      employee?.employeeNo ||
+        user?.employeeNo ||
+        user?.loginId ||
+        '',
+    ),
 
-    shiftId: employee?.shiftId || user?.shiftId,
-    shift: employee?.shift || user?.shift,
-    shiftInfo: employee?.shiftInfo || user?.shiftInfo,
-    assignedShift: employee?.assignedShift || user?.assignedShift,
-    shiftCode: employee?.shiftCode || user?.shiftCode,
-    shiftName: employee?.shiftName || user?.shiftName,
-    shiftType: employee?.shiftType || user?.shiftType,
-    shiftStartTime: employee?.shiftStartTime || user?.shiftStartTime,
-    shiftEndTime: employee?.shiftEndTime || user?.shiftEndTime,
-    shiftCrossMidnight:
-      employee?.shiftCrossMidnight ?? user?.shiftCrossMidnight,
+    displayName: toTrimmedString(
+      employee?.displayName ||
+        employee?.name ||
+        user?.displayName ||
+        user?.name ||
+        user?.loginId ||
+        '',
+    ),
   }
+}
 
-  return normalizeEmployeeRecord(merged, { isSelf: true })
+function getNormalizedRowsFromEmployeeResponse(res) {
+  const normalized = normalizeEmployeesResponse(res)
+  return Array.isArray(normalized?.rows) ? normalized.rows : []
+}
+
+function findSelfEmployeeFromRows(rows = [], authUser = {}) {
+  const employeeId = toTrimmedString(authUser.employeeId)
+  const employeeNo = toTrimmedString(authUser.employeeNo).toLowerCase()
+  const displayName = toTrimmedString(authUser.displayName).toLowerCase()
+
+  return (
+    rows.find((row) => {
+      const rowId = toTrimmedString(row?._id || row?.id)
+      const rowNo = toTrimmedString(row?.employeeNo).toLowerCase()
+      const rowName = toTrimmedString(row?.displayName).toLowerCase()
+
+      if (employeeId && rowId === employeeId) return true
+      if (employeeNo && rowNo === employeeNo) return true
+      if (employeeNo && rowName === employeeNo) return true
+      if (displayName && rowName === displayName) return true
+
+      return false
+    }) || null
+  )
 }
 
 function normalizeShiftOptionsResponse(res) {
@@ -426,8 +459,8 @@ function mergeUniqueRows(existingRows = [], incomingRows = []) {
     const normalized = normalizeEmployeeRecord(row, {
       isSelf: row?.isSelf === true,
     })
-    const id = getEmployeeId(normalized)
 
+    const id = getEmployeeId(normalized)
     if (id) map.set(id, normalized)
   }
 
@@ -507,10 +540,67 @@ async function loadSelfEmployee() {
   try {
     loadingSelf.value = true
 
-    const res = await api.get('/auth/me')
-    selfEmployee.value = normalizeMeResponse(res)
-  } catch {
+    const meRes = await api.get('/auth/me')
+    const authUser = normalizeAuthMeUser(meRes)
+
+    const searchKeys = Array.from(
+      new Set(
+        [
+          authUser.employeeNo,
+          authUser.employeeId,
+          authUser.displayName,
+        ]
+          .map((item) => toTrimmedString(item))
+          .filter(Boolean),
+      ),
+    )
+
+    let found = null
+
+    for (const keyword of searchKeys) {
+      const res = await getEmployees({
+        page: 1,
+        limit: 10,
+        search: keyword,
+        q: keyword,
+        isActive: true,
+      })
+
+      const rows = getNormalizedRowsFromEmployeeResponse(res)
+      found = findSelfEmployeeFromRows(rows, authUser)
+
+      if (found) break
+    }
+
+    if (found) {
+      selfEmployee.value = {
+        ...found,
+        isSelf: true,
+      }
+      return
+    }
+
     selfEmployee.value = null
+
+    toast.add({
+      severity: 'warn',
+      summary: 'Self employee not found',
+      detail:
+        'Your profile is logged in, but the employee master record was not found by employee lookup.',
+      life: 3500,
+    })
+  } catch (error) {
+    selfEmployee.value = null
+
+    toast.add({
+      severity: 'warn',
+      summary: 'Self employee load failed',
+      detail:
+        error?.response?.data?.message ||
+        error?.message ||
+        'Unable to load your employee record.',
+      life: 3500,
+    })
   } finally {
     loadingSelf.value = false
   }
@@ -520,30 +610,31 @@ async function loadShiftOptions() {
   try {
     loadingShifts.value = true
 
-    try {
-      const res = await api.get('/shift/lookup', {
-        params: {
-          page: 1,
-          limit: 300,
-          isActive: true,
-        },
-      })
+    const res = await api.get('/shift/lookup', {
+      params: {
+        page: 1,
+        limit: 300,
+        isActive: true,
+      },
+    })
 
-      remoteShiftOptions.value = normalizeShiftOptionsResponse(res)
-      return
-    } catch {
-      const res = await api.get('/shift', {
-        params: {
-          page: 1,
-          limit: 300,
-          isActive: true,
-        },
-      })
-
-      remoteShiftOptions.value = normalizeShiftOptionsResponse(res)
-    }
-  } catch {
+    remoteShiftOptions.value = normalizeShiftOptionsResponse(res)
+  } catch (error) {
     remoteShiftOptions.value = []
+
+    if (error?.response?.status === 403) {
+      return
+    }
+
+    toast.add({
+      severity: 'warn',
+      summary: 'Shift filter unavailable',
+      detail:
+        error?.response?.data?.message ||
+        error?.message ||
+        'Unable to load shift filter options.',
+      life: 2500,
+    })
   } finally {
     loadingShifts.value = false
   }
@@ -952,7 +1043,7 @@ onBeforeUnmount(() => {
 
 .ot-required-star {
   color: #ef4444;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .ot-picker-title {

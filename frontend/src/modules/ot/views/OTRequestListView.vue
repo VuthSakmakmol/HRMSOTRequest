@@ -1,5 +1,7 @@
 <!-- frontend/src/modules/ot/views/OTRequestListView.vue -->
 <script setup>
+// frontend/src/modules/ot/views/OTRequestListView.vue
+
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
@@ -53,6 +55,7 @@ const statusOptions = [
   { label: 'Approved', value: 'APPROVED' },
   { label: 'Rejected', value: 'REJECTED' },
   { label: 'Cancelled', value: 'CANCELLED' },
+  { label: 'Pending Confirmation', value: 'PENDING_REQUESTER_CONFIRMATION' },
 ]
 
 const dayTypeOptions = [
@@ -102,10 +105,29 @@ function buildExportQuery() {
   }
 }
 
+function normalizeClassKey(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, '-')
+    .replace(/\s+/g, '-')
+}
+
+function dayTypeClass(value) {
+  const key = normalizeClassKey(value || 'unknown')
+  return `ot-day-${key}`
+}
+
+function statusClass(value) {
+  const key = normalizeClassKey(value || 'unknown')
+  return `ot-status-${key}`
+}
+
 function dayTypeSeverity(value) {
   if (value === 'HOLIDAY') return 'danger'
   if (value === 'SUNDAY') return 'warning'
-  return 'success'
+  if (value === 'WORKING_DAY') return 'success'
+  return 'secondary'
 }
 
 function statusSeverity(value) {
@@ -113,6 +135,7 @@ function statusSeverity(value) {
   if (value === 'REJECTED') return 'danger'
   if (value === 'CANCELLED') return 'contrast'
   if (value === 'PENDING') return 'warning'
+  if (value === 'PENDING_REQUESTER_CONFIRMATION') return 'warning'
   if (value === 'DRAFT') return 'info'
   return 'secondary'
 }
@@ -130,7 +153,9 @@ function formatDateTime(value) {
 function formatTimeRange(row) {
   const start = String(row?.startTime || '').trim()
   const end = String(row?.endTime || '').trim()
+
   if (!start && !end) return '-'
+
   return [start, end].filter(Boolean).join(' - ')
 }
 
@@ -161,12 +186,15 @@ function getTargetEmployees(row) {
   if (Array.isArray(row?.employeeItems)) return row.employeeItems
   if (Array.isArray(row?.targetEmployees)) return row.targetEmployees
   if (Array.isArray(row?.employeeList)) return row.employeeList
+
   return []
 }
 
 function getEmployeeCount(row) {
   const explicitCount = Number(row?.employeeCount || row?.totalEmployees || 0)
+
   if (explicitCount > 0) return explicitCount
+
   return getTargetEmployees(row).length
 }
 
@@ -191,8 +219,8 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
     const items = normalizeItems(payload)
     const total = Number(
       payload?.pagination?.total ||
-      payload?.pagination?.totalRecords ||
-      0,
+        payload?.pagination?.totalRecords ||
+        0,
     )
 
     totalRecords.value = total
@@ -252,6 +280,7 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
 
 function runSearchSoon() {
   window.clearTimeout(searchTimer)
+
   searchTimer = window.setTimeout(() => {
     reloadFirstPage({ keepVisible: true })
   }, SEARCH_DEBOUNCE_MS)
@@ -275,6 +304,7 @@ function clearFilters() {
   filters.dayType = ''
   filters.sortField = 'createdAt'
   filters.sortOrder = -1
+
   reloadFirstPage({ keepVisible: true })
 }
 
@@ -290,6 +320,7 @@ function onSort(event) {
 
   filters.sortField = fieldMap[event.sortField] || 'createdAt'
   filters.sortOrder = typeof event.sortOrder === 'number' ? event.sortOrder : -1
+
   reloadFirstPage({ keepVisible: true })
 }
 
@@ -311,21 +342,25 @@ async function onVirtualLazyLoad(event) {
 
 function goCreate() {
   if (!canCreateRequest.value) return
+
   router.push('/ot/requests/create')
 }
 
 function goDetail(id) {
   if (!id) return
+
   router.push(`/ot/requests/${id}`)
 }
 
 function goEdit(id) {
   if (!id || !canUpdateRequest.value) return
+
   router.push(`/ot/requests/${id}/edit`)
 }
 
 function goVerifyAttendance(id) {
   if (!id || !canVerifyAttendance.value) return
+
   router.push(`/attendance/ot-verification/${id}`)
 }
 
@@ -361,11 +396,14 @@ async function onExportExcel() {
 
     const url = window.URL.createObjectURL(blob)
     const link = document.createElement('a')
+
     link.href = url
-    link.download = getExportFilenameFromHeaders(res?.headers || {})
+    link.download = getExportFilenameFromHeaders(res?.headers || '')
+
     document.body.appendChild(link)
     link.click()
     link.remove()
+
     window.URL.revokeObjectURL(url)
 
     toast.add({
@@ -402,22 +440,20 @@ onBeforeUnmount(() => {
   <div class="flex flex-col gap-4">
     <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
       <div class="min-w-0">
-        <h1 class="text-xl font-semibold text-[color:var(--ot-text)]">
+        <h1 class="text-xl font-medium text-[color:var(--ot-text)]">
           OT Requests
         </h1>
-        <p class="mt-1 text-sm text-[color:var(--ot-text-muted)]">
-          Search OT request by request no, requester, employee, department, or reason, then verify attendance directly.
-        </p>
       </div>
 
       <div class="flex flex-wrap items-center gap-2">
         <div
           class="flex min-w-[92px] flex-col items-center justify-center rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-3 py-2 text-center"
         >
-          <div class="text-[11px] font-semibold uppercase tracking-[0.14em] text-[color:var(--ot-text-muted)]">
+          <div class="text-[11px] font-medium uppercase tracking-[0.14em] text-[color:var(--ot-text-muted)]">
             Total
           </div>
-          <div class="mt-1 text-lg font-semibold leading-none text-[color:var(--ot-text)]">
+
+          <div class="mt-1 text-lg font-medium leading-none text-[color:var(--ot-text)]">
             {{ totalRequests }}
           </div>
         </div>
@@ -447,6 +483,7 @@ onBeforeUnmount(() => {
         <div class="flex flex-col gap-2 xl:flex-row xl:items-center">
           <IconField class="w-full xl:w-[320px] xl:shrink-0">
             <InputIcon class="pi pi-search" />
+
             <InputText
               v-model="filters.search"
               placeholder="Search request no, requester, employee, department, reason"
@@ -529,18 +566,32 @@ onBeforeUnmount(() => {
           </div>
         </template>
 
-        <Column field="requestNo" header="Request No" sortable style="min-width: 10rem">
+        <Column
+          field="requestNo"
+          header="Request No"
+          sortable
+          style="min-width: 10rem"
+        >
           <template #body="{ data }">
-            <span v-if="data" class="font-medium">{{ data.requestNo || '-' }}</span>
+            <span
+              v-if="data"
+              class="font-medium"
+            >
+              {{ data.requestNo || '-' }}
+            </span>
           </template>
         </Column>
 
-        <Column header="Request Owner" style="min-width: 15rem">
+        <Column
+          header="Request Owner"
+          style="min-width: 15rem"
+        >
           <template #body="{ data }">
             <div v-if="data">
               <div class="font-medium text-[color:var(--ot-text)]">
                 {{ formatRequester(data).name }}
               </div>
+
               <div class="text-xs text-[color:var(--ot-text-muted)]">
                 {{ formatRequester(data).employeeNo }}
               </div>
@@ -548,7 +599,10 @@ onBeforeUnmount(() => {
           </template>
         </Column>
 
-        <Column header="Employees" style="min-width: 9rem">
+        <Column
+          header="Employees"
+          style="min-width: 9rem"
+        >
           <template #body="{ data }">
             <Tag
               v-if="data"
@@ -559,61 +613,101 @@ onBeforeUnmount(() => {
           </template>
         </Column>
 
-        <Column field="otDate" header="OT Date" sortable style="min-width: 10rem">
+        <Column
+          field="otDate"
+          header="OT Date"
+          sortable
+          style="min-width: 10rem"
+        >
           <template #body="{ data }">
             <span v-if="data">{{ data.otDate || '-' }}</span>
           </template>
         </Column>
 
-        <Column header="Time" style="min-width: 11rem">
+        <Column
+          header="Time"
+          style="min-width: 11rem"
+        >
           <template #body="{ data }">
             <span v-if="data">{{ formatTimeRange(data) }}</span>
           </template>
         </Column>
 
-        <Column field="breakMinutes" header="Break" style="min-width: 8rem">
+        <Column
+          field="breakMinutes"
+          header="Break"
+          style="min-width: 8rem"
+        >
           <template #body="{ data }">
             <span v-if="data">{{ data.breakMinutes ?? 0 }} min</span>
           </template>
         </Column>
 
-        <Column field="totalHours" header="Hours" sortable style="min-width: 8rem">
+        <Column
+          field="totalHours"
+          header="Hours"
+          sortable
+          style="min-width: 8rem"
+        >
           <template #body="{ data }">
             <span v-if="data">{{ data.totalHours ?? '-' }}</span>
           </template>
         </Column>
 
-        <Column field="dayType" header="Day Type" sortable style="min-width: 9rem">
+        <Column
+          field="dayType"
+          header="Day Type"
+          sortable
+          style="min-width: 9rem"
+        >
           <template #body="{ data }">
             <Tag
               v-if="data"
               :value="data.dayType || '-'"
               :severity="dayTypeSeverity(data.dayType)"
               class="ot-status-tag"
+              :class="dayTypeClass(data.dayType)"
             />
           </template>
         </Column>
 
-        <Column field="status" header="Status" sortable style="min-width: 9rem">
+        <Column
+          field="status"
+          header="Status"
+          sortable
+          style="min-width: 11rem"
+        >
           <template #body="{ data }">
             <Tag
               v-if="data"
               :value="data.status || '-'"
               :severity="statusSeverity(data.status)"
               class="ot-status-tag"
+              :class="statusClass(data.status)"
             />
           </template>
         </Column>
 
-        <Column field="createdAt" header="Created At" sortable style="min-width: 14rem">
+        <Column
+          field="createdAt"
+          header="Created At"
+          sortable
+          style="min-width: 14rem"
+        >
           <template #body="{ data }">
             <span v-if="data">{{ formatDateTime(data.createdAt) }}</span>
           </template>
         </Column>
 
-        <Column header="Actions" style="width: 20rem; min-width: 20rem">
+        <Column
+          header="Actions"
+          style="width: 20rem; min-width: 20rem"
+        >
           <template #body="{ data }">
-            <div v-if="data" class="flex flex-wrap gap-2">
+            <div
+              v-if="data"
+              class="flex flex-wrap gap-2"
+            >
               <Button
                 v-if="canVerifyAttendance"
                 label="Verify"
@@ -669,10 +763,113 @@ onBeforeUnmount(() => {
 
 :deep(.ot-request-table .p-tag.ot-status-tag) {
   min-height: 1.35rem !important;
-  padding: 0.12rem 0.45rem !important;
+  padding: 0.12rem 0.48rem !important;
   font-size: 0.7rem !important;
-  font-weight: 600 !important;
+  font-weight: 500 !important;
   line-height: 1 !important;
   border-radius: 999px !important;
+  border: 1px solid transparent !important;
+}
+
+/* Status colors */
+:deep(.p-tag.ot-status-pending),
+:deep(.p-tag.ot-status-pending-requester-confirmation) {
+  background: #fef3c7 !important;
+  color: #92400e !important;
+  border-color: #f59e0b !important;
+}
+
+:deep(.p-tag.ot-status-approved) {
+  background: #dcfce7 !important;
+  color: #166534 !important;
+  border-color: #22c55e !important;
+}
+
+:deep(.p-tag.ot-status-rejected) {
+  background: #fee2e2 !important;
+  color: #991b1b !important;
+  border-color: #ef4444 !important;
+}
+
+:deep(.p-tag.ot-status-cancelled) {
+  background: #e5e7eb !important;
+  color: #374151 !important;
+  border-color: #9ca3af !important;
+}
+
+:deep(.p-tag.ot-status-draft) {
+  background: #dbeafe !important;
+  color: #1e40af !important;
+  border-color: #3b82f6 !important;
+}
+
+/* Day type colors */
+:deep(.p-tag.ot-day-working-day) {
+  background: #dcfce7 !important;
+  color: #166534 !important;
+  border-color: #22c55e !important;
+}
+
+:deep(.p-tag.ot-day-sunday) {
+  background: #ffedd5 !important;
+  color: #9a3412 !important;
+  border-color: #f97316 !important;
+}
+
+:deep(.p-tag.ot-day-holiday) {
+  background: #fee2e2 !important;
+  color: #991b1b !important;
+  border-color: #ef4444 !important;
+}
+
+/* Dark mode status colors */
+:global(.dark) :deep(.p-tag.ot-status-pending),
+:global(.dark) :deep(.p-tag.ot-status-pending-requester-confirmation) {
+  background: rgba(245, 158, 11, 0.2) !important;
+  color: #fbbf24 !important;
+  border-color: rgba(245, 158, 11, 0.45) !important;
+}
+
+:global(.dark) :deep(.p-tag.ot-status-approved) {
+  background: rgba(34, 197, 94, 0.18) !important;
+  color: #86efac !important;
+  border-color: rgba(34, 197, 94, 0.45) !important;
+}
+
+:global(.dark) :deep(.p-tag.ot-status-rejected) {
+  background: rgba(239, 68, 68, 0.18) !important;
+  color: #fca5a5 !important;
+  border-color: rgba(239, 68, 68, 0.45) !important;
+}
+
+:global(.dark) :deep(.p-tag.ot-status-cancelled) {
+  background: rgba(148, 163, 184, 0.18) !important;
+  color: #cbd5e1 !important;
+  border-color: rgba(148, 163, 184, 0.45) !important;
+}
+
+:global(.dark) :deep(.p-tag.ot-status-draft) {
+  background: rgba(59, 130, 246, 0.18) !important;
+  color: #93c5fd !important;
+  border-color: rgba(59, 130, 246, 0.45) !important;
+}
+
+/* Dark mode day type colors */
+:global(.dark) :deep(.p-tag.ot-day-working-day) {
+  background: rgba(34, 197, 94, 0.18) !important;
+  color: #86efac !important;
+  border-color: rgba(34, 197, 94, 0.45) !important;
+}
+
+:global(.dark) :deep(.p-tag.ot-day-sunday) {
+  background: rgba(249, 115, 22, 0.18) !important;
+  color: #fdba74 !important;
+  border-color: rgba(249, 115, 22, 0.45) !important;
+}
+
+:global(.dark) :deep(.p-tag.ot-day-holiday) {
+  background: rgba(239, 68, 68, 0.18) !important;
+  color: #fca5a5 !important;
+  border-color: rgba(239, 68, 68, 0.45) !important;
 }
 </style>

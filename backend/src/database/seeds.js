@@ -202,6 +202,12 @@ const PERMISSIONS = [
     module: 'SHIFT',
     description: 'Allow updating shift records',
   },
+  {
+    code: 'SHIFT_LOOKUP',
+    name: 'Lookup Shifts',
+    module: 'SHIFT',
+    description: 'Allow reading shift options for selectors and dropdowns only',
+  },
 
   // OT
   {

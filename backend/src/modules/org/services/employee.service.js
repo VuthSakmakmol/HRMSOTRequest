@@ -355,23 +355,36 @@ async function getScopedEmployeeIds(currentUser) {
   if (!myEmployeeId) return new Set()
 
   const childrenMap = new Map()
+
   for (const emp of baseEmployees) {
     const managerId = emp.reportsToEmployeeId ? String(emp.reportsToEmployeeId) : ''
-    if (!childrenMap.has(managerId)) childrenMap.set(managerId, [])
+
+    if (!childrenMap.has(managerId)) {
+      childrenMap.set(managerId, [])
+    }
+
     childrenMap.get(managerId).push(String(emp._id))
   }
 
-  const result = new Set()
+  // ✅ Important: include current user himself
+  const result = new Set([String(myEmployeeId)])
+
+  // ✅ Then include all direct/indirect subordinates
   const queue = [...(childrenMap.get(String(myEmployeeId)) || [])]
 
   while (queue.length) {
     const currentId = queue.shift()
+
     if (!currentId || result.has(currentId)) continue
+
     result.add(currentId)
 
     const children = childrenMap.get(currentId) || []
+
     for (const childId of children) {
-      if (!result.has(childId)) queue.push(childId)
+      if (!result.has(childId)) {
+        queue.push(childId)
+      }
     }
   }
 

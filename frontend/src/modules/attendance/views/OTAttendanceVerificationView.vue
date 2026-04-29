@@ -1,6 +1,8 @@
 <!-- frontend/src/modules/attendance/views/OTAttendanceVerificationView.vue -->
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+// frontend/src/modules/attendance/views/OTAttendanceVerificationView.vue
+
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import Button from 'primevue/button'
@@ -31,8 +33,21 @@ const payload = ref(null)
 const verificationDate = ref(null)
 const requestOptions = ref([])
 const selectedOtRequestId = ref('')
+const selectedRequestStatus = ref('')
 const tableSearch = ref('')
 const tableCategory = ref('')
+
+let requestSearchTimer = null
+let suppressRequestSearch = false
+
+const requestStatusOptions = [
+  { label: 'All OT Requests', value: '' },
+  { label: 'Pending', value: 'PENDING' },
+  { label: 'Approved', value: 'APPROVED' },
+  { label: 'Rejected', value: 'REJECTED' },
+  { label: 'Cancelled', value: 'CANCELLED' },
+  { label: 'Pending Confirmation', value: 'PENDING_REQUESTER_CONFIRMATION' },
+]
 
 const categoryOptions = [
   { label: 'All Results', value: '' },
@@ -428,12 +443,14 @@ function resultSeverity(value) {
 
 function requestOptionLabel(row) {
   const requestNo = s(row?.requestNo) || 'No Request No'
+  const status = upper(row?.status)
   const requester = s(row?.requesterName)
   const option = s(row?.shiftOtOptionLabel)
   const approvedCount = Number(row?.approvedEmployeeCount || 0)
 
   return [
     requestNo,
+    status,
     requester,
     option,
     `${approvedCount} approved`,
@@ -549,16 +566,13 @@ async function loadData() {
     const response = await verifyOTAttendance(activeOtRequestId.value)
     const nextPayload = response?.data?.data || null
 
-    console.log('[OTAttendanceVerification] verify payload:', nextPayload)
-
     payload.value = nextPayload
 
     if (!verificationDate.value && nextPayload?.otRequest?.otDate) {
+      suppressRequestSearch = true
       verificationDate.value = parseYMD(nextPayload.otRequest.otDate)
     }
   } catch (error) {
-    console.error('[OTAttendanceVerification] verify failed:', error)
-
     toast.add({
       severity: 'error',
       summary: 'Load failed',
@@ -573,16 +587,24 @@ async function loadData() {
   }
 }
 
-async function loadRequestsByDate() {
+async function loadRequestsByDate(options = {}) {
+  const { silent = false } = options
   const selectedDate = formatDateYMD(verificationDate.value)
 
   if (!selectedDate) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Attendance date required',
-      detail: 'Please select attendance date first.',
-      life: 2500,
-    })
+    requestOptions.value = []
+    selectedOtRequestId.value = ''
+    clearCurrentResultOnly()
+
+    if (!silent) {
+      toast.add({
+        severity: 'warn',
+        summary: 'OT date required',
+        detail: 'Please select OT date first.',
+        life: 2500,
+      })
+    }
+
     return
   }
 
@@ -592,44 +614,60 @@ async function loadRequestsByDate() {
   clearCurrentResultOnly()
 
   try {
-    const response = await searchOTVerificationRequests({
+    const params = {
       page: 1,
       limit: 100,
-      status: 'APPROVED',
       otDateFrom: selectedDate,
       otDateTo: selectedDate,
-    })
+    }
 
+    if (selectedRequestStatus.value) {
+      params.status = selectedRequestStatus.value
+    }
+
+    const response = await searchOTVerificationRequests(params)
     const payloadValue = normalizePayload(response)
     const items = normalizeItems(payloadValue)
 
-    console.log('[OTAttendanceVerification] date search response:', payloadValue)
-
     requestOptions.value = normalizeRequestOptions(items)
 
-    if (!requestOptions.value.length) {
+    if (!requestOptions.value.length && !silent) {
       toast.add({
         severity: 'warn',
-        summary: 'No approved OT requests',
-        detail: 'No approved OT request found for the selected date.',
+        summary: 'No OT requests',
+        detail: 'No OT request found for the selected date and status.',
         life: 3000,
       })
     }
   } catch (error) {
-    console.error('[OTAttendanceVerification] date search failed:', error)
-
     toast.add({
       severity: 'error',
       summary: 'Load failed',
       detail:
         error?.response?.data?.message ||
         error?.message ||
-        'Failed to load approved OT requests.',
+        'Failed to load OT requests.',
       life: 3500,
     })
   } finally {
     searchLoading.value = false
   }
+}
+
+function scheduleRequestSearch() {
+  window.clearTimeout(requestSearchTimer)
+
+  requestOptions.value = []
+  selectedOtRequestId.value = ''
+  clearCurrentResultOnly()
+
+  if (!verificationDate.value) {
+    return
+  }
+
+  requestSearchTimer = window.setTimeout(() => {
+    loadRequestsByDate({ silent: true })
+  }, 250)
 }
 
 async function onRequestSelected() {
@@ -642,7 +680,10 @@ async function onRequestSelected() {
 }
 
 function clearAll() {
+  window.clearTimeout(requestSearchTimer)
+
   verificationDate.value = null
+  selectedRequestStatus.value = ''
   requestOptions.value = []
   selectedOtRequestId.value = ''
   clearCurrentResultOnly()
@@ -658,11 +699,17 @@ function goBack() {
 }
 
 watch(
-  () => verificationDate.value,
+  () => [
+    formatDateYMD(verificationDate.value),
+    selectedRequestStatus.value,
+  ],
   () => {
-    requestOptions.value = []
-    selectedOtRequestId.value = ''
-    clearCurrentResultOnly()
+    if (suppressRequestSearch) {
+      suppressRequestSearch = false
+      return
+    }
+
+    scheduleRequestSearch()
   },
 )
 
@@ -671,6 +718,10 @@ onMounted(() => {
     selectedOtRequestId.value = routeOtRequestId.value
     loadData()
   }
+})
+
+onBeforeUnmount(() => {
+  window.clearTimeout(requestSearchTimer)
 })
 </script>
 
@@ -682,7 +733,7 @@ onMounted(() => {
       <div class="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
         <div class="min-w-0">
           <div class="flex flex-wrap items-center gap-2">
-            <h1 class="text-xl font-semibold tracking-tight text-[color:var(--ot-text)]">
+            <h1 class="text-xl font-medium tracking-tight text-[color:var(--ot-text)]">
               OT Attendance Verification
             </h1>
 
@@ -700,10 +751,6 @@ onMounted(() => {
               rounded
             />
           </div>
-
-          <p class="mt-1 text-sm text-[color:var(--ot-text-muted)]">
-            Select date, choose approved OT request, then review matched and exception employees.
-          </p>
         </div>
 
         <div class="flex flex-wrap items-center gap-2">
@@ -731,9 +778,9 @@ onMounted(() => {
     <section
       class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] shadow-sm"
     >
-      <div class="grid grid-cols-1 gap-3 p-3 lg:grid-cols-[190px,minmax(0,1fr),auto,auto] lg:items-end">
-        <div class="space-y-1">
-          <label class="text-xs font-semibold uppercase tracking-[0.1em] text-[color:var(--ot-text-muted)]">
+      <div class="ot-filter-row">
+        <div class="filter-field">
+          <label class="filter-label">
             OT Date
           </label>
 
@@ -747,9 +794,9 @@ onMounted(() => {
           />
         </div>
 
-        <div class="space-y-1">
-          <label class="text-xs font-semibold uppercase tracking-[0.1em] text-[color:var(--ot-text-muted)]">
-            Approved OT Request
+        <div class="filter-field">
+          <label class="filter-label">
+            Search OT Request
           </label>
 
           <Select
@@ -758,7 +805,7 @@ onMounted(() => {
             optionLabel="optionLabel"
             optionValue="id"
             class="w-full"
-            placeholder="Search date first, then select request"
+            placeholder="Select OT request"
             :loading="searchLoading"
             :disabled="!requestOptions.length || searchLoading"
             filter
@@ -766,13 +813,20 @@ onMounted(() => {
           />
         </div>
 
-        <Button
-          label="Search Date"
-          icon="pi pi-search"
-          size="small"
-          :loading="searchLoading"
-          @click="loadRequestsByDate"
-        />
+        <div class="filter-field">
+          <label class="filter-label">
+            Request Status
+          </label>
+
+          <Select
+            v-model="selectedRequestStatus"
+            :options="requestStatusOptions"
+            optionLabel="label"
+            optionValue="value"
+            class="w-full"
+            placeholder="All OT Requests"
+          />
+        </div>
 
         <Button
           label="Clear"
@@ -780,6 +834,7 @@ onMounted(() => {
           severity="secondary"
           outlined
           size="small"
+          class="filter-button"
           @click="clearAll"
         />
       </div>
@@ -794,12 +849,12 @@ onMounted(() => {
           :class="`tone-${card.tone}`"
         >
           <div class="flex items-center justify-between gap-2">
-            <div class="text-[11px] font-semibold uppercase tracking-[0.1em] opacity-75">
+            <div class="text-[11px] font-medium uppercase tracking-[0.1em] opacity-75">
               {{ card.label }}
             </div>
             <i :class="card.icon" class="text-xs opacity-70" />
           </div>
-          <div class="mt-1 text-xl font-bold leading-none">
+          <div class="mt-1 text-xl font-medium leading-none">
             {{ card.value }}
           </div>
         </div>
@@ -847,7 +902,7 @@ onMounted(() => {
         <template #content>
           <div class="mb-3 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
             <div class="flex flex-wrap items-center gap-2">
-              <div class="text-base font-semibold text-[color:var(--ot-text)]">
+              <div class="text-base font-medium text-[color:var(--ot-text)]">
                 Verification Result
               </div>
 
@@ -915,7 +970,7 @@ onMounted(() => {
 
             <Column header="Employee" style="min-width: 16rem">
               <template #body="{ data }">
-                <div class="font-semibold text-[color:var(--ot-text)]">
+                <div class="font-medium text-[color:var(--ot-text)]">
                   {{ data.employeeNo || '-' }}
                 </div>
                 <div class="mt-0.5 text-xs text-[color:var(--ot-text-muted)]">
@@ -939,9 +994,9 @@ onMounted(() => {
                 <div class="flex flex-col gap-1 text-sm">
                   <div>
                     In:
-                    <span class="font-semibold">{{ data.clockIn || '-' }}</span>
+                    <span class="font-medium">{{ data.clockIn || '-' }}</span>
                     · Out:
-                    <span class="font-semibold">{{ data.clockOut || '-' }}</span>
+                    <span class="font-medium">{{ data.clockOut || '-' }}</span>
                   </div>
                   <Tag
                     :value="data.attendanceStatus || '-'"
@@ -954,7 +1009,7 @@ onMounted(() => {
 
             <Column header="Expected OT" style="min-width: 11rem">
               <template #body="{ data }">
-                <div class="font-semibold text-[color:var(--ot-text)]">
+                <div class="font-medium text-[color:var(--ot-text)]">
                   {{ data.expectedOtTime }}
                 </div>
                 <div class="mt-0.5 text-xs text-[color:var(--ot-text-muted)]">
@@ -965,7 +1020,7 @@ onMounted(() => {
 
             <Column header="Credited OT" style="min-width: 10rem">
               <template #body="{ data }">
-                <div class="font-semibold text-[color:var(--ot-text)]">
+                <div class="font-medium text-[color:var(--ot-text)]">
                   {{ formatMinutesLabel(data.roundedOtMinutes) }}
                 </div>
                 <div class="mt-0.5 text-xs text-[color:var(--ot-text-muted)]">
@@ -1001,12 +1056,40 @@ onMounted(() => {
       v-else
       class="rounded-2xl border border-dashed border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-4 py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
     >
-      Select an OT date, search approved requests, then choose one request to verify.
+      Select an OT date, choose an OT request, then verify attendance result.
     </div>
   </div>
 </template>
 
 <style scoped>
+.ot-filter-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 190px) minmax(260px, 1fr) minmax(170px, 200px) auto;
+  gap: 0.75rem;
+  align-items: end;
+  padding: 0.75rem;
+}
+
+.filter-field {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.filter-label {
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ot-text-muted);
+}
+
+.filter-button {
+  min-height: 2.4rem;
+  white-space: nowrap;
+}
+
 .verification-stat-card {
   border: 1px solid var(--ot-border);
   border-radius: 1rem;
@@ -1065,7 +1148,7 @@ onMounted(() => {
 
 .info-label {
   font-size: 0.68rem;
-  font-weight: 700;
+  font-weight: 500;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--ot-text-muted);
@@ -1078,7 +1161,7 @@ onMounted(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 0.86rem;
-  font-weight: 700;
+  font-weight: 500;
   color: var(--ot-text);
 }
 
@@ -1096,7 +1179,7 @@ onMounted(() => {
   min-height: 1.3rem !important;
   padding: 0.1rem 0.45rem !important;
   font-size: 0.68rem !important;
-  font-weight: 700 !important;
+  font-weight: 500 !important;
   line-height: 1 !important;
   border-radius: 999px !important;
 }
@@ -1106,5 +1189,21 @@ onMounted(() => {
   overflow: hidden;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+}
+
+@media (max-width: 1100px) {
+  .ot-filter-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .filter-button {
+    width: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  .ot-filter-row {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
