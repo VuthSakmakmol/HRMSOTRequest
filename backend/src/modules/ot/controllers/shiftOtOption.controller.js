@@ -1,95 +1,74 @@
 // backend/src/modules/ot/controllers/shiftOtOption.controller.js
-const mongoose = require('mongoose')
 const shiftOtOptionService = require('../services/shiftOtOption.service')
-const {
-  createShiftOTOptionSchema,
-  updateShiftOTOptionSchema,
-  listShiftOTOptionsQuerySchema,
-  shiftOTOptionIdParamSchema,
-} = require('../validators/shiftOtOption.validation')
 
-function parse(schema, data) {
-  const result = schema.safeParse(data)
+async function lookupShiftOTOptions(req, res, next) {
+  try {
+    const result = await shiftOtOptionService.lookup(req.query || {})
 
-  if (!result.success) {
-    const err = new Error(result.error.issues[0]?.message || 'Validation error')
-    err.status = 400
-    throw err
+    return res.json({
+      ok: true,
+      data: result,
+    })
+  } catch (error) {
+    return next(error)
   }
-
-  return result.data
-}
-
-function parseObjectIdParam(value, label = 'id') {
-  const id = String(value || '').trim()
-
-  if (!mongoose.isValidObjectId(id)) {
-    const err = new Error(`Invalid ${label}`)
-    err.status = 400
-    throw err
-  }
-
-  return id
 }
 
 async function createShiftOTOption(req, res, next) {
   try {
-    const payload = parse(createShiftOTOptionSchema, req.body || {})
-    const data = await shiftOtOptionService.create(payload, req.user)
+    const result = await shiftOtOptionService.create(req.body || {}, req.user)
 
-    res.status(201).json({
+    return res.status(201).json({
       ok: true,
-      data,
+      message: 'Shift OT option created successfully',
+      item: result,
+      data: result,
     })
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function updateShiftOTOption(req, res, next) {
   try {
-    const params = parse(shiftOTOptionIdParamSchema, req.params || {})
-    const payload = parse(updateShiftOTOptionSchema, req.body || {})
-    const data = await shiftOtOptionService.update(params.id, payload, req.user)
+    const result = await shiftOtOptionService.update(req.params.id, req.body || {}, req.user)
 
-    res.json({
+    return res.json({
       ok: true,
-      data,
+      message: 'Shift OT option updated successfully',
+      item: result,
+      data: result,
     })
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function listShiftOTOptions(req, res, next) {
   try {
-    const query = parse(listShiftOTOptionsQuerySchema, req.query || {})
-    const data = await shiftOtOptionService.list(query)
-
-    res.json({
-      ok: true,
-      data,
-    })
+    const result = await shiftOtOptionService.list(req.query || {})
+    return res.json(result)
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function getShiftOTOptionDetail(req, res, next) {
   try {
-    const id = parseObjectIdParam(req.params.id, 'id')
-    const data = await shiftOtOptionService.getById(id)
+    const result = await shiftOtOptionService.getById(req.params.id)
 
-    res.json({
+    return res.json({
       ok: true,
-      data,
+      item: result,
+      data: result,
     })
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 module.exports = {
+  lookupShiftOTOptions,
   createShiftOTOption,
   updateShiftOTOption,
   listShiftOTOptions,

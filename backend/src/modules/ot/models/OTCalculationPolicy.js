@@ -64,6 +64,17 @@ const OTCalculationPolicySchema = new mongoose.Schema(
       default: 0,
     },
 
+    // ✅ SPECIAL COMPANY RULE
+    // Only useful for working-day post-shift OT.
+    // If true, approved OT can be credited when employee is PRESENT/LATE,
+    // even if exact OT end clock-out is not available.
+    allowApprovedOtWithoutExactClockOut: {
+      type: Boolean,
+      required: true,
+      default: false,
+      index: true,
+    },
+
     allowPreShiftOT: {
       type: Boolean,
       required: true,
@@ -123,11 +134,14 @@ OTCalculationPolicySchema.pre('validate', function preValidate(next) {
   this.code = s(this.code).toUpperCase()
   this.name = s(this.name)
   this.description = s(this.description)
-  this.roundMethod = s(this.roundMethod).toUpperCase()
+  this.roundMethod = s(this.roundMethod || 'CEIL').toUpperCase()
 
   this.minEligibleMinutes = Number(this.minEligibleMinutes || 0)
   this.roundUnitMinutes = Number(this.roundUnitMinutes || 0)
   this.graceAfterShiftEndMinutes = Number(this.graceAfterShiftEndMinutes || 0)
+
+  this.allowApprovedOtWithoutExactClockOut =
+    this.allowApprovedOtWithoutExactClockOut === true
 
   if (!Number.isInteger(this.minEligibleMinutes) || this.minEligibleMinutes < 0) {
     return next(new Error('minEligibleMinutes must be a non-negative integer'))
@@ -137,7 +151,10 @@ OTCalculationPolicySchema.pre('validate', function preValidate(next) {
     return next(new Error('roundUnitMinutes must be a positive integer'))
   }
 
-  if (!Number.isInteger(this.graceAfterShiftEndMinutes) || this.graceAfterShiftEndMinutes < 0) {
+  if (
+    !Number.isInteger(this.graceAfterShiftEndMinutes) ||
+    this.graceAfterShiftEndMinutes < 0
+  ) {
     return next(new Error('graceAfterShiftEndMinutes must be a non-negative integer'))
   }
 
@@ -145,6 +162,7 @@ OTCalculationPolicySchema.pre('validate', function preValidate(next) {
 })
 
 OTCalculationPolicySchema.index({ isActive: 1, name: 1 })
+OTCalculationPolicySchema.index({ allowApprovedOtWithoutExactClockOut: 1, isActive: 1 })
 OTCalculationPolicySchema.index({ createdAt: -1 })
 
 module.exports = mongoose.model('OTCalculationPolicy', OTCalculationPolicySchema)

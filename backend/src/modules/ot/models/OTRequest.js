@@ -205,6 +205,10 @@ const OTCalculationPolicySnapshotSchema = new mongoose.Schema(
       min: 0,
       default: 0,
     },
+    allowApprovedOtWithoutExactClockOut: {
+      type: Boolean,
+      default: false,
+    },
     allowPreShiftOT: {
       type: Boolean,
       default: false,

@@ -666,6 +666,10 @@ function buildPolicySnapshot(calculationPolicy) {
     roundUnitMinutes: Number(calculationPolicy?.roundUnitMinutes || 0),
     roundMethod: s(calculationPolicy?.roundMethod),
     graceAfterShiftEndMinutes: Number(calculationPolicy?.graceAfterShiftEndMinutes || 0),
+
+    allowApprovedOtWithoutExactClockOut:
+      calculationPolicy?.allowApprovedOtWithoutExactClockOut === true,
+
     allowPreShiftOT: calculationPolicy?.allowPreShiftOT === true,
     allowPostShiftOT: calculationPolicy?.allowPostShiftOT !== false,
     capByRequestedMinutes: calculationPolicy?.capByRequestedMinutes !== false,

@@ -4,6 +4,10 @@ import api from '@/shared/services/api'
 // =========================
 // OT Calculation Policies
 // =========================
+export function getOTCalculationPolicyLookupOptions(params = {}) {
+  return api.get('/ot/policies/lookup', { params })
+}
+
 export function getOTCalculationPolicies(params = {}) {
   return api.get('/ot/policies', { params })
 }
@@ -23,6 +27,10 @@ export function updateOTCalculationPolicy(id, payload) {
 // =========================
 // Shift OT Options
 // =========================
+export function getShiftOTOptionLookupOptions(params = {}) {
+  return api.get('/ot/shift-options/lookup', { params })
+}
+
 export function getShiftOTOptions(params = {}) {
   return api.get('/ot/shift-options', { params })
 }

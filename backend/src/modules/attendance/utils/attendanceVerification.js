@@ -419,6 +419,10 @@ function normalizePolicySnapshot(snapshot = {}) {
     roundUnitMinutes: safeNonNegativeInt(snapshot?.roundUnitMinutes, 30) || 30,
     roundMethod: upper(snapshot?.roundMethod || 'CEIL'),
     graceAfterShiftEndMinutes: safeNonNegativeInt(snapshot?.graceAfterShiftEndMinutes, 0),
+
+    allowApprovedOtWithoutExactClockOut:
+      snapshot?.allowApprovedOtWithoutExactClockOut === true,
+
     allowPreShiftOT: snapshot?.allowPreShiftOT === true,
     allowPostShiftOT: snapshot?.allowPostShiftOT !== false,
     capByRequestedMinutes: snapshot?.capByRequestedMinutes !== false,
@@ -605,6 +609,7 @@ function buildMismatchResponse(base, reason, overrides = {}) {
 function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
   const normalizedOtRequest = normalizeOtRequestContext(otRequest)
   const attendanceStatus = upper(attendanceRecord?.status)
+  const policy = normalizedOtRequest.otCalculationPolicySnapshot || {}
 
   const base = {
     requestedMinutes: normalizedOtRequest.requestedMinutes,
@@ -622,18 +627,14 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
     otResult: 'MISMATCH',
     otResultReason: '',
 
-    policyCode: s(normalizedOtRequest.otCalculationPolicySnapshot.code),
-    policyName: s(normalizedOtRequest.otCalculationPolicySnapshot.name),
-    policyRoundMethod: s(normalizedOtRequest.otCalculationPolicySnapshot.roundMethod),
-    policyRoundUnitMinutes: Number(
-      normalizedOtRequest.otCalculationPolicySnapshot.roundUnitMinutes || 0,
-    ),
-    policyMinEligibleMinutes: Number(
-      normalizedOtRequest.otCalculationPolicySnapshot.minEligibleMinutes || 0,
-    ),
-    policyGraceAfterShiftEndMinutes: Number(
-      normalizedOtRequest.otCalculationPolicySnapshot.graceAfterShiftEndMinutes || 0,
-    ),
+    policyCode: s(policy.code),
+    policyName: s(policy.name),
+    policyAllowApprovedOtWithoutExactClockOut:
+      policy.allowApprovedOtWithoutExactClockOut === true,
+    policyRoundMethod: s(policy.roundMethod),
+    policyRoundUnitMinutes: Number(policy.roundUnitMinutes || 0),
+    policyMinEligibleMinutes: Number(policy.minEligibleMinutes || 0),
+    policyGraceAfterShiftEndMinutes: Number(policy.graceAfterShiftEndMinutes || 0),
   }
 
   if (normalizedOtRequest.requestedMinutes <= 0) {
@@ -642,9 +643,75 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
     })
   }
 
+  /*
+    ✅ SPECIAL COMPANY RULE
+
+    This rule is ONLY for WORKING_DAY OT.
+
+    If policy allows approved OT without exact clock-out,
+    and employee is PRESENT/LATE for normal shift,
+    system credits approved OT minutes even when clock-out does not reach OT end.
+
+    Sunday/Holiday will NOT use this rule.
+    They continue to strict scan comparison below.
+  */
+  if (
+    upper(normalizedOtRequest.dayType) === 'WORKING_DAY' &&
+    policy.allowApprovedOtWithoutExactClockOut === true
+  ) {
+    if (
+      attendanceStatus === 'FORGET_SCAN_IN' &&
+      policy.treatForgetScanInAsPending
+    ) {
+      return buildMismatchResponse(base, 'Forget scan in is pending review by OT policy', {
+        rawOtDecision: 'PENDING_REVIEW',
+      })
+    }
+
+    if (
+      attendanceStatus === 'FORGET_SCAN_OUT' &&
+      policy.treatForgetScanOutAsPending
+    ) {
+      return buildMismatchResponse(base, 'Forget scan out is pending review by OT policy', {
+        rawOtDecision: 'PENDING_REVIEW',
+      })
+    }
+
+    if (isNormalAttendancePresentForApprovedOt(attendanceStatus)) {
+      return buildApprovedOtWithoutExactOutResponse(
+        base,
+        normalizedOtRequest,
+        attendanceStatus,
+      )
+    }
+
+    if (isAttendanceBlockedForApprovedOt(attendanceStatus)) {
+      return buildMismatchResponse(
+        base,
+        `Approved OT not credited because attendance status is ${attendanceStatus || 'UNKNOWN'}`,
+        {
+          rawOtDecision: 'ATTENDANCE_NOT_PRESENT',
+        },
+      )
+    }
+
+    return buildMismatchResponse(
+      base,
+      `Approved OT requires manual review because attendance status is ${attendanceStatus || 'UNKNOWN'}`,
+      {
+        rawOtDecision: 'PENDING_REVIEW',
+      },
+    )
+  }
+
+  /*
+    ✅ STRICT SCAN LOGIC
+    Sunday/Holiday/non-working-day OT stays here.
+    Also used when allowApprovedOtWithoutExactClockOut = false.
+  */
   if (
     attendanceStatus === 'FORGET_SCAN_IN' &&
-    normalizedOtRequest.otCalculationPolicySnapshot.treatForgetScanInAsPending
+    policy.treatForgetScanInAsPending
   ) {
     return buildMismatchResponse(base, 'Forget scan in is pending review by OT policy', {
       rawOtDecision: 'PENDING_REVIEW',
@@ -653,7 +720,7 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
 
   if (
     attendanceStatus === 'FORGET_SCAN_OUT' &&
-    normalizedOtRequest.otCalculationPolicySnapshot.treatForgetScanOutAsPending
+    policy.treatForgetScanOutAsPending
   ) {
     return buildMismatchResponse(base, 'Forget scan out is pending review by OT policy', {
       rawOtDecision: 'PENDING_REVIEW',
@@ -688,7 +755,6 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
   )
 
   let eligibleOtMinutes = 0
-  const policy = normalizedOtRequest.otCalculationPolicySnapshot
 
   const shiftStartMinutes = normalizedOtRequest.shiftStartMinutes
   const shiftEndMinutes = normalizedOtRequest.shiftEndMinutes
@@ -850,6 +916,8 @@ function buildVerificationItem(requested, attendanceRecord, otRequest) {
 
     policyCode: metrics.policyCode,
     policyName: metrics.policyName,
+     policyAllowApprovedOtWithoutExactClockOut:
+      metrics.policyAllowApprovedOtWithoutExactClockOut,
     policyRoundMethod: metrics.policyRoundMethod,
     policyRoundUnitMinutes: metrics.policyRoundUnitMinutes,
     policyMinEligibleMinutes: metrics.policyMinEligibleMinutes,
