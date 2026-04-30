@@ -10,9 +10,12 @@ const {
   lookupShiftOTOptionsQuerySchema,
 } = require('../validators/shiftOtOption.validation')
 
+const DAY_MINUTES = 24 * 60
+
 function s(value) {
   return String(value ?? '').trim()
 }
+
 function normalizeObjectIdInput(value) {
   if (!value) return ''
   return String(value).trim()
@@ -42,6 +45,87 @@ function parseSchema(schema, data) {
 
 function escapeRegex(value) {
   return s(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function isValidHHmm(value) {
+  return /^([01]\d|2[0-3]):([0-5]\d)$/.test(s(value))
+}
+
+function toMinutes(value) {
+  const raw = s(value)
+
+  if (!isValidHHmm(raw)) return null
+
+  const [hours, minutes] = raw.split(':').map(Number)
+  return hours * 60 + minutes
+}
+
+function buildClockInterval(startTime, endTime) {
+  const start = toMinutes(startTime)
+  const endRaw = toMinutes(endTime)
+
+  if (start === null || endRaw === null) {
+    return null
+  }
+
+  return {
+    start,
+    end: endRaw <= start ? endRaw + DAY_MINUTES : endRaw,
+  }
+}
+
+function durationBetweenTimes(startTime, endTime) {
+  const interval = buildClockInterval(startTime, endTime)
+
+  if (!interval) return 0
+
+  return Math.max(0, interval.end - interval.start)
+}
+
+function overlapMinutes(aStart, aEnd, bStart, bEnd) {
+  return Math.max(0, Math.min(aEnd, bEnd) - Math.max(aStart, bStart))
+}
+
+function getBreakOverlapMinutes({
+  windowStartTime,
+  windowEndTime,
+  breakStartTime,
+  breakEndTime,
+}) {
+  const windowInterval = buildClockInterval(windowStartTime, windowEndTime)
+  const breakInterval = buildClockInterval(breakStartTime, breakEndTime)
+
+  if (!windowInterval || !breakInterval) {
+    return 0
+  }
+
+  const overlaps = [-DAY_MINUTES, 0, DAY_MINUTES].map((offset) =>
+    overlapMinutes(
+      windowInterval.start,
+      windowInterval.end,
+      breakInterval.start + offset,
+      breakInterval.end + offset,
+    ),
+  )
+
+  return Math.max(...overlaps)
+}
+
+function getShiftBreakMinutes(shift = {}) {
+  return durationBetweenTimes(shift?.breakStartTime, shift?.breakEndTime)
+}
+
+function getFixedPaidMinutes({ fixedStartTime, fixedEndTime, shift }) {
+  const grossMinutes = durationBetweenTimes(fixedStartTime, fixedEndTime)
+
+  const breakOverlapMinutes = getBreakOverlapMinutes({
+    windowStartTime: fixedStartTime,
+    windowEndTime: fixedEndTime,
+    breakStartTime: shift?.breakStartTime,
+    breakEndTime: shift?.breakEndTime,
+  })
+
+  return Math.max(1, grossMinutes - breakOverlapMinutes)
 }
 
 function buildListQuery(query = {}) {
@@ -78,12 +162,15 @@ function buildSort(sortField = 'sequence', sortOrder = 1) {
 
   if (sortField === 'label') return { label: direction, sequence: 1, _id: -1 }
   if (sortField === 'timingMode') return { timingMode: direction, sequence: 1, _id: -1 }
+
   if (sortField === 'requestedMinutes') {
     return { requestedMinutes: direction, sequence: 1, _id: -1 }
   }
+
   if (sortField === 'startAfterShiftEndMinutes') {
     return { startAfterShiftEndMinutes: direction, sequence: 1, _id: -1 }
   }
+
   if (sortField === 'isActive') return { isActive: direction, sequence: 1, _id: -1 }
   if (sortField === 'createdAt') return { createdAt: direction, _id: -1 }
   if (sortField === 'updatedAt') return { updatedAt: direction, _id: -1 }
@@ -99,11 +186,17 @@ function normalizeShiftSnapshot(shift) {
       name: '',
       type: '',
       startTime: '',
+      breakStartTime: '',
+      breakEndTime: '',
       endTime: '',
       crossMidnight: false,
+      breakMinutes: 0,
       isActive: false,
     }
   }
+
+  const breakStartTime = s(shift.breakStartTime)
+  const breakEndTime = s(shift.breakEndTime)
 
   return {
     id: shift?._id ? String(shift._id) : null,
@@ -111,8 +204,11 @@ function normalizeShiftSnapshot(shift) {
     name: s(shift.name),
     type: s(shift.type),
     startTime: s(shift.startTime),
+    breakStartTime,
+    breakEndTime,
     endTime: s(shift.endTime),
     crossMidnight: shift.crossMidnight === true,
+    breakMinutes: getShiftBreakMinutes(shift),
     isActive: shift.isActive !== false,
   }
 }
@@ -157,6 +253,7 @@ function normalizeShiftOTOption(doc) {
 
   const requestedMinutes = Number(doc.requestedMinutes || 0)
   const timingMode = upper(doc.timingMode || 'AFTER_SHIFT_END')
+  const normalizedShift = normalizeShiftSnapshot(shift)
 
   return {
     id: String(doc._id),
@@ -168,7 +265,7 @@ function normalizeShiftOTOption(doc) {
         ? String(doc.shiftId)
         : '',
 
-    shift: normalizeShiftSnapshot(shift),
+    shift: normalizedShift,
 
     label: s(doc.label),
 
@@ -246,6 +343,8 @@ function populateQuery(query) {
         name: 1,
         type: 1,
         startTime: 1,
+        breakStartTime: 1,
+        breakEndTime: 1,
         endTime: 1,
         crossMidnight: 1,
         isActive: 1,
@@ -331,6 +430,46 @@ function actorAccountId(authUser) {
   return authUser?.accountId || authUser?._id || null
 }
 
+function applyTimingModeRules(data, shift) {
+  const timingMode = upper(data.timingMode || 'AFTER_SHIFT_END')
+
+  data.timingMode = timingMode
+
+  if (timingMode === 'AFTER_SHIFT_END') {
+    data.fixedStartTime = ''
+    data.fixedEndTime = ''
+    data.startAfterShiftEndMinutes = Number(data.startAfterShiftEndMinutes || 0)
+    data.requestedMinutes = Number(data.requestedMinutes || 0)
+
+    return data
+  }
+
+  if (timingMode === 'FIXED_TIME') {
+    if (!isValidHHmm(data.fixedStartTime)) {
+      throw createHttpError('fixedStartTime must be in HH:mm format', 400)
+    }
+
+    if (!isValidHHmm(data.fixedEndTime)) {
+      throw createHttpError('fixedEndTime must be in HH:mm format', 400)
+    }
+
+    if (data.fixedStartTime === data.fixedEndTime) {
+      throw createHttpError('fixedStartTime and fixedEndTime cannot be the same', 400)
+    }
+
+    data.startAfterShiftEndMinutes = 0
+    data.requestedMinutes = getFixedPaidMinutes({
+      fixedStartTime: data.fixedStartTime,
+      fixedEndTime: data.fixedEndTime,
+      shift,
+    })
+
+    return data
+  }
+
+  throw createHttpError('timingMode must be AFTER_SHIFT_END or FIXED_TIME', 400)
+}
+
 async function lookup(query = {}) {
   const parsed = parseSchema(lookupShiftOTOptionsQuerySchema, query)
 
@@ -354,8 +493,10 @@ async function lookup(query = {}) {
 async function create(payload, authUser) {
   const data = parseSchema(createShiftOTOptionSchema, payload)
 
-  await assertShiftExists(data.shiftId)
+  const shift = await assertShiftExists(data.shiftId)
   await assertPolicyExists(data.calculationPolicyId)
+
+  applyTimingModeRules(data, shift)
 
   if (data.isActive !== false) {
     await ensureUniqueActiveLabel({
@@ -390,35 +531,77 @@ async function update(id, payload, authUser) {
 
   const nextShiftId = data.shiftId || doc.shiftId
   const nextPolicyId = data.calculationPolicyId || doc.calculationPolicyId
-  const nextLabel = Object.prototype.hasOwnProperty.call(data, 'label')
-    ? data.label
-    : doc.label
-  const nextSequence = Object.prototype.hasOwnProperty.call(data, 'sequence')
-    ? data.sequence
-    : doc.sequence
-  const nextIsActive = Object.prototype.hasOwnProperty.call(data, 'isActive')
-    ? data.isActive
-    : doc.isActive
 
-  await assertShiftExists(nextShiftId)
+  const nextData = {
+    shiftId: nextShiftId,
+    calculationPolicyId: nextPolicyId,
+
+    label: Object.prototype.hasOwnProperty.call(data, 'label') ? data.label : doc.label,
+
+    timingMode: Object.prototype.hasOwnProperty.call(data, 'timingMode')
+      ? data.timingMode
+      : doc.timingMode,
+
+    startAfterShiftEndMinutes: Object.prototype.hasOwnProperty.call(
+      data,
+      'startAfterShiftEndMinutes',
+    )
+      ? data.startAfterShiftEndMinutes
+      : doc.startAfterShiftEndMinutes,
+
+    fixedStartTime: Object.prototype.hasOwnProperty.call(data, 'fixedStartTime')
+      ? data.fixedStartTime
+      : doc.fixedStartTime,
+
+    fixedEndTime: Object.prototype.hasOwnProperty.call(data, 'fixedEndTime')
+      ? data.fixedEndTime
+      : doc.fixedEndTime,
+
+    requestedMinutes: Object.prototype.hasOwnProperty.call(data, 'requestedMinutes')
+      ? data.requestedMinutes
+      : doc.requestedMinutes,
+
+    sequence: Object.prototype.hasOwnProperty.call(data, 'sequence')
+      ? data.sequence
+      : doc.sequence,
+
+    isActive: Object.prototype.hasOwnProperty.call(data, 'isActive')
+      ? data.isActive
+      : doc.isActive,
+  }
+
+  const shift = await assertShiftExists(nextShiftId)
   await assertPolicyExists(nextPolicyId)
 
-  if (nextIsActive !== false) {
+  applyTimingModeRules(nextData, shift)
+
+  if (nextData.isActive !== false) {
     await ensureUniqueActiveLabel({
-      shiftId: nextShiftId,
-      label: nextLabel,
+      shiftId: nextData.shiftId,
+      label: nextData.label,
       excludeId: optionId,
     })
 
     await ensureUniqueActiveSequence({
-      shiftId: nextShiftId,
-      sequence: nextSequence,
+      shiftId: nextData.shiftId,
+      sequence: nextData.sequence,
       excludeId: optionId,
     })
   }
 
-  Object.assign(doc, data)
-  doc.updatedBy = actorAccountId(authUser)
+  Object.assign(doc, {
+    shiftId: nextData.shiftId,
+    calculationPolicyId: nextData.calculationPolicyId,
+    label: nextData.label,
+    timingMode: nextData.timingMode,
+    startAfterShiftEndMinutes: nextData.startAfterShiftEndMinutes,
+    fixedStartTime: nextData.fixedStartTime,
+    fixedEndTime: nextData.fixedEndTime,
+    requestedMinutes: nextData.requestedMinutes,
+    sequence: nextData.sequence,
+    isActive: nextData.isActive,
+    updatedBy: actorAccountId(authUser),
+  })
 
   await doc.save()
 

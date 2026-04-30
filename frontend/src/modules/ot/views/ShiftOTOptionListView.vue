@@ -1,5 +1,7 @@
 <!-- frontend/src/modules/ot/views/ShiftOTOptionListView.vue -->
 <script setup>
+// frontend/src/modules/ot/views/ShiftOTOptionListView.vue
+
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useToast } from 'primevue/usetoast'
 
@@ -27,6 +29,7 @@ import {
 const toast = useToast()
 const auth = useAuthStore()
 
+const DAY_MINUTES = 24 * 60
 const PAGE_SIZE = 10
 const SEARCH_DEBOUNCE_MS = 250
 const LOOKUP_LIMIT = 50
@@ -82,14 +85,8 @@ const timingModeOptions = [
 ]
 
 const formTimingModeOptions = [
-  {
-    label: 'After Shift End',
-    value: 'AFTER_SHIFT_END',
-  },
-  {
-    label: 'Fixed Time',
-    value: 'FIXED_TIME',
-  },
+  { label: 'After Shift End', value: 'AFTER_SHIFT_END' },
+  { label: 'Fixed Time', value: 'FIXED_TIME' },
 ]
 
 const filterShiftOptions = computed(() => [
@@ -147,12 +144,30 @@ const previewWindow = computed(() => {
     return {
       start,
       end,
+      grossMinutes: Number(form.requestedMinutes || 0),
+      breakMinutes: 0,
+      paidMinutes: Number(form.requestedMinutes || 0),
     }
   }
+
+  const grossMinutes =
+    isValidHHmm(form.fixedStartTime) && isValidHHmm(form.fixedEndTime)
+      ? durationBetweenTimes(form.fixedStartTime, form.fixedEndTime)
+      : 0
+
+  const breakMinutes = getSelectedShiftBreakOverlapMinutes(
+    form.fixedStartTime,
+    form.fixedEndTime,
+  )
+
+  const paidMinutes = getFixedPaidMinutes(form.fixedStartTime, form.fixedEndTime)
 
   return {
     start: form.fixedStartTime || '',
     end: form.fixedEndTime || '',
+    grossMinutes,
+    breakMinutes,
+    paidMinutes,
   }
 })
 
@@ -211,6 +226,10 @@ function normalizeLookupItems(res) {
         ...item,
         label,
         value: id,
+        startTime: item?.startTime || item?.shift?.startTime || '',
+        breakStartTime: item?.breakStartTime || item?.shift?.breakStartTime || '',
+        breakEndTime: item?.breakEndTime || item?.shift?.breakEndTime || '',
+        endTime: item?.endTime || item?.shift?.endTime || '',
       }
     })
     .filter(Boolean)
@@ -234,11 +253,25 @@ function toMinutes(value) {
 }
 
 function fromMinutes(value) {
-  const total = ((Number(value || 0) % 1440) + 1440) % 1440
+  const total = ((Number(value || 0) % DAY_MINUTES) + DAY_MINUTES) % DAY_MINUTES
   const hours = Math.floor(total / 60)
   const minutes = total % 60
 
   return `${pad2(hours)}:${pad2(minutes)}`
+}
+
+function buildClockInterval(startTime, endTime) {
+  const start = toMinutes(startTime)
+  const endRaw = toMinutes(endTime)
+
+  if (start === null || endRaw === null) {
+    return null
+  }
+
+  return {
+    start,
+    end: endRaw <= start ? endRaw + DAY_MINUTES : endRaw,
+  }
 }
 
 function addMinutesToHHmm(time, minutesToAdd) {
@@ -250,18 +283,144 @@ function addMinutesToHHmm(time, minutesToAdd) {
 }
 
 function durationBetweenTimes(startTime, endTime) {
-  const start = toMinutes(startTime)
-  const end = toMinutes(endTime)
+  const interval = buildClockInterval(startTime, endTime)
 
-  if (start === null || end === null) return 0
+  if (!interval) return 0
 
-  let diff = end - start
+  return Math.max(0, interval.end - interval.start)
+}
 
-  if (diff <= 0) {
-    diff += 1440
+function overlapMinutes(aStart, aEnd, bStart, bEnd) {
+  return Math.max(0, Math.min(aEnd, bEnd) - Math.max(aStart, bStart))
+}
+
+function getBreakTimeRange(value = {}) {
+  const shift = value?.shift || {}
+
+  return {
+    breakStartTime: String(
+      value?.breakStartTime ||
+        shift?.breakStartTime ||
+        '',
+    ).trim(),
+
+    breakEndTime: String(
+      value?.breakEndTime ||
+        shift?.breakEndTime ||
+        '',
+    ).trim(),
+  }
+}
+
+function getBreakLabel(value = {}) {
+  const { breakStartTime, breakEndTime } = getBreakTimeRange(value)
+
+  if (!breakStartTime || !breakEndTime) return '-'
+
+  return `${breakStartTime} - ${breakEndTime}`
+}
+
+function getBreakOverlapMinutes({
+  windowStartTime,
+  windowEndTime,
+  breakStartTime,
+  breakEndTime,
+}) {
+  const windowInterval = buildClockInterval(windowStartTime, windowEndTime)
+  const breakInterval = buildClockInterval(breakStartTime, breakEndTime)
+
+  if (!windowInterval || !breakInterval) {
+    return 0
   }
 
-  return diff
+  const overlaps = [-DAY_MINUTES, 0, DAY_MINUTES].map((offset) => {
+    return overlapMinutes(
+      windowInterval.start,
+      windowInterval.end,
+      breakInterval.start + offset,
+      breakInterval.end + offset,
+    )
+  })
+
+  return Math.max(...overlaps)
+}
+
+function getBreakOverlapForValue(value = {}, windowStartTime, windowEndTime) {
+  const { breakStartTime, breakEndTime } = getBreakTimeRange(value)
+
+  return getBreakOverlapMinutes({
+    windowStartTime,
+    windowEndTime,
+    breakStartTime,
+    breakEndTime,
+  })
+}
+
+function getSelectedShiftBreakOverlapMinutes(
+  startTime = form.fixedStartTime,
+  endTime = form.fixedEndTime,
+) {
+  return getBreakOverlapForValue(selectedShiftOption.value || {}, startTime, endTime)
+}
+
+function getSelectedShiftBreakLabel() {
+  return getBreakLabel(selectedShiftOption.value || {})
+}
+
+function getFixedPaidMinutes(startTime, endTime) {
+  if (!isValidHHmm(startTime) || !isValidHHmm(endTime)) return 0
+
+  const grossMinutes = durationBetweenTimes(startTime, endTime)
+  const breakOverlap = getSelectedShiftBreakOverlapMinutes(startTime, endTime)
+
+  return Math.max(1, grossMinutes - breakOverlap)
+}
+
+function syncFixedRequestedMinutes() {
+  if (form.timingMode !== 'FIXED_TIME') return
+  if (!isValidHHmm(form.fixedStartTime) || !isValidHHmm(form.fixedEndTime)) return
+
+  form.requestedMinutes = getFixedPaidMinutes(form.fixedStartTime, form.fixedEndTime)
+}
+
+function upsertShiftOptionFromSnapshot(shift = {}) {
+  const id = String(shift?.id || shift?._id || '').trim()
+  if (!id) return
+
+  const existingIndex = shiftSelectOptions.value.findIndex((item) => item.value === id)
+
+  const code = String(shift?.code || '').trim()
+  const name = String(shift?.name || '').trim()
+  const start = String(shift?.startTime || '').trim()
+  const breakStart = String(shift?.breakStartTime || '').trim()
+  const breakEnd = String(shift?.breakEndTime || '').trim()
+  const end = String(shift?.endTime || '').trim()
+
+  const label =
+    [code, name].filter(Boolean).join(' - ') ||
+    [name, start && end ? `(${start}-${end})` : ''].filter(Boolean).join(' ') ||
+    id
+
+  const nextItem = {
+    ...shift,
+    id,
+    value: id,
+    label,
+    startTime: start,
+    breakStartTime: breakStart,
+    breakEndTime: breakEnd,
+    endTime: end,
+  }
+
+  if (existingIndex >= 0) {
+    shiftSelectOptions.value[existingIndex] = {
+      ...shiftSelectOptions.value[existingIndex],
+      ...nextItem,
+    }
+    return
+  }
+
+  shiftSelectOptions.value = [nextItem, ...shiftSelectOptions.value]
 }
 
 function buildQuery(page) {
@@ -504,6 +663,8 @@ function openCreateDialog() {
 function openEditDialog(row) {
   if (!canUpdateShiftOTOption.value) return
 
+  upsertShiftOptionFromSnapshot(row?.shift || {})
+
   editingOptionId.value = String(row?.id || row?._id || '').trim()
   form.shiftId = String(row?.shiftId || row?.shift?.id || row?.shift?._id || '').trim()
   form.label = String(row?.label || '').trim()
@@ -520,6 +681,10 @@ function openEditDialog(row) {
   ).trim()
   form.sequence = Number(row?.sequence || 1)
   form.isActive = row?.isActive !== false
+
+  if (form.timingMode === 'FIXED_TIME') {
+    syncFixedRequestedMinutes()
+  }
 
   optionDialogVisible.value = true
 }
@@ -711,8 +876,13 @@ function shiftSubLabel(row) {
   const type = String(shift?.type || '').trim()
   const start = String(shift?.startTime || '').trim()
   const end = String(shift?.endTime || '').trim()
+  const breakLabel = getBreakLabel(row)
 
-  return [type, start && end ? `${start} - ${end}` : '']
+  return [
+    type,
+    start && end ? `${start} - ${end}` : '',
+    breakLabel !== '-' ? `Break ${breakLabel}` : '',
+  ]
     .filter(Boolean)
     .join(' · ') || '-'
 }
@@ -778,7 +948,17 @@ function optionTimingSubLabel(row) {
   const timingMode = String(row?.timingMode || 'AFTER_SHIFT_END').toUpperCase()
 
   if (timingMode === 'FIXED_TIME') {
-    return 'Uses fixed start/end time'
+    const breakOverlap = getBreakOverlapForValue(
+      row,
+      row?.fixedStartTime,
+      row?.fixedEndTime,
+    )
+
+    if (breakOverlap > 0) {
+      return `Fixed time · Break ${breakOverlap} min deducted`
+    }
+
+    return 'Fixed time · No break inside OT window'
   }
 
   return `Starts ${Number(row?.startAfterShiftEndMinutes || 0)} min after shift end`
@@ -796,21 +976,15 @@ watch(
 
     if (mode === 'FIXED_TIME') {
       form.startAfterShiftEndMinutes = 0
-
-      if (isValidHHmm(form.fixedStartTime) && isValidHHmm(form.fixedEndTime)) {
-        form.requestedMinutes = durationBetweenTimes(form.fixedStartTime, form.fixedEndTime)
-      }
+      syncFixedRequestedMinutes()
     }
   },
 )
 
 watch(
-  () => [form.fixedStartTime, form.fixedEndTime, form.timingMode],
+  () => [form.fixedStartTime, form.fixedEndTime, form.timingMode, form.shiftId],
   () => {
-    if (form.timingMode !== 'FIXED_TIME') return
-    if (!isValidHHmm(form.fixedStartTime) || !isValidHHmm(form.fixedEndTime)) return
-
-    form.requestedMinutes = durationBetweenTimes(form.fixedStartTime, form.fixedEndTime)
+    syncFixedRequestedMinutes()
   },
 )
 
@@ -1028,7 +1202,7 @@ onBeforeUnmount(() => {
           </template>
         </Column>
 
-        <Column field="requestedMinutes" header="Requested" sortable style="min-width: 10rem">
+        <Column field="requestedMinutes" header="Requested/Paid OT" sortable style="min-width: 11rem">
           <template #body="{ data }">
             <Tag
               v-if="data"
@@ -1209,7 +1383,7 @@ onBeforeUnmount(() => {
 
             <div class="space-y-2">
               <label class="text-sm font-medium text-[color:var(--ot-text)]">
-                Requested Minutes
+                Requested/Paid Minutes
               </label>
               <InputNumber
                 v-model="form.requestedMinutes"
@@ -1217,9 +1391,10 @@ onBeforeUnmount(() => {
                 class="w-full"
                 :min="1"
                 :useGrouping="false"
+                disabled
               />
               <p class="text-xs text-[color:var(--ot-text-muted)]">
-                Auto-calculated from fixed time.
+                Auto-calculated from fixed time minus only overlapping shift break.
               </p>
             </div>
           </div>
@@ -1271,6 +1446,11 @@ onBeforeUnmount(() => {
               </div>
 
               <div>
+                <span class="font-medium text-[color:var(--ot-text)]">Shift Break:</span>
+                {{ getSelectedShiftBreakLabel() }}
+              </div>
+
+              <div>
                 <span class="font-medium text-[color:var(--ot-text)]">Timing Mode:</span>
                 {{ timingModeLabel(form.timingMode) }}
               </div>
@@ -1285,8 +1465,21 @@ onBeforeUnmount(() => {
                 {{ previewWindow.start || '-' }} - {{ previewWindow.end || '-' }}
               </div>
 
+              <div v-if="isFixedTimeMode">
+                <span class="font-medium text-[color:var(--ot-text)]">Fixed Duration:</span>
+                {{ previewWindow.grossMinutes }} min
+                <span class="ml-1">
+                  ({{ formatMinutesLabel(previewWindow.grossMinutes) }})
+                </span>
+              </div>
+
+              <div v-if="isFixedTimeMode">
+                <span class="font-medium text-[color:var(--ot-text)]">Break Deducted in OT Window:</span>
+                {{ previewWindow.breakMinutes }} min
+              </div>
+
               <div>
-                <span class="font-medium text-[color:var(--ot-text)]">Requested:</span>
+                <span class="font-medium text-[color:var(--ot-text)]">Requested/Paid OT:</span>
                 {{ Number(form.requestedMinutes || 0) }} min
                 <span class="ml-1">
                   ({{ formatMinutesLabel(form.requestedMinutes) }})
@@ -1322,10 +1515,10 @@ onBeforeUnmount(() => {
 
               <div class="rounded-xl border border-[color:var(--ot-border)] px-3 py-2">
                 <div class="font-semibold text-[color:var(--ot-text)]">
-                  Sunday/Holiday: 08:00 - 17:00
+                  Sunday/Holiday: Fixed Time
                 </div>
                 <div class="mt-1">
-                  Timing Mode = Fixed Time, Fixed Start = 08:00, Fixed End = 17:00.
+                  Paid OT = fixed duration minus only the break time that overlaps the OT window.
                 </div>
               </div>
             </div>

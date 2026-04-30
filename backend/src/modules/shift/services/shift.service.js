@@ -124,11 +124,30 @@ function validateShiftBusinessRules(payload) {
   }
 }
 
-function calculateWorkingMinutes(doc) {
+function calculateBreakMinutes(doc) {
   try {
     const timeline = buildShiftTimeline(doc)
-    const breakMinutes = timeline.breakEndMin - timeline.breakStartMin
-    return Math.max(0, timeline.endMin - timeline.startMin - breakMinutes)
+    return Math.max(0, timeline.breakEndMin - timeline.breakStartMin)
+  } catch {
+    return 0
+  }
+}
+
+function calculateGrossMinutes(doc) {
+  try {
+    const timeline = buildShiftTimeline(doc)
+    return Math.max(0, timeline.endMin - timeline.startMin)
+  } catch {
+    return 0
+  }
+}
+
+function calculateWorkingMinutes(doc) {
+  try {
+    const grossMinutes = calculateGrossMinutes(doc)
+    const breakMinutes = calculateBreakMinutes(doc)
+
+    return Math.max(0, grossMinutes - breakMinutes)
   } catch {
     return 0
   }
@@ -175,20 +194,34 @@ function normalizeShift(doc) {
   if (!doc) return null
 
   const startTime = doc.startTime || ''
+  const breakStartTime = doc.breakStartTime || ''
+  const breakEndTime = doc.breakEndTime || ''
   const endTime = doc.endTime || ''
+
+  const breakMinutes = calculateBreakMinutes(doc)
+  const grossMinutes = calculateGrossMinutes(doc)
+  const workingMinutes = calculateWorkingMinutes(doc)
 
   return {
     id: String(doc._id),
     _id: String(doc._id),
+
     code: doc.code || '',
     name: doc.name || '',
     type: doc.type || 'DAY',
+
     startTime,
-    breakStartTime: doc.breakStartTime || '',
-    breakEndTime: doc.breakEndTime || '',
+    breakStartTime,
+    breakEndTime,
     endTime,
+
     crossMidnight: startTime && endTime ? isCrossMidnight(startTime, endTime) : false,
-    workingMinutes: calculateWorkingMinutes(doc),
+
+    grossMinutes,
+    breakMinutes,
+    breakTimeMinutes: breakMinutes,
+    workingMinutes,
+
     isActive: !!doc.isActive,
     createdAt: doc.createdAt || null,
     updatedAt: doc.updatedAt || null,
@@ -202,11 +235,24 @@ function normalizeShiftLookupItem(doc) {
 
   return {
     id: item.id,
+    _id: item._id,
+
     code: item.code,
     name: item.name,
     type: item.type,
+
     startTime: item.startTime,
+    breakStartTime: item.breakStartTime,
+    breakEndTime: item.breakEndTime,
     endTime: item.endTime,
+
+    crossMidnight: item.crossMidnight,
+
+    grossMinutes: item.grossMinutes,
+    breakMinutes: item.breakMinutes,
+    breakTimeMinutes: item.breakTimeMinutes,
+    workingMinutes: item.workingMinutes,
+
     label: [item.code, item.name].filter(Boolean).join(' - '),
     isActive: item.isActive,
   }
@@ -364,6 +410,8 @@ async function exportShiftsExcel(query = {}) {
       BreakEndTime: normalized.breakEndTime,
       EndTime: normalized.endTime,
       CrossMidnight: normalized.crossMidnight ? 'Yes' : 'No',
+      GrossMinutes: normalized.grossMinutes,
+      BreakMinutes: normalized.breakMinutes,
       WorkingMinutes: normalized.workingMinutes,
       Status: normalized.isActive ? 'Active' : 'Inactive',
       CreatedAt: normalized.createdAt ? new Date(normalized.createdAt).toLocaleString() : '',
@@ -383,6 +431,7 @@ async function exportShiftsExcel(query = {}) {
     { wch: 16 },
     { wch: 16 },
     { wch: 12 },
+    { wch: 16 },
     { wch: 16 },
     { wch: 16 },
     { wch: 12 },
