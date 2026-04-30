@@ -52,6 +52,7 @@ const requestStatusOptions = [
 const categoryOptions = [
   { label: 'All Results', value: '' },
   { label: 'Matched', value: 'MATCH' },
+  { label: 'Partial Credited', value: 'PARTIAL' },
   { label: 'Match Without Exact Out', value: 'MATCH_WITHOUT_EXACT_OUT' },
   { label: 'Mismatch', value: 'MISMATCH' },
   { label: 'Absent Approved', value: 'ABSENT_APPROVED' },
@@ -146,45 +147,6 @@ const requestPolicyLabel = computed(() => {
   return code || name || '-'
 })
 
-const summaryCards = computed(() => [
-  {
-    label: 'Approved',
-    value: Number(verification.value?.approvedEmployeeCount || 0),
-    icon: 'pi pi-users',
-    tone: 'blue',
-  },
-  {
-    label: 'Matched',
-    value: verificationRows.value.filter((row) => row.result === 'MATCH').length,
-    icon: 'pi pi-check-circle',
-    tone: 'green',
-  },
-  {
-    label: 'Mismatch',
-    value: verificationRows.value.filter((row) => row.result === 'MISMATCH').length,
-    icon: 'pi pi-times-circle',
-    tone: 'red',
-  },
-  {
-    label: 'Pending',
-    value: Number(verification.value?.pendingReviewCount || 0),
-    icon: 'pi pi-clock',
-    tone: 'violet',
-  },
-  {
-    label: 'Absent',
-    value: Number(verification.value?.absentFromApprovedCount || 0),
-    icon: 'pi pi-user-minus',
-    tone: 'amber',
-  },
-  {
-    label: 'Not Approved',
-    value: Number(verification.value?.attendedButNotApprovedCount || 0),
-    icon: 'pi pi-exclamation-triangle',
-    tone: 'cyan',
-  },
-])
-
 const verificationRows = computed(() => {
   const map = new Map()
 
@@ -238,12 +200,76 @@ const verificationRows = computed(() => {
   return Array.from(map.values())
 })
 
+const partialVerificationRows = computed(() => {
+  return verificationRows.value.filter((row) => isPartialCredited(row))
+})
+
+const hardMismatchVerificationRows = computed(() => {
+  return verificationRows.value.filter((row) => {
+    return row.result === 'MISMATCH' && !isPartialCredited(row)
+  })
+})
+
+const summaryCards = computed(() => [
+  {
+    label: 'Approved',
+    value: Number(verification.value?.approvedEmployeeCount || 0),
+    icon: 'pi pi-users',
+    tone: 'blue',
+  },
+  {
+    label: 'Matched',
+    value: verificationRows.value.filter((row) => row.result === 'MATCH').length,
+    icon: 'pi pi-check-circle',
+    tone: 'green',
+  },
+  {
+    label: 'Partial',
+    value: partialVerificationRows.value.length,
+    icon: 'pi pi-clock',
+    tone: 'yellow',
+  },
+  {
+    label: 'Mismatch',
+    value: hardMismatchVerificationRows.value.length,
+    icon: 'pi pi-times-circle',
+    tone: 'red',
+  },
+  {
+    label: 'Pending',
+    value: Number(verification.value?.pendingReviewCount || 0),
+    icon: 'pi pi-hourglass',
+    tone: 'violet',
+  },
+  {
+    label: 'Absent',
+    value: Number(verification.value?.absentFromApprovedCount || 0),
+    icon: 'pi pi-user-minus',
+    tone: 'amber',
+  },
+  {
+    label: 'Not Approved',
+    value: Number(verification.value?.attendedButNotApprovedCount || 0),
+    icon: 'pi pi-exclamation-triangle',
+    tone: 'cyan',
+  },
+])
+
 const filteredVerificationRows = computed(() => {
   const keyword = String(tableSearch.value || '').trim().toLowerCase()
   const category = String(tableCategory.value || '').trim()
 
   return verificationRows.value.filter((row) => {
-    if (category && row.category !== category && row.result !== category) return false
+    if (category === 'PARTIAL' && !isPartialCredited(row)) return false
+
+    if (
+      category &&
+      category !== 'PARTIAL' &&
+      row.category !== category &&
+      row.result !== category
+    ) {
+      return false
+    }
 
     if (!keyword) return true
 
@@ -252,6 +278,8 @@ const filteredVerificationRows = computed(() => {
       row.employeeName,
       row.categoryLabel,
       row.result,
+      resultDisplayLabel(row),
+      resultMeaningLabel(row),
       row.attendanceStatus,
       row.rawDecision,
       row.reason,
@@ -439,6 +467,94 @@ function timingModeSeverity(value) {
 
 function resultSeverity(value) {
   return upper(value) === 'MATCH' ? 'success' : 'danger'
+}
+
+function isPartialCredited(row) {
+  const result = upper(row?.result)
+  const requested = Number(row?.requestedMinutes || 0)
+  const credited = Number(row?.roundedOtMinutes || 0)
+
+  return result === 'MISMATCH' && requested > 0 && credited > 0 && credited < requested
+}
+
+function resultDisplayLabel(row) {
+  if (isPartialCredited(row)) return 'PARTIAL'
+  return upper(row?.result) === 'MATCH' ? 'MATCH' : 'MISMATCH'
+}
+
+function resultVisualSeverity(row) {
+  if (isPartialCredited(row)) return 'warning'
+  return upper(row?.result) === 'MATCH' ? 'success' : 'danger'
+}
+
+function resultMeaningTone(row) {
+  if (isPartialCredited(row)) return 'is-partial'
+  return upper(row?.result) === 'MATCH' ? 'is-match' : 'is-mismatch'
+}
+
+function resultMeaningLabel(row) {
+  const category = upper(row?.category)
+  const result = upper(row?.result)
+  const requested = Number(row?.requestedMinutes || 0)
+  const credited = Number(row?.roundedOtMinutes || 0)
+  const actual = Number(row?.actualOtMinutes || 0)
+  const clockIn = s(row?.clockIn)
+  const clockOut = s(row?.clockOut)
+  const attendanceStatus = upper(row?.attendanceStatus)
+
+  if (category === 'MATCH_WITHOUT_EXACT_OUT') {
+    return 'Accepted by policy'
+  }
+
+  if (category === 'ABSENT_APPROVED') {
+    return 'Approved but absent'
+  }
+
+  if (category === 'PENDING_REVIEW') {
+    return 'Needs manual review'
+  }
+
+  if (category === 'SHIFT_MISMATCH') {
+    return 'Wrong shift'
+  }
+
+  if (category === 'NOT_APPROVED') {
+    return 'Not approved for OT'
+  }
+
+  if (category === 'NOT_ELIGIBLE') {
+    return 'Not eligible for OT'
+  }
+
+  if (result === 'MATCH') {
+    return 'OT matched request'
+  }
+
+  if (attendanceStatus === 'ABSENT') {
+    return 'Absent'
+  }
+
+  if (!clockIn || !clockOut || clockIn === '-' || clockOut === '-') {
+    return 'Missing scan time'
+  }
+
+  if (requested > 0 && credited <= 0) {
+    return 'No credited OT'
+  }
+
+  if (requested > 0 && credited < requested) {
+    return 'Credited less than request'
+  }
+
+  if (requested > 0 && credited > requested) {
+    return 'Credited over request'
+  }
+
+  if (actual > 0 && credited !== actual) {
+    return 'Adjusted by rule'
+  }
+
+  return 'Check OT rule'
 }
 
 function requestOptionLabel(row) {
@@ -841,7 +957,7 @@ onBeforeUnmount(() => {
     </section>
 
     <template v-if="payload">
-      <section class="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
+      <section class="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-7">
         <div
           v-for="card in summaryCards"
           :key="card.label"
@@ -930,7 +1046,7 @@ onBeforeUnmount(() => {
                 optionLabel="label"
                 optionValue="value"
                 size="small"
-                class="w-full sm:w-48"
+                class="w-full sm:w-52"
                 placeholder="Result"
               />
             </div>
@@ -941,7 +1057,7 @@ onBeforeUnmount(() => {
             dataKey="rowKey"
             scrollable
             scrollHeight="520px"
-            tableStyle="min-width: 96rem"
+            tableStyle="min-width: 98rem"
             class="verification-table"
             stripedRows
           >
@@ -951,19 +1067,22 @@ onBeforeUnmount(() => {
               </div>
             </template>
 
-            <Column header="Result" style="min-width: 10rem">
+            <Column header="Verification" style="min-width: 13rem">
               <template #body="{ data }">
-                <div class="flex flex-col gap-1">
+                <div class="verification-result-cell">
                   <Tag
-                    :value="data.result"
-                    :severity="resultSeverity(data.result)"
-                    class="verify-tag"
+                    :value="resultDisplayLabel(data)"
+                    :severity="resultVisualSeverity(data)"
+                    class="verify-tag result-main-tag"
                   />
-                  <Tag
-                    :value="data.categoryLabel"
-                    :severity="categorySeverity(data.category)"
-                    class="verify-tag"
-                  />
+
+                  <div
+                    class="result-meaning-label"
+                    :class="resultMeaningTone(data)"
+                    :title="data.reason || data.rawDecision || resultMeaningLabel(data)"
+                  >
+                    {{ resultMeaningLabel(data) }}
+                  </div>
                 </div>
               </template>
             </Column>
@@ -1042,7 +1161,10 @@ onBeforeUnmount(() => {
 
             <Column header="Reason" style="min-width: 25rem">
               <template #body="{ data }">
-                <div class="line-clamp-2 text-sm text-[color:var(--ot-text-muted)]" :title="data.reason">
+                <div
+                  class="line-clamp-2 text-sm text-[color:var(--ot-text-muted)]"
+                  :title="data.reason"
+                >
                   {{ data.reason || data.rawDecision || '-' }}
                 </div>
               </template>
@@ -1109,6 +1231,11 @@ onBeforeUnmount(() => {
   color: #15803d;
 }
 
+.tone-yellow {
+  background: color-mix(in srgb, #f59e0b 13%, var(--ot-surface));
+  color: #b45309;
+}
+
 .tone-red {
   background: color-mix(in srgb, #ef4444 9%, var(--ot-surface));
   color: #b91c1c;
@@ -1131,6 +1258,7 @@ onBeforeUnmount(() => {
 
 :global(.dark) .tone-blue,
 :global(.dark) .tone-green,
+:global(.dark) .tone-yellow,
 :global(.dark) .tone-red,
 :global(.dark) .tone-violet,
 :global(.dark) .tone-amber,
@@ -1162,6 +1290,51 @@ onBeforeUnmount(() => {
   white-space: nowrap;
   font-size: 0.86rem;
   font-weight: 500;
+  color: var(--ot-text);
+}
+
+.verification-result-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+}
+
+:deep(.p-tag.result-main-tag) {
+  min-width: 7.5rem;
+  justify-content: center;
+}
+
+.result-meaning-label {
+  max-width: 11.5rem;
+  overflow: hidden;
+  border-radius: 999px;
+  padding: 0.18rem 0.55rem;
+  font-size: 0.68rem;
+  font-weight: 500;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.result-meaning-label.is-match {
+  background: color-mix(in srgb, #22c55e 15%, transparent);
+  color: #15803d;
+}
+
+.result-meaning-label.is-partial {
+  background: color-mix(in srgb, #f59e0b 16%, transparent);
+  color: #b45309;
+}
+
+.result-meaning-label.is-mismatch {
+  background: color-mix(in srgb, #ef4444 13%, transparent);
+  color: #b91c1c;
+}
+
+:global(.dark) .result-meaning-label.is-match,
+:global(.dark) .result-meaning-label.is-partial,
+:global(.dark) .result-meaning-label.is-mismatch {
   color: var(--ot-text);
 }
 
