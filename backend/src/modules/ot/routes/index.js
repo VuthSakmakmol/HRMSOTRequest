@@ -13,67 +13,73 @@ router.use(requireAuth)
 router.post(
   '/requests',
   requirePermission('OT_REQUEST_CREATE'),
-  otController.createOTRequest
+  otController.createOTRequest,
 )
 
 router.patch(
   '/requests/:id',
   requirePermission('OT_REQUEST_UPDATE'),
-  otController.updateOTRequest
+  otController.updateOTRequest,
 )
 
 router.post(
   '/requests/:id/requester-confirmation',
   requirePermission('OT_REQUEST_UPDATE'),
-  otController.requesterConfirmOTRequest
+  otController.requesterConfirmOTRequest,
 )
 
 router.get(
   '/requests/export',
   requirePermission('OT_REQUEST_VIEW'),
-  otController.exportOTRequestsExcel
+  otController.exportOTRequestsExcel,
 )
 
 router.get(
   '/requests',
   requirePermission('OT_REQUEST_VIEW'),
-  otController.listOTRequests
+  otController.listOTRequests,
 )
 
 router.get(
   '/approvals/export',
   requirePermission('OT_REQUEST_APPROVE'),
-  otController.exportOTApprovalInboxExcel
+  otController.exportOTApprovalInboxExcel,
 )
 
 router.get(
   '/approvals',
   requirePermission('OT_REQUEST_APPROVE'),
-  otController.listMyApprovalInbox
+  otController.listMyApprovalInbox,
 )
 
 router.post(
   '/approvals/:id/decision',
   requirePermission('OT_REQUEST_APPROVE'),
-  otController.decideOTRequest
+  otController.decideOTRequest,
 )
 
 router.get(
   '/requests/allowed-approvers/:employeeId',
   requirePermission('OT_REQUEST_CREATE'),
-  otController.getAllowedApproverChain
+  otController.getAllowedApproverChain,
+)
+
+router.get(
+  '/requests/unavailable-employees',
+  requirePermission('OT_REQUEST_CREATE'),
+  otController.listUnavailableOTEmployees,
 )
 
 router.get(
   '/shift-options/by-shift/:shiftId',
   requirePermission('OT_REQUEST_CREATE'),
-  otController.getShiftOTOptionsByShift
+  otController.getShiftOTOptionsByShift,
 )
 
 router.get(
   '/requests/:id',
   requirePermission('OT_REQUEST_VIEW'),
-  otController.getOTRequestDetail
+  otController.getOTRequestDetail,
 )
 
 router.use('/policies', otPolicyRoutes)

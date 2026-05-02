@@ -16,7 +16,8 @@ import ProgressSpinner from 'primevue/progressspinner'
 import Tag from 'primevue/tag'
 
 import api from '@/shared/services/api'
-import { getEmployees } from '@/modules/org/employee.api'
+import { getEmployeeLookupOptions } from '@/modules/org/employee.api'
+import { getLineLookupOptions } from '@/modules/org/line.api'
 
 const props = defineProps({
   modelValue: {
@@ -35,6 +36,7 @@ const emit = defineEmits(['update:modelValue'])
 const toast = useToast()
 
 const PAGE_SIZE = 24
+const MAX_AUTO_SELECT_PAGES = 100
 
 const dialogVisible = ref(false)
 const scrollRef = ref(null)
@@ -42,14 +44,23 @@ const scrollRef = ref(null)
 const loading = ref(false)
 const loadingMore = ref(false)
 const loadingSelf = ref(false)
+const loadingLines = ref(false)
 const loadingShifts = ref(false)
+const selectingAllMatching = ref(false)
 
 const search = ref('')
+const selectedLineId = ref('')
 const selectedShiftId = ref('')
+const employeeScope = ref('MANAGED')
+const canSelectOtherEmployees = ref(false)
 
 const employees = ref([])
 const selfEmployee = ref(null)
+const remoteLineOptions = ref([])
 const remoteShiftOptions = ref([])
+
+const managedEmployeeIds = ref(new Set())
+const managedEmployeeIdsLoaded = ref(false)
 
 const page = ref(1)
 const total = ref(0)
@@ -74,6 +85,10 @@ const selectedIds = computed(() =>
 
 const selectedCount = computed(() => selectedRows.value.length)
 
+const outsideSelectedCount = computed(() =>
+  selectedRows.value.filter((item) => item?.isOutsideManaged === true).length,
+)
+
 const loadedCountLabel = computed(() => {
   const loaded = employees.value.length
   const all = total.value || loaded
@@ -82,6 +97,78 @@ const loadedCountLabel = computed(() => {
 })
 
 const selectedPreview = computed(() => selectedRows.value.slice(0, 12))
+
+const selectLoadedLabel = computed(() => {
+  if (employeeScope.value === 'MANAGED') {
+    return 'Select Matching'
+  }
+
+  return 'Select Loaded'
+})
+
+const employeeScopeOptions = computed(() => {
+  const options = [
+    {
+      label: 'My employees',
+      value: 'MANAGED',
+    },
+  ]
+
+  if (canSelectOtherEmployees.value) {
+    options.push({
+      label: 'All employees',
+      value: 'ALL',
+    })
+  }
+
+  return options
+})
+
+const scopeTagLabel = computed(() => {
+  return employeeScope.value === 'ALL' ? 'All employees' : 'My employees'
+})
+
+const localLineOptions = computed(() => {
+  const map = new Map()
+
+  for (const row of [...employees.value, ...selectedRows.value, selfEmployee.value]) {
+    if (!row) continue
+
+    const line = extractLineFields(row)
+    if (!line.lineId) continue
+
+    const label =
+      [line.lineCode, line.lineName].filter(Boolean).join(' · ') ||
+      'Unnamed line'
+
+    map.set(line.lineId, {
+      label,
+      value: line.lineId,
+    })
+  }
+
+  return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label))
+})
+
+const lineOptions = computed(() => {
+  const map = new Map()
+
+  for (const row of remoteLineOptions.value) {
+    if (row.value) map.set(row.value, row)
+  }
+
+  for (const row of localLineOptions.value) {
+    if (row.value) map.set(row.value, row)
+  }
+
+  return [
+    {
+      label: 'All lines',
+      value: '',
+    },
+    ...Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label)),
+  ]
+})
 
 const localShiftOptions = computed(() => {
   const map = new Map()
@@ -154,6 +241,10 @@ function toTrimmedString(value) {
   return String(value ?? '').trim()
 }
 
+function toUpperCode(value) {
+  return toTrimmedString(value).toUpperCase()
+}
+
 function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
@@ -176,6 +267,89 @@ function normalizeBoolean(...values) {
 
 function getEmployeeId(employee) {
   return toTrimmedString(employee?._id || employee?.id || employee?.employeeId)
+}
+
+function extractAuthRoot(res) {
+  return (
+    res?.data?.data?.user ||
+    res?.data?.data ||
+    res?.data?.user ||
+    res?.data ||
+    {}
+  )
+}
+
+function extractAuthAccess(res) {
+  const root = extractAuthRoot(res)
+
+  const permissionCodes = [
+    ...(Array.isArray(root?.effectivePermissionCodes) ? root.effectivePermissionCodes : []),
+    ...(Array.isArray(root?.permissionCodes) ? root.permissionCodes : []),
+    ...(Array.isArray(root?.directPermissionCodes) ? root.directPermissionCodes : []),
+  ]
+    .map(toUpperCode)
+    .filter(Boolean)
+
+  const roleCodes = Array.isArray(root?.roleCodes)
+    ? root.roleCodes.map(toUpperCode).filter(Boolean)
+    : []
+
+  const permissionSet = new Set(permissionCodes)
+  const roleSet = new Set(roleCodes)
+
+  const isRootAdmin =
+    root?.isRootAdmin === true ||
+    roleSet.has('ROOT_ADMIN')
+
+  const canLookupAll =
+    isRootAdmin ||
+    permissionSet.has('EMPLOYEE_LOOKUP_ALL') ||
+    permissionSet.has('EMPLOYEE_VIEW_ALL') ||
+    permissionSet.has('ORG_EMPLOYEE_VIEW_ALL') ||
+    permissionSet.has('ORG.EMPLOYEE_VIEW_ALL') ||
+    permissionSet.has('OT_ADD_OTHER_LINE_EMPLOYEE') ||
+    permissionSet.has('OT_SELECT_OTHER_EMPLOYEE')
+
+  return {
+    isRootAdmin,
+    canLookupAll,
+    permissionCodes,
+    roleCodes,
+  }
+}
+
+function extractLineFields(source = {}) {
+  const lineObj =
+    (isObject(source?.lineId) && source.lineId) ||
+    (isObject(source?.line) && source.line) ||
+    (isObject(source?.lineInfo) && source.lineInfo) ||
+    (isObject(source?.productionLine) && source.productionLine) ||
+    {}
+
+  const rawLineId =
+    !isObject(source?.lineId) && source?.lineId
+      ? source.lineId
+      : lineObj?._id || lineObj?.id || ''
+
+  const lineId = toTrimmedString(rawLineId)
+  const lineCode = toTrimmedString(source?.lineCode || lineObj?.code || '')
+  const lineName = toTrimmedString(source?.lineName || lineObj?.name || '')
+
+  const hasLinePayload = Boolean(lineId || lineCode || lineName)
+
+  return {
+    lineId,
+    lineCode,
+    lineName,
+    line: hasLinePayload
+      ? {
+          _id: lineId,
+          id: lineId,
+          code: lineCode,
+          name: lineName,
+        }
+      : null,
+  }
 }
 
 function extractShiftFields(source = {}) {
@@ -238,8 +412,23 @@ function extractShiftFields(source = {}) {
   }
 }
 
+function isOutsideManagedEmployee(employeeId, explicitValue = undefined) {
+  if (explicitValue === true || explicitValue === false) {
+    return explicitValue
+  }
+
+  const id = toTrimmedString(employeeId)
+  if (!id) return false
+
+  if (!managedEmployeeIdsLoaded.value) {
+    return false
+  }
+
+  return !managedEmployeeIds.value.has(id)
+}
+
 function normalizeEmployeeRecord(source = {}, options = {}) {
-  const { isSelf = false } = options
+  const { isSelf = false, isOutsideManaged = undefined } = options
 
   const _id = toTrimmedString(source?._id || source?.id || source?.employeeId || '')
 
@@ -274,12 +463,19 @@ function normalizeEmployeeRecord(source = {}, options = {}) {
     employeeNo,
     displayName,
     positionName,
+    ...extractLineFields(source),
     ...extractShiftFields(source),
     isSelf,
+    isOutsideManaged: isOutsideManagedEmployee(
+      _id,
+      isOutsideManaged ?? source?.isOutsideManaged,
+    ),
   }
 }
 
-function normalizeEmployeesResponse(res) {
+function normalizeEmployeesResponse(res, options = {}) {
+  const { markOutsideManaged = true } = options
+
   const root = res?.data?.data || res?.data || {}
 
   const rows =
@@ -292,7 +488,15 @@ function normalizeEmployeesResponse(res) {
     []
 
   const normalizedRows = Array.isArray(rows)
-    ? rows.map((item) => normalizeEmployeeRecord(item)).filter(Boolean)
+    ? rows
+        .map((item) =>
+          normalizeEmployeeRecord(item, {
+            isOutsideManaged: markOutsideManaged
+              ? isOutsideManagedEmployee(getEmployeeId(item), item?.isOutsideManaged)
+              : false,
+          }),
+        )
+        .filter(Boolean)
     : []
 
   const pagination =
@@ -326,12 +530,7 @@ function normalizeEmployeesResponse(res) {
 }
 
 function normalizeAuthMeUser(res) {
-  const user =
-    res?.data?.data?.user ||
-    res?.data?.data ||
-    res?.data?.user ||
-    res?.data ||
-    {}
+  const user = extractAuthRoot(res)
 
   const employee =
     user?.employee ||
@@ -365,8 +564,8 @@ function normalizeAuthMeUser(res) {
   }
 }
 
-function getNormalizedRowsFromEmployeeResponse(res) {
-  const normalized = normalizeEmployeesResponse(res)
+function getNormalizedRowsFromEmployeeResponse(res, options = {}) {
+  const normalized = normalizeEmployeesResponse(res, options)
   return Array.isArray(normalized?.rows) ? normalized.rows : []
 }
 
@@ -389,6 +588,39 @@ function findSelfEmployeeFromRows(rows = [], authUser = {}) {
       return false
     }) || null
   )
+}
+
+function normalizeLineOptionsResponse(res) {
+  const root = res?.data?.data || res?.data || {}
+
+  const rows =
+    root?.items ||
+    root?.rows ||
+    root?.lines ||
+    root?.data ||
+    res?.data?.items ||
+    res?.data?.rows ||
+    []
+
+  if (!Array.isArray(rows)) return []
+
+  const map = new Map()
+
+  for (const row of rows) {
+    const id = toTrimmedString(row?._id || row?.id || row?.lineId)
+    if (!id) continue
+
+    const code = toTrimmedString(row?.code || row?.lineCode)
+    const name = toTrimmedString(row?.name || row?.lineName)
+    const label = [code, name].filter(Boolean).join(' · ') || 'Unnamed line'
+
+    map.set(id, {
+      label,
+      value: id,
+    })
+  }
+
+  return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label))
 }
 
 function normalizeShiftOptionsResponse(res) {
@@ -426,7 +658,12 @@ function normalizeShiftOptionsResponse(res) {
 
 function employeeMatchesLocalFilters(employee) {
   const keyword = toTrimmedString(search.value).toLowerCase()
+  const lineId = toTrimmedString(selectedLineId.value)
   const shiftId = toTrimmedString(selectedShiftId.value)
+
+  if (lineId && toTrimmedString(employee?.lineId) !== lineId) {
+    return false
+  }
 
   if (shiftId && toTrimmedString(employee?.shiftId) !== shiftId) {
     return false
@@ -438,8 +675,11 @@ function employeeMatchesLocalFilters(employee) {
     employee?.employeeNo,
     employee?.displayName,
     employee?.positionName,
+    employee?.lineCode,
+    employee?.lineName,
     employee?.shiftCode,
     employee?.isSelf ? 'self me myself mine' : '',
+    employee?.isOutsideManaged ? 'outside team other employee' : '',
   ]
     .join(' ')
     .toLowerCase()
@@ -452,19 +692,28 @@ function mergeUniqueRows(existingRows = [], incomingRows = []) {
 
   for (const row of existingRows) {
     const id = getEmployeeId(row)
-    if (id) map.set(id, row)
+    if (id) {
+      map.set(
+        id,
+        normalizeEmployeeRecord(row, {
+          isSelf: row?.isSelf === true,
+          isOutsideManaged: row?.isOutsideManaged === true,
+        }),
+      )
+    }
   }
 
   for (const row of incomingRows) {
     const normalized = normalizeEmployeeRecord(row, {
       isSelf: row?.isSelf === true,
+      isOutsideManaged: row?.isOutsideManaged === true,
     })
 
     const id = getEmployeeId(normalized)
     if (id) map.set(id, normalized)
   }
 
-  return Array.from(map.values())
+  return Array.from(map.values()).filter(Boolean)
 }
 
 function emitSelected(rows = []) {
@@ -472,6 +721,7 @@ function emitSelected(rows = []) {
     .map((item) =>
       normalizeEmployeeRecord(item, {
         isSelf: item?.isSelf === true,
+        isOutsideManaged: item?.isOutsideManaged === true,
       }),
     )
     .filter(Boolean)
@@ -517,13 +767,20 @@ function clearSelected() {
   emitSelected([])
 }
 
-function selectAllLoaded() {
-  selectAllMode.value = true
+async function selectAllLoaded() {
+  if (employeeScope.value === 'MANAGED') {
+    selectAllMode.value = true
+    await loadAllMatchingEmployeesForSelection()
+    return
+  }
+
+  selectAllMode.value = false
   selectRows(displayedEmployees.value)
 }
 
 function buildEmployeeParams(targetPage) {
   const keyword = toTrimmedString(search.value)
+  const lineId = toTrimmedString(selectedLineId.value)
   const shiftId = toTrimmedString(selectedShiftId.value)
 
   return {
@@ -531,8 +788,112 @@ function buildEmployeeParams(targetPage) {
     limit: PAGE_SIZE,
     search: keyword,
     q: keyword,
+    lineId,
     shiftId,
     isActive: true,
+    scope: employeeScope.value,
+  }
+}
+
+async function ensureManagedEmployeeIdsLoaded(options = {}) {
+  const { force = false } = options
+
+  if (managedEmployeeIdsLoaded.value && !force) return
+
+  const ids = new Set()
+  let currentPage = 1
+  let keepLoading = true
+
+  while (keepLoading) {
+    const res = await getEmployeeLookupOptions({
+      page: currentPage,
+      limit: 100,
+      search: '',
+      q: '',
+      isActive: true,
+      scope: 'MANAGED',
+    })
+
+    const payload = normalizeEmployeesResponse(res, {
+      markOutsideManaged: false,
+    })
+
+    for (const row of payload.rows) {
+      const id = getEmployeeId(row)
+      if (id) ids.add(id)
+    }
+
+    keepLoading = payload.hasMore === true && payload.rows.length > 0
+    currentPage += 1
+
+    if (currentPage > MAX_AUTO_SELECT_PAGES) {
+      keepLoading = false
+    }
+  }
+
+  managedEmployeeIds.value = ids
+  managedEmployeeIdsLoaded.value = true
+}
+
+async function loadAllMatchingEmployeesForSelection() {
+  if (employeeScope.value !== 'MANAGED') return
+  if (!selectAllMode.value) return
+  if (selectingAllMatching.value) return
+
+  selectingAllMatching.value = true
+
+  try {
+    const allRows = []
+    const outsideRowsAlreadySelected = selectedRows.value.filter(
+      (item) => item?.isOutsideManaged === true,
+    )
+
+    let currentPage = 1
+    let keepLoading = true
+
+    while (keepLoading) {
+      const keyword = toTrimmedString(search.value)
+      const lineId = toTrimmedString(selectedLineId.value)
+      const shiftId = toTrimmedString(selectedShiftId.value)
+
+      const res = await getEmployeeLookupOptions({
+        page: currentPage,
+        limit: 100,
+        search: keyword,
+        q: keyword,
+        lineId,
+        shiftId,
+        isActive: true,
+        scope: 'MANAGED',
+      })
+
+      const payload = normalizeEmployeesResponse(res, {
+        markOutsideManaged: false,
+      })
+
+      allRows.push(...payload.rows)
+
+      keepLoading = payload.hasMore === true && payload.rows.length > 0
+      currentPage += 1
+
+      if (currentPage > MAX_AUTO_SELECT_PAGES) {
+        keepLoading = false
+      }
+    }
+
+    replaceSelection([...allRows, ...outsideRowsAlreadySelected])
+  } catch (error) {
+    toast.add({
+      severity: 'error',
+      summary: 'Auto select failed',
+      detail:
+        error?.response?.data?.message ||
+        error?.message ||
+        'Unable to auto-select all matching employees.',
+      life: 3000,
+    })
+  } finally {
+    selectingAllMatching.value = false
   }
 }
 
@@ -542,6 +903,15 @@ async function loadSelfEmployee() {
 
     const meRes = await api.get('/auth/me')
     const authUser = normalizeAuthMeUser(meRes)
+    const access = extractAuthAccess(meRes)
+
+    canSelectOtherEmployees.value = access.canLookupAll
+
+    if (!canSelectOtherEmployees.value && employeeScope.value === 'ALL') {
+      employeeScope.value = 'MANAGED'
+    }
+
+    await ensureManagedEmployeeIdsLoaded({ force: true })
 
     const searchKeys = Array.from(
       new Set(
@@ -558,15 +928,19 @@ async function loadSelfEmployee() {
     let found = null
 
     for (const keyword of searchKeys) {
-      const res = await getEmployees({
+      const res = await getEmployeeLookupOptions({
         page: 1,
         limit: 10,
         search: keyword,
         q: keyword,
         isActive: true,
+        scope: 'MANAGED',
       })
 
-      const rows = getNormalizedRowsFromEmployeeResponse(res)
+      const rows = getNormalizedRowsFromEmployeeResponse(res, {
+        markOutsideManaged: false,
+      })
+
       found = findSelfEmployeeFromRows(rows, authUser)
 
       if (found) break
@@ -576,6 +950,7 @@ async function loadSelfEmployee() {
       selfEmployee.value = {
         ...found,
         isSelf: true,
+        isOutsideManaged: false,
       }
       return
     }
@@ -591,6 +966,8 @@ async function loadSelfEmployee() {
     })
   } catch (error) {
     selfEmployee.value = null
+    managedEmployeeIds.value = new Set()
+    managedEmployeeIdsLoaded.value = true
 
     toast.add({
       severity: 'warn',
@@ -606,6 +983,36 @@ async function loadSelfEmployee() {
   }
 }
 
+async function loadLineOptions() {
+  try {
+    loadingLines.value = true
+
+    const res = await getLineLookupOptions({
+      page: 1,
+      limit: 100,
+      isActive: 'true',
+      sortBy: 'code',
+      sortOrder: 'asc',
+    })
+
+    remoteLineOptions.value = normalizeLineOptionsResponse(res)
+  } catch (error) {
+    remoteLineOptions.value = []
+
+    toast.add({
+      severity: 'warn',
+      summary: 'Line filter unavailable',
+      detail:
+        error?.response?.data?.message ||
+        error?.message ||
+        'Unable to load line filter options.',
+      life: 3000,
+    })
+  } finally {
+    loadingLines.value = false
+  }
+}
+
 async function loadShiftOptions() {
   try {
     loadingShifts.value = true
@@ -613,7 +1020,7 @@ async function loadShiftOptions() {
     const res = await api.get('/shift/lookup', {
       params: {
         page: 1,
-        limit: 300,
+        limit: 100,
         isActive: true,
       },
     })
@@ -671,11 +1078,13 @@ async function loadEmployees(options = {}) {
   let shouldEnsureFill = false
 
   try {
-    const res = await getEmployees(buildEmployeeParams(targetPage))
+    const res = await getEmployeeLookupOptions(buildEmployeeParams(targetPage))
 
     if (currentSeq !== requestSeq) return
 
-    const payload = normalizeEmployeesResponse(res)
+    const payload = normalizeEmployeesResponse(res, {
+      markOutsideManaged: employeeScope.value === 'ALL',
+    })
 
     total.value = payload.total
     hasMore.value = payload.hasMore
@@ -690,15 +1099,15 @@ async function loadEmployees(options = {}) {
         scrollRef.value.scrollTop = 0
       }
 
-      if (selectAllMode.value) {
-        replaceSelection(displayedEmployees.value)
+      if (selectAllMode.value && employeeScope.value === 'MANAGED') {
+        await loadAllMatchingEmployeesForSelection()
       }
     } else {
       employees.value = mergeUniqueRows(employees.value, payload.rows)
       page.value = targetPage + 1
 
-      if (selectAllMode.value) {
-        selectRows(displayedEmployees.value)
+      if (selectAllMode.value && employeeScope.value === 'MANAGED') {
+        await loadAllMatchingEmployeesForSelection()
       }
     }
 
@@ -766,7 +1175,23 @@ watch(search, () => {
   }, 280)
 })
 
+watch(selectedLineId, () => {
+  resetAndLoadEmployees()
+})
+
 watch(selectedShiftId, () => {
+  resetAndLoadEmployees()
+})
+
+watch(employeeScope, () => {
+  if (employeeScope.value === 'ALL') {
+    selectAllMode.value = false
+  }
+
+  if (employeeScope.value === 'MANAGED' && !selectedRows.value.length) {
+    selectAllMode.value = props.autoSelectAll
+  }
+
   resetAndLoadEmployees()
 })
 
@@ -774,6 +1199,7 @@ onMounted(async () => {
   await loadSelfEmployee()
 
   await Promise.all([
+    loadLineOptions(),
     loadShiftOptions(),
     resetAndLoadEmployees(),
   ])
@@ -788,17 +1214,9 @@ onBeforeUnmount(() => {
   <section class="ot-employee-picker">
     <div class="ot-picker-summary">
       <div class="min-w-0">
-        <div class="ot-picker-eyebrow">
-          Employee Selection <span class="ot-required-star">*</span>
-        </div>
-
         <h2 class="ot-picker-title">
-          Search & select employees
+          Search & select employees <span class="ot-required-star">*</span>
         </h2>
-
-        <p class="ot-picker-subtitle">
-          Employees are selected by default. Use Shift filter only when the manager has employees from different shifts.
-        </p>
       </div>
 
       <div class="ot-picker-actions">
@@ -829,15 +1247,23 @@ onBeforeUnmount(() => {
         v-for="employee in selectedPreview"
         :key="getEmployeeId(employee)"
         class="ot-selected-chip"
+        :class="{ 'is-outside-managed': employee.isOutsideManaged }"
       >
         <span>{{ employee.displayName }}</span>
         <small>{{ employee.employeeNo || 'No ID' }}</small>
+        <em v-if="employee.isOutsideManaged">Other</em>
       </div>
 
       <Tag
         v-if="selectedCount > selectedPreview.length"
         :value="`+${selectedCount - selectedPreview.length} more`"
         severity="info"
+      />
+
+      <Tag
+        v-if="outsideSelectedCount"
+        :value="`${outsideSelectedCount} outside team`"
+        severity="warn"
       />
     </div>
 
@@ -871,6 +1297,17 @@ onBeforeUnmount(() => {
 
           <div class="ot-dialog-tags">
             <Tag
+              :value="scopeTagLabel"
+              severity="info"
+            />
+
+            <Tag
+              v-if="outsideSelectedCount"
+              :value="`${outsideSelectedCount} outside team`"
+              severity="warn"
+            />
+
+            <Tag
               :value="selectAllMode ? 'Auto select ON' : 'Manual select'"
               :severity="selectAllMode ? 'success' : 'secondary'"
             />
@@ -896,9 +1333,29 @@ onBeforeUnmount(() => {
             <InputText
               v-model.trim="search"
               class="w-full"
-              placeholder="Search employee name, ID, position, or shift code..."
+              placeholder="Search employee name, ID, line, position, or shift code..."
             />
           </IconField>
+
+          <Dropdown
+            v-model="employeeScope"
+            :options="employeeScopeOptions"
+            optionLabel="label"
+            optionValue="value"
+            class="ot-scope-filter"
+            placeholder="Employee scope"
+            :disabled="!canSelectOtherEmployees"
+          />
+
+          <Dropdown
+            v-model="selectedLineId"
+            :options="lineOptions"
+            optionLabel="label"
+            optionValue="value"
+            class="ot-line-filter"
+            placeholder="All lines"
+            :loading="loadingLines"
+          />
 
           <Dropdown
             v-model="selectedShiftId"
@@ -911,10 +1368,12 @@ onBeforeUnmount(() => {
           />
 
           <Button
-            label="Select Loaded"
+            :label="selectLoadedLabel"
             icon="pi pi-check-square"
             severity="success"
             size="small"
+            :loading="selectingAllMatching"
+            :disabled="loading || loadingMore"
             @click="selectAllLoaded"
           />
 
@@ -948,7 +1407,7 @@ onBeforeUnmount(() => {
           >
             <i class="pi pi-users" />
             <strong>No employees found</strong>
-            <span>Try another keyword or shift filter.</span>
+            <span>Try another keyword, line, shift, or employee scope.</span>
           </div>
 
           <div
@@ -960,7 +1419,10 @@ onBeforeUnmount(() => {
               :key="employee._id"
               type="button"
               class="ot-employee-card"
-              :class="{ 'is-selected': selectedIds.has(employee._id) }"
+              :class="{
+                'is-selected': selectedIds.has(employee._id),
+                'is-outside-managed': employee.isOutsideManaged,
+              }"
               @click="toggleEmployee(employee)"
             >
               <span class="ot-check-circle">
@@ -979,6 +1441,11 @@ onBeforeUnmount(() => {
               </span>
 
               <span class="ot-employee-meta">
+                <i class="pi pi-sitemap" />
+                {{ employee.lineCode || employee.lineName || 'No line' }}
+              </span>
+
+              <span class="ot-employee-meta">
                 <i class="pi pi-clock" />
                 {{ employee.shiftCode || 'No shift' }}
               </span>
@@ -988,12 +1455,21 @@ onBeforeUnmount(() => {
                 {{ employee.positionName || 'No position' }}
               </span>
 
-              <Tag
-                v-if="employee.isSelf"
-                value="Self"
-                severity="success"
-                class="ot-self-tag"
-              />
+              <div class="ot-card-tags">
+                <Tag
+                  v-if="employee.isSelf"
+                  value="Self"
+                  severity="success"
+                  class="ot-self-tag"
+                />
+
+                <Tag
+                  v-if="employee.isOutsideManaged"
+                  value="Outside team"
+                  severity="warn"
+                  class="ot-outside-tag"
+                />
+              </div>
             </button>
           </div>
 
@@ -1053,13 +1529,6 @@ onBeforeUnmount(() => {
   color: var(--ot-text);
 }
 
-.ot-picker-subtitle {
-  margin-top: 0.25rem;
-  max-width: 760px;
-  font-size: 0.82rem;
-  color: var(--ot-text-muted);
-}
-
 .ot-picker-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1107,11 +1576,16 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
-  max-width: 230px;
+  max-width: 260px;
   border: 1px solid color-mix(in srgb, #22c55e 42%, var(--ot-border));
   border-radius: 999px;
   background: color-mix(in srgb, #22c55e 12%, var(--ot-surface));
   padding: 0.35rem 0.65rem;
+}
+
+.ot-selected-chip.is-outside-managed {
+  border-color: color-mix(in srgb, #f59e0b 55%, var(--ot-border));
+  background: color-mix(in srgb, #f59e0b 14%, var(--ot-surface));
 }
 
 .ot-selected-chip span {
@@ -1128,6 +1602,17 @@ onBeforeUnmount(() => {
   font-size: 0.72rem;
   font-weight: 500;
   color: var(--ot-text-muted);
+}
+
+.ot-selected-chip em {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.18);
+  padding: 0.08rem 0.35rem;
+  font-size: 0.64rem;
+  font-style: normal;
+  font-weight: 600;
+  color: #b45309;
 }
 
 .ot-dialog-header {
@@ -1171,6 +1656,8 @@ onBeforeUnmount(() => {
 }
 
 .ot-search-field,
+.ot-scope-filter,
+.ot-line-filter,
 .ot-shift-filter {
   width: 100%;
 }
@@ -1193,7 +1680,7 @@ onBeforeUnmount(() => {
 
 .ot-employee-card {
   position: relative;
-  min-height: 116px;
+  min-height: 136px;
   cursor: pointer;
   border: 1px solid var(--ot-border);
   border-radius: 1rem;
@@ -1205,20 +1692,35 @@ onBeforeUnmount(() => {
     border-color 0.16s ease,
     background 0.16s ease,
     box-shadow 0.16s ease;
+  box-shadow: none;
 }
 
 .ot-employee-card:hover {
   transform: translateY(-1px);
-  border-color: color-mix(in srgb, #3b82f6 45%, var(--ot-border));
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+  border-color: color-mix(in srgb, #3b82f6 30%, var(--ot-border));
+  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.04);
 }
 
 .ot-employee-card.is-selected {
-  border-color: color-mix(in srgb, #22c55e 72%, var(--ot-border));
+  border-color: color-mix(in srgb, #22c55e 60%, var(--ot-border));
   background:
-    linear-gradient(135deg, rgba(34, 197, 94, 0.17), rgba(59, 130, 246, 0.08)),
+    linear-gradient(135deg, rgba(34, 197, 94, 0.1), rgba(59, 130, 246, 0.04)),
     var(--ot-surface);
-  box-shadow: 0 12px 30px rgba(34, 197, 94, 0.13);
+  box-shadow: 0 4px 12px rgba(34, 197, 94, 0.06);
+}
+
+.ot-employee-card.is-outside-managed {
+  border-color: color-mix(in srgb, #f59e0b 50%, var(--ot-border));
+  background:
+    linear-gradient(135deg, rgba(245, 158, 11, 0.11), rgba(251, 191, 36, 0.04)),
+    var(--ot-surface);
+}
+
+.ot-employee-card.is-selected.is-outside-managed {
+  border-color: color-mix(in srgb, #f59e0b 72%, var(--ot-border));
+  background:
+    linear-gradient(135deg, rgba(245, 158, 11, 0.16), rgba(34, 197, 94, 0.08)),
+    var(--ot-surface);
 }
 
 .ot-check-circle {
@@ -1235,6 +1737,10 @@ onBeforeUnmount(() => {
   background: var(--ot-bg);
   color: #16a34a;
   font-size: 0.72rem;
+}
+
+.ot-employee-card.is-outside-managed .ot-check-circle {
+  border-color: rgba(245, 158, 11, 0.35);
 }
 
 .ot-employee-name {
@@ -1278,8 +1784,16 @@ onBeforeUnmount(() => {
   font-size: 0.7rem;
 }
 
-.ot-self-tag {
+.ot-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
   margin-top: 0.5rem;
+}
+
+.ot-self-tag,
+.ot-outside-tag {
+  font-size: 0.68rem !important;
 }
 
 .ot-loading-state,
@@ -1343,7 +1857,13 @@ onBeforeUnmount(() => {
 
 @media (min-width: 768px) {
   .ot-dialog-toolbar {
-    grid-template-columns: minmax(260px, 1fr) minmax(210px, 280px) auto auto;
+    grid-template-columns:
+      minmax(240px, 1fr)
+      minmax(150px, 190px)
+      minmax(170px, 230px)
+      minmax(170px, 230px)
+      auto
+      auto;
     align-items: center;
   }
 }

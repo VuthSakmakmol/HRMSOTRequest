@@ -322,6 +322,44 @@ function buildLineSummary(lineValue) {
   }
 }
 
+function canLookupAllEmployees(currentUser) {
+  return (
+    currentUser?.isRootAdmin === true ||
+    hasAnyPermission(currentUser, [
+      'EMPLOYEE_LOOKUP_ALL',
+      'EMPLOYEE_VIEW_ALL',
+      'ORG_EMPLOYEE_VIEW_ALL',
+      'ORG.EMPLOYEE_VIEW_ALL',
+      'OT_ADD_OTHER_LINE_EMPLOYEE',
+      'OT_SELECT_OTHER_EMPLOYEE',
+    ])
+  )
+}
+
+function throwMissingPermission(requiredPermission) {
+  const permissionCode = s(requiredPermission).toUpperCase()
+
+  const err = new Error(`Missing required permission: ${permissionCode}`)
+  err.status = 403
+  err.error = 'MISSING_PERMISSION'
+  err.requiredPermission = permissionCode
+  err.requiredPermissionCode = permissionCode
+
+  throw err
+}
+
+async function buildEmployeeLookupScopeFilter(query, currentUser) {
+  if (query.scope === 'ALL') {
+    if (!canLookupAllEmployees(currentUser)) {
+      throwMissingPermission('EMPLOYEE_LOOKUP_ALL')
+    }
+
+    return {}
+  }
+
+  return buildEmployeeScopeFilter(currentUser)
+}
+
 function sanitize(doc, accountDoc = null) {
   if (!doc) return null
 
@@ -433,7 +471,7 @@ async function ensureDepartmentExists(departmentId) {
 
 async function ensurePositionExists(positionId, departmentId = null) {
   const position = await Position.findById(positionId)
-    .select('_id code name departmentId reportsToPositionId isActive')
+    .select('_id code name departmentId reportsToPositionId managerScope isActive')
     .lean()
 
   if (!position) {
@@ -552,23 +590,40 @@ async function findAutoManagerIdByPositionAndLine({
   position,
   lineId,
 }) {
-  if (!position?.reportsToPositionId || !lineId) {
+  if (!position?.reportsToPositionId) {
     return undefined
   }
 
+  const managerScope = s(position.managerScope || 'SAME_LINE').toUpperCase()
+
   const filter = {
-    departmentId,
     positionId: position.reportsToPositionId,
-    lineId,
     isActive: true,
   }
+
+  if (managerScope === 'SAME_LINE') {
+    if (!lineId) {
+      return undefined
+    }
+
+    filter.lineId = lineId
+
+    if (departmentId) {
+      filter.departmentId = departmentId
+    }
+  }
+
+  // GLOBAL:
+  // Do not filter by line.
+  // Do not filter by department.
+  // Example: Sewer-Supervisor Line 02 -> HRSS Supervisor / HR Manager from HR department.
 
   if (employeeId) {
     filter._id = { $ne: employeeId }
   }
 
   const manager = await Employee.findOne(filter)
-    .select('_id employeeNo displayName')
+    .select('_id employeeNo displayName departmentId positionId lineId')
     .sort({ employeeNo: 1, displayName: 1, _id: 1 })
     .lean()
 
@@ -897,7 +952,8 @@ function buildEmployeeSort(sortBy, sortOrder) {
 }
 
 function normalizeLookupQuery(query = {}) {
-  const limit = Math.min(Math.max(Number(query.limit || 20), 1), 50)
+  const page = Math.max(Number(query.page || 1), 1)
+  const limit = Math.min(Math.max(Number(query.limit || 20), 1), 100)
 
   let isActive = true
   if (String(query.isActive ?? '').trim().toLowerCase() === 'false') {
@@ -907,8 +963,12 @@ function normalizeLookupQuery(query = {}) {
     isActive = true
   }
 
+  const rawScope = s(query.scope || query.employeeScope || 'MANAGED').toUpperCase()
+  const scope = ['MANAGED', 'ALL'].includes(rawScope) ? rawScope : 'MANAGED'
+
   return {
-    search: s(query.search),
+    page,
+    search: s(query.search || query.q),
     departmentId: s(query.departmentId),
     positionId: s(query.positionId),
     lineId: s(query.lineId),
@@ -916,6 +976,7 @@ function normalizeLookupQuery(query = {}) {
     reportsToEmployeeId: s(query.reportsToEmployeeId),
     isActive,
     limit,
+    scope,
   }
 }
 
@@ -961,7 +1022,7 @@ function buildEmployeeLookupItem(doc) {
 
 async function lookup(rawQuery = {}, currentUser = null) {
   const query = normalizeLookupQuery(rawQuery)
-  const scopeFilter = await buildEmployeeScopeFilter(currentUser)
+  const scopeFilter = await buildEmployeeLookupScopeFilter(query, currentUser)
 
   const filter = buildEmployeeListFilter(
     {
@@ -982,19 +1043,36 @@ async function lookup(rawQuery = {}, currentUser = null) {
     }
   }
 
-  const items = await Employee.find(filter)
-    .populate('departmentId', 'name code')
-    .populate('positionId', 'name code reportsToPositionId')
-    .populate('lineId', 'code name')
-    .populate('shiftId', 'code name type startTime endTime crossMidnight')
-    .populate('reportsToEmployeeId', 'employeeNo displayName')
-    .sort({ displayName: 1, employeeNo: 1 })
-    .limit(query.limit)
-    .lean()
+  const skip = (query.page - 1) * query.limit
+
+  const [items, total] = await Promise.all([
+    Employee.find(filter)
+      .populate('departmentId', 'name code')
+      .populate('positionId', 'name code reportsToPositionId')
+      .populate('lineId', 'code name')
+      .populate('shiftId', 'code name type startTime endTime crossMidnight')
+      .populate('reportsToEmployeeId', 'employeeNo displayName')
+      .sort({ displayName: 1, employeeNo: 1 })
+      .skip(skip)
+      .limit(query.limit)
+      .lean(),
+
+    Employee.countDocuments(filter),
+  ])
+
+  const totalPages = Math.max(1, Math.ceil(total / query.limit))
 
   return {
     items: items.map(buildEmployeeLookupItem),
+    pagination: {
+      page: query.page,
+      limit: query.limit,
+      total,
+      totalPages,
+      hasMore: query.page < totalPages,
+    },
     meta: {
+      scope: query.scope,
       limit: query.limit,
       count: items.length,
     },
@@ -1358,7 +1436,7 @@ async function downloadImportSample() {
     ['Shift Code', 'Required. Must already exist and be active'],
     [
       'Reports To Employee No',
-      'Optional. If Position has ReportsToPositionId and Line Code is provided, system auto-finds manager by parent position + same line',
+      'Optional. If Position has ReportsToPositionId, system auto-finds manager. SAME_LINE uses parent position + same line. GLOBAL uses parent position across departments/lines',
     ],
     ['Phone', 'Optional'],
     ['Email', 'Optional. Must be valid and unique if provided'],
@@ -1501,7 +1579,7 @@ async function importExcel(file, currentUser = null) {
     Department.find({ code: { $in: departmentCodes } }, '_id code name').lean(),
     Position.find(
       { code: { $in: positionCodes } },
-      '_id code name departmentId reportsToPositionId',
+      '_id code name departmentId reportsToPositionId managerScope',
     ).lean(),
     lineCodes.length
       ? ProductionLine.find(

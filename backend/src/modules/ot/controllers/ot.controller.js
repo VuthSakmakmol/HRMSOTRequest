@@ -6,6 +6,7 @@ const {
   updateOTRequestSchema,
   listOTRequestsQuerySchema,
   listOTApprovalInboxQuerySchema,
+  unavailableOTEmployeesQuerySchema,
   otRequestIdParamSchema,
   otApprovalDecisionSchema,
   otRequesterConfirmationSchema,
@@ -38,7 +39,6 @@ function parseObjectIdParam(value, label = 'id') {
 async function createOTRequest(req, res, next) {
   try {
     const payload = parse(createOTRequestSchema, req.body || {})
-
     const data = await otService.create(payload, req.user)
 
     res.status(201).json({
@@ -54,8 +54,21 @@ async function updateOTRequest(req, res, next) {
   try {
     const params = parse(otRequestIdParamSchema, req.params || {})
     const payload = parse(updateOTRequestSchema, req.body || {})
-
     const data = await otService.update(params.id, payload, req.user)
+
+    res.json({
+      ok: true,
+      data,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+async function listUnavailableOTEmployees(req, res, next) {
+  try {
+    const query = parse(unavailableOTEmployeesQuerySchema, req.query || {})
+    const data = await otService.listUnavailableEmployeesForDate(query)
 
     res.json({
       ok: true,
@@ -87,11 +100,11 @@ async function exportOTRequestsExcel(req, res, next) {
 
     res.setHeader(
       'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     )
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="${file.filename}"`
+      `attachment; filename="${file.filename}"`,
     )
 
     res.send(file.buffer)
@@ -149,11 +162,11 @@ async function exportOTApprovalInboxExcel(req, res, next) {
 
     res.setHeader(
       'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     )
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="${file.filename}"`
+      `attachment; filename="${file.filename}"`,
     )
 
     res.send(file.buffer)
@@ -166,7 +179,6 @@ async function decideOTRequest(req, res, next) {
   try {
     const params = parse(otRequestIdParamSchema, req.params || {})
     const payload = parse(otApprovalDecisionSchema, req.body || {})
-
     const data = await otService.decide(params.id, payload, req.user)
 
     res.json({
@@ -182,7 +194,6 @@ async function requesterConfirmOTRequest(req, res, next) {
   try {
     const params = parse(otRequestIdParamSchema, req.params || {})
     const payload = parse(otRequesterConfirmationSchema, req.body || {})
-
     const data = await otService.requesterConfirm(params.id, payload, req.user)
 
     res.json({
@@ -211,6 +222,7 @@ async function getShiftOTOptionsByShift(req, res, next) {
 module.exports = {
   createOTRequest,
   updateOTRequest,
+  listUnavailableOTEmployees,
   listOTRequests,
   exportOTRequestsExcel,
   getOTRequestDetail,

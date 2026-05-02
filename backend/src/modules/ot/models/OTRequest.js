@@ -697,6 +697,10 @@ OTRequestSchema.index({ shiftId: 1, otDate: -1 })
 OTRequestSchema.index({ shiftOtOptionId: 1, otDate: -1 })
 OTRequestSchema.index({ createdAt: -1 })
 
+OTRequestSchema.index({ otDate: 1, status: 1, 'requestedEmployees.employeeId': 1 })
+OTRequestSchema.index({ otDate: 1, status: 1, 'approvedEmployees.employeeId': 1 })
+OTRequestSchema.index({ otDate: 1, status: 1, 'proposedApprovedEmployees.employeeId': 1 })
+
 OTRequestSchema.index({ 'requestedEmployees.employeeId': 1, otDate: -1 })
 OTRequestSchema.index({ 'requestedEmployees.departmentId': 1, otDate: -1 })
 OTRequestSchema.index({ 'requestedEmployees.positionId': 1, otDate: -1 })

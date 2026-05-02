@@ -106,6 +106,10 @@ function normalizeItems(payload) {
   return Array.isArray(payload?.items) ? payload.items : []
 }
 
+function upper(value) {
+  return String(value || '').trim().toUpperCase()
+}
+
 function normalizeClassKey(value) {
   return String(value || '')
     .trim()
@@ -130,24 +134,18 @@ function timingModeClass(value) {
   return `ot-timing-${normalizeClassKey(value || 'unknown')}`
 }
 
-function modeClass(row) {
-  return isLegacyManualMode(row) ? 'ot-mode-legacy-manual' : 'ot-mode-shift-option'
-}
-
 function getTimingMode(row) {
-  return String(
+  return upper(
     row?.shiftOtOptionTimingMode ||
       row?.timingMode ||
       row?.otTimingMode ||
       row?.shiftOtOption?.timingMode ||
       '',
   )
-    .trim()
-    .toUpperCase()
 }
 
 function timingModeLabel(value) {
-  const normalized = String(value || '').trim().toUpperCase()
+  const normalized = upper(value)
 
   if (normalized === 'FIXED_TIME') return 'Fixed Time'
   if (normalized === 'AFTER_SHIFT_END') return 'After Shift End'
@@ -156,7 +154,7 @@ function timingModeLabel(value) {
 }
 
 function timingModeSeverity(value) {
-  const normalized = String(value || '').trim().toUpperCase()
+  const normalized = upper(value)
 
   if (normalized === 'FIXED_TIME') return 'warning'
   if (normalized === 'AFTER_SHIFT_END') return 'info'
@@ -204,7 +202,7 @@ function buildExportQuery() {
 }
 
 function dayTypeSeverity(value) {
-  const normalized = String(value || '').toUpperCase()
+  const normalized = upper(value)
 
   if (normalized === 'HOLIDAY') return 'danger'
   if (normalized === 'SUNDAY') return 'warning'
@@ -214,7 +212,7 @@ function dayTypeSeverity(value) {
 }
 
 function statusSeverity(value) {
-  const normalized = String(value || '').toUpperCase()
+  const normalized = upper(value)
 
   if (normalized === 'APPROVED') return 'success'
   if (normalized === 'REJECTED') return 'danger'
@@ -224,10 +222,6 @@ function statusSeverity(value) {
   if (normalized === 'PENDING') return 'warning'
 
   return 'secondary'
-}
-
-function modeSeverity(value) {
-  return value === 'SHIFT_OPTION' ? 'info' : 'contrast'
 }
 
 function formatDateTime(value) {
@@ -342,16 +336,57 @@ function getEmployeeCount(row) {
 }
 
 function currentStepLabel(row) {
-  const current = Number(row?.currentApprovalStep || 1)
+  const current = Number(row?.currentApprovalStep || row?.currentStep || 1)
   const total = Array.isArray(row?.approvalSteps)
     ? row.approvalSteps.length
-    : Number(row?.approvalStepCount || 0)
+    : Number(row?.approvalStepCount || row?.totalApprovalSteps || 0)
 
   return `Step ${current} / ${total || 0}`
 }
 
+function normalizeApprovalStatus(value) {
+  const normalized = upper(value)
+
+  if (!normalized) return ''
+  if (normalized === 'APPROVE') return 'APPROVED'
+  if (normalized === 'REJECT') return 'REJECTED'
+  if (normalized === 'WAITING_APPROVAL') return 'WAITING'
+
+  return normalized
+}
+
+function myApprovalStatus(row) {
+  return normalizeApprovalStatus(row?.myApprovalStatus || '')
+}
+
+function myApprovalStatusLabel(row) {
+  const status = myApprovalStatus(row)
+
+  if (status === 'APPROVED') return 'You approved'
+  if (status === 'REJECTED') return 'You rejected'
+  if (status === 'PENDING' && row?.isMyTurn) return 'Your turn'
+  if (status === 'PENDING') return 'Waiting for you'
+  if (status === 'WAITING') return 'Waiting step'
+
+  return ''
+}
+
+function myApprovalStatusSeverity(row) {
+  const status = myApprovalStatus(row)
+
+  if (status === 'APPROVED') return 'success'
+  if (status === 'REJECTED') return 'danger'
+  if (status === 'PENDING' && row?.isMyTurn) return 'warning'
+
+  return 'secondary'
+}
+
+function showMyApprovalTag(row) {
+  return Boolean(myApprovalStatus(row) && !canDecide(row))
+}
+
 function canDecide(row) {
-  return String(row?.status || '').toUpperCase() === 'PENDING'
+  return row?.canDecide === true
 }
 
 function openView(row) {
@@ -707,7 +742,6 @@ onBeforeUnmount(() => {
   <div class="flex flex-col gap-4">
     <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
       <div class="flex flex-wrap items-center gap-2">
-
         <Button
           label="Export Excel"
           icon="pi pi-file-excel"
@@ -1036,7 +1070,7 @@ onBeforeUnmount(() => {
 
         <Column
           header="Actions"
-          style="width: 15rem; min-width: 15rem"
+          style="width: 16rem; min-width: 16rem"
         >
           <template #body="{ data }">
             <div
@@ -1051,6 +1085,14 @@ onBeforeUnmount(() => {
                 outlined
                 class="action-btn"
                 @click="openView(data)"
+              />
+
+              <Tag
+                v-if="showMyApprovalTag(data)"
+                :value="myApprovalStatusLabel(data)"
+                :severity="myApprovalStatusSeverity(data)"
+                class="ot-status-tag action-state-tag"
+                :class="statusClass(myApprovalStatus(data))"
               />
 
               <Button
@@ -1302,7 +1344,6 @@ onBeforeUnmount(() => {
   border: 1px solid transparent !important;
 }
 
-/* Compact one-row action buttons */
 .action-row {
   display: flex;
   flex-wrap: nowrap;
@@ -1324,6 +1365,11 @@ onBeforeUnmount(() => {
 
 :deep(.action-btn .p-button-icon) {
   font-size: 0.72rem !important;
+}
+
+:deep(.action-state-tag) {
+  min-height: 1.75rem !important;
+  padding-inline: 0.55rem !important;
 }
 
 /* Status colors */

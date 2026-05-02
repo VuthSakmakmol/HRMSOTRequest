@@ -24,9 +24,10 @@ import {
   createEmployee,
   exportEmployeesExcel,
   getEmployees,
+  getEmployeeLookupOptions,
   updateEmployee,
 } from '@/modules/org/employee.api'
-import { getShifts } from '@/modules/shift/shift.api'
+import { getShiftLookupOptions } from '@/modules/shift/shift.api'
 
 const toast = useToast()
 
@@ -304,7 +305,7 @@ function mapManagerOptions(items = []) {
       .filter(Boolean)
       .filter((item) => !isInvalidManagerCandidate(item))
       .map((item) => ({
-        label: `${item.employeeNo} - ${item.displayName}`,
+        label: `${item.employeeNo || item.code || ''} - ${item.displayName || item.name || ''}`,
         value: item._id || item.id,
       })),
   ]
@@ -312,8 +313,12 @@ function mapManagerOptions(items = []) {
 
 function mapShiftOptions(items = []) {
   return items.map((item) => ({
-    label: `${item.code} - ${item.name}${item.type ? ` (${item.type})` : ''}`,
-    value: item._id || item.id,
+    label:
+      item.label ||
+      `${item.code || item.shiftCode || ''} - ${item.name || item.shiftName || ''}${
+        item.type || item.shiftType ? ` (${item.type || item.shiftType})` : ''
+      }`,
+    value: item._id || item.id || item.shiftId,
   }))
 }
 
@@ -410,7 +415,7 @@ async function fetchManagersForDropdown() {
   loadingManagers.value = true
 
   try {
-    const res = await getEmployees({
+    const res = await getEmployeeLookupOptions({
       page: 1,
       limit: 100,
       search: '',
@@ -432,7 +437,6 @@ async function fetchManagersForDropdown() {
     loadingManagers.value = false
   }
 }
-
 
 function addManagerToOptions(manager) {
   if (!manager) return
@@ -465,13 +469,14 @@ async function refreshAutoManagerPreview() {
 
   const selected = selectedPositionOption.value
   const parentPositionId = selected?.reportsToPositionId || ''
+  const managerScope = String(selected?.managerScope || 'SAME_LINE').toUpperCase()
 
   if (!parentPositionId) {
     form.reportsToEmployeeId = ''
     return
   }
 
-  if (selected.managerScope !== 'GLOBAL' && !form.lineId) {
+  if (managerScope !== 'GLOBAL' && !form.lineId) {
     form.reportsToEmployeeId = ''
     autoManagerError.value = 'Please select line first so the system can find the supervisor.'
     return
@@ -480,13 +485,14 @@ async function refreshAutoManagerPreview() {
   loadingAutoManager.value = true
 
   try {
-    const res = await getEmployees({
+    const res = await getEmployeeLookupOptions({
       page: 1,
       limit: 10,
       search: '',
       isActive: 'true',
+      scope: 'ALL',
       positionId: parentPositionId,
-      lineId: selected.managerScope === 'GLOBAL' ? '' : form.lineId,
+      lineId: managerScope === 'GLOBAL' ? '' : form.lineId,
       sortBy: 'displayName',
       sortOrder: 'asc',
     })
@@ -522,11 +528,11 @@ async function fetchShiftsForDropdown() {
   loadingShifts.value = true
 
   try {
-    const res = await getShifts({
+    const res = await getShiftLookupOptions({
       page: 1,
       limit: 100,
       search: '',
-      isActive: true,
+      isActive: 'true',
       sortBy: 'name',
       sortOrder: 'asc',
     })
@@ -1025,7 +1031,6 @@ onBeforeUnmount(() => {
 
     <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
       <div class="flex flex-wrap items-center gap-2">
-
         <Button
           label="Import Excel"
           icon="pi pi-upload"

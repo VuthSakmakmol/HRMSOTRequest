@@ -56,7 +56,6 @@ const baseOTRequestSchema = z
 
     otDate: otDateSchema,
 
-    // ===== old/manual flow (temporary backward compatibility) =====
     startTime: optionalTimeSchema,
     endTime: optionalTimeSchema,
     breakMinutes: z.coerce
@@ -65,7 +64,6 @@ const baseOTRequestSchema = z
       .min(0, 'breakMinutes must be at least 0')
       .default(0),
 
-    // ===== new option-based flow =====
     shiftOtOptionId: z
       .string()
       .trim()
@@ -93,9 +91,6 @@ const baseOTRequestSchema = z
     const hasStartTime = Boolean(String(data.startTime || '').trim())
     const hasEndTime = Boolean(String(data.endTime || '').trim())
 
-    // Backward-compatible rule:
-    // - new flow: shiftOtOptionId is enough
-    // - old flow: startTime + endTime required
     if (!hasShiftOtOptionId) {
       if (!hasStartTime) {
         ctx.addIssue({
@@ -124,8 +119,6 @@ const baseOTRequestSchema = z
       }
     }
 
-    // Optional consistency guard:
-    // if frontend sends both flows together, keep them logically valid
     if (hasShiftOtOptionId && hasStartTime && hasEndTime) {
       if (hhmmToMinutes(data.endTime) <= hhmmToMinutes(data.startTime)) {
         ctx.addIssue({
@@ -139,6 +132,10 @@ const baseOTRequestSchema = z
 
 const createOTRequestSchema = baseOTRequestSchema
 const updateOTRequestSchema = baseOTRequestSchema
+
+const unavailableOTEmployeesQuerySchema = z.object({
+  otDate: otDateSchema,
+})
 
 const listOTRequestsQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -155,15 +152,17 @@ const listOTRequestsQuerySchema = z.object({
   otDateFrom: z.string().trim().default(''),
   otDateTo: z.string().trim().default(''),
 
-  sortBy: z.enum([
-    'createdAt',
-    'otDate',
-    'requestNo',
-    'requesterName',
-    'status',
-    'totalHours',
-    'employeeCount',
-  ]).default('createdAt'),
+  sortBy: z
+    .enum([
+      'createdAt',
+      'otDate',
+      'requestNo',
+      'requesterName',
+      'status',
+      'totalHours',
+      'employeeCount',
+    ])
+    .default('createdAt'),
 
   sortOrder: z.enum(['asc', 'desc']).default('desc'),
 })
@@ -178,15 +177,17 @@ const listOTApprovalInboxQuerySchema = z.object({
   otDateFrom: z.string().trim().default(''),
   otDateTo: z.string().trim().default(''),
 
-  sortBy: z.enum([
-    'createdAt',
-    'otDate',
-    'requestNo',
-    'requesterName',
-    'status',
-    'totalHours',
-    'employeeCount',
-  ]).default('createdAt'),
+  sortBy: z
+    .enum([
+      'createdAt',
+      'otDate',
+      'requestNo',
+      'requesterName',
+      'status',
+      'totalHours',
+      'employeeCount',
+    ])
+    .default('createdAt'),
 
   sortOrder: z.enum(['asc', 'desc']).default('desc'),
 })
@@ -254,6 +255,7 @@ module.exports = {
   updateOTRequestSchema,
   listOTRequestsQuerySchema,
   listOTApprovalInboxQuerySchema,
+  unavailableOTEmployeesQuerySchema,
   otRequestIdParamSchema,
   otApprovalDecisionSchema,
   otRequesterConfirmationSchema,

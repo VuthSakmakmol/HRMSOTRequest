@@ -1,15 +1,19 @@
 <!-- frontend/src/modules/ot/views/OTRequestDetailView.vue -->
 <script setup>
+// frontend/src/modules/ot/views/OTRequestDetailView.vue
+
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
-import Card from 'primevue/card'
 import Column from 'primevue/column'
 import DataTable from 'primevue/datatable'
-import Divider from 'primevue/divider'
+import IconField from 'primevue/iconfield'
+import InputIcon from 'primevue/inputicon'
+import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
+import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 import Textarea from 'primevue/textarea'
 
@@ -29,6 +33,9 @@ const actionLoading = ref(false)
 const detail = ref(null)
 const requesterRemark = ref('')
 
+const employeeListType = ref('APPROVED')
+const employeeKeyword = ref('')
+
 const requestId = computed(() => String(route.params.id || '').trim())
 
 const canUpdateRequest = computed(() => auth.hasAnyPermission(['OT_REQUEST_UPDATE']))
@@ -46,8 +53,27 @@ const approvedEmployees = computed(() =>
 )
 
 const proposedApprovedEmployees = computed(() =>
-  Array.isArray(detail.value?.proposedApprovedEmployees) ? detail.value.proposedApprovedEmployees : [],
+  Array.isArray(detail.value?.proposedApprovedEmployees)
+    ? detail.value.proposedApprovedEmployees
+    : [],
 )
+
+const removedEmployees = computed(() => {
+  const finalList = proposedApprovedEmployees.value.length
+    ? proposedApprovedEmployees.value
+    : approvedEmployees.value
+
+  const finalIdSet = new Set(
+    finalList
+      .map((item) => String(item?.employeeId || '').trim())
+      .filter(Boolean),
+  )
+
+  return requestedEmployees.value.filter((item) => {
+    const employeeId = String(item?.employeeId || '').trim()
+    return employeeId && !finalIdSet.has(employeeId)
+  })
+})
 
 const approvalSteps = computed(() =>
   Array.isArray(detail.value?.approvalSteps) ? detail.value.approvalSteps : [],
@@ -56,6 +82,7 @@ const approvalSteps = computed(() =>
 const isLegacyManualMode = computed(() => {
   const shiftId = String(detail.value?.shiftId || '').trim()
   const shiftOtOptionId = String(detail.value?.shiftOtOptionId || '').trim()
+
   return !shiftId && !shiftOtOptionId
 })
 
@@ -64,12 +91,83 @@ const comparisonSummary = computed(() => detail.value?.comparisonSummary || {})
 const requestWindowLabel = computed(() => {
   const start = String(detail.value?.requestStartTime || detail.value?.startTime || '').trim()
   const end = String(detail.value?.requestEndTime || detail.value?.endTime || '').trim()
+
   if (!start && !end) return '-'
+
   return [start, end].filter(Boolean).join(' - ')
+})
+
+const modeLabel = computed(() =>
+  isLegacyManualMode.value ? 'Legacy Manual' : 'Shift OT Option',
+)
+
+const modeSeverity = computed(() =>
+  isLegacyManualMode.value ? 'contrast' : 'info',
+)
+
+const employeeListOptions = computed(() => {
+  const options = [
+    {
+      label: `Approved (${approvedEmployees.value.length})`,
+      value: 'APPROVED',
+    },
+    {
+      label: `Requested (${requestedEmployees.value.length})`,
+      value: 'REQUESTED',
+    },
+  ]
+
+  if (proposedApprovedEmployees.value.length) {
+    options.push({
+      label: `Proposed (${proposedApprovedEmployees.value.length})`,
+      value: 'PROPOSED',
+    })
+  }
+
+  if (removedEmployees.value.length) {
+    options.push({
+      label: `Removed (${removedEmployees.value.length})`,
+      value: 'REMOVED',
+    })
+  }
+
+  return options
+})
+
+const activeEmployeeRows = computed(() => {
+  if (employeeListType.value === 'REQUESTED') return requestedEmployees.value
+  if (employeeListType.value === 'PROPOSED') return proposedApprovedEmployees.value
+  if (employeeListType.value === 'REMOVED') return removedEmployees.value
+
+  return approvedEmployees.value
+})
+
+const filteredEmployeeRows = computed(() => {
+  const keyword = String(employeeKeyword.value || '').trim().toLowerCase()
+
+  if (!keyword) return activeEmployeeRows.value
+
+  return activeEmployeeRows.value.filter((employee) => {
+    const text = [
+      employee?.employeeCode,
+      employee?.employeeName,
+      employee?.departmentName,
+      employee?.positionName,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+
+    return text.includes(keyword)
+  })
 })
 
 function normalizePayload(res) {
   return res?.data?.data || res?.data || null
+}
+
+function upper(value) {
+  return String(value || '').trim().toUpperCase()
 }
 
 function formatDateTime(value) {
@@ -98,11 +196,12 @@ function formatMinutesLabel(value) {
 
   if (hh && mm) return `${hh}h ${mm}m`
   if (hh) return `${hh}h`
+
   return `${mm}m`
 }
 
 function getStatusSeverity(status) {
-  switch (String(status || '').toUpperCase()) {
+  switch (upper(status)) {
     case 'APPROVED':
       return 'success'
     case 'PENDING':
@@ -119,7 +218,7 @@ function getStatusSeverity(status) {
 }
 
 function getDayTypeSeverity(dayType) {
-  switch (String(dayType || '').toUpperCase()) {
+  switch (upper(dayType)) {
     case 'HOLIDAY':
       return 'danger'
     case 'SUNDAY':
@@ -132,7 +231,7 @@ function getDayTypeSeverity(dayType) {
 }
 
 function getApprovalStepSeverity(status) {
-  switch (String(status || '').toUpperCase()) {
+  switch (upper(status)) {
     case 'APPROVED':
       return 'success'
     case 'PENDING':
@@ -146,14 +245,20 @@ function getApprovalStepSeverity(status) {
   }
 }
 
-function personLabel(row) {
-  const code = String(row?.employeeCode || '').trim()
-  const name = String(row?.employeeName || '').trim()
-
-  if (code && name) return `${code} - ${name}`
-  if (code) return code
-  if (name) return name
-  return '-'
+function getRequesterConfirmationSeverity(status) {
+  switch (upper(status)) {
+    case 'AGREED':
+    case 'CONFIRMED':
+      return 'success'
+    case 'PENDING':
+      return 'warning'
+    case 'DISAGREED':
+      return 'danger'
+    case 'NOT_REQUIRED':
+      return 'secondary'
+    default:
+      return 'contrast'
+  }
 }
 
 function approverLabel(row) {
@@ -163,7 +268,24 @@ function approverLabel(row) {
   if (code && name) return `${code} - ${name}`
   if (code) return code
   if (name) return name
+
   return '-'
+}
+
+function safeNumber(value) {
+  const numberValue = Number(value || 0)
+  return Number.isFinite(numberValue) ? numberValue : 0
+}
+
+function policyValue(key, fallback = '-') {
+  const policy = detail.value?.otCalculationPolicySnapshot || {}
+  const value = policy[key]
+
+  if (value === true) return 'YES'
+  if (value === false) return 'NO'
+  if (value === 0) return 0
+
+  return value || fallback
 }
 
 async function fetchDetail() {
@@ -174,6 +296,13 @@ async function fetchDetail() {
   try {
     const res = await getOTRequestById(requestId.value)
     detail.value = normalizePayload(res)
+
+    if (
+      (employeeListType.value === 'PROPOSED' && !proposedApprovedEmployees.value.length) ||
+      (employeeListType.value === 'REMOVED' && !removedEmployees.value.length)
+    ) {
+      employeeListType.value = 'APPROVED'
+    }
   } catch (error) {
     toast.add({
       severity: 'error',
@@ -229,6 +358,7 @@ async function submitRequesterConfirmation(action) {
 
     detail.value = normalizePayload(res)
     requesterRemark.value = ''
+    employeeListType.value = 'APPROVED'
 
     toast.add({
       severity: 'success',
@@ -260,47 +390,65 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4">
-    <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+  <div class="ot-page">
+    <section class="ot-page-header">
       <div class="min-w-0">
-        <div class="flex flex-wrap items-center gap-2">
-          <h1 class="text-xl font-semibold text-[color:var(--ot-text)]">
-            OT Request Detail
-          </h1>
-
-          <Tag
-            v-if="detail"
-            :value="detail.status || '-'"
-            :severity="getStatusSeverity(detail.status)"
+        <div class="ot-title-row">
+          <Button
+            icon="pi pi-arrow-left"
+            severity="secondary"
+            text
+            rounded
+            size="small"
+            aria-label="Back"
+            @click="goBack"
           />
 
-          <Tag
-            v-if="detail"
-            :value="detail.dayType || '-'"
-            :severity="getDayTypeSeverity(detail.dayType)"
-          />
+          <div class="min-w-0">
+            <div class="ot-title-line">
+              <h1>OT Request Detail</h1>
 
-          <Tag
-            v-if="detail"
-            :value="isLegacyManualMode ? 'LEGACY MANUAL MODE' : 'SHIFT OT OPTION MODE'"
-            :severity="isLegacyManualMode ? 'contrast' : 'info'"
-          />
+              <span
+                v-if="detail?.requestNo"
+                class="ot-request-badge"
+              >
+                {{ detail.requestNo }}
+              </span>
+            </div>
+          </div>
         </div>
 
-        <p class="mt-1 text-sm text-[color:var(--ot-text-muted)]">
-          View OT request, approval flow, employee adjustments, and verify attendance from this request.
-        </p>
+        <div
+          v-if="detail"
+          class="ot-tag-row"
+        >
+          <Tag
+            :value="detail.status || '-'"
+            :severity="getStatusSeverity(detail.status)"
+            class="ot-soft-tag"
+          />
+
+          <Tag
+            :value="detail.dayType || '-'"
+            :severity="getDayTypeSeverity(detail.dayType)"
+            class="ot-soft-tag"
+          />
+
+          <Tag
+            :value="modeLabel"
+            :severity="modeSeverity"
+            class="ot-soft-tag"
+          />
+
+          <Tag
+            :value="`Requester: ${detail.requesterConfirmationStatus || '-'}`"
+            :severity="getRequesterConfirmationSeverity(detail.requesterConfirmationStatus)"
+            class="ot-soft-tag"
+          />
+        </div>
       </div>
 
-      <div class="flex flex-wrap items-center gap-2">
-        <Button
-          label="Back"
-          icon="pi pi-arrow-left"
-          severity="secondary"
-          outlined
-          size="small"
-          @click="goBack"
-        />
+      <div class="ot-header-actions">
         <Button
           label="Refresh"
           icon="pi pi-refresh"
@@ -309,6 +457,7 @@ onMounted(() => {
           :loading="loading"
           @click="fetchDetail"
         />
+
         <Button
           v-if="canVerifyAttendance"
           label="Verify Attendance"
@@ -318,6 +467,7 @@ onMounted(() => {
           size="small"
           @click="goVerifyAttendance"
         />
+
         <Button
           v-if="detail?.canEdit && canUpdateRequest"
           label="Edit"
@@ -326,11 +476,11 @@ onMounted(() => {
           @click="goEdit"
         />
       </div>
-    </div>
+    </section>
 
     <div
       v-if="loading"
-      class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-4 py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
+      class="ot-empty-state"
     >
       Loading OT request...
     </div>
@@ -340,489 +490,494 @@ onMounted(() => {
         v-if="canRequesterConfirmAction"
         severity="warn"
         :closable="false"
+        class="ot-message"
       >
         This request is waiting for requester confirmation because the approver adjusted the approved employee list.
       </Message>
 
-      <div
+      <section
         v-if="canRequesterConfirmAction"
-        class="rounded-2xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950/30"
+        class="ot-section ot-confirm-section"
       >
-        <div class="mb-3 text-sm font-semibold text-amber-800 dark:text-amber-300">
-          Requester Confirmation
-        </div>
-
-        <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
-          <div class="ot-info-box border-amber-200 dark:border-amber-800">
-            <div class="ot-info-label">Requested Staff</div>
-            <div class="ot-info-value">
-              {{ comparisonSummary.requestedEmployeeCount ?? 0 }}
-            </div>
-          </div>
-
-          <div class="ot-info-box border-amber-200 dark:border-amber-800">
-            <div class="ot-info-label">Current Approved Staff</div>
-            <div class="ot-info-value">
-              {{ comparisonSummary.approvedEmployeeCount ?? 0 }}
-            </div>
-          </div>
-
-          <div class="ot-info-box border-amber-200 dark:border-amber-800">
-            <div class="ot-info-label">Proposed Approved Staff</div>
-            <div class="ot-info-value">
-              {{ comparisonSummary.proposedApprovedEmployeeCount ?? 0 }}
-            </div>
+        <div class="ot-section-header">
+          <div>
+            <h2>Requester Confirmation</h2>
           </div>
         </div>
 
-        <div class="mt-4 space-y-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Remark
-          </label>
+        <div class="ot-metric-grid three">
+          <div class="ot-metric-card">
+            <span>Requested Staff</span>
+            <strong>{{ comparisonSummary.requestedEmployeeCount ?? 0 }}</strong>
+          </div>
+
+          <div class="ot-metric-card">
+            <span>Current Approved</span>
+            <strong>{{ comparisonSummary.approvedEmployeeCount ?? 0 }}</strong>
+          </div>
+
+          <div class="ot-metric-card">
+            <span>Proposed Approved</span>
+            <strong>{{ comparisonSummary.proposedApprovedEmployeeCount ?? 0 }}</strong>
+          </div>
+        </div>
+
+        <div class="ot-field-block">
+          <label>Remark</label>
+
           <Textarea
             v-model.trim="requesterRemark"
-            rows="4"
+            rows="3"
             autoResize
             class="w-full"
             placeholder="Optional for Agree, required for Disagree"
           />
         </div>
 
-        <div class="mt-4 flex flex-wrap items-center gap-2">
+        <div class="ot-action-row">
           <Button
             label="Agree"
             icon="pi pi-check"
+            size="small"
             :loading="actionLoading"
             @click="submitRequesterConfirmation('AGREE')"
           />
+
           <Button
             label="Disagree"
             icon="pi pi-times"
             severity="danger"
             outlined
+            size="small"
             :loading="actionLoading"
             @click="submitRequesterConfirmation('DISAGREE')"
           />
         </div>
-      </div>
+      </section>
 
-      <div class="grid grid-cols-1 gap-4 xl:grid-cols-4">
-        <div class="ot-summary-box">
-          <div class="ot-summary-label">Request No</div>
-          <div class="ot-summary-value">{{ detail.requestNo || '-' }}</div>
+      <section class="ot-metric-grid">
+        <div class="ot-metric-card">
+          <span>Requester</span>
+          <strong>{{ detail.requesterName || '-' }}</strong>
+          <small>{{ detail.requesterEmployeeNo || '-' }}</small>
         </div>
 
-        <div class="ot-summary-box">
-          <div class="ot-summary-label">Requester</div>
-          <div class="ot-summary-value">{{ detail.requesterName || '-' }}</div>
-          <div class="ot-summary-sub">{{ detail.requesterEmployeeNo || '-' }}</div>
+        <div class="ot-metric-card">
+          <span>OT Date</span>
+          <strong>{{ detail.otDate || '-' }}</strong>
+          <small>{{ detail.dayType || '-' }}</small>
         </div>
 
-        <div class="ot-summary-box">
-          <div class="ot-summary-label">OT Date</div>
-          <div class="ot-summary-value">{{ detail.otDate || '-' }}</div>
+        <div class="ot-metric-card">
+          <span>Current Step</span>
+          <strong>{{ detail.currentApprovalStep ?? 1 }}</strong>
+          <small>{{ approvalSteps.length }} total step(s)</small>
         </div>
 
-        <div class="ot-summary-box">
-          <div class="ot-summary-label">Current Step</div>
-          <div class="ot-summary-value">{{ detail.currentApprovalStep ?? 1 }}</div>
+        <div class="ot-metric-card">
+          <span>Requested Staff</span>
+          <strong>{{ detail.requestedEmployeeCount ?? 0 }}</strong>
+          <small>Original list</small>
         </div>
 
-        <div class="ot-summary-box">
-          <div class="ot-summary-label">Requested Staff</div>
-          <div class="ot-summary-value">{{ detail.requestedEmployeeCount ?? 0 }}</div>
+        <div class="ot-metric-card">
+          <span>Approved Staff</span>
+          <strong>{{ detail.approvedEmployeeCount ?? 0 }}</strong>
+          <small>Current list</small>
         </div>
 
-        <div class="ot-summary-box">
-          <div class="ot-summary-label">Approved Staff</div>
-          <div class="ot-summary-value">{{ detail.approvedEmployeeCount ?? 0 }}</div>
+        <div class="ot-metric-card">
+          <span>Duration</span>
+          <strong>{{ formatMinutesLabel(detail.requestedMinutes ?? detail.totalMinutes ?? 0) }}</strong>
+          <small>{{ safeNumber(detail.requestedMinutes ?? detail.totalMinutes) }} min</small>
         </div>
+      </section>
 
-        <div class="ot-summary-box">
-          <div class="ot-summary-label">Proposed Approved</div>
-          <div class="ot-summary-value">{{ detail.proposedApprovedEmployeeCount ?? 0 }}</div>
-        </div>
+      <section class="ot-two-column">
+        <div class="ot-section wide">
+          <div class="ot-section-header">
+            <div>
+              <h2>OT Request Summary</h2>
+            </div>
+          </div>
 
-        <div class="ot-summary-box">
-          <div class="ot-summary-label">Requester Confirmation</div>
-          <div class="ot-summary-value">{{ detail.requesterConfirmationStatus || '-' }}</div>
-        </div>
-      </div>
-
-      <div class="grid grid-cols-1 gap-4 xl:grid-cols-3">
-        <Card class="ot-detail-card xl:col-span-2">
-          <template #title>
-            OT Request Summary
-          </template>
-
-          <template #content>
-            <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-              <div class="ot-info-box">
-                <div class="ot-info-label">Request Window</div>
-                <div class="ot-info-value">{{ requestWindowLabel }}</div>
-              </div>
-
-              <div class="ot-info-box">
-                <div class="ot-info-label">Requested Minutes</div>
-                <div class="ot-info-value">{{ detail.requestedMinutes ?? detail.totalMinutes ?? 0 }}</div>
-              </div>
-
-              <div class="ot-info-box">
-                <div class="ot-info-label">Requested Duration</div>
-                <div class="ot-info-value">
-                  {{ formatMinutesLabel(detail.requestedMinutes ?? detail.totalMinutes ?? 0) }}
-                </div>
-              </div>
-
-              <div class="ot-info-box">
-                <div class="ot-info-label">Legacy Start Time</div>
-                <div class="ot-info-value">{{ detail.startTime || '-' }}</div>
-              </div>
-
-              <div class="ot-info-box">
-                <div class="ot-info-label">Legacy End Time</div>
-                <div class="ot-info-value">{{ detail.endTime || '-' }}</div>
-              </div>
-
-              <div class="ot-info-box">
-                <div class="ot-info-label">Break Minutes</div>
-                <div class="ot-info-value">{{ detail.breakMinutes ?? 0 }}</div>
-              </div>
+          <div class="ot-info-grid three">
+            <div class="ot-info-item">
+              <span>Request Window</span>
+              <strong>{{ requestWindowLabel }}</strong>
             </div>
 
-            <Divider />
-
-            <div class="space-y-2">
-              <div class="text-sm font-medium text-[color:var(--ot-text)]">Reason</div>
-              <div class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-bg)] p-4 text-sm leading-6 text-[color:var(--ot-text)]">
-                {{ detail.reason || '-' }}
-              </div>
+            <div class="ot-info-item">
+              <span>Requested Minutes</span>
+              <strong>{{ detail.requestedMinutes ?? detail.totalMinutes ?? 0 }}</strong>
             </div>
-          </template>
-        </Card>
 
-        <Card class="ot-detail-card">
-          <template #title>
-            Shift / OT Option
-          </template>
-
-          <template #content>
-            <div class="flex flex-col gap-3">
-              <div class="ot-info-box">
-                <div class="ot-info-label">Shift</div>
-                <div class="ot-info-value">
-                  {{ detail.shiftCode || '-' }} {{ detail.shiftName ? `· ${detail.shiftName}` : '' }}
-                </div>
-              </div>
-
-              <div class="ot-info-box">
-                <div class="ot-info-label">Shift Type</div>
-                <div class="ot-info-value">{{ detail.shiftType || '-' }}</div>
-              </div>
-
-              <div class="ot-info-box">
-                <div class="ot-info-label">Shift Start</div>
-                <div class="ot-info-value">{{ detail.shiftStartTime || '-' }}</div>
-              </div>
-
-              <div class="ot-info-box">
-                <div class="ot-info-label">Shift End</div>
-                <div class="ot-info-value">{{ detail.shiftEndTime || '-' }}</div>
-              </div>
-
-              <div class="ot-info-box">
-                <div class="ot-info-label">Cross Midnight</div>
-                <div class="ot-info-value">
-                  {{
-                    detail.shiftCrossMidnight === true
-                      ? 'YES'
-                      : detail.shiftCrossMidnight === false
-                        ? 'NO'
-                        : '-'
-                  }}
-                </div>
-              </div>
-
-              <div class="ot-info-box">
-                <div class="ot-info-label">OT Option</div>
-                <div class="ot-info-value">{{ detail.shiftOtOptionLabel || '-' }}</div>
-              </div>
+            <div class="ot-info-item">
+              <span>Requested Duration</span>
+              <strong>{{ formatMinutesLabel(detail.requestedMinutes ?? detail.totalMinutes ?? 0) }}</strong>
             </div>
-          </template>
-        </Card>
-      </div>
 
-      <Card
+            <div class="ot-info-item">
+              <span>Legacy Start</span>
+              <strong>{{ detail.startTime || '-' }}</strong>
+            </div>
+
+            <div class="ot-info-item">
+              <span>Legacy End</span>
+              <strong>{{ detail.endTime || '-' }}</strong>
+            </div>
+
+            <div class="ot-info-item">
+              <span>Break Minutes</span>
+              <strong>{{ detail.breakMinutes ?? 0 }}</strong>
+            </div>
+          </div>
+
+          <div class="ot-reason-box">
+            <span>Reason</span>
+            <p>{{ detail.reason || '-' }}</p>
+          </div>
+        </div>
+
+        <div class="ot-section">
+          <div class="ot-section-header">
+            <div>
+              <h2>Shift / OT Option</h2>
+            </div>
+          </div>
+
+          <div class="ot-info-list">
+            <div class="ot-info-line">
+              <span>Shift</span>
+              <strong>
+                {{ detail.shiftCode || '-' }}
+                {{ detail.shiftName ? `· ${detail.shiftName}` : '' }}
+              </strong>
+            </div>
+
+            <div class="ot-info-line">
+              <span>Shift Type</span>
+              <strong>{{ detail.shiftType || '-' }}</strong>
+            </div>
+
+            <div class="ot-info-line">
+              <span>Shift Start</span>
+              <strong>{{ detail.shiftStartTime || '-' }}</strong>
+            </div>
+
+            <div class="ot-info-line">
+              <span>Shift End</span>
+              <strong>{{ detail.shiftEndTime || '-' }}</strong>
+            </div>
+
+            <div class="ot-info-line">
+              <span>Cross Midnight</span>
+              <strong>
+                {{
+                  detail.shiftCrossMidnight === true
+                    ? 'YES'
+                    : detail.shiftCrossMidnight === false
+                      ? 'NO'
+                      : '-'
+                }}
+              </strong>
+            </div>
+
+            <div class="ot-info-line">
+              <span>OT Option</span>
+              <strong>{{ detail.shiftOtOptionLabel || '-' }}</strong>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section
         v-if="detail.otCalculationPolicySnapshot && (detail.otCalculationPolicySnapshot.code || detail.otCalculationPolicySnapshot.name)"
-        class="ot-detail-card"
+        class="ot-section"
       >
-        <template #title>
-          Policy Snapshot
-        </template>
-
-        <template #content>
-          <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <div class="ot-info-box">
-              <div class="ot-info-label">Policy Code</div>
-              <div class="ot-info-value">{{ detail.otCalculationPolicySnapshot.code || '-' }}</div>
-            </div>
-
-            <div class="ot-info-box">
-              <div class="ot-info-label">Policy Name</div>
-              <div class="ot-info-value">{{ detail.otCalculationPolicySnapshot.name || '-' }}</div>
-            </div>
-
-            <div class="ot-info-box">
-              <div class="ot-info-label">Min Eligible</div>
-              <div class="ot-info-value">
-                {{ detail.otCalculationPolicySnapshot.minEligibleMinutes ?? 0 }} min
-              </div>
-            </div>
-
-            <div class="ot-info-box">
-              <div class="ot-info-label">Round Unit</div>
-              <div class="ot-info-value">
-                {{ detail.otCalculationPolicySnapshot.roundUnitMinutes ?? 0 }} min
-              </div>
-            </div>
-
-            <div class="ot-info-box">
-              <div class="ot-info-label">Round Method</div>
-              <div class="ot-info-value">
-                {{ detail.otCalculationPolicySnapshot.roundMethod || '-' }}
-              </div>
-            </div>
-
-            <div class="ot-info-box">
-              <div class="ot-info-label">Grace After Shift End</div>
-              <div class="ot-info-value">
-                {{ detail.otCalculationPolicySnapshot.graceAfterShiftEndMinutes ?? 0 }} min
-              </div>
-            </div>
-
-            <div class="ot-info-box">
-              <div class="ot-info-label">Allow Pre-Shift OT</div>
-              <div class="ot-info-value">
-                {{ detail.otCalculationPolicySnapshot.allowPreShiftOT ? 'YES' : 'NO' }}
-              </div>
-            </div>
-
-            <div class="ot-info-box">
-              <div class="ot-info-label">Allow Post-Shift OT</div>
-              <div class="ot-info-value">
-                {{ detail.otCalculationPolicySnapshot.allowPostShiftOT ? 'YES' : 'NO' }}
-              </div>
-            </div>
-
-            <div class="ot-info-box">
-              <div class="ot-info-label">Cap By Request</div>
-              <div class="ot-info-value">
-                {{ detail.otCalculationPolicySnapshot.capByRequestedMinutes ? 'YES' : 'NO' }}
-              </div>
-            </div>
-
-            <div class="ot-info-box">
-              <div class="ot-info-label">Forget Scan In Pending</div>
-              <div class="ot-info-value">
-                {{ detail.otCalculationPolicySnapshot.treatForgetScanInAsPending ? 'YES' : 'NO' }}
-              </div>
-            </div>
-
-            <div class="ot-info-box">
-              <div class="ot-info-label">Forget Scan Out Pending</div>
-              <div class="ot-info-value">
-                {{ detail.otCalculationPolicySnapshot.treatForgetScanOutAsPending ? 'YES' : 'NO' }}
-              </div>
-            </div>
+        <div class="ot-section-header">
+          <div>
+            <h2>Policy Snapshot</h2>
           </div>
-        </template>
-      </Card>
+        </div>
 
-      <div class="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <Card class="ot-detail-card">
-          <template #title>
-            Requested Employees
-          </template>
+        <div class="ot-info-grid four">
+          <div class="ot-info-item">
+            <span>Policy Code</span>
+            <strong>{{ policyValue('code') }}</strong>
+          </div>
 
-          <template #content>
-            <DataTable
-              :value="requestedEmployees"
-              dataKey="employeeId"
-              responsiveLayout="scroll"
-              stripedRows
+          <div class="ot-info-item">
+            <span>Policy Name</span>
+            <strong>{{ policyValue('name') }}</strong>
+          </div>
+
+          <div class="ot-info-item">
+            <span>Min Eligible</span>
+            <strong>{{ policyValue('minEligibleMinutes', 0) }} min</strong>
+          </div>
+
+          <div class="ot-info-item">
+            <span>Round Unit</span>
+            <strong>{{ policyValue('roundUnitMinutes', 0) }} min</strong>
+          </div>
+
+          <div class="ot-info-item">
+            <span>Round Method</span>
+            <strong>{{ policyValue('roundMethod') }}</strong>
+          </div>
+
+          <div class="ot-info-item">
+            <span>Grace After Shift End</span>
+            <strong>{{ policyValue('graceAfterShiftEndMinutes', 0) }} min</strong>
+          </div>
+
+          <div class="ot-info-item">
+            <span>Allow Pre-Shift OT</span>
+            <strong>{{ policyValue('allowPreShiftOT') }}</strong>
+          </div>
+
+          <div class="ot-info-item">
+            <span>Allow Post-Shift OT</span>
+            <strong>{{ policyValue('allowPostShiftOT') }}</strong>
+          </div>
+
+          <div class="ot-info-item">
+            <span>Cap By Request</span>
+            <strong>{{ policyValue('capByRequestedMinutes') }}</strong>
+          </div>
+
+          <div class="ot-info-item">
+            <span>Forget Scan In Pending</span>
+            <strong>{{ policyValue('treatForgetScanInAsPending') }}</strong>
+          </div>
+
+          <div class="ot-info-item">
+            <span>Forget Scan Out Pending</span>
+            <strong>{{ policyValue('treatForgetScanOutAsPending') }}</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="ot-section">
+        <div class="ot-section-header employee-header">
+          <div>
+            <h2>Employees</h2>
+          </div>
+
+          <div class="employee-tools">
+            <Select
+              v-model="employeeListType"
+              :options="employeeListOptions"
+              optionLabel="label"
+              optionValue="value"
               size="small"
-              class="ot-table"
-            >
-              <template #empty>
-                <div class="py-6 text-center text-sm text-[color:var(--ot-text-muted)]">
-                  No requested employees.
-                </div>
-              </template>
+              class="employee-list-select"
+            />
 
-              <Column header="Employee" style="min-width: 14rem">
-                <template #body="{ data }">
-                  {{ personLabel(data) }}
-                </template>
-              </Column>
-              <Column field="departmentName" header="Department" style="min-width: 10rem" />
-              <Column field="positionName" header="Position" style="min-width: 10rem" />
-            </DataTable>
+            <IconField class="employee-search">
+              <InputIcon class="pi pi-search" />
+
+              <InputText
+                v-model="employeeKeyword"
+                placeholder="Search employee"
+                size="small"
+                class="w-full"
+              />
+            </IconField>
+          </div>
+        </div>
+
+        <div class="employee-count-row">
+          <Tag
+            :value="`Requested ${requestedEmployees.length}`"
+            severity="secondary"
+            class="ot-soft-tag"
+          />
+
+          <Tag
+            :value="`Approved ${approvedEmployees.length}`"
+            severity="info"
+            class="ot-soft-tag"
+          />
+
+          <Tag
+            v-if="proposedApprovedEmployees.length"
+            :value="`Proposed ${proposedApprovedEmployees.length}`"
+            severity="warning"
+            class="ot-soft-tag"
+          />
+
+          <Tag
+            v-if="removedEmployees.length"
+            :value="`Removed ${removedEmployees.length}`"
+            severity="danger"
+            class="ot-soft-tag"
+          />
+
+          <span class="employee-filter-count">
+            Showing {{ filteredEmployeeRows.length }} of {{ activeEmployeeRows.length }}
+          </span>
+        </div>
+
+        <DataTable
+          :value="filteredEmployeeRows"
+          dataKey="employeeId"
+          scrollable
+          scrollHeight="320px"
+          size="small"
+          class="ot-compact-table"
+        >
+          <template #empty>
+            <div class="ot-table-empty">
+              No employees found.
+            </div>
           </template>
-        </Card>
 
-        <Card class="ot-detail-card">
-          <template #title>
-            Approved Employees
-          </template>
-
-          <template #content>
-            <DataTable
-              :value="approvedEmployees"
-              dataKey="employeeId"
-              responsiveLayout="scroll"
-              stripedRows
-              size="small"
-              class="ot-table"
-            >
-              <template #empty>
-                <div class="py-6 text-center text-sm text-[color:var(--ot-text-muted)]">
-                  No approved employees.
-                </div>
-              </template>
-
-              <Column header="Employee" style="min-width: 14rem">
-                <template #body="{ data }">
-                  {{ personLabel(data) }}
-                </template>
-              </Column>
-              <Column field="departmentName" header="Department" style="min-width: 10rem" />
-              <Column field="positionName" header="Position" style="min-width: 10rem" />
-            </DataTable>
-          </template>
-        </Card>
-      </div>
-
-      <Card
-        v-if="proposedApprovedEmployees.length"
-        class="ot-detail-card"
-      >
-        <template #title>
-          Proposed Approved Employees
-        </template>
-
-        <template #content>
-          <DataTable
-            :value="proposedApprovedEmployees"
-            dataKey="employeeId"
-            responsiveLayout="scroll"
-            stripedRows
-            size="small"
-            class="ot-table"
+          <Column
+            header="Employee"
+            style="min-width: 16rem"
           >
-            <template #empty>
-              <div class="py-6 text-center text-sm text-[color:var(--ot-text-muted)]">
-                No proposed approved employees.
+            <template #body="{ data }">
+              <div class="ot-person-cell">
+                <strong>{{ data.employeeName || '-' }}</strong>
+                <small>{{ data.employeeCode || '-' }}</small>
               </div>
             </template>
+          </Column>
 
-            <Column header="Employee" style="min-width: 14rem">
-              <template #body="{ data }">
-                {{ personLabel(data) }}
-              </template>
-            </Column>
-            <Column field="departmentName" header="Department" style="min-width: 10rem" />
-            <Column field="positionName" header="Position" style="min-width: 10rem" />
-          </DataTable>
-        </template>
-      </Card>
-
-      <Card class="ot-detail-card">
-        <template #title>
-          Approval Steps
-        </template>
-
-        <template #content>
-          <DataTable
-            :value="approvalSteps"
-            dataKey="stepNo"
-            responsiveLayout="scroll"
-            stripedRows
-            size="small"
-            class="ot-table"
+          <Column
+            header="Work Info"
+            style="min-width: 18rem"
           >
-            <template #empty>
-              <div class="py-6 text-center text-sm text-[color:var(--ot-text-muted)]">
-                No approval steps found.
+            <template #body="{ data }">
+              <div class="ot-person-cell">
+                <strong>{{ data.positionName || '-' }}</strong>
+                <small>{{ data.departmentName || '-' }}</small>
               </div>
             </template>
+          </Column>
+        </DataTable>
+      </section>
 
-            <Column field="stepNo" header="Step" style="min-width: 5rem" />
-            <Column header="Approver" style="min-width: 14rem">
-              <template #body="{ data }">
-                {{ approverLabel(data) }}
-              </template>
-            </Column>
-            <Column header="Status" style="min-width: 8rem">
-              <template #body="{ data }">
-                <Tag
-                  :value="data.status || '-'"
-                  :severity="getApprovalStepSeverity(data.status)"
-                />
-              </template>
-            </Column>
-            <Column field="actedAt" header="Acted At" style="min-width: 12rem">
-              <template #body="{ data }">
-                {{ formatDateTime(data.actedAt) }}
-              </template>
-            </Column>
-            <Column field="remark" header="Remark" style="min-width: 16rem" />
-          </DataTable>
-        </template>
-      </Card>
+      <section class="ot-section">
+        <div class="ot-section-header compact">
+          <div>
+            <h2>Approval Steps</h2>
+            <p>{{ approvalSteps.length }} approval step(s)</p>
+          </div>
+        </div>
 
-      <Card
+        <DataTable
+          :value="approvalSteps"
+          dataKey="stepNo"
+          scrollable
+          scrollHeight="360px"
+          size="small"
+          class="ot-compact-table"
+        >
+          <template #empty>
+            <div class="ot-table-empty">
+              No approval steps found.
+            </div>
+          </template>
+
+          <Column
+            field="stepNo"
+            header="Step"
+            style="min-width: 5rem"
+          />
+
+          <Column
+            header="Approver"
+            style="min-width: 15rem"
+          >
+            <template #body="{ data }">
+              <div class="ot-person-cell">
+                <strong>{{ approverLabel(data) }}</strong>
+                <small>Step {{ data.stepNo || '-' }}</small>
+              </div>
+            </template>
+          </Column>
+
+          <Column
+            header="Status"
+            style="min-width: 8rem"
+          >
+            <template #body="{ data }">
+              <Tag
+                :value="data.status || '-'"
+                :severity="getApprovalStepSeverity(data.status)"
+                class="ot-soft-tag"
+              />
+            </template>
+          </Column>
+
+          <Column
+            field="actedAt"
+            header="Acted At"
+            style="min-width: 13rem"
+          >
+            <template #body="{ data }">
+              {{ formatDateTime(data.actedAt) }}
+            </template>
+          </Column>
+
+          <Column
+            field="remark"
+            header="Remark"
+            style="min-width: 18rem"
+          >
+            <template #body="{ data }">
+              <span class="ot-muted-text">{{ data.remark || '-' }}</span>
+            </template>
+          </Column>
+        </DataTable>
+      </section>
+
+      <section
         v-if="detail.lastAdjustmentByEmployeeName || detail.requesterConfirmationRemark"
-        class="ot-detail-card"
+        class="ot-section"
       >
-        <template #title>
-          Adjustment / Confirmation
-        </template>
-
-        <template #content>
-          <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <div class="ot-info-box">
-              <div class="ot-info-label">Last Adjustment By</div>
-              <div class="ot-info-value">{{ detail.lastAdjustmentByEmployeeName || '-' }}</div>
-              <div class="ot-summary-sub">{{ detail.lastAdjustmentByEmployeeNo || '' }}</div>
-            </div>
-
-            <div class="ot-info-box">
-              <div class="ot-info-label">Last Adjustment At</div>
-              <div class="ot-info-value">{{ formatDateTime(detail.lastAdjustmentAt) }}</div>
-            </div>
-
-            <div class="ot-info-box md:col-span-2 xl:col-span-2">
-              <div class="ot-info-label">Last Adjustment Remark</div>
-              <div class="ot-info-value">{{ detail.lastAdjustmentRemark || '-' }}</div>
-            </div>
-
-            <div class="ot-info-box">
-              <div class="ot-info-label">Requester Confirmed At</div>
-              <div class="ot-info-value">{{ formatDateTime(detail.requesterConfirmedAt) }}</div>
-            </div>
-
-            <div class="ot-info-box md:col-span-3">
-              <div class="ot-info-label">Requester Confirmation Remark</div>
-              <div class="ot-info-value">{{ detail.requesterConfirmationRemark || '-' }}</div>
-            </div>
+        <div class="ot-section-header">
+          <div>
+            <h2>Adjustment / Confirmation</h2>
           </div>
-        </template>
-      </Card>
+        </div>
+
+        <div class="ot-info-grid four">
+          <div class="ot-info-item">
+            <span>Last Adjustment By</span>
+            <strong>{{ detail.lastAdjustmentByEmployeeName || '-' }}</strong>
+            <small>{{ detail.lastAdjustmentByEmployeeNo || '' }}</small>
+          </div>
+
+          <div class="ot-info-item">
+            <span>Last Adjustment At</span>
+            <strong>{{ formatDateTime(detail.lastAdjustmentAt) }}</strong>
+          </div>
+
+          <div class="ot-info-item wide">
+            <span>Last Adjustment Remark</span>
+            <strong>{{ detail.lastAdjustmentRemark || '-' }}</strong>
+          </div>
+
+          <div class="ot-info-item">
+            <span>Requester Confirmed At</span>
+            <strong>{{ formatDateTime(detail.requesterConfirmedAt) }}</strong>
+          </div>
+
+          <div class="ot-info-item wide">
+            <span>Requester Confirmation Remark</span>
+            <strong>{{ detail.requesterConfirmationRemark || '-' }}</strong>
+          </div>
+        </div>
+      </section>
     </template>
 
     <div
       v-else
-      class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-4 py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
+      class="ot-empty-state"
     >
       OT request not found.
     </div>
@@ -830,76 +985,479 @@ onMounted(() => {
 </template>
 
 <style scoped>
-:deep(.ot-detail-card .p-card-body) {
-  padding: 1rem !important;
+.ot-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
 }
 
-:deep(.ot-detail-card .p-card-title) {
-  font-size: 1rem !important;
-  font-weight: 700 !important;
-  color: var(--ot-text) !important;
+.ot-page-header,
+.ot-section,
+.ot-empty-state {
+  border: 1px solid var(--ot-line);
+  background: var(--ot-card);
+  border-radius: 1.15rem;
+  box-shadow: var(--ot-shadow);
 }
 
-:deep(.ot-table .p-datatable-thead > tr > th) {
-  padding: 0.65rem 0.75rem !important;
-  font-size: 0.8rem !important;
-  white-space: nowrap;
+.ot-page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem;
 }
 
-:deep(.ot-table .p-datatable-tbody > tr > td) {
-  padding: 0.65rem 0.75rem !important;
-  vertical-align: middle !important;
+.ot-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
 }
 
-.ot-summary-box {
-  border: 1px solid var(--ot-border);
-  background: var(--ot-surface);
-  border-radius: 1rem;
-  padding: 0.9rem;
+.ot-title-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
 }
 
-.ot-summary-label {
-  font-size: 0.72rem;
+.ot-title-line h1 {
+  margin: 0;
+  color: var(--ot-text-main);
+  font-size: 1.15rem;
   font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--ot-text-muted);
+  line-height: 1.3;
 }
 
-.ot-summary-value {
-  margin-top: 0.35rem;
+.ot-subtitle {
+  margin: 0.18rem 0 0;
+  color: var(--ot-text-soft);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.ot-request-badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--ot-line);
+  background: var(--ot-soft-bg);
+  color: var(--ot-text-main);
+  border-radius: 999px;
+  padding: 0.18rem 0.55rem;
+  font-size: 0.73rem;
+  font-weight: 700;
+}
+
+.ot-tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.7rem;
+  padding-left: 2.7rem;
+}
+
+.ot-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
+.ot-message {
+  border-radius: 1rem;
+}
+
+.ot-confirm-section {
+  border-color: rgba(245, 158, 11, 0.45);
+  background:
+    linear-gradient(135deg, rgba(245, 158, 11, 0.08), transparent 50%),
+    var(--ot-card);
+}
+
+.ot-section {
+  padding: 1rem;
+}
+
+.ot-section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.85rem;
+}
+
+.ot-section-header.compact {
+  margin-bottom: 0.65rem;
+}
+
+.ot-section-header h2 {
+  margin: 0;
+  color: var(--ot-text-main);
+  font-size: 0.98rem;
+  font-weight: 700;
+}
+
+.ot-section-header p {
+  margin: 0.18rem 0 0;
+  color: var(--ot-text-soft);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.ot-two-column {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr);
+  gap: 1rem;
+}
+
+.ot-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.ot-metric-grid.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.ot-metric-card {
+  border: 1px solid var(--ot-line);
+  background: var(--ot-card);
+  border-radius: 1rem;
+  padding: 0.8rem;
+  min-width: 0;
+}
+
+.ot-metric-card span,
+.ot-info-item span,
+.ot-info-line span,
+.ot-reason-box span,
+.ot-field-block label {
+  display: block;
+  color: var(--ot-text-soft);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+}
+
+.ot-metric-card strong {
+  display: block;
+  margin-top: 0.28rem;
+  color: var(--ot-text-main);
   font-size: 1rem;
-  font-weight: 700;
-  color: var(--ot-text);
+  font-weight: 800;
+  line-height: 1.25;
   word-break: break-word;
 }
 
-.ot-summary-sub {
+.ot-metric-card small,
+.ot-info-item small {
+  display: block;
   margin-top: 0.2rem;
-  font-size: 0.75rem;
-  color: var(--ot-text-muted);
+  color: var(--ot-text-soft);
+  font-size: 0.72rem;
 }
 
-.ot-info-box {
-  border: 1px solid var(--ot-border);
-  background: var(--ot-bg);
-  border-radius: 1rem;
-  padding: 0.9rem;
+.ot-info-grid {
+  display: grid;
+  gap: 0.7rem;
 }
 
-.ot-info-label {
-  margin-bottom: 0.3rem;
-  font-size: 0.75rem;
+.ot-info-grid.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.ot-info-grid.four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.ot-info-item {
+  border: 1px solid var(--ot-line);
+  background: var(--ot-soft-bg);
+  border-radius: 0.95rem;
+  padding: 0.75rem;
+  min-width: 0;
+}
+
+.ot-info-item.wide {
+  grid-column: span 2;
+}
+
+.ot-info-item strong {
+  display: block;
+  margin-top: 0.25rem;
+  color: var(--ot-text-main);
+  font-size: 0.88rem;
   font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--ot-text-muted);
+  line-height: 1.35;
+  word-break: break-word;
 }
 
-.ot-info-value {
+.ot-info-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.ot-info-line {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border: 1px solid var(--ot-line);
+  background: var(--ot-soft-bg);
+  border-radius: 0.9rem;
+  padding: 0.7rem 0.75rem;
+}
+
+.ot-info-line strong {
+  color: var(--ot-text-main);
+  font-size: 0.86rem;
+  font-weight: 700;
+  text-align: right;
   word-break: break-word;
-  font-size: 0.95rem;
+}
+
+.ot-reason-box {
+  margin-top: 0.8rem;
+  border: 1px solid var(--ot-line);
+  background: var(--ot-soft-bg);
+  border-radius: 0.95rem;
+  padding: 0.85rem;
+}
+
+.ot-reason-box p {
+  margin: 0.3rem 0 0;
+  color: var(--ot-text-main);
+  font-size: 0.88rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.ot-field-block {
+  margin-top: 0.85rem;
+}
+
+.ot-field-block label {
+  margin-bottom: 0.35rem;
+}
+
+.ot-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.85rem;
+}
+
+.employee-header {
+  align-items: center;
+}
+
+.employee-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.employee-list-select {
+  width: 13rem;
+}
+
+.employee-search {
+  width: 16rem;
+}
+
+.employee-count-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.7rem;
+}
+
+.employee-filter-count {
+  color: var(--ot-text-soft);
+  font-size: 0.76rem;
   font-weight: 600;
-  color: var(--ot-text);
+  margin-left: auto;
+}
+
+.ot-person-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  min-width: 0;
+}
+
+.ot-person-cell strong {
+  color: var(--ot-text-main);
+  font-size: 0.83rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.ot-person-cell small,
+.ot-muted-text {
+  color: var(--ot-text-soft);
+  font-size: 0.75rem;
+}
+
+.ot-table-empty,
+.ot-empty-state {
+  color: var(--ot-text-soft);
+  text-align: center;
+  font-size: 0.85rem;
+}
+
+.ot-table-empty {
+  padding: 1.75rem 1rem;
+}
+
+.ot-empty-state {
+  padding: 2.5rem 1rem;
+}
+
+:deep(.ot-soft-tag.p-tag) {
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0.2rem 0.55rem;
+}
+
+:deep(.ot-compact-table) {
+  border: 1px solid var(--ot-line);
+  border-radius: 0.95rem;
+  overflow: hidden;
+}
+
+:deep(.ot-compact-table .p-datatable-thead > tr > th) {
+  background: var(--ot-table-head) !important;
+  color: var(--ot-text-soft) !important;
+  padding: 0.62rem 0.75rem !important;
+  font-size: 0.74rem !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  border-color: var(--ot-line) !important;
+}
+
+:deep(.ot-compact-table .p-datatable-tbody > tr > td) {
+  padding: 0.62rem 0.75rem !important;
+  font-size: 0.82rem !important;
+  vertical-align: middle !important;
+  border-color: var(--ot-line) !important;
+}
+
+:deep(.ot-compact-table .p-datatable-tbody > tr) {
+  background: var(--ot-card) !important;
+}
+
+:deep(.ot-compact-table .p-datatable-tbody > tr:hover) {
+  background: var(--ot-row-hover) !important;
+}
+
+:deep(.p-button.p-button-sm) {
+  border-radius: 0.65rem;
+}
+
+:deep(.p-inputtextarea),
+:deep(.p-inputtext),
+:deep(.p-select) {
+  border-radius: 0.75rem;
+}
+
+.ot-page {
+  --ot-card: var(--p-content-background, var(--surface-card, #ffffff));
+  --ot-soft-bg: var(--p-surface-50, #f8fafc);
+  --ot-table-head: var(--p-surface-50, #f8fafc);
+  --ot-row-hover: var(--p-surface-100, #f1f5f9);
+  --ot-line: var(--p-content-border-color, var(--surface-border, #e2e8f0));
+  --ot-text-main: var(--p-text-color, #0f172a);
+  --ot-text-soft: var(--p-text-muted-color, #64748b);
+  --ot-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);
+}
+
+:global(.dark) .ot-page {
+  --ot-card: var(--p-content-background, #111827);
+  --ot-soft-bg: rgba(148, 163, 184, 0.08);
+  --ot-table-head: rgba(148, 163, 184, 0.08);
+  --ot-row-hover: rgba(148, 163, 184, 0.1);
+  --ot-line: rgba(148, 163, 184, 0.22);
+  --ot-text-main: #e5e7eb;
+  --ot-text-soft: #94a3b8;
+  --ot-shadow: 0 14px 30px rgba(0, 0, 0, 0.18);
+}
+
+@media (max-width: 1280px) {
+  .ot-metric-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .ot-info-grid.four {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ot-two-column {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .ot-page-header {
+    flex-direction: column;
+  }
+
+  .ot-header-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .ot-tag-row {
+    padding-left: 0;
+  }
+
+  .ot-metric-grid,
+  .ot-metric-grid.three,
+  .ot-info-grid.three,
+  .ot-info-grid.four {
+    grid-template-columns: 1fr;
+  }
+
+  .ot-info-item.wide {
+    grid-column: span 1;
+  }
+
+  .ot-info-line {
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .ot-info-line strong {
+    text-align: left;
+  }
+
+  .employee-header {
+    align-items: flex-start;
+  }
+
+  .employee-tools {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .employee-list-select,
+  .employee-search {
+    width: 100%;
+  }
+
+  .employee-filter-count {
+    width: 100%;
+    margin-left: 0;
+  }
 }
 </style>

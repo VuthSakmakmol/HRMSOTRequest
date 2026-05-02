@@ -14,6 +14,12 @@ const Position = require('../../org/models/Position')
 const { getDayType } = require('../utils/dayClassifier')
 const Holiday = require('../../calendar/models/Holiday')
 
+const OT_DUPLICATE_BLOCKING_STATUSES = [
+  'PENDING',
+  'PENDING_REQUESTER_CONFIRMATION',
+  'APPROVED',
+]
+
 function s(value) {
   return String(value ?? '').trim()
 }
@@ -69,7 +75,6 @@ function calculateDuration({ startTime, endTime, breakMinutes = 0 }) {
   }
 }
 
-
 function parseYMDToUtcRange(ymd) {
   const raw = String(ymd || '').trim()
   const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/)
@@ -124,7 +129,207 @@ function escapeRegex(value) {
 }
 
 function normalizeIdArray(values = []) {
-  return Array.from(new Set((Array.isArray(values) ? values : []).map((id) => s(id)).filter(Boolean)))
+  return Array.from(
+    new Set((Array.isArray(values) ? values : []).map((id) => s(id)).filter(Boolean)),
+  )
+}
+
+function buildEmployeeLabel(item = {}) {
+  return (
+    [s(item.employeeCode), s(item.employeeName)].filter(Boolean).join(' - ') ||
+    s(item.employeeId)
+  )
+}
+
+function otUnavailableStatusLabel(status) {
+  const normalized = s(status).toUpperCase()
+
+  if (normalized === 'PENDING') return 'Pending for approval'
+  if (normalized === 'PENDING_REQUESTER_CONFIRMATION') return 'Waiting requester confirmation'
+  if (normalized === 'APPROVED') return 'Already approved'
+
+  return normalized || 'Unavailable'
+}
+
+function collectEmployeeSnapshotsFromRequest(doc) {
+  return [
+    ...(Array.isArray(doc?.requestedEmployees) ? doc.requestedEmployees : []),
+    ...(Array.isArray(doc?.approvedEmployees) ? doc.approvedEmployees : []),
+    ...(Array.isArray(doc?.proposedApprovedEmployees) ? doc.proposedApprovedEmployees : []),
+  ]
+}
+
+function collectDuplicateEmployeesFromRequest(doc, selectedIdSet, duplicateMap) {
+  const collections = collectEmployeeSnapshotsFromRequest(doc)
+
+  for (const item of collections) {
+    const employeeId = s(item?.employeeId)
+
+    if (!employeeId || !selectedIdSet.has(employeeId)) continue
+    if (duplicateMap.has(employeeId)) continue
+
+    duplicateMap.set(employeeId, {
+      employeeId,
+      employeeCode: s(item?.employeeCode),
+      employeeName: s(item?.employeeName),
+      employeeLabel: buildEmployeeLabel(item),
+      requestId: doc?._id ? String(doc._id) : '',
+      requestNo: s(doc?.requestNo),
+      otDate: s(doc?.otDate),
+      status: s(doc?.status).toUpperCase(),
+      statusLabel: otUnavailableStatusLabel(doc?.status),
+    })
+  }
+}
+
+async function ensureNoDuplicateOTEmployeesForDate({
+  otDate,
+  employeeIds = [],
+  excludeRequestId = null,
+}) {
+  const date = s(otDate)
+  const uniqueEmployeeIds = normalizeIdArray(employeeIds)
+
+  if (!date || !uniqueEmployeeIds.length) return
+
+  const employeeObjectIds = uniqueEmployeeIds
+    .filter((id) => mongoose.isValidObjectId(id))
+    .map((id) => new mongoose.Types.ObjectId(id))
+
+  if (!employeeObjectIds.length) return
+
+  const filter = {
+    otDate: date,
+    status: { $in: OT_DUPLICATE_BLOCKING_STATUSES },
+    $or: [
+      { 'requestedEmployees.employeeId': { $in: employeeObjectIds } },
+      { 'approvedEmployees.employeeId': { $in: employeeObjectIds } },
+      { 'proposedApprovedEmployees.employeeId': { $in: employeeObjectIds } },
+    ],
+  }
+
+  if (excludeRequestId && mongoose.isValidObjectId(excludeRequestId)) {
+    filter._id = { $ne: new mongoose.Types.ObjectId(excludeRequestId) }
+  }
+
+  const existingRequests = await OTRequest.find(filter)
+    .select({
+      _id: 1,
+      requestNo: 1,
+      otDate: 1,
+      status: 1,
+      requestedEmployees: 1,
+      approvedEmployees: 1,
+      proposedApprovedEmployees: 1,
+    })
+    .lean()
+
+  if (!existingRequests.length) return
+
+  const selectedIdSet = new Set(uniqueEmployeeIds)
+  const duplicateMap = new Map()
+
+  for (const request of existingRequests) {
+    collectDuplicateEmployeesFromRequest(request, selectedIdSet, duplicateMap)
+  }
+
+  const duplicates = Array.from(duplicateMap.values())
+
+  if (!duplicates.length) return
+
+  const preview = duplicates
+    .slice(0, 5)
+    .map((item) => {
+      const employeeLabel = item.employeeLabel || item.employeeId
+      const requestNo = item.requestNo ? ` (${item.requestNo})` : ''
+      return `${employeeLabel}${requestNo}`
+    })
+    .join(', ')
+
+  const moreText = duplicates.length > 5 ? ` and ${duplicates.length - 5} more` : ''
+
+  const err = new Error(
+    `Some employees already have OT request on ${date}. Please remove them before submit. ${preview}${moreText}`,
+  )
+
+  err.status = 409
+  err.code = 'OT_EMPLOYEE_DUPLICATE_DATE'
+  err.error = 'OT_EMPLOYEE_DUPLICATE_DATE'
+  err.duplicates = duplicates
+  err.duplicateEmployeeIds = duplicates.map((item) => item.employeeId)
+  err.details = {
+    otDate: date,
+    duplicates,
+    duplicateEmployeeIds: err.duplicateEmployeeIds,
+  }
+
+  throw err
+}
+
+function collectUnavailableEmployeesFromRequest(doc, map) {
+  const collections = collectEmployeeSnapshotsFromRequest(doc)
+
+  for (const item of collections) {
+    const employeeId = s(item?.employeeId)
+    if (!employeeId) continue
+    if (map.has(employeeId)) continue
+
+    map.set(employeeId, {
+      employeeId,
+      employeeCode: s(item?.employeeCode),
+      employeeName: s(item?.employeeName),
+      employeeLabel: buildEmployeeLabel(item),
+      requestId: doc?._id ? String(doc._id) : '',
+      requestNo: s(doc?.requestNo),
+      otDate: s(doc?.otDate),
+      status: s(doc?.status).toUpperCase(),
+      statusLabel: otUnavailableStatusLabel(doc?.status),
+    })
+  }
+}
+
+async function listUnavailableEmployeesForDate(query = {}) {
+  const otDate = s(query.otDate)
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(otDate)) {
+    const err = new Error('otDate must be YYYY-MM-DD')
+    err.status = 400
+    throw err
+  }
+
+  const docs = await OTRequest.find({
+    otDate,
+    status: { $in: OT_DUPLICATE_BLOCKING_STATUSES },
+  })
+    .select({
+      _id: 1,
+      requestNo: 1,
+      otDate: 1,
+      status: 1,
+      requestedEmployees: 1,
+      approvedEmployees: 1,
+      proposedApprovedEmployees: 1,
+    })
+    .lean()
+
+  const map = new Map()
+
+  for (const doc of docs) {
+    collectUnavailableEmployeesFromRequest(doc, map)
+  }
+
+  const items = Array.from(map.values()).sort((a, b) => {
+    return `${a.employeeCode} ${a.employeeName}`.localeCompare(
+      `${b.employeeCode} ${b.employeeName}`,
+    )
+  })
+
+  return {
+    otDate,
+    items,
+    employeeIds: items.map((item) => item.employeeId),
+    total: items.length,
+  }
 }
 
 function mapEmployeeOutput(item) {
@@ -417,7 +622,10 @@ function buildRequestSheetRows(doc) {
     ['Shift Type', s(doc.shiftType)],
     ['Shift Start Time', s(doc.shiftStartTime)],
     ['Shift End Time', s(doc.shiftEndTime)],
-    ['Shift Cross Midnight', doc.shiftCrossMidnight === true ? 'YES' : doc.shiftCrossMidnight === false ? 'NO' : ''],
+    [
+      'Shift Cross Midnight',
+      doc.shiftCrossMidnight === true ? 'YES' : doc.shiftCrossMidnight === false ? 'NO' : '',
+    ],
 
     ['OT Option', s(doc.shiftOtOptionLabel)],
     ['Requested Minutes', Number(doc.requestedMinutes || 0)],
@@ -668,7 +876,6 @@ function buildPolicySnapshot(calculationPolicy) {
     roundMethod: s(calculationPolicy?.roundMethod),
     graceAfterShiftEndMinutes: Number(calculationPolicy?.graceAfterShiftEndMinutes || 0),
 
-    //REQUIRED for your special rule
     allowApprovedOtWithoutExactClockOut:
       calculationPolicy?.allowApprovedOtWithoutExactClockOut === true,
 
@@ -713,10 +920,7 @@ function buildOptionBasedTiming({ sharedShift, shiftOtOption, calculationPolicy 
       throw err
     }
 
-    if (
-      !Number.isInteger(startAfterShiftEndMinutes) ||
-      startAfterShiftEndMinutes < 0
-    ) {
+    if (!Number.isInteger(startAfterShiftEndMinutes) || startAfterShiftEndMinutes < 0) {
       const err = new Error('Selected OT option startAfterShiftEndMinutes is invalid')
       err.status = 400
       throw err
@@ -727,14 +931,12 @@ function buildOptionBasedTiming({ sharedShift, shiftOtOption, calculationPolicy 
   }
 
   return {
-    // legacy compatibility fields
     startTime: requestStartTime,
     endTime: requestEndTime,
     breakMinutes: 0,
     totalMinutes: requestedMinutes,
     totalHours: Number((requestedMinutes / 60).toFixed(2)),
 
-    // shift snapshot
     shiftId: sharedShift?._id || null,
     shiftCode: s(sharedShift?.code),
     shiftName: s(sharedShift?.name),
@@ -743,7 +945,6 @@ function buildOptionBasedTiming({ sharedShift, shiftOtOption, calculationPolicy 
     shiftEndTime: s(sharedShift?.endTime),
     shiftCrossMidnight: sharedShift?.crossMidnight === true,
 
-    // OT option snapshot
     shiftOtOptionId: shiftOtOption?._id || null,
     shiftOtOptionLabel: s(shiftOtOption?.label),
     shiftOtOptionTimingMode: timingMode,
@@ -755,7 +956,6 @@ function buildOptionBasedTiming({ sharedShift, shiftOtOption, calculationPolicy 
       timingMode === 'FIXED_TIME' ? requestEndTime : '',
 
     requestedMinutes,
-
     requestStartTime,
     requestEndTime,
 
@@ -772,14 +972,12 @@ function buildManualTiming(payload) {
   })
 
   return {
-    // legacy/manual fields
     startTime: s(payload.startTime),
     endTime: s(payload.endTime),
     breakMinutes: Number(payload.breakMinutes || 0),
     totalMinutes: duration.totalMinutes,
     totalHours: duration.totalHours,
 
-    // new fields cleared for backward compatibility mode
     shiftId: null,
     shiftCode: '',
     shiftName: '',
@@ -801,6 +999,86 @@ function buildManualTiming(payload) {
 
     otCalculationPolicyId: null,
     otCalculationPolicySnapshot: {},
+  }
+}
+
+function mapApprovalStepOutput(step) {
+  return {
+    stepNo: Number(step?.stepNo || 0),
+    approverEmployeeId: step?.approverEmployeeId
+      ? String(step.approverEmployeeId)
+      : null,
+    approverCode: s(step?.approverCode),
+    approverName: s(step?.approverName),
+    status: s(step?.status).toUpperCase(),
+    actedAt: step?.actedAt || null,
+    actedBy: step?.actedBy ? String(step.actedBy) : null,
+    remark: s(step?.remark),
+  }
+}
+
+function findCurrentApprovalStep(doc) {
+  const steps = Array.isArray(doc?.approvalSteps) ? doc.approvalSteps : []
+  const currentStepNo = Number(doc?.currentApprovalStep || 1)
+
+  return (
+    steps.find((step) => Number(step?.stepNo || 0) === currentStepNo) ||
+    steps.find((step) => s(step?.status).toUpperCase() === 'PENDING') ||
+    null
+  )
+}
+
+function findMyApprovalStep(doc, authUser) {
+  const actorEmployeeId = s(authUser?.employeeId)
+
+  if (!actorEmployeeId) return null
+
+  const steps = Array.isArray(doc?.approvalSteps) ? doc.approvalSteps : []
+
+  return (
+    steps.find((step) => s(step?.approverEmployeeId) === actorEmployeeId) ||
+    null
+  )
+}
+
+function buildApprovalActionContext(doc, authUser) {
+  const requestStatus = s(doc?.status).toUpperCase()
+  const actorEmployeeId = s(authUser?.employeeId)
+  const currentApproverEmployeeId = s(doc?.currentApproverEmployeeId)
+
+  const currentStep = findCurrentApprovalStep(doc)
+  const myStep = findMyApprovalStep(doc, authUser)
+
+  const currentStepStatus = s(currentStep?.status).toUpperCase()
+  const myApprovalStatus = s(myStep?.status).toUpperCase()
+
+  const isAssignedCurrentApprover =
+    actorEmployeeId &&
+    currentApproverEmployeeId &&
+    actorEmployeeId === currentApproverEmployeeId
+
+  const isMyTurn =
+    requestStatus === 'PENDING' &&
+    currentStepStatus === 'PENDING' &&
+    isAssignedCurrentApprover
+
+  const canDecideAsRoot =
+    authUser?.isRootAdmin === true &&
+    requestStatus === 'PENDING' &&
+    currentStepStatus === 'PENDING'
+
+  const canDecide = isMyTurn || canDecideAsRoot
+
+  return {
+    currentApprovalStepStatus: currentStepStatus,
+    currentApproverName: s(currentStep?.approverName),
+    currentApproverCode: s(currentStep?.approverCode),
+
+    myApprovalStep: myStep ? mapApprovalStepOutput(myStep) : null,
+    myApprovalStepNo: myStep ? Number(myStep?.stepNo || 0) : null,
+    myApprovalStatus: myApprovalStatus || (canDecide ? 'PENDING' : ''),
+    isMyTurn,
+    canDecide,
   }
 }
 
@@ -1099,24 +1377,27 @@ function buildComparisonSummary(doc) {
 function mapListItem(doc, authUser) {
   const approvalSteps = Array.isArray(doc.approvalSteps) ? doc.approvalSteps : []
   const effectiveEmployees = effectiveEmployeesForDoc(doc)
+  const approvalContext = buildApprovalActionContext(doc, authUser)
 
   return {
     id: String(doc._id),
+    _id: String(doc._id),
+
     requestNo: doc.requestNo,
-    requesterEmployeeId: doc.requesterEmployeeId ? String(doc.requesterEmployeeId) : null,
+    requesterEmployeeId: doc.requesterEmployeeId
+      ? String(doc.requesterEmployeeId)
+      : null,
     requesterEmployeeNo: s(doc.requesterEmployeeNo),
     requesterName: s(doc.requesterName),
 
     otDate: s(doc.otDate),
 
-    // legacy/manual-compatible fields
     startTime: s(doc.startTime),
     endTime: s(doc.endTime),
     breakMinutes: Number(doc.breakMinutes || 0),
     totalMinutes: Number(doc.totalMinutes || 0),
     totalHours: Number(doc.totalHours || 0),
 
-    // new option-based fields
     shiftId: doc.shiftId ? String(doc.shiftId) : null,
     shiftCode: s(doc.shiftCode),
     shiftName: s(doc.shiftName),
@@ -1124,6 +1405,7 @@ function mapListItem(doc, authUser) {
     shiftStartTime: s(doc.shiftStartTime),
     shiftEndTime: s(doc.shiftEndTime),
     shiftCrossMidnight: doc.shiftCrossMidnight === true,
+
     shiftOtOptionId: doc.shiftOtOptionId ? String(doc.shiftOtOptionId) : null,
     shiftOtOptionLabel: s(doc.shiftOtOptionLabel),
     shiftOtOptionTimingMode: s(doc.shiftOtOptionTimingMode),
@@ -1132,31 +1414,41 @@ function mapListItem(doc, authUser) {
     ),
     shiftOtOptionFixedStartTime: s(doc.shiftOtOptionFixedStartTime),
     shiftOtOptionFixedEndTime: s(doc.shiftOtOptionFixedEndTime),
+
     requestedMinutes: Number(doc.requestedMinutes || 0),
     requestStartTime: s(doc.requestStartTime || doc.startTime),
     requestEndTime: s(doc.requestEndTime || doc.endTime),
-    otCalculationPolicyId: doc.otCalculationPolicyId ? String(doc.otCalculationPolicyId) : null,
+
+    otCalculationPolicyId: doc.otCalculationPolicyId
+      ? String(doc.otCalculationPolicyId)
+      : null,
     otCalculationPolicySnapshot: doc.otCalculationPolicySnapshot || {},
 
-    dayType: s(doc.dayType),
+    dayType: s(doc.dayType).toUpperCase(),
     reason: s(doc.reason),
 
     employeeCount: effectiveEmployeeCountForDoc(doc),
     requestedEmployeeCount: Number(
       doc.requestedEmployeeCount ||
-        (Array.isArray(doc.requestedEmployees) ? doc.requestedEmployees.length : 0),
+        (Array.isArray(doc.requestedEmployees)
+          ? doc.requestedEmployees.length
+          : 0),
     ),
     approvedEmployeeCount: Number(
       doc.approvedEmployeeCount ||
-        (Array.isArray(doc.approvedEmployees) ? doc.approvedEmployees.length : 0),
+        (Array.isArray(doc.approvedEmployees)
+          ? doc.approvedEmployees.length
+          : 0),
     ),
     proposedApprovedEmployeeCount: Number(
       doc.proposedApprovedEmployeeCount ||
-        (Array.isArray(doc.proposedApprovedEmployees) ? doc.proposedApprovedEmployees.length : 0),
+        (Array.isArray(doc.proposedApprovedEmployees)
+          ? doc.proposedApprovedEmployees.length
+          : 0),
     ),
 
-    status: s(doc.status),
-    requesterConfirmationStatus: s(doc.requesterConfirmationStatus),
+    status: s(doc.status).toUpperCase(),
+    requesterConfirmationStatus: s(doc.requesterConfirmationStatus).toUpperCase(),
 
     currentApprovalStep: Number(doc.currentApprovalStep || 1),
     currentApproverEmployeeId: doc.currentApproverEmployeeId
@@ -1167,6 +1459,19 @@ function mapListItem(doc, authUser) {
       : null,
 
     approvalStepCount: approvalSteps.length,
+    approvalSteps: approvalSteps.map(mapApprovalStepOutput),
+
+    currentApprovalStepStatus: approvalContext.currentApprovalStepStatus,
+    currentApproverName: approvalContext.currentApproverName,
+    currentApproverCode: approvalContext.currentApproverCode,
+
+    myApprovalStep: approvalContext.myApprovalStep,
+    myApprovalStepNo: approvalContext.myApprovalStepNo,
+    myApprovalStatus: approvalContext.myApprovalStatus,
+    isMyTurn: approvalContext.isMyTurn,
+    canDecide: approvalContext.canDecide,
+    canApprove: approvalContext.canDecide,
+
     hasApprovedStep: hasApprovedStep(doc),
     canEdit: canEditOTRequest(doc, authUser),
     canRequesterConfirm: canRequesterConfirm(doc, authUser),
@@ -1195,14 +1500,12 @@ function mapDetail(doc, authUser) {
 
     otDate: s(doc.otDate),
 
-    // legacy/manual-compatible fields
     startTime: s(doc.startTime),
     endTime: s(doc.endTime),
     breakMinutes: Number(doc.breakMinutes || 0),
     totalMinutes: Number(doc.totalMinutes || 0),
     totalHours: Number(doc.totalHours || 0),
 
-    // shift snapshot
     shiftId: doc.shiftId ? String(doc.shiftId) : null,
     shiftCode: s(doc.shiftCode),
     shiftName: s(doc.shiftName),
@@ -1211,11 +1514,9 @@ function mapDetail(doc, authUser) {
     shiftEndTime: s(doc.shiftEndTime),
     shiftCrossMidnight: doc.shiftCrossMidnight === true,
 
-    // OT option snapshot
     shiftOtOptionId: doc.shiftOtOptionId ? String(doc.shiftOtOptionId) : null,
     shiftOtOptionLabel: s(doc.shiftOtOptionLabel),
 
-    // ✅ REQUIRED: timing mode fields
     shiftOtOptionTimingMode: s(doc.shiftOtOptionTimingMode),
     shiftOtOptionStartAfterShiftEndMinutes: Number(
       doc.shiftOtOptionStartAfterShiftEndMinutes || 0,
@@ -1237,7 +1538,6 @@ function mapDetail(doc, authUser) {
     approvedEmployees: approvedEmployees.map(mapEmployeeOutput),
     proposedApprovedEmployees: proposedApprovedEmployees.map(mapEmployeeOutput),
 
-    // alias so old frontend still shows something
     employees: effectiveEmployees.map(mapEmployeeOutput),
 
     employeeCount: effectiveEmployees.length,
@@ -1314,6 +1614,11 @@ async function create(payload, authUser, options = {}) {
     throw err
   }
 
+  await ensureNoDuplicateOTEmployeesForDate({
+    otDate: payload.otDate,
+    employeeIds: uniqueEmployeeIds,
+  })
+
   const employeeContexts = await resolveEmployeesSnapshotsWithContext(uniqueEmployeeIds)
   const requestedEmployees = employeeContexts.map((item) => item.snapshot)
 
@@ -1376,7 +1681,6 @@ async function create(payload, authUser, options = {}) {
     shiftOtOptionId: timingContext.shiftOtOptionId,
     shiftOtOptionLabel: timingContext.shiftOtOptionLabel,
 
-    //save OT option timing snapshot
     shiftOtOptionTimingMode: timingContext.shiftOtOptionTimingMode,
     shiftOtOptionStartAfterShiftEndMinutes:
       timingContext.shiftOtOptionStartAfterShiftEndMinutes,
@@ -1440,6 +1744,12 @@ async function update(id, payload, authUser, options = {}) {
     throw err
   }
 
+  await ensureNoDuplicateOTEmployeesForDate({
+    otDate: payload.otDate,
+    employeeIds: uniqueEmployeeIds,
+    excludeRequestId: id,
+  })
+
   const employeeContexts = await resolveEmployeesSnapshotsWithContext(uniqueEmployeeIds)
   const requestedEmployees = employeeContexts.map((item) => item.snapshot)
 
@@ -1499,7 +1809,6 @@ async function update(id, payload, authUser, options = {}) {
   doc.shiftOtOptionId = timingContext.shiftOtOptionId
   doc.shiftOtOptionLabel = timingContext.shiftOtOptionLabel
 
-  // save OT option timing snapshot
   doc.shiftOtOptionTimingMode = timingContext.shiftOtOptionTimingMode
   doc.shiftOtOptionStartAfterShiftEndMinutes =
     timingContext.shiftOtOptionStartAfterShiftEndMinutes
@@ -2037,7 +2346,6 @@ async function getShiftOTOptionsByShift(shiftId) {
         label: s(item.label),
         optionLabel: `${s(item.label)} (${requestedMinutes} min)`,
 
-        // ✅ important timing fields for frontend
         timingMode,
         startAfterShiftEndMinutes,
         fixedStartTime: s(item.fixedStartTime),
@@ -2091,4 +2399,5 @@ module.exports = {
   calculateDuration,
   getAllowedApproverChain,
   getShiftOTOptionsByShift,
+  listUnavailableEmployeesForDate,
 }
