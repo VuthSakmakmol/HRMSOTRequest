@@ -29,19 +29,19 @@ router.get(
 
 router.get(
   '/export',
-  requirePermission('LINE_VIEW'),
+  requirePermission('LINE_EXPORT'),
   productionLineController.exportExcel,
 )
 
 router.get(
-  '/import/sample',
-  requirePermission('LINE_VIEW'),
+  '/import-sample',
+  requirePermission('LINE_IMPORT'),
   productionLineController.downloadImportSample,
 )
 
 router.post(
   '/import',
-  requirePermission('LINE_CREATE'),
+  requirePermission('LINE_IMPORT'),
   upload.single('file'),
   productionLineController.importExcel,
 )

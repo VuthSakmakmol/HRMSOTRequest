@@ -128,13 +128,6 @@ const navGroups = computed(() => {
           permissions: ['POSITION_VIEW'],
         },
         {
-          key: 'lines',
-          label: 'Lines',
-          icon: 'pi pi-sitemap',
-          to: '/org/lines',
-          permissions: ['LINE_VIEW'],
-        },
-        {
           key: 'employees',
           label: 'Employees',
           icon: 'pi pi-users',
@@ -325,34 +318,6 @@ function sidebarItemClass(to, collapsed = false) {
         <div class="truncate text-[15px] font-semibold text-[color:var(--ot-text)]">
           OT Request
         </div>
-        <div class="truncate text-[11px] text-[color:var(--ot-text-muted)]">
-          Enterprise Workspace
-        </div>
-      </div>
-    </div>
-
-    <div v-if="!desktopCollapsed" class="border-b border-[color:var(--ot-border)] px-3 py-3">
-      <div class="flex items-center gap-3">
-        <div
-          class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[color:var(--ot-sky)] text-sm font-semibold text-[color:var(--ot-text)]"
-        >
-          {{ String(currentUserName).charAt(0).toUpperCase() }}
-        </div>
-
-        <div class="min-w-0 flex-1">
-          <div class="truncate text-sm font-medium text-[color:var(--ot-text)]">
-            {{ currentUserName }}
-          </div>
-          <div class="truncate text-xs text-[color:var(--ot-text-muted)]">
-            {{ currentUserLogin }}
-          </div>
-        </div>
-      </div>
-
-      <div class="mt-3">
-        <span class="ot-role-chip">
-          {{ currentRoleLabel }}
-        </span>
       </div>
     </div>
 
@@ -454,38 +419,11 @@ function sidebarItemClass(to, collapsed = false) {
           <div class="truncate text-[15px] font-semibold text-[color:var(--ot-text)]">
             OT Request
           </div>
-          <div class="truncate text-xs text-[color:var(--ot-text-muted)]">
-            Enterprise Workspace
-          </div>
         </div>
       </div>
     </template>
 
     <div class="flex h-full min-h-0 flex-col">
-      <div class="border-b border-[color:var(--ot-border)] pb-3">
-        <div class="flex items-center gap-3">
-          <div
-            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[color:var(--ot-sky)] text-sm font-semibold text-[color:var(--ot-text)]"
-          >
-            {{ String(currentUserName).charAt(0).toUpperCase() }}
-          </div>
-
-          <div class="min-w-0 flex-1">
-            <div class="truncate text-sm font-medium text-[color:var(--ot-text)]">
-              {{ currentUserName }}
-            </div>
-            <div class="truncate text-xs text-[color:var(--ot-text-muted)]">
-              {{ currentUserLogin }}
-            </div>
-          </div>
-        </div>
-
-        <div class="mt-3">
-          <span class="ot-role-chip">
-            {{ currentRoleLabel }}
-          </span>
-        </div>
-      </div>
 
       <div class="min-h-0 flex-1 py-3">
         <ScrollPanel style="width: 100%; height: 100%">

@@ -59,7 +59,7 @@ export function exportLinesExcel(params = {}) {
 }
 
 export function downloadLineImportSample() {
-  return api.get('/org/lines/import/sample', {
+  return api.get('/org/lines/import-sample', {
     responseType: 'blob',
   })
 }

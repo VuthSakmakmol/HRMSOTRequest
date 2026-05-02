@@ -1,5 +1,6 @@
 <!-- frontend/src/modules/org/views/OrgChartView.vue -->
 <script setup>
+// frontend/src/modules/org/views/OrgChartView.vue
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -11,7 +12,6 @@ import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
 import Select from 'primevue/select'
 import Skeleton from 'primevue/skeleton'
-import Tag from 'primevue/tag'
 
 import OrgChartNode from '../components/OrgChartNode.vue'
 import { getEmployeeOrgTree } from '../employee.api'
@@ -135,8 +135,8 @@ const totalRoots = computed(() => {
 
 const summaryItems = computed(() => [
   { label: 'Visible Employees', value: totalVisibleEmployees.value },
-  { label: 'Matched', value: matchedEmployeeIds.value.length },
-  { label: 'Roots', value: totalRoots.value },
+  { label: 'Search Results', value: matchedEmployeeIds.value.length },
+  { label: 'Root Options', value: totalRoots.value },
 ])
 
 function syncRouteQuery() {
@@ -237,35 +237,34 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="flex flex-col gap-4">
-    <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-      <div class="flex flex-wrap items-center gap-2">
-        <div
-          v-for="item in summaryItems"
-          :key="item.label"
-          class="rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-3 py-2"
-        >
-          <div class="text-[11px] font-semibold uppercase tracking-[0.14em] text-[color:var(--ot-text-muted)]">
-            {{ item.label }}
-          </div>
-          <div class="mt-1 text-lg font-semibold text-[color:var(--ot-text)]">
-            {{ item.value }}
-          </div>
+    <div class="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1">
+      <div
+        v-for="item in summaryItems"
+        :key="item.label"
+        class="shrink-0 rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-3 py-2"
+      >
+        <div class="whitespace-nowrap text-[11px] font-semibold uppercase tracking-[0.14em] text-[color:var(--ot-text-muted)]">
+          {{ item.label }}
         </div>
-
-        <Button
-          label="Refresh"
-          icon="pi pi-refresh"
-          outlined
-          size="small"
-          :loading="loading"
-          @click="refreshTree"
-        />
+        <div class="mt-1 text-lg font-semibold text-[color:var(--ot-text)]">
+          {{ item.value }}
+        </div>
       </div>
+
+      <Button
+        label="Refresh"
+        icon="pi pi-refresh"
+        outlined
+        size="small"
+        :loading="loading"
+        class="shrink-0"
+        @click="refreshTree"
+      />
     </div>
 
     <div class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]">
       <div class="px-3 py-3">
-        <div class="grid grid-cols-1 gap-2 xl:grid-cols-[minmax(240px,1.2fr)_minmax(320px,1.1fr)_auto_auto]">
+        <div class="grid grid-cols-1 gap-2 xl:grid-cols-[minmax(260px,1.2fr)_minmax(340px,1.15fr)_180px]">
           <IconField class="w-full">
             <InputIcon class="pi pi-search" />
             <InputText
@@ -289,7 +288,7 @@ onBeforeUnmount(() => {
             @update:modelValue="onRootChange"
           />
 
-          <div class="flex items-center gap-2 rounded-xl border border-[color:var(--ot-border)] px-3 py-2">
+          <div class="flex h-[37px] items-center gap-2 rounded-xl border border-[color:var(--ot-border)] px-3">
             <Checkbox
               inputId="includeInactive"
               v-model="includeInactive"
@@ -298,18 +297,11 @@ onBeforeUnmount(() => {
             />
             <label
               for="includeInactive"
-              class="cursor-pointer text-sm text-[color:var(--ot-text)]"
+              class="cursor-pointer whitespace-nowrap text-sm text-[color:var(--ot-text)]"
             >
               Include inactive
             </label>
           </div>
-
-          <!-- <div class="flex items-center gap-2 xl:justify-end">
-            <Tag
-              :value="selectedRootEmployeeId ? 'Top selected' : 'No root selected'"
-              severity="contrast"
-            />
-          </div> -->
         </div>
       </div>
     </div>
@@ -320,28 +312,39 @@ onBeforeUnmount(() => {
 
     <div class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]">
       <div class="border-b border-[color:var(--ot-border)] px-3 py-3">
-        <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div class="flex flex-wrap items-center gap-2">
-            <Tag :value="`Expanded Path Nodes: ${expandedEmployeeIds.length}`" severity="info" />
-            <Tag :value="`Matches: ${matchedEmployeeIds.length}`" severity="success" />
-            <Tag :value="`Zoom: ${zoomPercent}`" severity="contrast" />
+        <div class="flex flex-nowrap items-center justify-between gap-3 overflow-x-auto">
+          <div class="min-w-0 shrink-0">
+            <div class="text-sm font-semibold text-[color:var(--ot-text)]">
+              Organization Tree
+            </div>
+            <div class="text-xs text-[color:var(--ot-text-muted)]">
+              Zoom {{ zoomPercent }}
+            </div>
+          </div>
 
+          <div class="flex shrink-0 flex-nowrap items-center gap-2">
             <Button
               icon="pi pi-search-minus"
+              label="Zoom Out"
               outlined
               size="small"
+              class="org-chart-control-btn"
               @click="zoomOut"
             />
             <Button
               icon="pi pi-refresh"
+              label="Reset"
               outlined
               size="small"
+              class="org-chart-control-btn"
               @click="resetZoom"
             />
             <Button
               icon="pi pi-search-plus"
+              label="Zoom In"
               outlined
               size="small"
+              class="org-chart-control-btn"
               @click="zoomIn"
             />
           </div>
@@ -393,5 +396,20 @@ onBeforeUnmount(() => {
   justify-content: center;
   align-items: flex-start;
   transition: transform 0.18s ease;
+}
+
+:deep(.org-chart-control-btn.p-button) {
+  white-space: nowrap !important;
+}
+
+@media (max-width: 640px) {
+  :deep(.org-chart-control-btn .p-button-label) {
+    display: none !important;
+  }
+
+  :deep(.org-chart-control-btn.p-button) {
+    width: 2.25rem !important;
+    padding-inline: 0 !important;
+  }
 }
 </style>
