@@ -238,15 +238,6 @@ onBeforeUnmount(() => {
 <template>
   <div class="flex flex-col gap-4">
     <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-      <div class="min-w-0">
-        <h1 class="text-xl font-semibold text-[color:var(--ot-text)]">
-          Organization Tree
-        </h1>
-        <p class="mt-1 text-sm text-[color:var(--ot-text-muted)]">
-          View the organization from the top person by default, search employees, and re-root the chart by clicking Set as root.
-        </p>
-      </div>
-
       <div class="flex flex-wrap items-center gap-2">
         <div
           v-for="item in summaryItems"
@@ -313,12 +304,12 @@ onBeforeUnmount(() => {
             </label>
           </div>
 
-          <div class="flex items-center gap-2 xl:justify-end">
+          <!-- <div class="flex items-center gap-2 xl:justify-end">
             <Tag
               :value="selectedRootEmployeeId ? 'Top selected' : 'No root selected'"
               severity="contrast"
             />
-          </div>
+          </div> -->
         </div>
       </div>
     </div>
@@ -330,15 +321,6 @@ onBeforeUnmount(() => {
     <div class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]">
       <div class="border-b border-[color:var(--ot-border)] px-3 py-3">
         <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <h2 class="text-sm font-semibold text-[color:var(--ot-text)]">
-              Organization Chart
-            </h2>
-            <p class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
-              Smaller org cards with zoom controls and connector lines.
-            </p>
-          </div>
-
           <div class="flex flex-wrap items-center gap-2">
             <Tag :value="`Expanded Path Nodes: ${expandedEmployeeIds.length}`" severity="info" />
             <Tag :value="`Matches: ${matchedEmployeeIds.length}`" severity="success" />

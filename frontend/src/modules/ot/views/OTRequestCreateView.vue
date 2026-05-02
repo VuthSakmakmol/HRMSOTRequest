@@ -745,44 +745,6 @@ onMounted(async () => {
 
 <template>
   <div class="ot-create-page">
-    <section class="ot-create-hero">
-      <div class="min-w-0">
-        <div class="ot-create-eyebrow">
-          Overtime Request
-        </div>
-
-        <h1 class="ot-create-title">
-          Create OT Request
-        </h1>
-      </div>
-
-      <div class="ot-create-hero-actions">
-        <div class="ot-mini-stat">
-          <span>Staff</span>
-          <strong>{{ selectedEmployeeIds.length }}</strong>
-        </div>
-
-        <div class="ot-mini-stat">
-          <span>Shift</span>
-          <strong>{{ selectedShiftLabel }}</strong>
-        </div>
-
-        <div class="ot-mini-stat">
-          <span>Day Type</span>
-          <strong>{{ selectedDayType }}</strong>
-        </div>
-
-        <Button
-          label="Back"
-          icon="pi pi-arrow-left"
-          severity="secondary"
-          outlined
-          size="small"
-          @click="goBack"
-        />
-      </div>
-    </section>
-
     <OTEmployeeMultiPicker
       v-model="selectedEmployees"
       auto-select-all
@@ -790,20 +752,10 @@ onMounted(async () => {
 
     <div class="ot-create-bottom-grid">
       <Card class="ot-create-card">
-        <template #title>
-          Request Detail & OT Option
-        </template>
 
         <template #content>
           <div class="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_390px]">
             <div class="flex flex-col gap-4">
-              <Message
-                v-if="!form.otDate"
-                severity="info"
-                :closable="false"
-              >
-                Please select OT date from the internal calendar.
-              </Message>
 
               <div class="space-y-2">
                 <label class="ot-field-label">

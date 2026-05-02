@@ -1,5 +1,4 @@
 // backend/src/modules/org/routes/employee.routes.js
-// backend/src/modules/org/routes/employee.routes.js
 const express = require('express')
 const multer = require('multer')
 

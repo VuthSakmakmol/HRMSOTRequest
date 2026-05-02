@@ -405,31 +405,8 @@ onBeforeUnmount(() => {
     >
       <div class="p-4 sm:p-5">
         <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div class="min-w-0">
-            <div class="flex flex-wrap items-center gap-2">
-              <h1 class="text-xl font-semibold tracking-tight text-[color:var(--ot-text)]">
-                Attendance Import
-              </h1>
-              <Tag value="Attendance" severity="info" rounded />
-            </div>
-
-            <p class="mt-1 text-sm text-[color:var(--ot-text-muted)]">
-              Import attendance punch data, keep batch history, and review validation results.
-            </p>
-          </div>
 
           <div class="flex flex-wrap items-center gap-2">
-            <div
-              class="flex min-w-[92px] flex-col items-center justify-center rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-bg)] px-3 py-2 text-center"
-            >
-              <div class="text-[11px] font-semibold uppercase tracking-[0.14em] text-[color:var(--ot-text-muted)]">
-                Total
-              </div>
-              <div class="mt-1 text-lg font-semibold leading-none text-[color:var(--ot-text)]">
-                {{ totalImports }}
-              </div>
-            </div>
-
             <Button
               v-if="canImportAttendance"
               label="Import Attendance"

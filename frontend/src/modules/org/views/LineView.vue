@@ -1,5 +1,6 @@
 <!-- frontend/src/modules/org/views/LineView.vue -->
 <script setup>
+// frontend/src/modules/org/views/LineView.vue
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useToast } from 'primevue/usetoast'
 
@@ -16,8 +17,11 @@ import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 import Textarea from 'primevue/textarea'
 
+import LineImportDialog from '@/modules/org/components/LineImportDialog.vue'
+
 import {
   createLine,
+  exportLinesExcel,
   getDepartmentLookupOptions,
   getLines,
   getPositionLookupOptions,
@@ -30,6 +34,7 @@ const PAGE_SIZE = 10
 const SEARCH_DEBOUNCE_MS = 250
 
 const saving = ref(false)
+const exporting = ref(false)
 
 const rows = ref([])
 const totalRecords = ref(0)
@@ -39,6 +44,7 @@ const bootstrapped = ref(false)
 const backgroundLoading = ref(false)
 
 const lineDialogVisible = ref(false)
+const importDialogVisible = ref(false)
 const editingLineId = ref('')
 
 const departments = ref([])
@@ -83,6 +89,8 @@ const isSaveDisabled = computed(() => {
   )
 })
 
+const isExportDisabled = computed(() => exporting.value || totalLines.value <= 0)
+
 let searchTimer = null
 let currentRequestId = 0
 
@@ -119,6 +127,48 @@ function buildQuery(page) {
     sortField: filters.sortField,
     sortOrder: filters.sortOrder,
   }
+}
+
+function buildExportQuery() {
+  return {
+    search: String(filters.search || '').trim(),
+    departmentId: filters.departmentId || '',
+    isActive: filters.isActive || 'all',
+    sortField: filters.sortField,
+    sortOrder: filters.sortOrder,
+  }
+}
+
+function getFilenameFromDisposition(disposition, fallback) {
+  const raw = String(disposition || '')
+
+  const utfMatch = raw.match(/filename\*=UTF-8''([^;]+)/i)
+  if (utfMatch?.[1]) return decodeURIComponent(utfMatch[1])
+
+  const normalMatch = raw.match(/filename="?([^"]+)"?/i)
+  if (normalMatch?.[1]) return normalMatch[1]
+
+  return fallback
+}
+
+function downloadBlobResponse(response, fallbackName) {
+  const blob = response?.data
+  const disposition =
+    response?.headers?.['content-disposition'] ||
+    response?.headers?.['Content-Disposition']
+
+  const filename = getFilenameFromDisposition(disposition, fallbackName)
+
+  const url = window.URL.createObjectURL(blob)
+  const link = document.createElement('a')
+
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+
+  window.URL.revokeObjectURL(url)
 }
 
 async function fetchPage(page, { replace = false, silent = false } = {}) {
@@ -377,6 +427,39 @@ async function submitLine() {
   }
 }
 
+async function exportLines() {
+  if (isExportDisabled.value) return
+
+  exporting.value = true
+
+  try {
+    const response = await exportLinesExcel(buildExportQuery())
+    const today = new Date().toISOString().slice(0, 10)
+
+    downloadBlobResponse(response, `production-lines-${today}.xlsx`)
+
+    toast.add({
+      severity: 'success',
+      summary: 'Exported',
+      detail: 'Production lines exported successfully.',
+      life: 2500,
+    })
+  } catch (error) {
+    toast.add({
+      severity: 'error',
+      summary: 'Export failed',
+      detail: errorMessage(error, 'Failed to export production lines'),
+      life: 3500,
+    })
+  } finally {
+    exporting.value = false
+  }
+}
+
+async function onImportSuccess() {
+  await reloadFirstPage({ keepVisible: false })
+}
+
 function statusSeverity(active) {
   return active ? 'success' : 'contrast'
 }
@@ -422,32 +505,32 @@ onBeforeUnmount(() => {
 <template>
   <div class="flex flex-col gap-4">
     <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-      <div class="min-w-0">
-        <h1 class="text-xl font-semibold text-[color:var(--ot-text)]">
-          Production Lines
-        </h1>
-        <p class="mt-1 text-sm text-[color:var(--ot-text-muted)]">
-          Manage line master records for sewing and production employee grouping.
-        </p>
-      </div>
-
       <div class="flex flex-wrap items-center gap-2">
-        <div
-          class="flex min-w-[92px] flex-col items-center justify-center rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-3 py-2 text-center"
-        >
-          <div class="text-[11px] font-semibold uppercase tracking-[0.14em] text-[color:var(--ot-text-muted)]">
-            Total
-          </div>
-          <div class="mt-1 text-lg font-semibold leading-none text-[color:var(--ot-text)]">
-            {{ totalLines }}
-          </div>
-        </div>
-
         <Button
           label="New Line"
           icon="pi pi-plus"
           size="small"
           @click="openCreateDialog"
+        />
+
+        <Button
+          label="Import"
+          icon="pi pi-upload"
+          severity="secondary"
+          outlined
+          size="small"
+          @click="importDialogVisible = true"
+        />
+
+        <Button
+          label="Export"
+          icon="pi pi-download"
+          severity="secondary"
+          outlined
+          size="small"
+          :loading="exporting"
+          :disabled="isExportDisabled"
+          @click="exportLines"
         />
       </div>
     </div>
@@ -756,6 +839,11 @@ onBeforeUnmount(() => {
         </div>
       </template>
     </Dialog>
+
+    <LineImportDialog
+      v-model:visible="importDialogVisible"
+      @success="onImportSuccess"
+    />
   </div>
 </template>
 

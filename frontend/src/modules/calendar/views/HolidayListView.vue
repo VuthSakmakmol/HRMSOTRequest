@@ -349,14 +349,6 @@ onMounted(async () => {
 <template>
   <div class="flex flex-col gap-4">
     <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-      <div class="min-w-0">
-        <h1 class="text-xl font-semibold text-[color:var(--ot-text)]">
-          Holiday Master
-        </h1>
-        <p class="mt-1 text-sm text-[color:var(--ot-text-muted)]">
-          Manage company holidays and view them directly in calendar.
-        </p>
-      </div>
 
       <div class="flex items-center gap-2">
         <div class="rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-3 py-2">
@@ -472,15 +464,7 @@ onMounted(async () => {
             <h2 class="text-lg font-semibold text-[color:var(--ot-text)]">
               Holiday Summary
             </h2>
-            <p class="mt-1 text-sm text-[color:var(--ot-text-muted)]">
-              Holiday meaning and date summary beside the calendar.
-            </p>
           </div>
-
-          <Tag
-            :value="selectedHoliday ? 'Selected holiday' : 'Monthly summary'"
-            :severity="selectedHoliday ? 'success' : 'contrast'"
-          />
         </div>
 
         <div

@@ -1,4 +1,5 @@
 // backend/src/modules/org/controllers/productionLine.controller.js
+// backend/src/modules/org/controllers/productionLine.controller.js
 
 const productionLineService = require('../services/productionLine.service')
 const {
@@ -18,6 +19,18 @@ function parse(schema, data) {
   }
 
   return result.data
+}
+
+function setExcelHeaders(res, filename) {
+  res.setHeader(
+    'Content-Type',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  )
+
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="${filename}"`,
+  )
 }
 
 async function list(req, res, next) {
@@ -89,10 +102,60 @@ async function update(req, res, next) {
   }
 }
 
+async function exportExcel(req, res, next) {
+  try {
+    const query = parse(listProductionLineQuerySchema, {
+      ...(req.query || {}),
+      page: 1,
+      limit: 200,
+    })
+
+    const result = await productionLineService.exportExcel(query)
+
+    setExcelHeaders(res, result.filename)
+    res.send(result.buffer)
+  } catch (error) {
+    next(error)
+  }
+}
+
+async function downloadImportSample(req, res, next) {
+  try {
+    const result = await productionLineService.downloadImportSample()
+
+    setExcelHeaders(res, result.filename)
+    res.send(result.buffer)
+  } catch (error) {
+    next(error)
+  }
+}
+
+async function importExcel(req, res, next) {
+  try {
+    if (!req.file?.buffer) {
+      const err = new Error('Excel file is required')
+      err.status = 400
+      throw err
+    }
+
+    const data = await productionLineService.importExcel(req.file.buffer, req.user)
+
+    res.json({
+      ok: true,
+      data,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
 module.exports = {
   list,
   lookup,
   getById,
   create,
   update,
+  exportExcel,
+  downloadImportSample,
+  importExcel,
 }

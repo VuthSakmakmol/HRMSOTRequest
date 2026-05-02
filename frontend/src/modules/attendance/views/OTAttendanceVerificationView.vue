@@ -849,9 +849,6 @@ onBeforeUnmount(() => {
       <div class="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
         <div class="min-w-0">
           <div class="flex flex-wrap items-center gap-2">
-            <h1 class="text-xl font-medium tracking-tight text-[color:var(--ot-text)]">
-              OT Attendance Verification
-            </h1>
 
             <Tag
               v-if="payload"

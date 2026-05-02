@@ -459,26 +459,8 @@ onBeforeUnmount(() => {
     />
 
     <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-      <div class="min-w-0">
-        <h1 class="text-xl font-semibold text-[color:var(--ot-text)]">
-          Shifts
-        </h1>
-        <p class="mt-1 text-sm text-[color:var(--ot-text-muted)]">
-          Manage shift master records for employee assignment and OT calculation.
-        </p>
-      </div>
 
       <div class="flex flex-wrap items-center gap-2">
-        <div
-          class="flex min-w-[92px] flex-col items-center justify-center rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-3 py-2 text-center"
-        >
-          <div class="text-[11px] font-semibold uppercase tracking-[0.14em] text-[color:var(--ot-text-muted)]">
-            Total
-          </div>
-          <div class="mt-1 text-lg font-semibold leading-none text-[color:var(--ot-text)]">
-            {{ totalShifts }}
-          </div>
-        </div>
 
         <Button
           v-if="canCreate"

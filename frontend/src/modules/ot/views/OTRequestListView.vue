@@ -439,24 +439,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="flex flex-col gap-4">
     <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-      <div class="min-w-0">
-        <h1 class="text-xl font-medium text-[color:var(--ot-text)]">
-          OT Requests
-        </h1>
-      </div>
-
       <div class="flex flex-wrap items-center gap-2">
-        <div
-          class="flex min-w-[92px] flex-col items-center justify-center rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-3 py-2 text-center"
-        >
-          <div class="text-[11px] font-medium uppercase tracking-[0.14em] text-[color:var(--ot-text-muted)]">
-            Total
-          </div>
-
-          <div class="mt-1 text-lg font-medium leading-none text-[color:var(--ot-text)]">
-            {{ totalRequests }}
-          </div>
-        </div>
 
         <Button
           label="Export Excel"
