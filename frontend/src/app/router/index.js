@@ -22,6 +22,7 @@ import OTRequestDetailView from '@/modules/ot/views/OTRequestDetailView.vue'
 import OTRequestEditView from '@/modules/ot/views/OTRequestEditView.vue'
 import OTCalculationPolicyListView from '@/modules/ot/views/OTCalculationPolicyListView.vue'
 import ShiftOTOptionListView from '@/modules/ot/views/ShiftOTOptionListView.vue'
+import LineView from '@/modules/org/views/LineView.vue'
 
 import AttendanceImportView from '@/modules/attendance/views/AttendanceImportView.vue'
 import AttendanceRecordsView from '@/modules/attendance/views/AttendanceRecordsView.vue'
@@ -159,6 +160,20 @@ const routes = [
             'POSITION_VIEW',
             'POSITION_CREATE',
             'POSITION_UPDATE',
+          ],
+        },
+      },
+      {
+        path: 'org/lines',
+        name: 'lines',
+        component: LineView,
+        meta: {
+          requiresAuth: true,
+          title: 'Production Lines',
+          requiredAnyPermissions: [
+            'LINE_VIEW',
+            'LINE_CREATE',
+            'LINE_UPDATE',
           ],
         },
       },

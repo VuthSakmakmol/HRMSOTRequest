@@ -128,6 +128,13 @@ const navGroups = computed(() => {
           permissions: ['POSITION_VIEW'],
         },
         {
+          key: 'lines',
+          label: 'Lines',
+          icon: 'pi pi-sitemap',
+          to: '/org/lines',
+          permissions: ['LINE_VIEW'],
+        },
+        {
           key: 'employees',
           label: 'Employees',
           icon: 'pi pi-users',

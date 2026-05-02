@@ -1,4 +1,5 @@
 // backend/src/modules/org/validators/position.validation.js
+
 const { z } = require('zod')
 const mongoose = require('mongoose')
 
@@ -14,9 +15,18 @@ function toBoolean(value, defaultValue = undefined) {
   if (typeof value === 'number') return value === 1
 
   const v = String(value).trim().toLowerCase()
+
   if (['true', '1', 'yes', 'y'].includes(v)) return true
   if (['false', '0', 'no', 'n'].includes(v)) return false
+
   return defaultValue
+}
+
+function normalizeOptionalObjectId(value) {
+  if (value === undefined) return undefined
+
+  const text = String(value ?? '').trim()
+  return text || null
 }
 
 const objectIdField = z
@@ -32,6 +42,22 @@ const optionalObjectIdFilter = z
   .default('')
   .refine((value) => !value || isObjectId(value), 'Invalid departmentId')
 
+const optionalReportsToPositionField = z.preprocess(
+  normalizeOptionalObjectId,
+  z
+    .union([
+      z.string().trim().refine(isObjectId, 'Invalid reportsToPositionId'),
+      z.null(),
+    ])
+    .optional(),
+)
+
+const managerScopeField = z
+  .string()
+  .trim()
+  .transform((value) => String(value || '').trim().toUpperCase())
+  .pipe(z.enum(['SAME_LINE', 'GLOBAL']))
+
 const paginationQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(10),
@@ -43,19 +69,62 @@ const paginationQuerySchema = z.object({
 })
 
 const createPositionSchema = z.object({
-  code: z.string().trim().min(1, 'Code is required').max(50, 'Code is too long'),
-  name: z.string().trim().min(1, 'Name is required').max(120, 'Name is too long'),
+  code: z
+    .string()
+    .trim()
+    .min(1, 'Code is required')
+    .max(50, 'Code is too long'),
+
+  name: z
+    .string()
+    .trim()
+    .min(1, 'Name is required')
+    .max(120, 'Name is too long'),
+
   departmentId: objectIdField,
-  description: z.string().trim().max(500, 'Description is too long').optional().default(''),
+
+  reportsToPositionId: optionalReportsToPositionField.default(null),
+
+  managerScope: managerScopeField.optional().default('SAME_LINE'),
+
+  description: z
+    .string()
+    .trim()
+    .max(500, 'Description is too long')
+    .optional()
+    .default(''),
+
   isActive: z.boolean().optional().default(true),
 })
 
 const updatePositionSchema = z
   .object({
-    code: z.string().trim().min(1, 'Code is required').max(50, 'Code is too long').optional(),
-    name: z.string().trim().min(1, 'Name is required').max(120, 'Name is too long').optional(),
+    code: z
+      .string()
+      .trim()
+      .min(1, 'Code is required')
+      .max(50, 'Code is too long')
+      .optional(),
+
+    name: z
+      .string()
+      .trim()
+      .min(1, 'Name is required')
+      .max(120, 'Name is too long')
+      .optional(),
+
     departmentId: objectIdField.optional(),
-    description: z.string().trim().max(500, 'Description is too long').optional(),
+
+    reportsToPositionId: optionalReportsToPositionField,
+
+    managerScope: managerScopeField.optional(),
+
+    description: z
+      .string()
+      .trim()
+      .max(500, 'Description is too long')
+      .optional(),
+
     isActive: z.boolean().optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {

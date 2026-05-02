@@ -1,6 +1,7 @@
 <!-- frontend/src/modules/org/views/EmployeeView.vue -->
 <script setup>
 // frontend/src/modules/org/views/EmployeeView.vue
+
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useToast } from 'primevue/usetoast'
 
@@ -18,6 +19,7 @@ import Tag from 'primevue/tag'
 import EmployeeImportDialog from '@/modules/org/components/EmployeeImportDialog.vue'
 import { getDepartmentLookupOptions } from '@/modules/org/department.api'
 import { getPositionLookupOptions } from '@/modules/org/position.api'
+import { getLineLookupOptions } from '@/modules/org/line.api'
 import {
   createEmployee,
   exportEmployeesExcel,
@@ -35,8 +37,13 @@ const saving = ref(false)
 const exporting = ref(false)
 const loadingDepartments = ref(false)
 const loadingPositions = ref(false)
+const loadingLines = ref(false)
 const loadingManagers = ref(false)
 const loadingShifts = ref(false)
+const loadingAutoManager = ref(false)
+
+const autoManagerPreview = ref(null)
+const autoManagerError = ref('')
 
 const rows = ref([])
 const totalRecords = ref(0)
@@ -52,13 +59,15 @@ const importDialogVisible = ref(false)
 
 const departmentOptions = ref([])
 const positionOptions = ref([])
-const managerOptions = ref([])
+const lineOptions = ref([])
+const rawManagerItems = ref([])
 const shiftOptions = ref([])
 
 const filters = reactive({
   search: '',
   departmentId: '',
   positionId: '',
+  lineId: '',
   shiftId: '',
   isActive: '',
   sortField: 'createdAt',
@@ -70,6 +79,7 @@ const form = reactive({
   displayName: '',
   departmentId: '',
   positionId: '',
+  lineId: '',
   shiftId: '',
   reportsToEmployeeId: '',
   phone: '',
@@ -100,6 +110,62 @@ const loadedCount = computed(() => rows.value.filter(Boolean).length)
 const summaryText = computed(() => `${loadedCount.value} of ${totalEmployees.value}`)
 const hasAnyData = computed(() => rows.value.some(Boolean))
 const useVirtualScroll = computed(() => totalEmployees.value > PAGE_SIZE)
+
+const selectedPositionOption = computed(() => {
+  return positionOptions.value.find((item) => String(item.value) === String(form.positionId))
+})
+
+const shouldAutoResolveManager = computed(() => {
+  const selected = selectedPositionOption.value
+
+  if (!selected?.reportsToPositionId) {
+    return false
+  }
+
+  if (selected.managerScope === 'GLOBAL') {
+    return true
+  }
+
+  return !!form.lineId
+})
+
+const autoManagerHint = computed(() => {
+  const selected = selectedPositionOption.value
+
+  if (!shouldAutoResolveManager.value || !selected) {
+    return ''
+  }
+
+  const reportsToName = selected.reportsToPositionName || 'parent position'
+
+  if (selected.managerScope === 'GLOBAL') {
+    return `Manager will be auto-selected by backend using ${reportsToName} across departments.`
+  }
+
+  return `Manager will be auto-selected by backend using ${reportsToName} in the selected line.`
+})
+
+const autoManagerDisplayHint = computed(() => {
+  if (!shouldAutoResolveManager.value) {
+    return ''
+  }
+
+  if (autoManagerPreview.value) {
+    return `Manager auto-selected: ${autoManagerPreview.value.employeeNo} - ${autoManagerPreview.value.displayName}`
+  }
+
+  if (loadingAutoManager.value) {
+    return 'Finding manager...'
+  }
+
+  if (autoManagerError.value) {
+    return autoManagerError.value
+  }
+
+  return autoManagerHint.value
+})
+
+const managerOptions = computed(() => mapManagerOptions(rawManagerItems.value))
 
 const wantsCreateAccount = computed(() => {
   return !isEditMode.value && form.accountMode === 'WITH_ACCOUNT'
@@ -150,17 +216,84 @@ function normalizeItems(payload) {
   return Array.isArray(payload?.items) ? payload.items : []
 }
 
+function errorMessage(error, fallback = 'Something went wrong') {
+  return (
+    error?.response?.data?.message ||
+    error?.response?.data?.error ||
+    error?.message ||
+    fallback
+  )
+}
+
+function sameValue(a, b) {
+  return String(a || '') !== '' && String(a || '') === String(b || '')
+}
+
+function getRowId(row) {
+  return row?._id || row?.id || ''
+}
+
+function getRowLineId(row) {
+  const line = row?.lineId
+
+  if (!line) return ''
+
+  if (typeof line === 'string') {
+    return line
+  }
+
+  return line._id || line.id || ''
+}
+
+function getRowReportsToPositionId(row) {
+  return row?.reportsToPositionId || row?.positionId?.reportsToPositionId || ''
+}
+
+function isInvalidManagerCandidate(item) {
+  const candidateId = getRowId(item)
+
+  if (editingEmployeeId.value && sameValue(candidateId, editingEmployeeId.value)) {
+    return true
+  }
+
+  const candidateReportsToPositionId = getRowReportsToPositionId(item)
+  const candidateLineId = getRowLineId(item)
+
+  if (form.positionId && sameValue(candidateReportsToPositionId, form.positionId)) {
+    if (!form.lineId || !candidateLineId || sameValue(candidateLineId, form.lineId)) {
+      return true
+    }
+  }
+
+  return false
+}
+
 function mapDepartmentOptions(items = []) {
   return items.map((item) => ({
-    label: `${item.code} - ${item.name}`,
+    label: item.label || `${item.code} - ${item.name}`,
     value: item._id || item.id,
   }))
 }
 
 function mapPositionOptions(items = []) {
   return items.map((item) => ({
-    label: `${item.code} - ${item.name}`,
+    label: item.label || `${item.code} - ${item.name}`,
     value: item._id || item.id,
+    code: item.code || '',
+    name: item.name || '',
+    reportsToPositionId: item.reportsToPositionId || null,
+    reportsToPositionCode: item.reportsToPositionCode || '',
+    reportsToPositionName: item.reportsToPositionName || '',
+    managerScope: item.managerScope || 'SAME_LINE',
+  }))
+}
+
+function mapLineOptions(items = []) {
+  return items.map((item) => ({
+    label: item.label || `${item.code} - ${item.name}`,
+    value: item._id || item.id,
+    code: item.code || '',
+    name: item.name || '',
   }))
 }
 
@@ -169,6 +302,7 @@ function mapManagerOptions(items = []) {
     { label: 'No Manager', value: '' },
     ...items
       .filter(Boolean)
+      .filter((item) => !isInvalidManagerCandidate(item))
       .map((item) => ({
         label: `${item.employeeNo} - ${item.displayName}`,
         value: item._id || item.id,
@@ -190,6 +324,7 @@ function buildQuery(page) {
     search: String(filters.search || '').trim(),
     departmentId: filters.departmentId,
     positionId: filters.positionId,
+    lineId: filters.lineId,
     shiftId: filters.shiftId,
     isActive: filters.isActive,
     sortBy: filters.sortField,
@@ -199,22 +334,21 @@ function buildQuery(page) {
 
 async function fetchDepartmentsForDropdown(search = '') {
   loadingDepartments.value = true
+
   try {
     const res = await getDepartmentLookupOptions({
       limit: 100,
       search: String(search || '').trim(),
       isActive: true,
     })
+
     const payload = normalizePayload(res)
     departmentOptions.value = mapDepartmentOptions(normalizeItems(payload))
   } catch (error) {
     toast.add({
       severity: 'error',
       summary: 'Department load failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to load departments',
+      detail: errorMessage(error, 'Failed to load departments'),
       life: 3000,
     })
   } finally {
@@ -224,6 +358,7 @@ async function fetchDepartmentsForDropdown(search = '') {
 
 async function fetchPositionsForDropdown(departmentId = '', search = '') {
   loadingPositions.value = true
+
   try {
     const res = await getPositionLookupOptions({
       limit: 100,
@@ -231,16 +366,14 @@ async function fetchPositionsForDropdown(departmentId = '', search = '') {
       departmentId: String(departmentId || '').trim(),
       isActive: true,
     })
+
     const payload = normalizePayload(res)
     positionOptions.value = mapPositionOptions(normalizeItems(payload))
   } catch (error) {
     toast.add({
       severity: 'error',
       summary: 'Position load failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to load positions',
+      detail: errorMessage(error, 'Failed to load positions'),
       life: 3000,
     })
   } finally {
@@ -248,8 +381,34 @@ async function fetchPositionsForDropdown(departmentId = '', search = '') {
   }
 }
 
+async function fetchLinesForDropdown(departmentId = '', search = '') {
+  loadingLines.value = true
+
+  try {
+    const res = await getLineLookupOptions({
+      limit: 100,
+      search: String(search || '').trim(),
+      departmentId: String(departmentId || '').trim(),
+      isActive: 'true',
+    })
+
+    const payload = normalizePayload(res)
+    lineOptions.value = mapLineOptions(normalizeItems(payload))
+  } catch (error) {
+    toast.add({
+      severity: 'error',
+      summary: 'Line load failed',
+      detail: errorMessage(error, 'Failed to load lines'),
+      life: 3000,
+    })
+  } finally {
+    loadingLines.value = false
+  }
+}
+
 async function fetchManagersForDropdown() {
   loadingManagers.value = true
+
   try {
     const res = await getEmployees({
       page: 1,
@@ -259,16 +418,14 @@ async function fetchManagersForDropdown() {
       sortBy: 'displayName',
       sortOrder: 'asc',
     })
+
     const payload = normalizePayload(res)
-    managerOptions.value = mapManagerOptions(normalizeItems(payload))
+    rawManagerItems.value = normalizeItems(payload)
   } catch (error) {
     toast.add({
       severity: 'error',
       summary: 'Manager load failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to load managers',
+      detail: errorMessage(error, 'Failed to load managers'),
       life: 3000,
     })
   } finally {
@@ -276,8 +433,94 @@ async function fetchManagersForDropdown() {
   }
 }
 
+
+function addManagerToOptions(manager) {
+  if (!manager) return
+
+  const managerId = manager._id || manager.id
+  if (!managerId) return
+
+  const exists = rawManagerItems.value.some((item) => {
+    return String(item?._id || item?.id || '') === String(managerId)
+  })
+
+  if (!exists) {
+    rawManagerItems.value = [manager, ...rawManagerItems.value]
+  }
+}
+
+function clearAutoManagerPreview() {
+  autoManagerPreview.value = null
+  autoManagerError.value = ''
+  loadingAutoManager.value = false
+}
+
+async function refreshAutoManagerPreview() {
+  autoManagerPreview.value = null
+  autoManagerError.value = ''
+
+  if (!shouldAutoResolveManager.value) {
+    return
+  }
+
+  const selected = selectedPositionOption.value
+  const parentPositionId = selected?.reportsToPositionId || ''
+
+  if (!parentPositionId) {
+    form.reportsToEmployeeId = ''
+    return
+  }
+
+  if (selected.managerScope !== 'GLOBAL' && !form.lineId) {
+    form.reportsToEmployeeId = ''
+    autoManagerError.value = 'Please select line first so the system can find the supervisor.'
+    return
+  }
+
+  loadingAutoManager.value = true
+
+  try {
+    const res = await getEmployees({
+      page: 1,
+      limit: 10,
+      search: '',
+      isActive: 'true',
+      positionId: parentPositionId,
+      lineId: selected.managerScope === 'GLOBAL' ? '' : form.lineId,
+      sortBy: 'displayName',
+      sortOrder: 'asc',
+    })
+
+    const payload = normalizePayload(res)
+    const items = normalizeItems(payload)
+
+    const manager = items.find((item) => {
+      const managerId = item?._id || item?.id || ''
+      return !sameValue(managerId, editingEmployeeId.value)
+    })
+
+    if (!manager) {
+      form.reportsToEmployeeId = ''
+      autoManagerError.value = `No active manager found for ${selected.reportsToPositionName || 'parent position'}.`
+      return
+    }
+
+    const managerId = manager._id || manager.id
+
+    autoManagerPreview.value = manager
+    addManagerToOptions(manager)
+    form.reportsToEmployeeId = managerId
+  } catch (error) {
+    form.reportsToEmployeeId = ''
+    autoManagerError.value = errorMessage(error, 'Failed to find auto manager')
+  } finally {
+    loadingAutoManager.value = false
+  }
+}
+
 async function fetchShiftsForDropdown() {
   loadingShifts.value = true
+
   try {
     const res = await getShifts({
       page: 1,
@@ -287,16 +530,14 @@ async function fetchShiftsForDropdown() {
       sortBy: 'name',
       sortOrder: 'asc',
     })
+
     const payload = normalizePayload(res)
     shiftOptions.value = mapShiftOptions(normalizeItems(payload))
   } catch (error) {
     toast.add({
       severity: 'error',
       summary: 'Shift load failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to load shifts',
+      detail: errorMessage(error, 'Failed to load shifts'),
       life: 3000,
     })
   } finally {
@@ -352,10 +593,7 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
     toast.add({
       severity: 'error',
       summary: 'Load failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to load employees',
+      detail: errorMessage(error, 'Failed to load employees'),
       life: 3000,
     })
   } finally {
@@ -391,13 +629,23 @@ function onStatusChange() {
   reloadFirstPage({ keepVisible: true })
 }
 
-function onDepartmentFilterChange() {
+async function onDepartmentFilterChange() {
   filters.positionId = ''
-  fetchPositionsForDropdown(filters.departmentId || '')
-  reloadFirstPage({ keepVisible: true })
+  filters.lineId = ''
+
+  await Promise.all([
+    fetchPositionsForDropdown(filters.departmentId || ''),
+    fetchLinesForDropdown(filters.departmentId || ''),
+  ])
+
+  await reloadFirstPage({ keepVisible: true })
 }
 
 function onPositionChange() {
+  reloadFirstPage({ keepVisible: true })
+}
+
+function onLineChange() {
   reloadFirstPage({ keepVisible: true })
 }
 
@@ -409,11 +657,14 @@ function clearFilters() {
   filters.search = ''
   filters.departmentId = ''
   filters.positionId = ''
+  filters.lineId = ''
   filters.shiftId = ''
   filters.isActive = ''
   filters.sortField = 'createdAt'
   filters.sortOrder = -1
+
   fetchPositionsForDropdown('')
+  fetchLinesForDropdown('')
   reloadFirstPage({ keepVisible: true })
 }
 
@@ -445,6 +696,7 @@ function resetForm() {
   form.displayName = ''
   form.departmentId = ''
   form.positionId = ''
+  form.lineId = ''
   form.shiftId = ''
   form.reportsToEmployeeId = ''
   form.phone = ''
@@ -455,12 +707,19 @@ function resetForm() {
   form.hasAccount = false
   form.accountLoginId = ''
   form.accountIsActive = false
+  clearAutoManagerPreview()
   positionOptions.value = []
+  lineOptions.value = []
 }
 
 async function openCreateDialog() {
   resetForm()
-  await fetchPositionsForDropdown('')
+
+  await Promise.all([
+    fetchPositionsForDropdown(''),
+    fetchLinesForDropdown(''),
+  ])
+
   employeeDialogVisible.value = true
 }
 
@@ -474,12 +733,21 @@ async function openEditDialog(row) {
     row?.departmentId ||
     ''
 
-  await fetchPositionsForDropdown(form.departmentId)
+  await Promise.all([
+    fetchPositionsForDropdown(form.departmentId),
+    fetchLinesForDropdown(form.departmentId),
+  ])
 
   form.positionId =
     row?.positionId?._id ||
     row?.positionId?.id ||
     row?.positionId ||
+    ''
+
+  form.lineId =
+    row?.lineId?._id ||
+    row?.lineId?.id ||
+    row?.lineId ||
     ''
 
   form.shiftId =
@@ -503,19 +771,31 @@ async function openEditDialog(row) {
   form.accountIsActive = !!row?.accountIsActive
   form.accountMode = 'WITHOUT_ACCOUNT'
 
+  if (shouldAutoResolveManager.value) {
+    await refreshAutoManagerPreview()
+  } else if (form.reportsToEmployeeId && row?.reportsToEmployeeId && typeof row.reportsToEmployeeId === 'object') {
+    addManagerToOptions(row.reportsToEmployeeId)
+  }
+
   employeeDialogVisible.value = true
 }
 
 async function submitEmployee() {
   saving.value = true
+
   try {
+    const manualManagerId = shouldAutoResolveManager.value
+      ? null
+      : String(form.reportsToEmployeeId || '').trim() || null
+
     const payload = {
       employeeNo: String(form.employeeNo || '').trim().toUpperCase(),
       displayName: String(form.displayName || '').trim(),
       departmentId: String(form.departmentId || '').trim(),
       positionId: String(form.positionId || '').trim(),
+      lineId: String(form.lineId || '').trim() || null,
       shiftId: String(form.shiftId || '').trim(),
-      reportsToEmployeeId: String(form.reportsToEmployeeId || '').trim() || null,
+      reportsToEmployeeId: manualManagerId,
       phone: String(form.phone || '').trim(),
       email: String(form.email || '').trim().toLowerCase(),
       joinDate: String(form.joinDate || '').trim() || null,
@@ -556,10 +836,7 @@ async function submitEmployee() {
     toast.add({
       severity: 'error',
       summary: isEditMode.value ? 'Update failed' : 'Create failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to save employee',
+      detail: errorMessage(error, 'Failed to save employee'),
       life: 3500,
     })
   } finally {
@@ -591,6 +868,20 @@ function positionLabel(row) {
   if (!pos) return row?.positionName || '-'
   if (typeof pos === 'string') return row?.positionName || pos
   return [pos.code, pos.name].filter(Boolean).join(' - ') || row?.positionName || '-'
+}
+
+function lineLabel(row) {
+  const line = row?.lineId
+
+  if (!line) {
+    return [row?.lineCode, row?.lineName].filter(Boolean).join(' - ') || '-'
+  }
+
+  if (typeof line === 'string') {
+    return [row?.lineCode, row?.lineName].filter(Boolean).join(' - ') || line
+  }
+
+  return [line.code, line.name].filter(Boolean).join(' - ') || row?.lineName || '-'
 }
 
 function shiftLabel(row) {
@@ -626,11 +917,13 @@ function downloadBlob(blob, filename) {
 
 async function handleExport() {
   exporting.value = true
+
   try {
     const res = await exportEmployeesExcel({
       search: String(filters.search || '').trim(),
       departmentId: filters.departmentId,
       positionId: filters.positionId,
+      lineId: filters.lineId,
       shiftId: filters.shiftId,
       isActive: filters.isActive,
       sortBy: filters.sortField,
@@ -655,10 +948,7 @@ async function handleExport() {
     toast.add({
       severity: 'error',
       summary: 'Export failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to export excel',
+      detail: errorMessage(error, 'Failed to export excel'),
       life: 3500,
     })
   } finally {
@@ -682,8 +972,30 @@ watch(
   () => form.departmentId,
   async (newDepartmentId, oldDepartmentId) => {
     if (newDepartmentId === oldDepartmentId) return
+
     form.positionId = ''
-    await fetchPositionsForDropdown(newDepartmentId || '')
+    form.lineId = ''
+    form.reportsToEmployeeId = ''
+    clearAutoManagerPreview()
+
+    await Promise.all([
+      fetchPositionsForDropdown(newDepartmentId || ''),
+      fetchLinesForDropdown(newDepartmentId || ''),
+    ])
+  },
+)
+
+watch(
+  () => form.positionId,
+  async () => {
+    await refreshAutoManagerPreview()
+  },
+)
+
+watch(
+  () => form.lineId,
+  async () => {
+    await refreshAutoManagerPreview()
   },
 )
 
@@ -691,9 +1003,11 @@ onMounted(async () => {
   await Promise.all([
     fetchDepartmentsForDropdown(),
     fetchPositionsForDropdown(''),
+    fetchLinesForDropdown(''),
     fetchShiftsForDropdown(),
     fetchManagersForDropdown(),
   ])
+
   await reloadFirstPage({ keepVisible: false })
 })
 
@@ -715,7 +1029,7 @@ onBeforeUnmount(() => {
           Employees
         </h1>
         <p class="mt-1 text-sm text-[color:var(--ot-text-muted)]">
-          Manage employee master records, account provisioning, reporting lines, and assigned shifts.
+          Manage employee master records, line assignment, reporting structure, shifts, and account provisioning.
         </p>
       </div>
 
@@ -801,6 +1115,20 @@ onBeforeUnmount(() => {
             />
           </div>
 
+          <div class="w-full xl:w-[170px] xl:shrink-0">
+            <Select
+              v-model="filters.lineId"
+              :options="[{ label: 'All Lines', value: '' }, ...lineOptions]"
+              optionLabel="label"
+              optionValue="value"
+              placeholder="Line"
+              class="w-full"
+              size="small"
+              :loading="loadingLines"
+              @change="onLineChange"
+            />
+          </div>
+
           <div class="w-full xl:w-[180px] xl:shrink-0">
             <Select
               v-model="filters.shiftId"
@@ -853,7 +1181,7 @@ onBeforeUnmount(() => {
         scrollHeight="500px"
         :sortField="filters.sortField"
         :sortOrder="filters.sortOrder"
-        tableStyle="min-width: 108rem"
+        tableStyle="min-width: 116rem"
         class="employee-table"
         :virtualScrollerOptions="useVirtualScroll ? {
           lazy: true,
@@ -896,6 +1224,12 @@ onBeforeUnmount(() => {
         <Column field="positionName" header="Position" style="min-width: 14rem">
           <template #body="{ data }">
             <span v-if="data" class="line-clamp-1">{{ positionLabel(data) }}</span>
+          </template>
+        </Column>
+
+        <Column header="Line" style="min-width: 13rem">
+          <template #body="{ data }">
+            <span v-if="data" class="line-clamp-1">{{ lineLabel(data) }}</span>
           </template>
         </Column>
 
@@ -1053,6 +1387,27 @@ onBeforeUnmount(() => {
 
         <div class="space-y-2">
           <label class="text-sm font-medium text-[color:var(--ot-text)]">
+            Line
+          </label>
+          <Select
+            v-model="form.lineId"
+            :options="lineOptions"
+            optionLabel="label"
+            optionValue="value"
+            placeholder="Optional: select production line"
+            class="w-full"
+            filter
+            showClear
+            :loading="loadingLines"
+            :disabled="!form.departmentId"
+          />
+          <small class="text-[color:var(--ot-text-muted)]">
+            Required for production employees such as Sewer if manager should follow line.
+          </small>
+        </div>
+
+        <div class="space-y-2">
+          <label class="text-sm font-medium text-[color:var(--ot-text)]">
             Shift
           </label>
           <Select
@@ -1067,7 +1422,7 @@ onBeforeUnmount(() => {
           />
         </div>
 
-        <div class="space-y-2">
+        <div class="space-y-2 md:col-span-2">
           <label class="text-sm font-medium text-[color:var(--ot-text)]">
             Manager
           </label>
@@ -1079,8 +1434,23 @@ onBeforeUnmount(() => {
             placeholder="Select manager"
             class="w-full"
             filter
-            :loading="loadingManagers"
+            :loading="loadingManagers || loadingAutoManager"
+            :disabled="shouldAutoResolveManager"
           />
+          <small
+            v-if="shouldAutoResolveManager"
+            :class="autoManagerPreview
+              ? 'text-emerald-600 dark:text-emerald-300'
+              : 'text-amber-600 dark:text-amber-300'"
+          >
+            {{ autoManagerDisplayHint }}
+          </small>
+          <small
+            v-else
+            class="text-[color:var(--ot-text-muted)]"
+          >
+            Manual manager is used only when the selected position does not have a parent position rule.
+          </small>
         </div>
 
         <div class="space-y-2">

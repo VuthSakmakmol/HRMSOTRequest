@@ -1,4 +1,3 @@
-// frontend/src/modules/org/views/PositionView.vue
 <!-- frontend/src/modules/org/views/PositionView.vue -->
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
@@ -33,6 +32,7 @@ const SEARCH_DEBOUNCE_MS = 250
 const saving = ref(false)
 const exporting = ref(false)
 const loadingDepartments = ref(false)
+const loadingReportsToPositions = ref(false)
 const importDialogVisible = ref(false)
 
 const rows = ref([])
@@ -43,6 +43,7 @@ const bootstrapped = ref(false)
 const backgroundLoading = ref(false)
 
 const departmentOptions = ref([])
+const reportsToPositionOptions = ref([])
 
 const positionDialogVisible = ref(false)
 const editingPositionId = ref('')
@@ -59,6 +60,8 @@ const form = reactive({
   code: '',
   name: '',
   departmentId: '',
+  reportsToPositionId: null,
+  managerScope: 'SAME_LINE',
   description: '',
   isActive: true,
 })
@@ -67,6 +70,11 @@ const statusOptions = [
   { label: 'All Status', value: '' },
   { label: 'Active', value: 'true' },
   { label: 'Inactive', value: 'false' },
+]
+
+const managerScopeOptions = [
+  { label: 'Same Line', value: 'SAME_LINE' },
+  { label: 'Global / Cross Department', value: 'GLOBAL' },
 ]
 
 const isEditMode = computed(() => !!editingPositionId.value)
@@ -85,6 +93,13 @@ const isSaveDisabled = computed(() => {
   )
 })
 
+const filteredReportsToPositionOptions = computed(() => {
+  return reportsToPositionOptions.value.filter((item) => {
+    if (!editingPositionId.value) return true
+    return String(item.value) !== String(editingPositionId.value)
+  })
+})
+
 let searchTimer = null
 let currentRequestId = 0
 
@@ -96,11 +111,41 @@ function normalizeItems(payload) {
   return Array.isArray(payload?.items) ? payload.items : []
 }
 
+function normalizeTotal(payload) {
+  return Number(payload?.pagination?.total || payload?.total || 0)
+}
+
+function errorMessage(error, fallback = 'Something went wrong') {
+  return (
+    error?.response?.data?.message ||
+    error?.response?.data?.error ||
+    error?.message ||
+    fallback
+  )
+}
+
 function mapDepartmentOptions(items = []) {
   return items.map((item) => ({
-    label: `${item.code} - ${item.name}`,
+    label: item.label || `${item.code} - ${item.name}`,
     value: item._id || item.id,
   }))
+}
+
+function mapPositionOptions(items = []) {
+  return items
+    .filter(Boolean)
+    .map((item) => ({
+      label: [item.code, item.name].filter(Boolean).join(' - '),
+      value: item._id || item.id,
+      code: item.code || '',
+      name: item.name || '',
+    }))
+}
+
+function getPositionId(value) {
+  if (!value) return null
+  if (typeof value === 'string') return value
+  return value._id || value.id || null
 }
 
 function buildQuery(page) {
@@ -133,6 +178,7 @@ function getFilenameFromDisposition(disposition, fallbackName) {
 
 async function fetchDepartmentsForDropdown(search = '') {
   loadingDepartments.value = true
+
   try {
     const res = await getDepartmentLookupOptions({
       limit: 100,
@@ -146,14 +192,38 @@ async function fetchDepartmentsForDropdown(search = '') {
     toast.add({
       severity: 'error',
       summary: 'Department load failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to load departments',
+      detail: errorMessage(error, 'Failed to load departments'),
       life: 3000,
     })
   } finally {
     loadingDepartments.value = false
+  }
+}
+
+async function fetchReportsToPositions() {
+  reportsToPositionOptions.value = []
+  loadingReportsToPositions.value = true
+
+  try {
+    const res = await getPositions({
+      page: 1,
+      limit: 100,
+      isActive: 'true',
+      sortBy: 'name',
+      sortOrder: 'asc',
+    })
+
+    const payload = normalizePayload(res)
+    reportsToPositionOptions.value = mapPositionOptions(normalizeItems(payload))
+  } catch (error) {
+    toast.add({
+      severity: 'error',
+      summary: 'Position load failed',
+      detail: errorMessage(error, 'Failed to load reports-to positions'),
+      life: 3000,
+    })
+  } finally {
+    loadingReportsToPositions.value = false
   }
 }
 
@@ -172,7 +242,7 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
     const payload = normalizePayload(res)
     const items = normalizeItems(payload)
-    const total = Number(payload?.pagination?.total || 0)
+    const total = normalizeTotal(payload)
 
     totalRecords.value = total
 
@@ -205,10 +275,7 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
     toast.add({
       severity: 'error',
       summary: 'Load failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to load positions',
+      detail: errorMessage(error, 'Failed to load positions'),
       life: 3000,
     })
   } finally {
@@ -284,16 +351,20 @@ function resetForm() {
   form.code = ''
   form.name = ''
   form.departmentId = ''
+  form.reportsToPositionId = null
+  form.managerScope = 'SAME_LINE'
   form.description = ''
   form.isActive = true
+  reportsToPositionOptions.value = []
 }
 
-function openCreateDialog() {
+async function openCreateDialog() {
   resetForm()
+  await fetchReportsToPositions()
   positionDialogVisible.value = true
 }
 
-function openEditDialog(row) {
+async function openEditDialog(row) {
   editingPositionId.value = row?.id || row?._id || ''
   form.code = row?.code || ''
   form.name = row?.name || ''
@@ -302,24 +373,38 @@ function openEditDialog(row) {
     row?.departmentId?.id ||
     row?.departmentId ||
     ''
+
+  form.reportsToPositionId = getPositionId(row?.reportsToPositionId)
+  form.managerScope = row?.managerScope || 'SAME_LINE'
   form.description = row?.description || ''
   form.isActive = !!row?.isActive
+
+  await fetchReportsToPositions()
+
   positionDialogVisible.value = true
+}
+
+async function onFormDepartmentChange() {
+  await fetchReportsToPositions()
 }
 
 async function submitPosition() {
   saving.value = true
+
   try {
     const payload = {
       code: String(form.code || '').trim().toUpperCase(),
       name: String(form.name || '').trim(),
       departmentId: String(form.departmentId || '').trim(),
+      reportsToPositionId: form.reportsToPositionId || null,
+      managerScope: form.managerScope || 'SAME_LINE',
       description: String(form.description || '').trim(),
       isActive: !!form.isActive,
     }
 
     if (editingPositionId.value) {
       await updatePosition(editingPositionId.value, payload)
+
       toast.add({
         severity: 'success',
         summary: 'Updated',
@@ -328,6 +413,7 @@ async function submitPosition() {
       })
     } else {
       await createPosition(payload)
+
       toast.add({
         severity: 'success',
         summary: 'Created',
@@ -343,10 +429,7 @@ async function submitPosition() {
     toast.add({
       severity: 'error',
       summary: isEditMode.value ? 'Update failed' : 'Create failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to save position',
+      detail: errorMessage(error, 'Failed to save position'),
       life: 3500,
     })
   } finally {
@@ -356,6 +439,7 @@ async function submitPosition() {
 
 async function handleExport() {
   exporting.value = true
+
   try {
     const res = await exportPositions({
       search: String(filters.search || '').trim(),
@@ -388,10 +472,7 @@ async function handleExport() {
     toast.add({
       severity: 'error',
       summary: 'Export failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to export positions',
+      detail: errorMessage(error, 'Failed to export positions'),
       life: 3500,
     })
   } finally {
@@ -419,11 +500,31 @@ function statusSeverity(active) {
   return active ? 'success' : 'contrast'
 }
 
+function managerScopeSeverity(scope) {
+  return scope === 'GLOBAL' ? 'info' : 'success'
+}
+
+function managerScopeLabel(scope) {
+  return scope === 'GLOBAL' ? 'Global' : 'Same Line'
+}
+
 function departmentLabel(row) {
   const dept = row?.departmentId
   if (!dept) return '-'
   if (typeof dept === 'string') return dept
   return [dept.code, dept.name].filter(Boolean).join(' - ') || '-'
+}
+
+function reportsToPositionLabel(row) {
+  const position = row?.reportsToPositionId
+
+  if (!position) return '-'
+
+  if (typeof position === 'string') {
+    return position
+  }
+
+  return [position.code, position.name].filter(Boolean).join(' - ') || '-'
 }
 
 function formatDateTime(value) {
@@ -454,7 +555,7 @@ onBeforeUnmount(() => {
           Positions
         </h1>
         <p class="mt-1 text-sm text-[color:var(--ot-text-muted)]">
-          Manage position master records by department.
+          Manage position hierarchy and manager scope by department.
         </p>
       </div>
 
@@ -564,7 +665,7 @@ onBeforeUnmount(() => {
         scrollHeight="500px"
         :sortField="filters.sortField"
         :sortOrder="filters.sortOrder"
-        tableStyle="min-width: 72rem"
+        tableStyle="min-width: 88rem"
         class="position-table"
         :virtualScrollerOptions="useVirtualScroll ? {
           lazy: true,
@@ -601,6 +702,25 @@ onBeforeUnmount(() => {
         <Column header="Department" style="min-width: 16rem">
           <template #body="{ data }">
             <span v-if="data" class="line-clamp-1">{{ departmentLabel(data) }}</span>
+          </template>
+        </Column>
+
+        <Column header="Reports To Position" style="min-width: 18rem">
+          <template #body="{ data }">
+            <span v-if="data" class="line-clamp-1">
+              {{ reportsToPositionLabel(data) }}
+            </span>
+          </template>
+        </Column>
+
+        <Column header="Manager Scope" style="min-width: 12rem">
+          <template #body="{ data }">
+            <Tag
+              v-if="data"
+              :value="managerScopeLabel(data.managerScope)"
+              :severity="managerScopeSeverity(data.managerScope)"
+              class="ot-status-tag"
+            />
           </template>
         </Column>
 
@@ -655,7 +775,7 @@ onBeforeUnmount(() => {
       v-model:visible="positionDialogVisible"
       modal
       :header="isEditMode ? 'Edit Position' : 'Create Position'"
-      :style="{ width: '40rem', maxWidth: '96vw' }"
+      :style="{ width: '44rem', maxWidth: '96vw' }"
       @hide="resetForm"
     >
       <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -666,7 +786,7 @@ onBeforeUnmount(() => {
           <InputText
             v-model="form.code"
             class="w-full"
-            placeholder="Example: HR_OFFICER"
+            placeholder="Example: SW"
           />
         </div>
 
@@ -677,7 +797,7 @@ onBeforeUnmount(() => {
           <InputText
             v-model="form.name"
             class="w-full"
-            placeholder="Example: HR Officer"
+            placeholder="Example: Sewer"
           />
         </div>
 
@@ -694,7 +814,45 @@ onBeforeUnmount(() => {
             class="w-full"
             filter
             :loading="loadingDepartments"
+            @change="onFormDepartmentChange"
           />
+        </div>
+
+        <div class="space-y-2 md:col-span-2">
+          <label class="text-sm font-medium text-[color:var(--ot-text)]">
+            Reports To Position
+          </label>
+          <Select
+            v-model="form.reportsToPositionId"
+            :options="filteredReportsToPositionOptions"
+            optionLabel="label"
+            optionValue="value"
+            placeholder="Optional: select parent/supervisor position"
+            class="w-full"
+            filter
+            showClear
+            :loading="loadingReportsToPositions"
+          />
+          <p class="text-xs text-[color:var(--ot-text-muted)]">
+            Example: Sewer reports to Sewer-Supervisor. Sewer-Supervisor can report to HR or GM from another department.
+          </p>
+        </div>
+
+        <div class="space-y-2 md:col-span-2">
+          <label class="text-sm font-medium text-[color:var(--ot-text)]">
+            Manager Scope
+          </label>
+          <Select
+            v-model="form.managerScope"
+            :options="managerScopeOptions"
+            optionLabel="label"
+            optionValue="value"
+            placeholder="Select manager scope"
+            class="w-full"
+          />
+          <p class="text-xs text-[color:var(--ot-text-muted)]">
+            Same Line = find manager in same production line. Global = find manager by parent position across departments.
+          </p>
         </div>
 
         <div class="space-y-2 md:col-span-2">

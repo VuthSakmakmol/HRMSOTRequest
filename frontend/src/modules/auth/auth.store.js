@@ -1,4 +1,5 @@
 // frontend/src/modules/auth/auth.store.js
+
 import { defineStore } from 'pinia'
 import { loginApi, getMeApi } from './auth.api'
 
@@ -60,7 +61,10 @@ function normalizeUser(user) {
     roleIds: Array.isArray(user.roleIds) ? user.roleIds.map((v) => s(v)).filter(Boolean) : [],
     roles: normalizeRoles(user.roles || user.roleCodes || []),
     roleCodes: uniqueStrings(
-      user.roleCodes || (Array.isArray(user.roles) ? user.roles.map((r) => (typeof r === 'string' ? r : r?.code)) : [])
+      user.roleCodes ||
+        (Array.isArray(user.roles)
+          ? user.roles.map((r) => (typeof r === 'string' ? r : r?.code))
+          : []),
     ),
     directPermissionCodes: uniqueStrings(user.directPermissionCodes || []),
     effectivePermissionCodes: uniqueStrings(user.effectivePermissionCodes || []),
@@ -68,6 +72,33 @@ function normalizeUser(user) {
     mustChangePassword: !!user.mustChangePassword,
     isRootAdmin: !!user.isRootAdmin,
     isActive: !!user.isActive,
+  }
+}
+
+function extractLoginPayload(responseData) {
+  const payload = responseData?.data || responseData || {}
+
+  const token =
+    payload.token ||
+    payload.accessToken ||
+    payload.access_token ||
+    payload.jwt ||
+    responseData?.token ||
+    responseData?.accessToken ||
+    responseData?.access_token ||
+    ''
+
+  const user =
+    payload.user ||
+    payload.account ||
+    payload.profile ||
+    responseData?.user ||
+    responseData?.account ||
+    null
+
+  return {
+    token: s(token),
+    user,
   }
 }
 
@@ -120,15 +151,23 @@ export const useAuthStore = defineStore('auth', {
 
   actions: {
     setToken(token) {
-      this.token = token || ''
-      if (this.token) localStorage.setItem(TOKEN_KEY, this.token)
-      else localStorage.removeItem(TOKEN_KEY)
+      this.token = s(token)
+
+      if (this.token) {
+        localStorage.setItem(TOKEN_KEY, this.token)
+      } else {
+        localStorage.removeItem(TOKEN_KEY)
+      }
     },
 
     setUser(user) {
       this.user = normalizeUser(user)
-      if (this.user) localStorage.setItem(USER_KEY, JSON.stringify(this.user))
-      else localStorage.removeItem(USER_KEY)
+
+      if (this.user) {
+        localStorage.setItem(USER_KEY, JSON.stringify(this.user))
+      } else {
+        localStorage.removeItem(USER_KEY)
+      }
     },
 
     clearAuth() {
@@ -147,7 +186,7 @@ export const useAuthStore = defineStore('auth', {
 
       try {
         const { data } = await getMeApi()
-        this.setUser(data?.data || null)
+        this.setUser(data?.data || data?.user || null)
       } catch {
         this.clearAuth()
       } finally {
@@ -157,11 +196,23 @@ export const useAuthStore = defineStore('auth', {
 
     async login(payload) {
       this.loading = true
+
       try {
         const { data } = await loginApi(payload)
-        this.setToken(data?.data?.token || '')
-        this.setUser(data?.data?.user || null)
+        const loginPayload = extractLoginPayload(data)
+
+        if (!loginPayload.token) {
+          throw new Error('Login succeeded but access token was not returned by backend')
+        }
+
+        if (!loginPayload.user) {
+          throw new Error('Login succeeded but user profile was not returned by backend')
+        }
+
+        this.setToken(loginPayload.token)
+        this.setUser(loginPayload.user)
         this.bootstrapped = true
+
         return data
       } finally {
         this.loading = false

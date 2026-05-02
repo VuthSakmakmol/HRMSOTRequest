@@ -1,5 +1,5 @@
 // backend/src/modules/org/services/position.service.js
-// backend/src/modules/org/services/position.service.js
+
 const mongoose = require('mongoose')
 const XLSX = require('xlsx')
 
@@ -8,6 +8,10 @@ const Department = require('../models/Department')
 
 function s(value) {
   return String(value ?? '').trim()
+}
+
+function upper(value) {
+  return s(value).toUpperCase()
 }
 
 function buildSort(sortBy, sortOrder) {
@@ -68,6 +72,68 @@ async function ensureDepartmentExists(departmentId) {
   return department
 }
 
+async function ensureReportsToPositionValid({
+  reportsToPositionId,
+  currentPositionId = null,
+}) {
+  if (!reportsToPositionId) return null
+
+  if (!mongoose.isValidObjectId(reportsToPositionId)) {
+    const err = new Error('Invalid reportsToPositionId')
+    err.status = 400
+    throw err
+  }
+
+  if (currentPositionId && String(reportsToPositionId) === String(currentPositionId)) {
+    const err = new Error('Position cannot report to itself')
+    err.status = 400
+    throw err
+  }
+
+  const parentPosition = await Position.findById(reportsToPositionId)
+    .select('_id code name departmentId reportsToPositionId managerScope isActive')
+    .lean()
+
+  if (!parentPosition) {
+    const err = new Error('Reports-to position not found')
+    err.status = 404
+    throw err
+  }
+
+  // Cross-department reporting is allowed.
+  // Example: Sewer-Supervisor in Sewing can report to HR position.
+  if (currentPositionId) {
+    let cursor = parentPosition
+    const visited = new Set()
+
+    while (cursor?.reportsToPositionId) {
+      const nextId = String(cursor.reportsToPositionId)
+
+      if (nextId === String(currentPositionId)) {
+        const err = new Error('Circular position hierarchy is not allowed')
+        err.status = 400
+        throw err
+      }
+
+      if (visited.has(nextId)) {
+        const err = new Error('Circular position hierarchy is not allowed')
+        err.status = 400
+        throw err
+      }
+
+      visited.add(nextId)
+
+      cursor = await Position.findById(nextId)
+        .select('_id departmentId reportsToPositionId managerScope')
+        .lean()
+
+      if (!cursor) break
+    }
+  }
+
+  return parentPosition._id
+}
+
 function normalizeDuplicateError(error) {
   if (error?.code === 11000) {
     const err = new Error('Position code already exists in this department')
@@ -115,6 +181,14 @@ function buildSampleWorkbook() {
       Guide: 'PositionName is required.',
     },
     {
+      Guide:
+        'ReportsToPositionCode is optional. Use another existing position code in the same department.',
+    },
+    {
+      Guide:
+        'Example: Sewer position can report to Sewer Supervisor position inside the same Sewing department.',
+    },
+    {
       Guide: 'IsActive accepts TRUE/FALSE, YES/NO, 1/0. Blank means TRUE.',
     },
     {
@@ -124,17 +198,19 @@ function buildSampleWorkbook() {
 
   const sampleRows = [
     {
-      DepartmentCode: 'HR',
-      PositionCode: 'HR_OFFICER',
-      PositionName: 'HR Officer',
-      Description: 'Support daily HR operation',
+      DepartmentCode: 'SEWING',
+      PositionCode: 'SEWER_SUPERVISOR',
+      PositionName: 'Sewer Supervisor',
+      ReportsToPositionCode: '',
+      Description: 'Supervise sewer employees by line',
       IsActive: 'TRUE',
     },
     {
-      DepartmentCode: 'IT',
-      PositionCode: 'IT_SUPPORT',
-      PositionName: 'IT Support',
-      Description: 'Support devices and user issues',
+      DepartmentCode: 'SEWING',
+      PositionCode: 'SEWER',
+      PositionName: 'Sewer',
+      ReportsToPositionCode: 'SEWER_SUPERVISOR',
+      Description: 'Sewing operator',
       IsActive: 'TRUE',
     },
   ]
@@ -143,7 +219,7 @@ function buildSampleWorkbook() {
   sampleSheet['!cols'] = autoFitColumns(sampleRows)
 
   const guideSheet = XLSX.utils.json_to_sheet(guideRows)
-  guideSheet['!cols'] = [{ wch: 90 }]
+  guideSheet['!cols'] = [{ wch: 100 }]
 
   XLSX.utils.book_append_sheet(workbook, sampleSheet, 'Sample')
   XLSX.utils.book_append_sheet(workbook, guideSheet, 'Guide')
@@ -160,6 +236,8 @@ function buildExportWorkbook(items = []) {
     DepartmentName: item?.departmentId?.name || '',
     PositionCode: item?.code || '',
     PositionName: item?.name || '',
+    ReportsToPositionCode: item?.reportsToPositionId?.code || '',
+    ReportsToPositionName: item?.reportsToPositionId?.name || '',
     Description: item?.description || '',
     Status: item?.isActive ? 'Active' : 'Inactive',
     CreatedAt: item?.createdAt ? new Date(item.createdAt).toISOString() : '',
@@ -175,6 +253,8 @@ function buildExportWorkbook(items = []) {
           DepartmentName: '',
           PositionCode: '',
           PositionName: '',
+          ReportsToPositionCode: '',
+          ReportsToPositionName: '',
           Description: '',
           Status: '',
           CreatedAt: '',
@@ -209,10 +289,11 @@ function parseImportRows(buffer) {
 
 function normalizeImportRow(row = {}) {
   return {
-    departmentCode: String(row.DepartmentCode || '').trim().toUpperCase(),
-    code: String(row.PositionCode || '').trim().toUpperCase(),
-    name: String(row.PositionName || '').trim(),
-    description: String(row.Description || '').trim(),
+    departmentCode: upper(row.DepartmentCode),
+    code: upper(row.PositionCode),
+    name: s(row.PositionName),
+    reportsToPositionCode: upper(row.ReportsToPositionCode),
+    description: s(row.Description),
     isActive: parseBooleanLike(row.IsActive, true),
   }
 }
@@ -224,6 +305,7 @@ function buildLookupItem(item) {
     name: item.name || '',
     description: item.description || '',
     label: [item.code, item.name].filter(Boolean).join(' - '),
+
     departmentId: item?.departmentId?._id
       ? String(item.departmentId._id)
       : item?.departmentId
@@ -231,6 +313,20 @@ function buildLookupItem(item) {
         : null,
     departmentCode: item?.departmentId?.code || '',
     departmentName: item?.departmentId?.name || '',
+
+    reportsToPositionId: item?.reportsToPositionId?._id
+      ? String(item.reportsToPositionId._id)
+      : item?.reportsToPositionId
+        ? String(item.reportsToPositionId)
+        : null,
+    reportsToPositionCode: item?.reportsToPositionId?.code || '',
+    reportsToPositionName: item?.reportsToPositionId?.name || '',
+    reportsToPositionDepartmentId: item?.reportsToPositionId?.departmentId
+      ? String(item.reportsToPositionId.departmentId)
+      : null,
+
+    managerScope: item.managerScope || 'SAME_LINE',
+
     isActive: !!item.isActive,
   }
 }
@@ -251,6 +347,7 @@ async function lookup(query = {}) {
 
   const items = await Position.find(filters)
     .populate('departmentId', 'code name isActive')
+    .populate('reportsToPositionId', 'code name departmentId managerScope isActive')
     .sort({ name: 1, code: 1, _id: -1 })
     .limit(limit)
     .lean()
@@ -272,6 +369,7 @@ async function list(query) {
   const [items, total] = await Promise.all([
     Position.find(filters)
       .populate('departmentId', 'code name isActive')
+      .populate('reportsToPositionId', 'code name departmentId isActive')
       .sort(buildSort(sortBy, sortOrder))
       .skip(skip)
       .limit(limit)
@@ -293,6 +391,7 @@ async function list(query) {
 async function getById(id) {
   const item = await Position.findById(id)
     .populate('departmentId', 'code name isActive')
+    .populate('reportsToPositionId', 'code name departmentId isActive')
     .lean()
 
   if (!item) {
@@ -307,8 +406,19 @@ async function getById(id) {
 async function create(payload) {
   await ensureDepartmentExists(payload.departmentId)
 
+  const reportsToPositionId = await ensureReportsToPositionValid({
+    reportsToPositionId: payload.reportsToPositionId,
+  })
+
   try {
-    const created = await Position.create(payload)
+    const created = await Position.create({
+      ...payload,
+      code: upper(payload.code),
+      name: s(payload.name),
+      description: s(payload.description),
+      reportsToPositionId,
+    })
+
     return getById(created._id)
   } catch (error) {
     normalizeDuplicateError(error)
@@ -324,12 +434,53 @@ async function update(id, payload) {
     throw err
   }
 
+  const nextDepartmentId = payload.departmentId || existing.departmentId
+
   if (payload.departmentId) {
     await ensureDepartmentExists(payload.departmentId)
   }
 
-  Object.assign(existing, payload)
+  const hasReportsToPositionField = Object.prototype.hasOwnProperty.call(
+    payload,
+    'reportsToPositionId',
+  )
 
+  const nextReportsToPositionId = hasReportsToPositionField
+    ? payload.reportsToPositionId
+    : existing.reportsToPositionId
+
+  const reportsToPositionId = await ensureReportsToPositionValid({
+    reportsToPositionId: nextReportsToPositionId,
+    currentPositionId: existing._id,
+  })
+
+  if (payload.code !== undefined) {
+    existing.code = upper(payload.code)
+  }
+
+  if (payload.name !== undefined) {
+    existing.name = s(payload.name)
+  }
+
+  if (payload.departmentId !== undefined) {
+    existing.departmentId = payload.departmentId
+  }
+
+  if (hasReportsToPositionField || payload.departmentId !== undefined) {
+    existing.reportsToPositionId = reportsToPositionId
+  }
+
+  if (payload.description !== undefined) {
+    existing.description = s(payload.description)
+  }
+
+  if (payload.isActive !== undefined) {
+    existing.isActive = Boolean(payload.isActive)
+  }
+
+  if (payload.managerScope !== undefined) {
+    existing.managerScope = payload.managerScope || 'SAME_LINE'
+  }
   try {
     await existing.save()
     return getById(existing._id)
@@ -352,6 +503,7 @@ async function exportExcel(query) {
 
   const items = await Position.find(filters)
     .populate('departmentId', 'code name isActive')
+    .populate('reportsToPositionId', 'code name departmentId isActive')
     .sort(buildSort(query.sortBy, query.sortOrder))
     .lean()
 
@@ -361,6 +513,35 @@ async function exportExcel(query) {
     filename: `positions-export-${new Date().toISOString().slice(0, 10)}.xlsx`,
     buffer: workbookToBuffer(workbook),
   }
+}
+
+async function resolveReportsToPositionForImport({
+  department,
+  reportsToPositionCode,
+  currentPositionId = null,
+}) {
+  if (!reportsToPositionCode) return null
+
+  const parent = await Position.findOne({
+    departmentId: department._id,
+    code: reportsToPositionCode,
+  })
+    .select('_id code name departmentId reportsToPositionId')
+    .lean()
+
+  if (!parent) {
+    const err = new Error(
+      `ReportsToPositionCode "${reportsToPositionCode}" was not found in department "${department.code}"`,
+    )
+    err.status = 400
+    throw err
+  }
+
+  return ensureReportsToPositionValid({
+    reportsToPositionId: parent._id,
+    departmentId: department._id,
+    currentPositionId,
+  })
 }
 
 async function importExcel(file) {
@@ -377,7 +558,7 @@ async function importExcel(file) {
     .lean()
 
   const departmentMap = new Map(
-    departments.map((item) => [String(item.code || '').trim().toUpperCase(), item])
+    departments.map((item) => [String(item.code || '').trim().toUpperCase(), item]),
   )
 
   const result = {
@@ -411,12 +592,18 @@ async function importExcel(file) {
         continue
       }
 
+      if (row.reportsToPositionCode && row.reportsToPositionCode === row.code) {
+        result.skippedCount += 1
+        result.errors.push(`Row ${rowNumber}: Position cannot report to itself`)
+        continue
+      }
+
       const department = departmentMap.get(row.departmentCode)
 
       if (!department) {
         result.skippedCount += 1
         result.errors.push(
-          `Row ${rowNumber}: DepartmentCode "${row.departmentCode}" was not found`
+          `Row ${rowNumber}: DepartmentCode "${row.departmentCode}" was not found`,
         )
         continue
       }
@@ -426,9 +613,16 @@ async function importExcel(file) {
         code: row.code,
       })
 
+      const reportsToPositionId = await resolveReportsToPositionForImport({
+        department,
+        reportsToPositionCode: row.reportsToPositionCode,
+        currentPositionId: existing?._id || null,
+      })
+
       if (existing) {
         existing.name = row.name
         existing.description = row.description
+        existing.reportsToPositionId = reportsToPositionId
         existing.isActive = row.isActive
         await existing.save()
         result.updatedCount += 1
@@ -437,9 +631,11 @@ async function importExcel(file) {
           departmentId: department._id,
           code: row.code,
           name: row.name,
+          reportsToPositionId,
           description: row.description,
           isActive: row.isActive,
         })
+
         result.createdCount += 1
       }
     } catch (error) {

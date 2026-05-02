@@ -1,10 +1,12 @@
 // backend/src/modules/org/services/employee.service.js
+
 const mongoose = require('mongoose')
 const XLSX = require('xlsx')
 
 const Employee = require('../models/Employee')
 const Department = require('../models/Department')
 const Position = require('../models/Position')
+const ProductionLine = require('../models/ProductionLine')
 const Shift = require('../../shift/models/Shift')
 const Account = require('../../auth/models/Account')
 const accountService = require('../../auth/services/account.service')
@@ -24,11 +26,203 @@ function toObjectId(value) {
   return new mongoose.Types.ObjectId(String(value))
 }
 
+function pad2(value) {
+  return String(value).padStart(2, '0')
+}
+
+function isValidDateParts(year, month, day) {
+  if (!year || !month || !day) return false
+  if (year < 1900 || year > 2200) return false
+  if (month < 1 || month > 12) return false
+  if (day < 1 || day > 31) return false
+
+  const date = new Date(Date.UTC(year, month - 1, day))
+
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() + 1 === month &&
+    date.getUTCDate() === day
+  )
+}
+
+function toInternalDateString(year, month, day) {
+  return `${year}-${pad2(month)}-${pad2(day)}`
+}
+
 function formatDate(value) {
   if (!value) return ''
   const date = value instanceof Date ? value : new Date(value)
   if (Number.isNaN(date.getTime())) return ''
   return date.toISOString().slice(0, 10)
+}
+
+function formatDateDDMMYYYY(value) {
+  if (!value) return ''
+
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const day = value.getDate()
+    const month = value.getMonth() + 1
+    const year = value.getFullYear()
+
+    if (!isValidDateParts(year, month, day)) return ''
+
+    return `${pad2(day)}/${pad2(month)}/${year}`
+  }
+
+  const raw = s(value)
+
+  let match = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/)
+  if (match) {
+    const year = Number(match[1])
+    const month = Number(match[2])
+    const day = Number(match[3])
+
+    if (!isValidDateParts(year, month, day)) return ''
+
+    return `${pad2(day)}/${pad2(month)}/${year}`
+  }
+
+  match = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  if (match) {
+    const day = Number(match[1])
+    const month = Number(match[2])
+    const year = Number(match[3])
+
+    if (!isValidDateParts(year, month, day)) return ''
+
+    return `${pad2(day)}/${pad2(month)}/${year}`
+  }
+
+  const date = new Date(raw)
+  if (Number.isNaN(date.getTime())) return ''
+
+  const day = date.getDate()
+  const month = date.getMonth() + 1
+  const year = date.getFullYear()
+
+  if (!isValidDateParts(year, month, day)) return ''
+
+  return `${pad2(day)}/${pad2(month)}/${year}`
+}
+
+function parseExcelSerialDate(value) {
+  const serial = Number(value)
+
+  if (!Number.isFinite(serial) || serial <= 0) {
+    return ''
+  }
+
+  const excelEpoch = new Date(Date.UTC(1899, 11, 30))
+  const date = new Date(excelEpoch.getTime() + serial * 24 * 60 * 60 * 1000)
+
+  const year = date.getUTCFullYear()
+  const month = date.getUTCMonth() + 1
+  const day = date.getUTCDate()
+
+  if (!isValidDateParts(year, month, day)) {
+    return ''
+  }
+
+  return toInternalDateString(year, month, day)
+}
+
+function normalizeImportDateDDMMYYYY(value) {
+  if (value === null || value === undefined || value === '') {
+    return ''
+  }
+
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const year = value.getFullYear()
+    const month = value.getMonth() + 1
+    const day = value.getDate()
+
+    if (!isValidDateParts(year, month, day)) {
+      return ''
+    }
+
+    return toInternalDateString(year, month, day)
+  }
+
+  if (typeof value === 'number') {
+    return parseExcelSerialDate(value)
+  }
+
+  const raw = s(value)
+
+  if (!raw) {
+    return ''
+  }
+
+  let match = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  if (match) {
+    const day = Number(match[1])
+    const month = Number(match[2])
+    const year = Number(match[3])
+
+    if (!isValidDateParts(year, month, day)) {
+      return ''
+    }
+
+    return toInternalDateString(year, month, day)
+  }
+
+  match = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/)
+  if (match) {
+    const year = Number(match[1])
+    const month = Number(match[2])
+    const day = Number(match[3])
+
+    if (!isValidDateParts(year, month, day)) {
+      return ''
+    }
+
+    return toInternalDateString(year, month, day)
+  }
+
+  match = raw.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/)
+  if (match) {
+    const day = Number(match[1])
+    const month = Number(match[2])
+    const year = Number(match[3])
+
+    if (!isValidDateParts(year, month, day)) {
+      return ''
+    }
+
+    return toInternalDateString(year, month, day)
+  }
+
+  return ''
+}
+
+function normalizeImportStatus(value) {
+  const raw = s(value)
+
+  if (!raw) {
+    return true
+  }
+
+  const text = raw.toLowerCase()
+
+  if (['active', 'true', 'yes', 'y', '1'].includes(text)) {
+    return true
+  }
+
+  if (['inactive', 'false', 'no', 'n', '0'].includes(text)) {
+    return false
+  }
+
+  return null
+}
+
+function getImportField(raw = {}, keys = []) {
+  for (const key of keys) {
+    if (raw[key] !== undefined && raw[key] !== null && s(raw[key]) !== '') {
+      return raw[key]
+    }
+  }
+
+  return ''
 }
 
 function excelBufferFromWorkbook(workbook) {
@@ -107,6 +301,27 @@ function buildShiftSummary(shiftValue) {
   }
 }
 
+function buildLineSummary(lineValue) {
+  const lineId = lineValue?._id
+    ? String(lineValue._id)
+    : lineValue
+      ? String(lineValue)
+      : null
+
+  return {
+    lineId,
+    lineCode: lineValue?.code || '',
+    lineName: lineValue?.name || '',
+    line: lineId
+      ? {
+          _id: lineId,
+          code: lineValue?.code || '',
+          name: lineValue?.name || '',
+        }
+      : null,
+  }
+}
+
 function sanitize(doc, accountDoc = null) {
   if (!doc) return null
 
@@ -115,31 +330,44 @@ function sanitize(doc, accountDoc = null) {
     id: String(doc._id),
     employeeNo: doc.employeeNo,
     displayName: doc.displayName,
+
     departmentId: doc.departmentId?._id
       ? String(doc.departmentId._id)
       : doc.departmentId
         ? String(doc.departmentId)
         : null,
+    departmentCode: doc.departmentId?.code || '',
     departmentName: doc.departmentId?.name || '',
+
     positionId: doc.positionId?._id
       ? String(doc.positionId._id)
       : doc.positionId
         ? String(doc.positionId)
         : null,
+    positionCode: doc.positionId?.code || '',
     positionName: doc.positionId?.name || '',
+    reportsToPositionId: doc.positionId?.reportsToPositionId
+      ? String(doc.positionId.reportsToPositionId)
+      : null,
+
+    ...buildLineSummary(doc.lineId),
     ...buildShiftSummary(doc.shiftId),
+
     reportsToEmployeeId: doc.reportsToEmployeeId?._id
       ? String(doc.reportsToEmployeeId._id)
       : doc.reportsToEmployeeId
         ? String(doc.reportsToEmployeeId)
         : null,
+    reportsToEmployeeNo: doc.reportsToEmployeeId?.employeeNo || '',
     reportsToEmployeeName: doc.reportsToEmployeeId?.displayName || '',
+
     phone: doc.phone || '',
     email: doc.email || '',
     joinDate: doc.joinDate || null,
     isActive: !!doc.isActive,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
+
     ...buildAccountSummary(accountDoc),
   }
 }
@@ -152,19 +380,24 @@ function sanitizeOrgNode(doc) {
     id: String(doc._id),
     employeeNo: doc.employeeNo,
     displayName: doc.displayName,
+
     departmentId: doc.departmentId?._id
       ? String(doc.departmentId._id)
       : doc.departmentId
         ? String(doc.departmentId)
         : null,
     departmentName: doc.departmentId?.name || '',
+
     positionId: doc.positionId?._id
       ? String(doc.positionId._id)
       : doc.positionId
         ? String(doc.positionId)
         : null,
     positionName: doc.positionId?.name || '',
+
+    ...buildLineSummary(doc.lineId),
     ...buildShiftSummary(doc.shiftId),
+
     reportsToEmployeeId: doc.reportsToEmployeeId?._id
       ? String(doc.reportsToEmployeeId._id)
       : doc.reportsToEmployeeId
@@ -187,41 +420,103 @@ function hasAnyPermission(user, codes = []) {
 }
 
 async function ensureDepartmentExists(departmentId) {
-  const exists = await Department.exists({ _id: departmentId })
-  if (!exists) {
+  const department = await Department.findById(departmentId).select('_id code name isActive').lean()
+
+  if (!department) {
     const err = new Error('Department not found')
     err.status = 404
     throw err
   }
+
+  return department
 }
 
-async function ensurePositionExists(positionId) {
-  const exists = await Position.exists({ _id: positionId })
-  if (!exists) {
+async function ensurePositionExists(positionId, departmentId = null) {
+  const position = await Position.findById(positionId)
+    .select('_id code name departmentId reportsToPositionId isActive')
+    .lean()
+
+  if (!position) {
     const err = new Error('Position not found')
     err.status = 404
     throw err
   }
+
+  if (departmentId && String(position.departmentId) !== String(departmentId)) {
+    const err = new Error('Position does not belong to selected department')
+    err.status = 400
+    throw err
+  }
+
+  return position
+}
+
+async function ensureLineAllowed(lineId, departmentId, positionId) {
+  if (!lineId) return null
+
+  const line = await ProductionLine.findById(lineId)
+    .select('_id code name departmentId positionIds isActive')
+    .lean()
+
+  if (!line) {
+    const err = new Error('Line not found')
+    err.status = 404
+    throw err
+  }
+
+  if (line.isActive === false) {
+    const err = new Error('Line is inactive')
+    err.status = 400
+    throw err
+  }
+
+  if (departmentId && String(line.departmentId) !== String(departmentId)) {
+    const err = new Error('Line does not belong to selected department')
+    err.status = 400
+    throw err
+  }
+
+  const allowedPositionIds = Array.isArray(line.positionIds)
+    ? line.positionIds.map((item) => String(item))
+    : []
+
+  if (allowedPositionIds.length && positionId && !allowedPositionIds.includes(String(positionId))) {
+    const err = new Error('Selected line does not allow this position')
+    err.status = 400
+    throw err
+  }
+
+  return line
 }
 
 async function ensureShiftExists(shiftId) {
-  const exists = await Shift.exists({ _id: shiftId, isActive: true })
-  if (!exists) {
+  const shift = await Shift.findOne({ _id: shiftId, isActive: true })
+    .select('_id code name isActive')
+    .lean()
+
+  if (!shift) {
     const err = new Error('Shift not found or inactive')
     err.status = 404
     throw err
   }
+
+  return shift
 }
 
 async function ensureReportsToEmployeeExists(employeeId) {
-  if (!employeeId) return
+  if (!employeeId) return null
 
-  const exists = await Employee.exists({ _id: employeeId })
-  if (!exists) {
+  const employee = await Employee.findById(employeeId)
+    .select('_id employeeNo displayName isActive')
+    .lean()
+
+  if (!employee) {
     const err = new Error('Reports-to employee not found')
     err.status = 404
     throw err
   }
+
+  return employee
 }
 
 async function ensureEmployeeNoUnique(employeeNo, excludeId = null) {
@@ -249,6 +544,67 @@ async function ensureEmailUnique(email, excludeId = null) {
     err.status = 409
     throw err
   }
+}
+
+async function findAutoManagerIdByPositionAndLine({
+  employeeId = null,
+  departmentId,
+  position,
+  lineId,
+}) {
+  if (!position?.reportsToPositionId || !lineId) {
+    return undefined
+  }
+
+  const filter = {
+    departmentId,
+    positionId: position.reportsToPositionId,
+    lineId,
+    isActive: true,
+  }
+
+  if (employeeId) {
+    filter._id = { $ne: employeeId }
+  }
+
+  const manager = await Employee.findOne(filter)
+    .select('_id employeeNo displayName')
+    .sort({ employeeNo: 1, displayName: 1, _id: 1 })
+    .lean()
+
+  return manager?._id || null
+}
+
+async function resolveFinalReportsToEmployeeId({
+  employeeId = null,
+  departmentId,
+  position,
+  lineId,
+  manualReportsToEmployeeId = null,
+}) {
+  const autoManagerId = await findAutoManagerIdByPositionAndLine({
+    employeeId,
+    departmentId,
+    position,
+    lineId,
+  })
+
+  if (autoManagerId !== undefined) {
+    return autoManagerId
+  }
+
+  if (!manualReportsToEmployeeId) {
+    return null
+  }
+
+  if (employeeId && String(manualReportsToEmployeeId) === String(employeeId)) {
+    const err = new Error('Employee cannot report to self')
+    err.status = 400
+    throw err
+  }
+
+  await ensureReportsToEmployeeExists(manualReportsToEmployeeId)
+  return manualReportsToEmployeeId
 }
 
 async function findAccountByEmployeeOrLogin({ employeeId, loginId }) {
@@ -344,7 +700,7 @@ async function getScopedEmployeeIds(currentUser) {
 
   const baseEmployees = await Employee.find(
     { isActive: true },
-    { _id: 1, reportsToEmployeeId: 1 }
+    { _id: 1, reportsToEmployeeId: 1 },
   ).lean()
 
   if (canViewAll) {
@@ -366,10 +722,7 @@ async function getScopedEmployeeIds(currentUser) {
     childrenMap.get(managerId).push(String(emp._id))
   }
 
-  // ✅ Important: include current user himself
   const result = new Set([String(myEmployeeId)])
-
-  // ✅ Then include all direct/indirect subordinates
   const queue = [...(childrenMap.get(String(myEmployeeId)) || [])]
 
   while (queue.length) {
@@ -417,6 +770,8 @@ function makeOrgTreeNode(emp, children = [], expanded = false, highlighted = fal
       name: emp.displayName || 'Unknown',
       title: emp.positionName || 'No position',
       department: emp.departmentName || 'No department',
+      lineName: emp.lineName || '',
+      lineCode: emp.lineCode || '',
       shiftName: emp.shiftName || '',
       shiftCode: emp.shiftCode || '',
       shiftStartTime: emp.shiftStartTime || '',
@@ -436,7 +791,7 @@ function buildTreeRecursive(rootId, employeeMap, childrenMap, expandedIds, highl
   const childIds = childrenMap.get(rootId) || []
   const children = childIds
     .map((childId) =>
-      buildTreeRecursive(childId, employeeMap, childrenMap, expandedIds, highlightedIds)
+      buildTreeRecursive(childId, employeeMap, childrenMap, expandedIds, highlightedIds),
     )
     .filter(Boolean)
 
@@ -474,6 +829,8 @@ function searchEmployees(allEmployees, keyword) {
       emp.email,
       emp.departmentName,
       emp.positionName,
+      emp.lineName,
+      emp.lineCode,
       emp.shiftName,
       emp.shiftCode,
     ]
@@ -487,6 +844,7 @@ function buildEmployeeListFilter(
     search,
     departmentId,
     positionId,
+    lineId,
     shiftId,
     isActive,
   },
@@ -513,6 +871,11 @@ function buildEmployeeListFilter(
   if (positionId) {
     const positionObjectId = toObjectId(positionId)
     if (positionObjectId) filter.positionId = positionObjectId
+  }
+
+  if (lineId) {
+    const lineObjectId = toObjectId(lineId)
+    if (lineObjectId) filter.lineId = lineObjectId
   }
 
   if (shiftId) {
@@ -548,6 +911,7 @@ function normalizeLookupQuery(query = {}) {
     search: s(query.search),
     departmentId: s(query.departmentId),
     positionId: s(query.positionId),
+    lineId: s(query.lineId),
     shiftId: s(query.shiftId),
     reportsToEmployeeId: s(query.reportsToEmployeeId),
     isActive,
@@ -578,6 +942,7 @@ function buildEmployeeLookupItem(doc) {
     positionCode: doc.positionId?.code || '',
     positionName: doc.positionId?.name || '',
 
+    ...buildLineSummary(doc.lineId),
     ...buildShiftSummary(doc.shiftId),
 
     reportsToEmployeeId: doc.reportsToEmployeeId?._id
@@ -585,6 +950,7 @@ function buildEmployeeLookupItem(doc) {
       : doc.reportsToEmployeeId
         ? String(doc.reportsToEmployeeId)
         : null,
+    reportsToEmployeeNo: doc.reportsToEmployeeId?.employeeNo || '',
     reportsToEmployeeName: doc.reportsToEmployeeId?.displayName || '',
 
     phone: doc.phone || '',
@@ -602,6 +968,7 @@ async function lookup(rawQuery = {}, currentUser = null) {
       search: query.search,
       departmentId: query.departmentId,
       positionId: query.positionId,
+      lineId: query.lineId,
       shiftId: query.shiftId,
       isActive: query.isActive,
     },
@@ -617,7 +984,8 @@ async function lookup(rawQuery = {}, currentUser = null) {
 
   const items = await Employee.find(filter)
     .populate('departmentId', 'name code')
-    .populate('positionId', 'name code')
+    .populate('positionId', 'name code reportsToPositionId')
+    .populate('lineId', 'code name')
     .populate('shiftId', 'code name type startTime endTime crossMidnight')
     .populate('reportsToEmployeeId', 'employeeNo displayName')
     .sort({ displayName: 1, employeeNo: 1 })
@@ -653,33 +1021,54 @@ function buildEmployeeExportRows(items = []) {
     'Display Name': item.displayName || '',
     Department: item.departmentName || '',
     Position: item.positionName || '',
+    'Line Code': item.lineCode || '',
+    'Line Name': item.lineName || '',
     'Shift Code': item.shiftCode || '',
     'Shift Name': item.shiftName || '',
     'Shift Type': item.shiftType || '',
+    'Manager Employee No': item.reportsToEmployeeNo || '',
     'Manager Name': item.reportsToEmployeeName || '',
     Phone: item.phone || '',
     Email: item.email || '',
-    'Join Date': formatDate(item.joinDate),
+    'Join Date': formatDateDDMMYYYY(item.joinDate),
     Status: item.isActive ? 'Active' : 'Inactive',
     'Has Account': item.hasAccount ? 'Yes' : 'No',
     'Account Login ID': item.accountLoginId || '',
-    'Created At': formatDate(item.createdAt),
-    'Updated At': formatDate(item.updatedAt),
+    'Created At': formatDateDDMMYYYY(item.createdAt),
+    'Updated At': formatDateDDMMYYYY(item.updatedAt),
   }))
 }
 
 function normalizeImportRow(raw = {}) {
+  const rawJoinDate = getImportField(raw, [
+    'joinDate',
+    'Join Date',
+    'join date',
+    'JoinDate',
+    'JOIN DATE',
+  ])
+
+  const rawStatus = getImportField(raw, [
+    'isActive',
+    'Status',
+    'status',
+    'STATUS',
+  ])
+
   return {
     employeeNo: s(raw.employeeNo || raw['Employee No']).toUpperCase(),
     displayName: s(raw.displayName || raw['Display Name']),
     departmentCode: s(raw.departmentCode || raw['Department Code']).toUpperCase(),
     positionCode: s(raw.positionCode || raw['Position Code']).toUpperCase(),
+    lineCode: s(raw.lineCode || raw['Line Code']).toUpperCase(),
     shiftCode: s(raw.shiftCode || raw['Shift Code']).toUpperCase(),
     reportsToEmployeeNo: s(raw.reportsToEmployeeNo || raw['Reports To Employee No']).toUpperCase(),
     phone: s(raw.phone || raw.Phone),
     email: s(raw.email || raw.Email).toLowerCase(),
-    joinDate: raw.joinDate ?? raw['Join Date'] ?? null,
-    isActive: raw.isActive ?? raw.Status ?? true,
+    joinDate: normalizeImportDateDDMMYYYY(rawJoinDate),
+    rawJoinDate,
+    isActive: normalizeImportStatus(rawStatus),
+    rawStatus,
   }
 }
 
@@ -714,14 +1103,16 @@ async function getOrgTree(
       displayName: 1,
       departmentId: 1,
       positionId: 1,
+      lineId: 1,
       shiftId: 1,
       reportsToEmployeeId: 1,
       isActive: 1,
       email: 1,
-    }
+    },
   )
     .populate('departmentId', 'name')
     .populate('positionId', 'name')
+    .populate('lineId', 'code name')
     .populate('shiftId', 'code name type startTime endTime crossMidnight')
     .lean()
 
@@ -733,6 +1124,7 @@ async function getOrgTree(
     departmentName: doc.departmentId?.name || '',
     positionId: doc.positionId?._id ? String(doc.positionId._id) : null,
     positionName: doc.positionId?.name || '',
+    ...buildLineSummary(doc.lineId),
     ...buildShiftSummary(doc.shiftId),
     reportsToEmployeeId: doc.reportsToEmployeeId ? String(doc.reportsToEmployeeId) : null,
     isActive: !!doc.isActive,
@@ -799,7 +1191,7 @@ async function getOrgTree(
   } else {
     tree = rootCandidates
       .map((root) =>
-        buildTreeRecursive(root._id, employeeMap, childrenMap, expandedIds, highlightedIds)
+        buildTreeRecursive(root._id, employeeMap, childrenMap, expandedIds, highlightedIds),
       )
       .filter(Boolean)
   }
@@ -812,6 +1204,8 @@ async function getOrgTree(
       displayName: emp.displayName,
       positionName: emp.positionName,
       departmentName: emp.departmentName,
+      lineName: emp.lineName,
+      lineCode: emp.lineCode,
       shiftName: emp.shiftName,
       shiftCode: emp.shiftCode,
       shiftStartTime: emp.shiftStartTime,
@@ -831,16 +1225,17 @@ async function list(
     search,
     departmentId,
     positionId,
+    lineId,
     shiftId,
     isActive,
     sortBy,
     sortOrder,
   },
-  currentUser = null
+  currentUser = null,
 ) {
   const scopeFilter = await buildEmployeeScopeFilter(currentUser)
   const filter = buildEmployeeListFilter(
-    { search, departmentId, positionId, shiftId, isActive },
+    { search, departmentId, positionId, lineId, shiftId, isActive },
     scopeFilter,
   )
   const sort = buildEmployeeSort(sortBy, sortOrder)
@@ -849,7 +1244,8 @@ async function list(
   const [items, total, accountByEmployeeId] = await Promise.all([
     Employee.find(filter)
       .populate('departmentId', 'name code')
-      .populate('positionId', 'name code')
+      .populate('positionId', 'name code reportsToPositionId')
+      .populate('lineId', 'code name')
       .populate('shiftId', 'code name type startTime endTime crossMidnight')
       .populate('reportsToEmployeeId', 'employeeNo displayName')
       .sort(sort)
@@ -862,7 +1258,7 @@ async function list(
 
   return {
     items: items.map((item) =>
-      sanitize(item, accountByEmployeeId.get(String(item._id)) || null)
+      sanitize(item, accountByEmployeeId.get(String(item._id)) || null),
     ),
     pagination: {
       page,
@@ -878,6 +1274,7 @@ async function exportExcel(
     search = '',
     departmentId = '',
     positionId = '',
+    lineId = '',
     shiftId = '',
     isActive,
     sortBy = 'createdAt',
@@ -887,7 +1284,7 @@ async function exportExcel(
 ) {
   const scopeFilter = await buildEmployeeScopeFilter(currentUser)
   const filter = buildEmployeeListFilter(
-    { search, departmentId, positionId, shiftId, isActive },
+    { search, departmentId, positionId, lineId, shiftId, isActive },
     scopeFilter,
   )
   const sort = buildEmployeeSort(sortBy, sortOrder)
@@ -895,7 +1292,8 @@ async function exportExcel(
   const [items, accountByEmployeeId] = await Promise.all([
     Employee.find(filter)
       .populate('departmentId', 'name code')
-      .populate('positionId', 'name code')
+      .populate('positionId', 'name code reportsToPositionId')
+      .populate('lineId', 'code name')
       .populate('shiftId', 'code name type startTime endTime crossMidnight')
       .populate('reportsToEmployeeId', 'employeeNo displayName')
       .sort(sort)
@@ -904,7 +1302,7 @@ async function exportExcel(
   ])
 
   const rows = items.map((item) =>
-    sanitize(item, accountByEmployeeId.get(String(item._id)) || null)
+    sanitize(item, accountByEmployeeId.get(String(item._id)) || null),
   )
 
   const worksheet = XLSX.utils.json_to_sheet(buildEmployeeExportRows(rows))
@@ -921,26 +1319,28 @@ async function downloadImportSample() {
   const sampleRows = [
     {
       'Employee No': 'EMP001',
-      'Display Name': 'John Smith',
-      'Department Code': 'HR',
-      'Position Code': 'HR_OFFICER',
+      'Display Name': 'Mr A',
+      'Department Code': 'SEWING',
+      'Position Code': 'SEWER_SUPERVISOR',
+      'Line Code': 'LINE-01',
       'Shift Code': 'DAY',
       'Reports To Employee No': '',
       Phone: '012345678',
-      Email: 'john.smith@company.com',
-      'Join Date': '2026-04-09',
+      Email: 'mra@company.com',
+      'Join Date': '30/04/2026',
       Status: 'Active',
     },
     {
       'Employee No': 'EMP002',
-      'Display Name': 'Sok Dara',
-      'Department Code': 'IT',
-      'Position Code': 'DEV',
+      'Display Name': 'Worker 001',
+      'Department Code': 'SEWING',
+      'Position Code': 'SEWER',
+      'Line Code': 'LINE-01',
       'Shift Code': 'DAY',
-      'Reports To Employee No': 'EMP001',
+      'Reports To Employee No': '',
       Phone: '098765432',
-      Email: 'sok.dara@company.com',
-      'Join Date': '2026-04-09',
+      Email: 'worker001@company.com',
+      'Join Date': '30/04/2026',
       Status: 'Active',
     },
   ]
@@ -954,11 +1354,15 @@ async function downloadImportSample() {
     ['Display Name', 'Required'],
     ['Department Code', 'Required. Must already exist'],
     ['Position Code', 'Required. Must already exist and belong to Department Code'],
+    ['Line Code', 'Optional. Required for production line employees like Sewer. Must already exist'],
     ['Shift Code', 'Required. Must already exist and be active'],
-    ['Reports To Employee No', 'Optional. Must already exist in system or appear earlier in the same import file'],
+    [
+      'Reports To Employee No',
+      'Optional. If Position has ReportsToPositionId and Line Code is provided, system auto-finds manager by parent position + same line',
+    ],
     ['Phone', 'Optional'],
     ['Email', 'Optional. Must be valid and unique if provided'],
-    ['Join Date', 'Optional. Use YYYY-MM-DD format'],
+    ['Join Date', 'Optional. Use DD/MM/YYYY format, example 30/04/2026'],
     ['Status', 'Optional. Use Active or Inactive. Blank = Active'],
     ['Account creation', 'Import does not create login accounts. Account provisioning stays in normal create/edit flow'],
   ]
@@ -983,7 +1387,10 @@ async function importExcel(file, currentUser = null) {
     throw err
   }
 
-  const workbook = XLSX.read(file.buffer, { type: 'buffer' })
+  const workbook = XLSX.read(file.buffer, {
+    type: 'buffer',
+    cellDates: true,
+  })
   const firstSheetName = workbook.SheetNames[0]
 
   if (!firstSheetName) {
@@ -995,7 +1402,8 @@ async function importExcel(file, currentUser = null) {
   const worksheet = workbook.Sheets[firstSheetName]
   const rawRows = XLSX.utils.sheet_to_json(worksheet, {
     defval: '',
-    raw: false,
+    raw: true,
+    dateNF: 'dd/mm/yyyy',
   })
 
   if (!rawRows.length) {
@@ -1016,11 +1424,29 @@ async function importExcel(file, currentUser = null) {
 
   const parsedRows = rawRows.map((raw, index) => {
     const normalized = normalizeImportRow(raw)
-    const result = importEmployeeRowSchema.safeParse(normalized)
+
+    if (normalized.rawJoinDate && !normalized.joinDate) {
+      const err = new Error(
+        `Row ${index + 2}: Invalid joinDate. Use DD/MM/YYYY format, example 30/11/2012`,
+      )
+      err.status = 400
+      throw err
+    }
+
+    if (normalized.rawStatus && normalized.isActive === null) {
+      const err = new Error(
+        `Row ${index + 2}: Invalid Status. Use Active or Inactive`,
+      )
+      err.status = 400
+      throw err
+    }
+
+    const { rawJoinDate, rawStatus, ...schemaPayload } = normalized
+    const result = importEmployeeRowSchema.safeParse(schemaPayload)
 
     if (!result.success) {
       const err = new Error(
-        `Row ${index + 2}: ${result.error.issues[0]?.message || 'Invalid data'}`
+        `Row ${index + 2}: ${result.error.issues[0]?.message || 'Invalid data'}`,
       )
       err.status = 400
       throw err
@@ -1028,17 +1454,17 @@ async function importExcel(file, currentUser = null) {
 
     const data = result.data
 
-    if (String(data.isActive).toLowerCase() === 'active') data.isActive = true
-    if (String(data.isActive).toLowerCase() === 'inactive') data.isActive = false
-
     return {
       ...data,
       employeeNo: s(data.employeeNo).toUpperCase(),
       departmentCode: s(data.departmentCode).toUpperCase(),
       positionCode: s(data.positionCode).toUpperCase(),
+      lineCode: s(data.lineCode).toUpperCase(),
       shiftCode: s(data.shiftCode).toUpperCase(),
       reportsToEmployeeNo: s(data.reportsToEmployeeNo).toUpperCase(),
       email: s(data.email).toLowerCase(),
+      joinDate: s(data.joinDate),
+      isActive: typeof data.isActive === 'boolean' ? data.isActive : true,
     }
   })
 
@@ -1055,6 +1481,7 @@ async function importExcel(file, currentUser = null) {
 
   const departmentCodes = [...new Set(parsedRows.map((x) => x.departmentCode).filter(Boolean))]
   const positionCodes = [...new Set(parsedRows.map((x) => x.positionCode).filter(Boolean))]
+  const lineCodes = [...new Set(parsedRows.map((x) => x.lineCode).filter(Boolean))]
   const shiftCodes = [...new Set(parsedRows.map((x) => x.shiftCode).filter(Boolean))]
   const managerEmployeeNos = [
     ...new Set(parsedRows.map((x) => x.reportsToEmployeeNo).filter(Boolean)),
@@ -1066,19 +1493,29 @@ async function importExcel(file, currentUser = null) {
   const [
     departments,
     positions,
+    lines,
     shifts,
     existingEmployees,
     existingEmails,
   ] = await Promise.all([
     Department.find({ code: { $in: departmentCodes } }, '_id code name').lean(),
-    Position.find({ code: { $in: positionCodes } }, '_id code name departmentId').lean(),
+    Position.find(
+      { code: { $in: positionCodes } },
+      '_id code name departmentId reportsToPositionId',
+    ).lean(),
+    lineCodes.length
+      ? ProductionLine.find(
+          { code: { $in: lineCodes } },
+          '_id code name departmentId positionIds isActive',
+        ).lean()
+      : [],
     Shift.find(
       { code: { $in: shiftCodes }, isActive: true },
-      '_id code name type startTime endTime crossMidnight isActive'
+      '_id code name type startTime endTime crossMidnight isActive',
     ).lean(),
     Employee.find(
       { employeeNo: { $in: allEmployeeNosToLookup } },
-      '_id employeeNo displayName email departmentId positionId shiftId reportsToEmployeeId'
+      '_id employeeNo displayName email departmentId positionId lineId shiftId reportsToEmployeeId',
     ).lean(),
     emails.length
       ? Employee.find({ email: { $in: emails } }, '_id employeeNo email').lean()
@@ -1086,19 +1523,18 @@ async function importExcel(file, currentUser = null) {
   ])
 
   const departmentByCode = new Map(
-    departments.map((item) => [s(item.code).toUpperCase(), item])
+    departments.map((item) => [s(item.code).toUpperCase(), item]),
   )
   const positionByCode = new Map(
-    positions.map((item) => [s(item.code).toUpperCase(), item])
+    positions.map((item) => [s(item.code).toUpperCase(), item]),
   )
-  const shiftByCode = new Map(
-    shifts.map((item) => [s(item.code).toUpperCase(), item])
-  )
+  const lineByCode = new Map(lines.map((item) => [s(item.code).toUpperCase(), item]))
+  const shiftByCode = new Map(shifts.map((item) => [s(item.code).toUpperCase(), item]))
   const existingEmployeeByNo = new Map(
-    existingEmployees.map((item) => [s(item.employeeNo).toUpperCase(), item])
+    existingEmployees.map((item) => [s(item.employeeNo).toUpperCase(), item]),
   )
   const existingEmailByValue = new Map(
-    existingEmails.map((item) => [s(item.email).toLowerCase(), item])
+    existingEmails.map((item) => [s(item.email).toLowerCase(), item]),
   )
 
   const createdIds = []
@@ -1129,6 +1565,17 @@ async function importExcel(file, currentUser = null) {
       throw err
     }
 
+    const line = row.lineCode ? lineByCode.get(row.lineCode) : null
+    if (row.lineCode && !line) {
+      const err = new Error(`Row ${rowNo}: Line Code not found`)
+      err.status = 400
+      throw err
+    }
+
+    if (line) {
+      await ensureLineAllowed(line._id, department._id, position._id)
+    }
+
     const shift = shiftByCode.get(row.shiftCode)
     if (!shift) {
       const err = new Error(`Row ${rowNo}: Shift Code not found or inactive`)
@@ -1136,20 +1583,35 @@ async function importExcel(file, currentUser = null) {
       throw err
     }
 
-    let managerId = null
+    const existing = existingEmployeeByNo.get(row.employeeNo) || null
+
+    let manualManagerId = null
     if (row.reportsToEmployeeNo) {
       const manager = existingEmployeeByNo.get(row.reportsToEmployeeNo)
       if (!manager) {
         const err = new Error(
-          `Row ${rowNo}: Reports To Employee No not found. Import managers first or place manager rows earlier`
+          `Row ${rowNo}: Reports To Employee No not found. Import managers first or place manager rows earlier`,
         )
         err.status = 400
         throw err
       }
-      managerId = manager._id
+
+      manualManagerId = manager._id
     }
 
-    const existing = existingEmployeeByNo.get(row.employeeNo) || null
+    if (existing && manualManagerId && String(existing._id) === String(manualManagerId)) {
+      const err = new Error(`Row ${rowNo}: Employee cannot report to self`)
+      err.status = 400
+      throw err
+    }
+
+    const finalManagerId = await resolveFinalReportsToEmployeeId({
+      employeeId: existing?._id || null,
+      departmentId: department._id,
+      position,
+      lineId: line?._id || null,
+      manualReportsToEmployeeId: manualManagerId,
+    })
 
     if (row.email) {
       const existingEmailOwner = existingEmailByValue.get(row.email)
@@ -1166,8 +1628,9 @@ async function importExcel(file, currentUser = null) {
         displayName: row.displayName,
         departmentId: department._id,
         positionId: position._id,
+        lineId: line?._id || null,
         shiftId: shift._id,
-        reportsToEmployeeId: managerId || null,
+        reportsToEmployeeId: finalManagerId || null,
         phone: row.phone || '',
         email: row.email || '',
         joinDate: row.joinDate || null,
@@ -1182,6 +1645,11 @@ async function importExcel(file, currentUser = null) {
         employeeNo: created.employeeNo,
         displayName: created.displayName,
         email: created.email,
+        departmentId: created.departmentId,
+        positionId: created.positionId,
+        lineId: created.lineId,
+        shiftId: created.shiftId,
+        reportsToEmployeeId: created.reportsToEmployeeId,
       })
 
       if (row.email) {
@@ -1194,12 +1662,6 @@ async function importExcel(file, currentUser = null) {
       continue
     }
 
-    if (row.reportsToEmployeeNo && String(existing._id) === String(managerId)) {
-      const err = new Error(`Row ${rowNo}: Employee cannot report to self`)
-      err.status = 400
-      throw err
-    }
-
     await ensureEmailUnique(row.email || '', existing._id)
 
     await Employee.updateOne(
@@ -1209,14 +1671,15 @@ async function importExcel(file, currentUser = null) {
           displayName: row.displayName,
           departmentId: department._id,
           positionId: position._id,
+          lineId: line?._id || null,
           shiftId: shift._id,
-          reportsToEmployeeId: managerId || null,
+          reportsToEmployeeId: finalManagerId || null,
           phone: row.phone || '',
           email: row.email || '',
           joinDate: row.joinDate || null,
           isActive: typeof row.isActive === 'boolean' ? row.isActive : true,
         },
-      }
+      },
     )
 
     updatedCount += 1
@@ -1225,6 +1688,11 @@ async function importExcel(file, currentUser = null) {
       ...existing,
       displayName: row.displayName,
       email: row.email || '',
+      departmentId: department._id,
+      positionId: position._id,
+      lineId: line?._id || null,
+      shiftId: shift._id,
+      reportsToEmployeeId: finalManagerId || null,
     })
 
     if (row.email) {
@@ -1250,10 +1718,11 @@ async function getById(id) {
   const [doc, accountDoc] = await Promise.all([
     Employee.findById(id)
       .populate('departmentId', 'name code')
-      .populate('positionId', 'name code')
+      .populate('positionId', 'name code reportsToPositionId')
+      .populate('lineId', 'code name')
       .populate(
         'shiftId',
-        'code name type startTime breakStartTime breakEndTime endTime crossMidnight'
+        'code name type startTime breakStartTime breakEndTime endTime crossMidnight',
       )
       .populate('reportsToEmployeeId', 'employeeNo displayName')
       .lean(),
@@ -1272,7 +1741,8 @@ async function getById(id) {
 async function getOrgChart(id) {
   const focusDoc = await Employee.findById(id)
     .populate('departmentId', 'name code')
-    .populate('positionId', 'name code')
+    .populate('positionId', 'name code reportsToPositionId')
+    .populate('lineId', 'code name')
     .populate('shiftId', 'code name type startTime endTime crossMidnight')
     .populate('reportsToEmployeeId', 'employeeNo displayName')
     .lean()
@@ -1297,7 +1767,8 @@ async function getOrgChart(id) {
 
     const managerDoc = await Employee.findById(currentManagerId)
       .populate('departmentId', 'name code')
-      .populate('positionId', 'name code')
+      .populate('positionId', 'name code reportsToPositionId')
+      .populate('lineId', 'code name')
       .populate('shiftId', 'code name type startTime endTime crossMidnight')
       .populate('reportsToEmployeeId', 'employeeNo displayName')
       .lean()
@@ -1319,7 +1790,8 @@ async function getOrgChart(id) {
     reportsToEmployeeId: focusDoc._id,
   })
     .populate('departmentId', 'name code')
-    .populate('positionId', 'name code')
+    .populate('positionId', 'name code reportsToPositionId')
+    .populate('lineId', 'code name')
     .populate('shiftId', 'code name type startTime endTime crossMidnight')
     .populate('reportsToEmployeeId', 'employeeNo displayName')
     .sort({ displayName: 1, employeeNo: 1 })
@@ -1333,22 +1805,30 @@ async function getOrgChart(id) {
 }
 
 async function create(payload) {
-  await Promise.all([
-    ensureEmployeeNoUnique(payload.employeeNo),
-    ensureEmailUnique(payload.email || ''),
-    ensureDepartmentExists(payload.departmentId),
-    ensurePositionExists(payload.positionId),
-    ensureShiftExists(payload.shiftId),
-    ensureReportsToEmployeeExists(payload.reportsToEmployeeId),
-  ])
+  await ensureEmployeeNoUnique(payload.employeeNo)
+  await ensureEmailUnique(payload.email || '')
+
+  const department = await ensureDepartmentExists(payload.departmentId)
+  const position = await ensurePositionExists(payload.positionId, department._id)
+  await ensureShiftExists(payload.shiftId)
+  await ensureLineAllowed(payload.lineId, department._id, position._id)
+
+  const reportsToEmployeeId = await resolveFinalReportsToEmployeeId({
+    employeeId: null,
+    departmentId: department._id,
+    position,
+    lineId: payload.lineId || null,
+    manualReportsToEmployeeId: payload.reportsToEmployeeId || null,
+  })
 
   const doc = await Employee.create({
     employeeNo: s(payload.employeeNo),
     displayName: s(payload.displayName),
     departmentId: payload.departmentId,
     positionId: payload.positionId,
+    lineId: payload.lineId || null,
     shiftId: payload.shiftId,
-    reportsToEmployeeId: payload.reportsToEmployeeId || null,
+    reportsToEmployeeId: reportsToEmployeeId || null,
     phone: s(payload.phone),
     email: s(payload.email),
     joinDate: payload.joinDate || null,
@@ -1368,7 +1848,8 @@ async function create(payload) {
 
   const fresh = await Employee.findById(doc._id)
     .populate('departmentId', 'name code')
-    .populate('positionId', 'name code')
+    .populate('positionId', 'name code reportsToPositionId')
+    .populate('lineId', 'code name')
     .populate('shiftId', 'code name type startTime endTime crossMidnight')
     .populate('reportsToEmployeeId', 'employeeNo displayName')
     .lean()
@@ -1382,7 +1863,7 @@ async function create(payload) {
           isActive: provisionedAccount.isActive,
           employeeId: provisionedAccount.employeeId,
         }
-      : null
+      : null,
   )
 }
 
@@ -1402,39 +1883,53 @@ async function update(id, payload) {
     payload.displayName !== undefined ? s(payload.displayName) : s(doc.displayName)
   const nextEmail = payload.email !== undefined ? s(payload.email).toLowerCase() : s(doc.email)
 
+  const nextDepartmentId =
+    payload.departmentId !== undefined ? payload.departmentId : doc.departmentId
+  const nextPositionId =
+    payload.positionId !== undefined ? payload.positionId : doc.positionId
+  const nextLineId =
+    payload.lineId !== undefined ? payload.lineId : doc.lineId
+  const nextShiftId =
+    payload.shiftId !== undefined ? payload.shiftId : doc.shiftId
+
   if (payload.employeeNo !== undefined && nextEmployeeNo !== s(doc.employeeNo)) {
     await ensureEmployeeNoUnique(nextEmployeeNo, doc._id)
     doc.employeeNo = nextEmployeeNo
   }
 
-  if (payload.departmentId !== undefined) {
-    await ensureDepartmentExists(payload.departmentId)
-    doc.departmentId = payload.departmentId
-  }
+  const department = await ensureDepartmentExists(nextDepartmentId)
+  const position = await ensurePositionExists(nextPositionId, department._id)
+  await ensureShiftExists(nextShiftId)
+  await ensureLineAllowed(nextLineId, department._id, position._id)
 
-  if (payload.positionId !== undefined) {
-    await ensurePositionExists(payload.positionId)
-    doc.positionId = payload.positionId
-  }
-
-  if (payload.shiftId !== undefined) {
-    await ensureShiftExists(payload.shiftId)
-    doc.shiftId = payload.shiftId
-  }
-
-  if (payload.reportsToEmployeeId !== undefined) {
-    if (payload.reportsToEmployeeId && String(payload.reportsToEmployeeId) === String(doc._id)) {
-      const err = new Error('Employee cannot report to self')
-      err.status = 400
-      throw err
-    }
-
-    await ensureReportsToEmployeeExists(payload.reportsToEmployeeId)
-    doc.reportsToEmployeeId = payload.reportsToEmployeeId || null
-  }
+  const shouldRefreshManager =
+    payload.departmentId !== undefined ||
+    payload.positionId !== undefined ||
+    payload.lineId !== undefined ||
+    payload.reportsToEmployeeId !== undefined
 
   if (payload.displayName !== undefined) {
     doc.displayName = nextDisplayName
+  }
+
+  doc.departmentId = nextDepartmentId
+  doc.positionId = nextPositionId
+  doc.lineId = nextLineId || null
+  doc.shiftId = nextShiftId
+
+  if (shouldRefreshManager) {
+    const reportsToEmployeeId = await resolveFinalReportsToEmployeeId({
+      employeeId: doc._id,
+      departmentId: department._id,
+      position,
+      lineId: nextLineId || null,
+      manualReportsToEmployeeId:
+        payload.reportsToEmployeeId !== undefined
+          ? payload.reportsToEmployeeId
+          : doc.reportsToEmployeeId,
+    })
+
+    doc.reportsToEmployeeId = reportsToEmployeeId || null
   }
 
   if (payload.phone !== undefined) {
@@ -1458,7 +1953,7 @@ async function update(id, payload) {
 
   let accountDoc = await Account.findOne(
     { employeeId: doc._id },
-    'loginId isActive employeeId'
+    'loginId isActive employeeId',
   ).lean()
 
   if (payload.provisionAccount === true) {
@@ -1491,7 +1986,8 @@ async function update(id, payload) {
 
   const fresh = await Employee.findById(doc._id)
     .populate('departmentId', 'name code')
-    .populate('positionId', 'name code')
+    .populate('positionId', 'name code reportsToPositionId')
+    .populate('lineId', 'code name')
     .populate('shiftId', 'code name type startTime endTime crossMidnight')
     .populate('reportsToEmployeeId', 'employeeNo displayName')
     .lean()

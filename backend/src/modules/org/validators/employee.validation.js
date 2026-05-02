@@ -1,4 +1,5 @@
 // backend/src/modules/org/validators/employee.validation.js
+
 const { z } = require('zod')
 const mongoose = require('mongoose')
 
@@ -35,10 +36,7 @@ const optionalObjectIdField = (label) =>
       const v = String(value).trim()
       return v || null
     })
-    .refine(
-      (value) => value === null || isObjectId(value),
-      `Invalid ${label}`,
-    )
+    .refine((value) => value === null || isObjectId(value), `Invalid ${label}`)
 
 const joinDateField = z
   .union([z.string(), z.date(), z.null(), z.undefined()])
@@ -71,6 +69,7 @@ const listQuerySchema = z.object({
   search: z.string().trim().optional().default(''),
   departmentId: z.string().trim().optional().default(''),
   positionId: z.string().trim().optional().default(''),
+  lineId: z.string().trim().optional().default(''),
   shiftId: z.string().trim().optional().default(''),
   isActive: booleanLike,
   sortBy: z
@@ -90,6 +89,7 @@ const exportQuerySchema = z.object({
   search: z.string().trim().optional().default(''),
   departmentId: z.string().trim().optional().default(''),
   positionId: z.string().trim().optional().default(''),
+  lineId: z.string().trim().optional().default(''),
   shiftId: z.string().trim().optional().default(''),
   isActive: booleanLike,
   sortBy: z
@@ -112,15 +112,25 @@ const createEmployeeSchema = z
       .trim()
       .min(1, 'Employee No is required')
       .max(50, 'Employee No is too long'),
+
     displayName: z
       .string()
       .trim()
       .min(1, 'Display Name is required')
       .max(150, 'Display Name is too long'),
+
     departmentId: objectIdField('Department'),
     positionId: objectIdField('Position'),
+
+    // Optional because some office/admin employees may not belong to a production line.
+    lineId: optionalObjectIdField('Line'),
+
     shiftId: objectIdField('Shift'),
+
+    // Manual manager is still accepted, but service will auto-overwrite it when:
+    // position.reportsToPositionId exists AND lineId exists.
     reportsToEmployeeId: optionalObjectIdField('reportsToEmployeeId'),
+
     phone: phoneField,
     email: emailField,
     joinDate: joinDateField,
@@ -145,17 +155,22 @@ const updateEmployeeSchema = z
       .min(1, 'Employee No is required')
       .max(50, 'Employee No is too long')
       .optional(),
+
     displayName: z
       .string()
       .trim()
       .min(1, 'Display Name is required')
       .max(150, 'Display Name is too long')
       .optional(),
+
     departmentId: objectIdField('Department').optional(),
     positionId: objectIdField('Position').optional(),
+    lineId: optionalObjectIdField('Line').optional(),
     shiftId: objectIdField('Shift').optional(),
     reportsToEmployeeId: optionalObjectIdField('reportsToEmployeeId').optional(),
+
     phone: z.string().trim().max(30, 'Phone is too long').optional(),
+
     email: z
       .string()
       .trim()
@@ -163,6 +178,7 @@ const updateEmployeeSchema = z
       .max(150, 'Email is too long')
       .optional()
       .or(z.literal('')),
+
     joinDate: joinDateField.optional(),
     isActive: z.boolean().optional(),
     provisionAccount: z.boolean().optional().default(false),
@@ -173,6 +189,7 @@ const updateEmployeeSchema = z
       data.displayName !== undefined ||
       data.departmentId !== undefined ||
       data.positionId !== undefined ||
+      data.lineId !== undefined ||
       data.shiftId !== undefined ||
       data.reportsToEmployeeId !== undefined ||
       data.phone !== undefined ||
@@ -207,32 +224,45 @@ const importEmployeeRowSchema = z.object({
     .trim()
     .min(1, 'Employee No is required')
     .max(50, 'Employee No is too long'),
+
   displayName: z
     .string()
     .trim()
     .min(1, 'Display Name is required')
     .max(150, 'Display Name is too long'),
+
   departmentCode: z
     .string()
     .trim()
     .min(1, 'Department Code is required')
     .max(50, 'Department Code is too long'),
+
   positionCode: z
     .string()
     .trim()
     .min(1, 'Position Code is required')
     .max(50, 'Position Code is too long'),
+
+  lineCode: z
+    .union([z.string(), z.null(), z.undefined()])
+    .transform((value) => {
+      if (value === undefined || value === null) return ''
+      return String(value).trim()
+    }),
+
   shiftCode: z
     .string()
     .trim()
     .min(1, 'Shift Code is required')
     .max(50, 'Shift Code is too long'),
+
   reportsToEmployeeNo: z
     .union([z.string(), z.null(), z.undefined()])
     .transform((value) => {
       if (value === undefined || value === null) return ''
       return String(value).trim()
     }),
+
   phone: z
     .union([z.string(), z.null(), z.undefined()])
     .transform((value) => {
@@ -240,6 +270,7 @@ const importEmployeeRowSchema = z.object({
       return String(value).trim()
     })
     .refine((value) => value.length <= 30, 'Phone is too long'),
+
   email: z
     .union([z.string(), z.null(), z.undefined()])
     .transform((value) => {
@@ -251,6 +282,7 @@ const importEmployeeRowSchema = z.object({
       'Invalid email',
     )
     .refine((value) => value.length <= 150, 'Email is too long'),
+
   joinDate: z
     .union([z.string(), z.date(), z.null(), z.undefined()])
     .transform((value) => {
@@ -259,6 +291,7 @@ const importEmployeeRowSchema = z.object({
       return Number.isNaN(date.getTime()) ? 'INVALID_DATE' : date
     })
     .refine((value) => value === null || value !== 'INVALID_DATE', 'Invalid joinDate'),
+
   isActive: z
     .union([z.boolean(), z.string(), z.number(), z.null(), z.undefined()])
     .transform((value) => {
@@ -277,6 +310,7 @@ function normalizeListQuery(raw = {}) {
     search: parsed.search,
     departmentId: parsed.departmentId,
     positionId: parsed.positionId,
+    lineId: parsed.lineId,
     shiftId: parsed.shiftId,
     isActive: toBoolean(parsed.isActive),
     sortBy: parsed.sortBy,
@@ -291,6 +325,7 @@ function normalizeExportQuery(raw = {}) {
     search: parsed.search,
     departmentId: parsed.departmentId,
     positionId: parsed.positionId,
+    lineId: parsed.lineId,
     shiftId: parsed.shiftId,
     isActive: toBoolean(parsed.isActive),
     sortBy: parsed.sortBy,

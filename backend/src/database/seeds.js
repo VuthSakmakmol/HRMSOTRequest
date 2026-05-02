@@ -1,5 +1,5 @@
 // backend/src/database/seeds.js
-// backend/src/database/seeds.js
+
 require('../config/env')
 
 const mongoose = require('mongoose')
@@ -157,6 +157,58 @@ const PERMISSIONS = [
     description: 'Allow updating employee records',
   },
 
+  // Production Lines
+  {
+    code: 'LINE_VIEW',
+    name: 'View Lines',
+    module: 'ORG',
+    description: 'Allow viewing production line records',
+  },
+  {
+    code: 'LINE_LOOKUP',
+    name: 'Lookup Lines',
+    module: 'ORG',
+    description: 'Allow reading production line options for selectors and dropdowns only',
+  },
+  {
+    code: 'LINE_CREATE',
+    name: 'Create Lines',
+    module: 'ORG',
+    description: 'Allow creating production line records',
+  },
+  {
+    code: 'LINE_UPDATE',
+    name: 'Update Lines',
+    module: 'ORG',
+    description: 'Allow updating production line records',
+  },
+  {
+    code: 'LINE_IMPORT',
+    name: 'Import Lines',
+    module: 'ORG',
+    description: 'Allow importing production line records from Excel',
+  },
+  {
+    code: 'LINE_EXPORT',
+    name: 'Export Lines',
+    module: 'ORG',
+    description: 'Allow exporting production line records to Excel',
+  },
+
+  // Line Supervisor Assignment
+  {
+    code: 'LINE_SUPERVISOR_VIEW',
+    name: 'View Line Supervisors',
+    module: 'ORG',
+    description: 'Allow viewing supervisor assignments for production lines',
+  },
+  {
+    code: 'LINE_SUPERVISOR_ASSIGN',
+    name: 'Assign Line Supervisors',
+    module: 'ORG',
+    description: 'Allow assigning supervisors to production lines',
+  },
+
   // Holidays
   {
     code: 'HOLIDAY_VIEW',
@@ -233,6 +285,12 @@ const PERMISSIONS = [
     name: 'Approve OT Requests',
     module: 'OT',
     description: 'Allow approving OT requests',
+  },
+  {
+    code: 'OT_ADD_OTHER_LINE_EMPLOYEE',
+    name: 'Add Other Line Employee to OT',
+    module: 'OT',
+    description: 'Allow adding employees from other production lines to an OT request with a required reason',
   },
 
   // Attendance
@@ -315,7 +373,7 @@ async function seedPermissions() {
         new: true,
         upsert: true,
         setDefaultsOnInsert: true,
-      }
+      },
     )
 
     results.push(doc)
@@ -345,7 +403,7 @@ async function seedRootAdminRole(allPermissions) {
       new: true,
       upsert: true,
       setDefaultsOnInsert: true,
-    }
+    },
   )
 
   console.log(`✅ Role seeded: ${ROOT_ADMIN_ROLE_CODE}`)
@@ -387,7 +445,7 @@ async function seedSuperAccount(rootAdminRole) {
         directPermissionCodes: [],
         isActive: true,
       },
-    }
+    },
   )
 
   console.log(`✅ Super account synced: ${loginId}`)
@@ -407,8 +465,10 @@ async function run() {
 run().catch(async (error) => {
   console.error('❌ Seed failed')
   console.error(error)
+
   try {
     await mongoose.connection.close()
   } catch (_) {}
+
   process.exit(1)
 })
