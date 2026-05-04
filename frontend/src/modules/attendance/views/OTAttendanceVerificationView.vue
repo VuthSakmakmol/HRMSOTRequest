@@ -13,6 +13,7 @@ import DatePicker from 'primevue/datepicker'
 import IconField from 'primevue/iconfield'
 import InputIcon from 'primevue/inputicon'
 import InputText from 'primevue/inputtext'
+import Message from 'primevue/message'
 import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 import { useToast } from 'primevue/usetoast'
@@ -43,10 +44,11 @@ let suppressRequestSearch = false
 const requestStatusOptions = [
   { label: 'All OT Requests', value: '' },
   { label: 'Pending', value: 'PENDING' },
+  { label: 'Pending Confirmation', value: 'PENDING_REQUESTER_CONFIRMATION' },
   { label: 'Approved', value: 'APPROVED' },
   { label: 'Rejected', value: 'REJECTED' },
+  { label: 'Requester Disagreed', value: 'REQUESTER_DISAGREED' },
   { label: 'Cancelled', value: 'CANCELLED' },
-  { label: 'Pending Confirmation', value: 'PENDING_REQUESTER_CONFIRMATION' },
 ]
 
 const categoryOptions = [
@@ -55,10 +57,10 @@ const categoryOptions = [
   { label: 'Partial Credited', value: 'PARTIAL' },
   { label: 'Match Without Exact Out', value: 'MATCH_WITHOUT_EXACT_OUT' },
   { label: 'Mismatch', value: 'MISMATCH' },
-  { label: 'Absent Approved', value: 'ABSENT_APPROVED' },
+  { label: 'Approved Staff Absent', value: 'ABSENT_APPROVED' },
   { label: 'Pending Review', value: 'PENDING_REVIEW' },
   { label: 'Shift Mismatch', value: 'SHIFT_MISMATCH' },
-  { label: 'Not Approved', value: 'NOT_APPROVED' },
+  { label: 'Not in OT Staff', value: 'NOT_APPROVED' },
   { label: 'Not Eligible', value: 'NOT_ELIGIBLE' },
 ]
 
@@ -77,6 +79,10 @@ const activeOtRequestId = computed(() => {
 
 const otRequest = computed(() => payload.value?.otRequest || {})
 const verification = computed(() => payload.value?.verification || {})
+
+const isFinalApprovedRequest = computed(() => {
+  return upper(otRequest.value?.status) === 'APPROVED'
+})
 
 const attendedEmployees = computed(() => asArray(verification.value?.attendedEmployees))
 const absentFromApproved = computed(() => asArray(verification.value?.absentFromApproved))
@@ -212,7 +218,7 @@ const hardMismatchVerificationRows = computed(() => {
 
 const summaryCards = computed(() => [
   {
-    label: 'Approved',
+    label: 'OT Staff',
     value: Number(verification.value?.approvedEmployeeCount || 0),
     icon: 'pi pi-users',
     tone: 'blue',
@@ -248,7 +254,7 @@ const summaryCards = computed(() => [
     tone: 'amber',
   },
   {
-    label: 'Not Approved',
+    label: 'Not in OT',
     value: Number(verification.value?.attendedButNotApprovedCount || 0),
     icon: 'pi pi-exclamation-triangle',
     tone: 'cyan',
@@ -405,10 +411,10 @@ function categoryLabel(category) {
     MATCH: 'Matched',
     MATCH_WITHOUT_EXACT_OUT: 'Match Without Exact Out',
     MISMATCH: 'Mismatch',
-    ABSENT_APPROVED: 'Absent Approved',
+    ABSENT_APPROVED: 'Approved Staff Absent',
     PENDING_REVIEW: 'Pending Review',
     SHIFT_MISMATCH: 'Shift Mismatch',
-    NOT_APPROVED: 'Not Approved',
+    NOT_APPROVED: 'Not in OT Staff',
     NOT_ELIGIBLE: 'Not Eligible',
   }
 
@@ -434,8 +440,24 @@ function statusSeverity(value) {
   const normalized = upper(value)
 
   if (['APPROVED', 'PRESENT', 'MATCH'].includes(normalized)) return 'success'
-  if (['PENDING', 'PENDING_REVIEW', 'PENDING_REQUESTER_CONFIRMATION', 'LATE'].includes(normalized)) return 'warning'
-  if (['REJECTED', 'ABSENT', 'SHIFT_MISMATCH', 'MISMATCH'].includes(normalized)) return 'danger'
+  if (
+    ['PENDING', 'PENDING_REVIEW', 'PENDING_REQUESTER_CONFIRMATION', 'LATE'].includes(
+      normalized,
+    )
+  ) {
+    return 'warning'
+  }
+  if (
+    [
+      'REJECTED',
+      'REQUESTER_DISAGREED',
+      'ABSENT',
+      'SHIFT_MISMATCH',
+      'MISMATCH',
+    ].includes(normalized)
+  ) {
+    return 'danger'
+  }
   if (['FORGET_SCAN_IN', 'FORGET_SCAN_OUT'].includes(normalized)) return 'info'
   if (['CANCELLED', 'OFF'].includes(normalized)) return 'secondary'
 
@@ -463,10 +485,6 @@ function timingModeLabel(value) {
 
 function timingModeSeverity(value) {
   return upper(value) === 'FIXED_TIME' ? 'warning' : 'info'
-}
-
-function resultSeverity(value) {
-  return upper(value) === 'MATCH' ? 'success' : 'danger'
 }
 
 function isPartialCredited(row) {
@@ -502,74 +520,60 @@ function resultMeaningLabel(row) {
   const clockOut = s(row?.clockOut)
   const attendanceStatus = upper(row?.attendanceStatus)
 
-  if (category === 'MATCH_WITHOUT_EXACT_OUT') {
-    return 'Accepted by policy'
-  }
+  if (category === 'MATCH_WITHOUT_EXACT_OUT') return 'Accepted by policy'
+  if (category === 'ABSENT_APPROVED') return 'OT staff absent'
+  if (category === 'PENDING_REVIEW') return 'Needs manual review'
+  if (category === 'SHIFT_MISMATCH') return 'Wrong shift'
+  if (category === 'NOT_APPROVED') return 'Not in OT staff'
+  if (category === 'NOT_ELIGIBLE') return 'Not eligible for OT'
 
-  if (category === 'ABSENT_APPROVED') {
-    return 'Approved but absent'
-  }
-
-  if (category === 'PENDING_REVIEW') {
-    return 'Needs manual review'
-  }
-
-  if (category === 'SHIFT_MISMATCH') {
-    return 'Wrong shift'
-  }
-
-  if (category === 'NOT_APPROVED') {
-    return 'Not approved for OT'
-  }
-
-  if (category === 'NOT_ELIGIBLE') {
-    return 'Not eligible for OT'
-  }
-
-  if (result === 'MATCH') {
-    return 'OT matched request'
-  }
-
-  if (attendanceStatus === 'ABSENT') {
-    return 'Absent'
-  }
+  if (result === 'MATCH') return 'OT matched request'
+  if (attendanceStatus === 'ABSENT') return 'Absent'
 
   if (!clockIn || !clockOut || clockIn === '-' || clockOut === '-') {
     return 'Missing scan time'
   }
 
-  if (requested > 0 && credited <= 0) {
-    return 'No credited OT'
-  }
-
-  if (requested > 0 && credited < requested) {
-    return 'Credited less than request'
-  }
-
-  if (requested > 0 && credited > requested) {
-    return 'Credited over request'
-  }
-
-  if (actual > 0 && credited !== actual) {
-    return 'Adjusted by rule'
-  }
+  if (requested > 0 && credited <= 0) return 'No credited OT'
+  if (requested > 0 && credited < requested) return 'Credited less than request'
+  if (requested > 0 && credited > requested) return 'Credited over request'
+  if (actual > 0 && credited !== actual) return 'Adjusted by rule'
 
   return 'Check OT rule'
 }
 
+function requestStatusLabel(value) {
+  const normalized = upper(value)
+
+  if (normalized === 'PENDING') return 'Pending'
+  if (normalized === 'PENDING_REQUESTER_CONFIRMATION') return 'Pending Confirmation'
+  if (normalized === 'APPROVED') return 'Approved'
+  if (normalized === 'REJECTED') return 'Rejected'
+  if (normalized === 'REQUESTER_DISAGREED') return 'Requester Disagreed'
+  if (normalized === 'CANCELLED') return 'Cancelled'
+  if (normalized === 'DRAFT') return 'Draft'
+
+  return normalized || '-'
+}
+
 function requestOptionLabel(row) {
   const requestNo = s(row?.requestNo) || 'No Request No'
-  const status = upper(row?.status)
+  const status = requestStatusLabel(row?.status)
   const requester = s(row?.requesterName)
   const option = s(row?.shiftOtOptionLabel)
-  const approvedCount = Number(row?.approvedEmployeeCount || 0)
+  const staffCount = Number(
+    row?.employeeCount ||
+      row?.approvedEmployeeCount ||
+      row?.requestedEmployeeCount ||
+      0,
+  )
 
   return [
     requestNo,
-    status,
+    `Status: ${status}`,
     requester,
     option,
-    `${approvedCount} approved`,
+    `${staffCount} staff`,
   ]
     .filter(Boolean)
     .join(' · ')
@@ -849,6 +853,12 @@ onBeforeUnmount(() => {
       <div class="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
         <div class="min-w-0">
           <div class="flex flex-wrap items-center gap-2">
+            <Tag
+              v-if="otRequest?.status"
+              :value="requestStatusLabel(otRequest.status)"
+              :severity="statusSeverity(otRequest.status)"
+              rounded
+            />
 
             <Tag
               v-if="payload"
@@ -954,6 +964,15 @@ onBeforeUnmount(() => {
     </section>
 
     <template v-if="payload">
+      <Message
+        v-if="!isFinalApprovedRequest"
+        severity="warn"
+        :closable="false"
+        class="verification-warning"
+      >
+        This OT request is currently {{ requestStatusLabel(otRequest.status) }}. Verification is for checking only until the request is finally approved.
+      </Message>
+
       <section class="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-7">
         <div
           v-for="card in summaryCards"
@@ -974,11 +993,16 @@ onBeforeUnmount(() => {
       </section>
 
       <section
-        class="grid grid-cols-1 gap-3 rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] p-3 shadow-sm md:grid-cols-2 xl:grid-cols-6"
+        class="grid grid-cols-1 gap-3 rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] p-3 shadow-sm md:grid-cols-2 xl:grid-cols-7"
       >
         <div class="info-box xl:col-span-1">
           <div class="info-label">Request No</div>
           <div class="info-value">{{ otRequest.requestNo || '-' }}</div>
+        </div>
+
+        <div class="info-box xl:col-span-1">
+          <div class="info-label">Status</div>
+          <div class="info-value">{{ requestStatusLabel(otRequest.status) }}</div>
         </div>
 
         <div class="info-box xl:col-span-1">
@@ -1207,6 +1231,10 @@ onBeforeUnmount(() => {
 .filter-button {
   min-height: 2.4rem;
   white-space: nowrap;
+}
+
+.verification-warning {
+  border-radius: 1rem;
 }
 
 .verification-stat-card {

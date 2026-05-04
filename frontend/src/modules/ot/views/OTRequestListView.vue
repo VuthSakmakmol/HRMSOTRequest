@@ -1,7 +1,5 @@
 <!-- frontend/src/modules/ot/views/OTRequestListView.vue -->
 <script setup>
-// frontend/src/modules/ot/views/OTRequestListView.vue
-
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
@@ -9,6 +7,7 @@ import { useToast } from 'primevue/usetoast'
 import Button from 'primevue/button'
 import Column from 'primevue/column'
 import DataTable from 'primevue/datatable'
+import DatePicker from 'primevue/datepicker'
 import IconField from 'primevue/iconfield'
 import InputIcon from 'primevue/inputicon'
 import InputText from 'primevue/inputtext'
@@ -40,6 +39,8 @@ const filters = reactive({
   search: '',
   status: '',
   dayType: '',
+  otDateFrom: null,
+  otDateTo: null,
   sortField: 'createdAt',
   sortOrder: -1,
 })
@@ -52,10 +53,11 @@ const statusOptions = [
   { label: 'All Status', value: '' },
   { label: 'Draft', value: 'DRAFT' },
   { label: 'Pending', value: 'PENDING' },
+  { label: 'Pending Confirmation', value: 'PENDING_REQUESTER_CONFIRMATION' },
   { label: 'Approved', value: 'APPROVED' },
   { label: 'Rejected', value: 'REJECTED' },
+  { label: 'Requester Disagreed', value: 'REQUESTER_DISAGREED' },
   { label: 'Cancelled', value: 'CANCELLED' },
-  { label: 'Pending Confirmation', value: 'PENDING_REQUESTER_CONFIRMATION' },
 ]
 
 const dayTypeOptions = [
@@ -83,6 +85,19 @@ function normalizeItems(payload) {
   return Array.isArray(payload?.items) ? payload.items : []
 }
 
+function formatDateYMD(value) {
+  if (!value) return undefined
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return undefined
+
+  const yyyy = date.getFullYear()
+  const mm = String(date.getMonth() + 1).padStart(2, '0')
+  const dd = String(date.getDate()).padStart(2, '0')
+
+  return `${yyyy}-${mm}-${dd}`
+}
+
 function buildQuery(page) {
   return {
     page,
@@ -90,6 +105,8 @@ function buildQuery(page) {
     search: String(filters.search || '').trim() || undefined,
     status: filters.status || undefined,
     dayType: filters.dayType || undefined,
+    otDateFrom: formatDateYMD(filters.otDateFrom),
+    otDateTo: formatDateYMD(filters.otDateTo),
     sortBy: filters.sortField,
     sortOrder: filters.sortOrder === 1 ? 'asc' : 'desc',
   }
@@ -100,6 +117,8 @@ function buildExportQuery() {
     search: String(filters.search || '').trim() || undefined,
     status: filters.status || undefined,
     dayType: filters.dayType || undefined,
+    otDateFrom: formatDateYMD(filters.otDateFrom),
+    otDateTo: formatDateYMD(filters.otDateTo),
     sortBy: filters.sortField,
     sortOrder: filters.sortOrder === 1 ? 'asc' : 'desc',
   }
@@ -114,13 +133,11 @@ function normalizeClassKey(value) {
 }
 
 function dayTypeClass(value) {
-  const key = normalizeClassKey(value || 'unknown')
-  return `ot-day-${key}`
+  return `ot-day-${normalizeClassKey(value || 'unknown')}`
 }
 
 function statusClass(value) {
-  const key = normalizeClassKey(value || 'unknown')
-  return `ot-status-${key}`
+  return `ot-status-${normalizeClassKey(value || 'unknown')}`
 }
 
 function dayTypeSeverity(value) {
@@ -133,6 +150,7 @@ function dayTypeSeverity(value) {
 function statusSeverity(value) {
   if (value === 'APPROVED') return 'success'
   if (value === 'REJECTED') return 'danger'
+  if (value === 'REQUESTER_DISAGREED') return 'danger'
   if (value === 'CANCELLED') return 'contrast'
   if (value === 'PENDING') return 'warning'
   if (value === 'PENDING_REQUESTER_CONFIRMATION') return 'warning'
@@ -200,6 +218,34 @@ function getEmployeeCount(row) {
 
 function canEdit(row) {
   return canUpdateRequest.value && !!row?.canEdit
+}
+
+function approvalDisplay(row) {
+  return row?.approvalDisplay || {
+    type: row?.approvalDisplayType || row?.status || 'UNKNOWN',
+    label: row?.approvalDisplayLabel || row?.status || '-',
+    subLabel: row?.approvalDisplaySubLabel || '',
+    severity: row?.approvalDisplaySeverity || statusSeverity(row?.status),
+  }
+}
+
+function approvalDisplayClass(row) {
+  return `ot-approval-${normalizeClassKey(approvalDisplay(row).type || 'unknown')}`
+}
+
+function approvalDisplaySeverity(row) {
+  const severity = approvalDisplay(row).severity
+
+  if (severity) return severity
+
+  const type = String(approvalDisplay(row).type || '').toUpperCase()
+
+  if (type === 'APPROVED') return 'success'
+  if (type === 'REJECTED' || type === 'REQUESTER_DISAGREED') return 'danger'
+  if (type === 'WAITING' || type === 'REQUESTER_CONFIRMATION') return 'warning'
+  if (type === 'CANCELLED') return 'secondary'
+
+  return 'secondary'
 }
 
 async function fetchPage(page, { replace = false, silent = false } = {}) {
@@ -298,10 +344,16 @@ function onDayTypeChange() {
   reloadFirstPage({ keepVisible: true })
 }
 
+function onDateChange() {
+  reloadFirstPage({ keepVisible: true })
+}
+
 function clearFilters() {
   filters.search = ''
   filters.status = ''
   filters.dayType = ''
+  filters.otDateFrom = null
+  filters.otDateTo = null
   filters.sortField = 'createdAt'
   filters.sortOrder = -1
 
@@ -440,7 +492,6 @@ onBeforeUnmount(() => {
   <div class="flex flex-col gap-4">
     <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
       <div class="flex flex-wrap items-center gap-2">
-
         <Button
           label="Export Excel"
           icon="pi pi-file-excel"
@@ -464,12 +515,12 @@ onBeforeUnmount(() => {
     <div class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]">
       <div class="border-b border-[color:var(--ot-border)] px-3 py-3">
         <div class="flex flex-col gap-2 xl:flex-row xl:items-center">
-          <IconField class="w-full xl:w-[320px] xl:shrink-0">
+          <IconField class="w-full xl:w-[200px] xl:shrink-0">
             <InputIcon class="pi pi-search" />
 
             <InputText
               v-model="filters.search"
-              placeholder="Search request no, requester, employee, department, reason"
+              placeholder="Search"
               class="w-full"
               size="small"
               @input="onSearchInput"
@@ -489,7 +540,7 @@ onBeforeUnmount(() => {
             />
           </div>
 
-          <div class="w-full xl:w-[190px] xl:shrink-0">
+          <div class="w-full xl:w-[180px] xl:shrink-0">
             <Select
               v-model="filters.dayType"
               :options="dayTypeOptions"
@@ -499,6 +550,34 @@ onBeforeUnmount(() => {
               class="w-full"
               size="small"
               @change="onDayTypeChange"
+            />
+          </div>
+
+          <div class="w-full xl:w-[180px] xl:shrink-0">
+            <DatePicker
+              v-model="filters.otDateFrom"
+              dateFormat="yy-mm-dd"
+              showIcon
+              showButtonBar
+              class="w-full"
+              inputClass="w-full"
+              placeholder="OT Date From"
+              @date-select="onDateChange"
+              @clear-click="onDateChange"
+            />
+          </div>
+
+          <div class="w-full xl:w-[180px] xl:shrink-0">
+            <DatePicker
+              v-model="filters.otDateTo"
+              dateFormat="yy-mm-dd"
+              showIcon
+              showButtonBar
+              class="w-full"
+              inputClass="w-full"
+              placeholder="OT Date To"
+              @date-select="onDateChange"
+              @clear-click="onDateChange"
             />
           </div>
 
@@ -527,7 +606,7 @@ onBeforeUnmount(() => {
         scrollHeight="500px"
         :sortField="filters.sortField"
         :sortOrder="filters.sortOrder"
-        tableStyle="min-width: 98rem"
+        tableStyle="min-width: 104rem"
         class="ot-request-table"
         :virtualScrollerOptions="useVirtualScroll ? {
           lazy: true,
@@ -583,16 +662,39 @@ onBeforeUnmount(() => {
         </Column>
 
         <Column
-          header="Employees"
-          style="min-width: 9rem"
+          field="status"
+          header="Approval Status"
+          sortable
+          style="min-width: 20rem"
         >
           <template #body="{ data }">
-            <Tag
+            <div
               v-if="data"
-              :value="`${getEmployeeCount(data)} staff`"
-              severity="info"
-              class="ot-status-tag"
-            />
+              class="approval-status-cell"
+            >
+              <div class="flex flex-wrap items-center gap-1.5">
+                <Tag
+                  :value="data.status || '-'"
+                  :severity="statusSeverity(data.status)"
+                  class="ot-status-tag"
+                  :class="statusClass(data.status)"
+                />
+
+                <Tag
+                  :value="approvalDisplay(data).label"
+                  :severity="approvalDisplaySeverity(data)"
+                  class="ot-status-tag approval-display-tag"
+                  :class="approvalDisplayClass(data)"
+                />
+              </div>
+
+              <div
+                v-if="approvalDisplay(data).subLabel"
+                class="approval-sub-label"
+              >
+                {{ approvalDisplay(data).subLabel }}
+              </div>
+            </div>
           </template>
         </Column>
 
@@ -650,23 +752,6 @@ onBeforeUnmount(() => {
               :severity="dayTypeSeverity(data.dayType)"
               class="ot-status-tag"
               :class="dayTypeClass(data.dayType)"
-            />
-          </template>
-        </Column>
-
-        <Column
-          field="status"
-          header="Status"
-          sortable
-          style="min-width: 11rem"
-        >
-          <template #body="{ data }">
-            <Tag
-              v-if="data"
-              :value="data.status || '-'"
-              :severity="statusSeverity(data.status)"
-              class="ot-status-tag"
-              :class="statusClass(data.status)"
             />
           </template>
         </Column>
@@ -768,7 +853,8 @@ onBeforeUnmount(() => {
   border-color: #22c55e !important;
 }
 
-:deep(.p-tag.ot-status-rejected) {
+:deep(.p-tag.ot-status-rejected),
+:deep(.p-tag.ot-status-requester-disagreed) {
   background: #fee2e2 !important;
   color: #991b1b !important;
   border-color: #ef4444 !important;
@@ -819,7 +905,8 @@ onBeforeUnmount(() => {
   border-color: rgba(34, 197, 94, 0.45) !important;
 }
 
-:global(.dark) :deep(.p-tag.ot-status-rejected) {
+:global(.dark) :deep(.p-tag.ot-status-rejected),
+:global(.dark) :deep(.p-tag.ot-status-requester-disagreed) {
   background: rgba(239, 68, 68, 0.18) !important;
   color: #fca5a5 !important;
   border-color: rgba(239, 68, 68, 0.45) !important;
@@ -854,5 +941,81 @@ onBeforeUnmount(() => {
   background: rgba(239, 68, 68, 0.18) !important;
   color: #fca5a5 !important;
   border-color: rgba(239, 68, 68, 0.45) !important;
+}
+
+.approval-status-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.approval-sub-label {
+  color: var(--ot-text-muted, #64748b);
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+:deep(.p-tag.approval-display-tag) {
+  max-width: 15rem;
+}
+
+:deep(.p-tag.approval-display-tag .p-tag-label) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Approval display colors */
+:deep(.p-tag.ot-approval-waiting),
+:deep(.p-tag.ot-approval-requester-confirmation) {
+  background: #fef3c7 !important;
+  color: #92400e !important;
+  border-color: #f59e0b !important;
+}
+
+:deep(.p-tag.ot-approval-approved) {
+  background: #dcfce7 !important;
+  color: #166534 !important;
+  border-color: #22c55e !important;
+}
+
+:deep(.p-tag.ot-approval-rejected),
+:deep(.p-tag.ot-approval-requester-disagreed) {
+  background: #fee2e2 !important;
+  color: #991b1b !important;
+  border-color: #ef4444 !important;
+}
+
+:deep(.p-tag.ot-approval-cancelled) {
+  background: #e5e7eb !important;
+  color: #374151 !important;
+  border-color: #9ca3af !important;
+}
+
+:global(.dark) :deep(.p-tag.ot-approval-waiting),
+:global(.dark) :deep(.p-tag.ot-approval-requester-confirmation) {
+  background: rgba(245, 158, 11, 0.2) !important;
+  color: #fbbf24 !important;
+  border-color: rgba(245, 158, 11, 0.45) !important;
+}
+
+:global(.dark) :deep(.p-tag.ot-approval-approved) {
+  background: rgba(34, 197, 94, 0.18) !important;
+  color: #86efac !important;
+  border-color: rgba(34, 197, 94, 0.45) !important;
+}
+
+:global(.dark) :deep(.p-tag.ot-approval-rejected),
+:global(.dark) :deep(.p-tag.ot-approval-requester-disagreed) {
+  background: rgba(239, 68, 68, 0.18) !important;
+  color: #fca5a5 !important;
+  border-color: rgba(239, 68, 68, 0.45) !important;
+}
+
+:global(.dark) :deep(.p-tag.ot-approval-cancelled) {
+  background: rgba(148, 163, 184, 0.18) !important;
+  color: #cbd5e1 !important;
+  border-color: rgba(148, 163, 184, 0.45) !important;
 }
 </style>

@@ -1,7 +1,5 @@
 <!-- frontend/src/modules/ot/views/OTApprovalInboxView.vue -->
 <script setup>
-// frontend/src/modules/ot/views/OTApprovalInboxView.vue
-
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
@@ -82,17 +80,10 @@ const hasAnyData = computed(() => rows.value.some(Boolean))
 const useVirtualScroll = computed(() => totalInbox.value > PAGE_SIZE)
 
 const decisionEmployees = computed(() => getTargetEmployees(decisionDialog.row))
-
-const selectedApprovedCount = computed(
-  () => decisionDialog.selectedApprovedEmployeeIds.length,
-)
+const selectedApprovedCount = computed(() => decisionDialog.selectedApprovedEmployeeIds.length)
 
 const removedCount = computed(() =>
-  Math.max(
-    0,
-    decisionEmployees.value.length -
-      decisionDialog.selectedApprovedEmployeeIds.length,
-  ),
+  Math.max(0, decisionEmployees.value.length - decisionDialog.selectedApprovedEmployeeIds.length),
 )
 
 let searchTimer = null
@@ -122,16 +113,40 @@ function statusClass(value) {
   return `ot-status-${normalizeClassKey(value || 'unknown')}`
 }
 
-function requesterStatusClass(value) {
-  return `ot-requester-${normalizeClassKey(value || 'unknown')}`
-}
-
 function dayTypeClass(value) {
   return `ot-day-${normalizeClassKey(value || 'unknown')}`
 }
 
 function timingModeClass(value) {
   return `ot-timing-${normalizeClassKey(value || 'unknown')}`
+}
+
+function approvalDisplay(row) {
+  return row?.approvalDisplay || {
+    type: row?.approvalDisplayType || row?.status || 'UNKNOWN',
+    label: row?.approvalDisplayLabel || row?.status || '-',
+    subLabel: row?.approvalDisplaySubLabel || '',
+    severity: row?.approvalDisplaySeverity || statusSeverity(row?.status),
+  }
+}
+
+function approvalDisplayClass(row) {
+  return `ot-approval-${normalizeClassKey(approvalDisplay(row).type || 'unknown')}`
+}
+
+function approvalDisplaySeverity(row) {
+  const severity = approvalDisplay(row).severity
+
+  if (severity) return severity
+
+  const type = upper(approvalDisplay(row).type)
+
+  if (type === 'APPROVED') return 'success'
+  if (type === 'REJECTED' || type === 'REQUESTER_DISAGREED') return 'danger'
+  if (type === 'WAITING' || type === 'REQUESTER_CONFIRMATION') return 'warning'
+  if (type === 'CANCELLED') return 'secondary'
+
+  return 'secondary'
 }
 
 function getTimingMode(row) {
@@ -344,47 +359,6 @@ function currentStepLabel(row) {
   return `Step ${current} / ${total || 0}`
 }
 
-function normalizeApprovalStatus(value) {
-  const normalized = upper(value)
-
-  if (!normalized) return ''
-  if (normalized === 'APPROVE') return 'APPROVED'
-  if (normalized === 'REJECT') return 'REJECTED'
-  if (normalized === 'WAITING_APPROVAL') return 'WAITING'
-
-  return normalized
-}
-
-function myApprovalStatus(row) {
-  return normalizeApprovalStatus(row?.myApprovalStatus || '')
-}
-
-function myApprovalStatusLabel(row) {
-  const status = myApprovalStatus(row)
-
-  if (status === 'APPROVED') return 'You approved'
-  if (status === 'REJECTED') return 'You rejected'
-  if (status === 'PENDING' && row?.isMyTurn) return 'Your turn'
-  if (status === 'PENDING') return 'Waiting for you'
-  if (status === 'WAITING') return 'Waiting step'
-
-  return ''
-}
-
-function myApprovalStatusSeverity(row) {
-  const status = myApprovalStatus(row)
-
-  if (status === 'APPROVED') return 'success'
-  if (status === 'REJECTED') return 'danger'
-  if (status === 'PENDING' && row?.isMyTurn) return 'warning'
-
-  return 'secondary'
-}
-
-function showMyApprovalTag(row) {
-  return Boolean(myApprovalStatus(row) && !canDecide(row))
-}
-
 function canDecide(row) {
   return row?.canDecide === true
 }
@@ -480,11 +454,7 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
     const payload = normalizePayload(res)
     const items = normalizeItems(payload)
-    const total = Number(
-      payload?.pagination?.total ||
-        payload?.pagination?.totalRecords ||
-        0,
-    )
+    const total = Number(payload?.pagination?.total || payload?.pagination?.totalRecords || 0)
 
     totalRecords.value = total
 
@@ -664,10 +634,7 @@ async function submitDecision() {
 
   if (!row?._id && !row?.id) return
 
-  if (
-    decisionDialog.action === 'REJECT' &&
-    !String(decisionDialog.remark || '').trim()
-  ) {
+  if (decisionDialog.action === 'REJECT' && !String(decisionDialog.remark || '').trim()) {
     toast.add({
       severity: 'warn',
       summary: 'Validation',
@@ -677,10 +644,7 @@ async function submitDecision() {
     return
   }
 
-  if (
-    decisionDialog.action === 'APPROVE' &&
-    !decisionDialog.selectedApprovedEmployeeIds.length
-  ) {
+  if (decisionDialog.action === 'APPROVE' && !decisionDialog.selectedApprovedEmployeeIds.length) {
     toast.add({
       severity: 'warn',
       summary: 'Validation',
@@ -741,6 +705,12 @@ onBeforeUnmount(() => {
 <template>
   <div class="flex flex-col gap-4">
     <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+      <div>
+        <div class="text-sm font-semibold text-[color:var(--ot-text)]">
+          My OT Approval Requests
+        </div>
+      </div>
+
       <div class="flex flex-wrap items-center gap-2">
         <Button
           label="Export Excel"
@@ -757,19 +727,19 @@ onBeforeUnmount(() => {
     <div class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]">
       <div class="border-b border-[color:var(--ot-border)] px-3 py-3">
         <div class="flex flex-col gap-2 xl:flex-row xl:items-center">
-          <IconField class="w-full xl:w-[320px] xl:shrink-0">
+          <IconField class="w-full xl:w-[220px] xl:shrink-0">
             <InputIcon class="pi pi-search" />
 
             <InputText
               v-model="filters.search"
-              placeholder="Search request no, requester, employee, shift, option, reason"
+              placeholder="Search"
               class="w-full"
               size="small"
               @input="onSearchInput"
             />
           </IconField>
 
-          <div class="w-full xl:w-[180px] xl:shrink-0">
+          <div class="w-full xl:w-[190px] xl:shrink-0">
             <Select
               v-model="filters.status"
               :options="statusOptions"
@@ -795,11 +765,12 @@ onBeforeUnmount(() => {
             />
           </div>
 
-          <div class="w-full xl:w-[190px] xl:shrink-0">
+          <div class="w-full xl:w-[180px] xl:shrink-0">
             <DatePicker
               v-model="filters.otDateFrom"
               dateFormat="yy-mm-dd"
               showIcon
+              showButtonBar
               class="w-full"
               inputClass="w-full"
               placeholder="OT Date From"
@@ -808,11 +779,12 @@ onBeforeUnmount(() => {
             />
           </div>
 
-          <div class="w-full xl:w-[190px] xl:shrink-0">
+          <div class="w-full xl:w-[180px] xl:shrink-0">
             <DatePicker
               v-model="filters.otDateTo"
               dateFormat="yy-mm-dd"
               showIcon
+              showButtonBar
               class="w-full"
               inputClass="w-full"
               placeholder="OT Date To"
@@ -846,7 +818,7 @@ onBeforeUnmount(() => {
         scrollHeight="500px"
         :sortField="filters.sortField"
         :sortOrder="filters.sortOrder"
-        tableStyle="min-width: 116rem"
+        tableStyle="min-width: 112rem"
         class="ot-approval-table"
         :virtualScrollerOptions="useVirtualScroll ? {
           lazy: true,
@@ -864,7 +836,7 @@ onBeforeUnmount(() => {
             v-if="bootstrapped"
             class="py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
           >
-            No OT approval records found.
+            No OT approval requests found.
           </div>
         </template>
 
@@ -902,8 +874,45 @@ onBeforeUnmount(() => {
         </Column>
 
         <Column
-          header="Requested"
-          style="min-width: 8rem"
+          field="status"
+          header="Approval Status"
+          sortable
+          style="min-width: 22rem"
+        >
+          <template #body="{ data }">
+            <div
+              v-if="data"
+              class="approval-status-cell"
+            >
+              <div class="flex flex-wrap items-center gap-1.5">
+                <Tag
+                  :value="data.status || '-'"
+                  :severity="statusSeverity(data.status)"
+                  class="ot-status-tag"
+                  :class="statusClass(data.status)"
+                />
+
+                <Tag
+                  :value="approvalDisplay(data).label"
+                  :severity="approvalDisplaySeverity(data)"
+                  class="ot-status-tag approval-display-tag"
+                  :class="approvalDisplayClass(data)"
+                />
+              </div>
+
+              <div
+                v-if="approvalDisplay(data).subLabel"
+                class="approval-sub-label"
+              >
+                {{ approvalDisplay(data).subLabel }}
+              </div>
+            </div>
+          </template>
+        </Column>
+
+        <Column
+          header="Requested Staff"
+          style="min-width: 9rem"
         >
           <template #body="{ data }">
             <Tag
@@ -917,7 +926,7 @@ onBeforeUnmount(() => {
 
         <Column
           header="Current Approved"
-          style="min-width: 9rem"
+          style="min-width: 10rem"
         >
           <template #body="{ data }">
             <Tag
@@ -1020,35 +1029,6 @@ onBeforeUnmount(() => {
         </Column>
 
         <Column
-          field="status"
-          header="Status"
-          sortable
-          style="min-width: 16rem"
-        >
-          <template #body="{ data }">
-            <div
-              v-if="data"
-              class="flex flex-nowrap items-center gap-1.5"
-            >
-              <Tag
-                :value="data.status || '-'"
-                :severity="statusSeverity(data.status)"
-                class="ot-status-tag"
-                :class="statusClass(data.status)"
-              />
-
-              <Tag
-                v-if="data.requesterConfirmationStatus && data.requesterConfirmationStatus !== 'NOT_REQUIRED'"
-                :value="`Requester: ${data.requesterConfirmationStatus}`"
-                severity="contrast"
-                class="ot-status-tag"
-                :class="requesterStatusClass(data.requesterConfirmationStatus)"
-              />
-            </div>
-          </template>
-        </Column>
-
-        <Column
           header="Current Step"
           style="min-width: 10rem"
         >
@@ -1085,14 +1065,6 @@ onBeforeUnmount(() => {
                 outlined
                 class="action-btn"
                 @click="openView(data)"
-              />
-
-              <Tag
-                v-if="showMyApprovalTag(data)"
-                :value="myApprovalStatusLabel(data)"
-                :severity="myApprovalStatusSeverity(data)"
-                class="ot-status-tag action-state-tag"
-                :class="statusClass(myApprovalStatus(data))"
               />
 
               <Button
@@ -1352,6 +1324,29 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
+.approval-status-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.approval-sub-label {
+  color: var(--ot-text-muted, #64748b);
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+:deep(.p-tag.approval-display-tag) {
+  max-width: 15rem;
+}
+
+:deep(.p-tag.approval-display-tag .p-tag-label) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 :deep(.action-btn.p-button) {
   min-height: 1.9rem !important;
   padding: 0.26rem 0.48rem !important;
@@ -1367,58 +1362,37 @@ onBeforeUnmount(() => {
   font-size: 0.72rem !important;
 }
 
-:deep(.action-state-tag) {
-  min-height: 1.75rem !important;
-  padding-inline: 0.55rem !important;
-}
-
 /* Status colors */
 :deep(.p-tag.ot-status-pending),
-:deep(.p-tag.ot-status-pending-requester-confirmation) {
+:deep(.p-tag.ot-status-pending-requester-confirmation),
+:deep(.p-tag.ot-approval-waiting),
+:deep(.p-tag.ot-approval-requester-confirmation) {
   background: #fef3c7 !important;
   color: #92400e !important;
   border-color: #f59e0b !important;
 }
 
-:deep(.p-tag.ot-status-approved) {
+:deep(.p-tag.ot-status-approved),
+:deep(.p-tag.ot-approval-approved) {
   background: #dcfce7 !important;
   color: #166534 !important;
   border-color: #22c55e !important;
 }
 
 :deep(.p-tag.ot-status-rejected),
-:deep(.p-tag.ot-status-requester-disagreed) {
+:deep(.p-tag.ot-status-requester-disagreed),
+:deep(.p-tag.ot-approval-rejected),
+:deep(.p-tag.ot-approval-requester-disagreed) {
   background: #fee2e2 !important;
   color: #991b1b !important;
   border-color: #ef4444 !important;
 }
 
-:deep(.p-tag.ot-status-cancelled) {
+:deep(.p-tag.ot-status-cancelled),
+:deep(.p-tag.ot-approval-cancelled) {
   background: #e5e7eb !important;
   color: #374151 !important;
   border-color: #9ca3af !important;
-}
-
-/* Requester confirmation colors */
-:deep(.p-tag.ot-requester-agreed),
-:deep(.p-tag.ot-requester-confirmed) {
-  background: #dcfce7 !important;
-  color: #166534 !important;
-  border-color: #22c55e !important;
-}
-
-:deep(.p-tag.ot-requester-disagreed),
-:deep(.p-tag.ot-requester-rejected) {
-  background: #fee2e2 !important;
-  color: #991b1b !important;
-  border-color: #ef4444 !important;
-}
-
-:deep(.p-tag.ot-requester-pending),
-:deep(.p-tag.ot-requester-pending-confirmation) {
-  background: #fef3c7 !important;
-  color: #92400e !important;
-  border-color: #f59e0b !important;
 }
 
 /* Day type colors */
@@ -1485,17 +1459,18 @@ onBeforeUnmount(() => {
   border-color: #38bdf8 !important;
 }
 
-/* Dark mode status colors */
+/* Dark mode */
 :global(.dark) :deep(.p-tag.ot-status-pending),
-:global(.dark) :deep(.p-tag.ot-status-pending-requester-confirmation) {
+:global(.dark) :deep(.p-tag.ot-status-pending-requester-confirmation),
+:global(.dark) :deep(.p-tag.ot-approval-waiting),
+:global(.dark) :deep(.p-tag.ot-approval-requester-confirmation) {
   background: rgba(245, 158, 11, 0.2) !important;
   color: #fbbf24 !important;
   border-color: rgba(245, 158, 11, 0.45) !important;
 }
 
 :global(.dark) :deep(.p-tag.ot-status-approved),
-:global(.dark) :deep(.p-tag.ot-requester-agreed),
-:global(.dark) :deep(.p-tag.ot-requester-confirmed) {
+:global(.dark) :deep(.p-tag.ot-approval-approved) {
   background: rgba(34, 197, 94, 0.18) !important;
   color: #86efac !important;
   border-color: rgba(34, 197, 94, 0.45) !important;
@@ -1503,27 +1478,20 @@ onBeforeUnmount(() => {
 
 :global(.dark) :deep(.p-tag.ot-status-rejected),
 :global(.dark) :deep(.p-tag.ot-status-requester-disagreed),
-:global(.dark) :deep(.p-tag.ot-requester-disagreed),
-:global(.dark) :deep(.p-tag.ot-requester-rejected) {
+:global(.dark) :deep(.p-tag.ot-approval-rejected),
+:global(.dark) :deep(.p-tag.ot-approval-requester-disagreed) {
   background: rgba(239, 68, 68, 0.18) !important;
   color: #fca5a5 !important;
   border-color: rgba(239, 68, 68, 0.45) !important;
 }
 
-:global(.dark) :deep(.p-tag.ot-status-cancelled) {
+:global(.dark) :deep(.p-tag.ot-status-cancelled),
+:global(.dark) :deep(.p-tag.ot-approval-cancelled) {
   background: rgba(148, 163, 184, 0.18) !important;
   color: #cbd5e1 !important;
   border-color: rgba(148, 163, 184, 0.45) !important;
 }
 
-:global(.dark) :deep(.p-tag.ot-requester-pending),
-:global(.dark) :deep(.p-tag.ot-requester-pending-confirmation) {
-  background: rgba(245, 158, 11, 0.2) !important;
-  color: #fbbf24 !important;
-  border-color: rgba(245, 158, 11, 0.45) !important;
-}
-
-/* Dark mode day type colors */
 :global(.dark) :deep(.p-tag.ot-day-working-day) {
   background: rgba(34, 197, 94, 0.18) !important;
   color: #86efac !important;
@@ -1540,37 +1508,6 @@ onBeforeUnmount(() => {
   background: rgba(239, 68, 68, 0.18) !important;
   color: #fca5a5 !important;
   border-color: rgba(239, 68, 68, 0.45) !important;
-}
-
-/* Dark mode mode/timing/count colors */
-:global(.dark) :deep(.p-tag.ot-mode-shift-option) {
-  background: rgba(59, 130, 246, 0.18) !important;
-  color: #93c5fd !important;
-  border-color: rgba(59, 130, 246, 0.45) !important;
-}
-
-:global(.dark) :deep(.p-tag.ot-mode-legacy-manual) {
-  background: rgba(168, 85, 247, 0.18) !important;
-  color: #d8b4fe !important;
-  border-color: rgba(168, 85, 247, 0.45) !important;
-}
-
-:global(.dark) :deep(.p-tag.ot-timing-fixed-time) {
-  background: rgba(245, 158, 11, 0.2) !important;
-  color: #fbbf24 !important;
-  border-color: rgba(245, 158, 11, 0.45) !important;
-}
-
-:global(.dark) :deep(.p-tag.ot-timing-after-shift-end) {
-  background: rgba(14, 165, 233, 0.18) !important;
-  color: #7dd3fc !important;
-  border-color: rgba(14, 165, 233, 0.45) !important;
-}
-
-:global(.dark) :deep(.p-tag.ot-timing-unknown) {
-  background: rgba(148, 163, 184, 0.18) !important;
-  color: #cbd5e1 !important;
-  border-color: rgba(148, 163, 184, 0.45) !important;
 }
 
 :global(.dark) :deep(.p-tag.ot-count-requested) {

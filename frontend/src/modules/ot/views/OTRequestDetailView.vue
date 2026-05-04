@@ -262,14 +262,8 @@ function getRequesterConfirmationSeverity(status) {
 }
 
 function approverLabel(row) {
-  const code = String(row?.approverCode || '').trim()
   const name = String(row?.approverName || '').trim()
-
-  if (code && name) return `${code} - ${name}`
-  if (code) return code
-  if (name) return name
-
-  return '-'
+  return name || '-'
 }
 
 function safeNumber(value) {
@@ -986,9 +980,22 @@ onMounted(() => {
 
 <style scoped>
 .ot-page {
+  --ot-card: var(--p-content-background, var(--surface-card, #ffffff));
+  --ot-soft-bg: var(--p-surface-50, #f8fafc);
+  --ot-table-head: var(--p-surface-50, #f8fafc);
+  --ot-row-hover: var(--p-surface-100, #f1f5f9);
+  --ot-line: var(--p-content-border-color, var(--surface-border, #e2e8f0));
+  --ot-text-main: var(--p-text-color, #0f172a);
+  --ot-text-soft: var(--p-text-muted-color, #64748b);
+  --ot-shadow: 0 10px 28px rgba(15, 23, 42, 0.055);
+
   display: flex;
   flex-direction: column;
   gap: 1rem;
+}
+
+.ot-page strong {
+  font-weight: 500;
 }
 
 .ot-page-header,
@@ -1024,16 +1031,9 @@ onMounted(() => {
 .ot-title-line h1 {
   margin: 0;
   color: var(--ot-text-main);
-  font-size: 1.15rem;
-  font-weight: 700;
+  font-size: 1.08rem;
+  font-weight: 600;
   line-height: 1.3;
-}
-
-.ot-subtitle {
-  margin: 0.18rem 0 0;
-  color: var(--ot-text-soft);
-  font-size: 0.82rem;
-  line-height: 1.45;
 }
 
 .ot-request-badge {
@@ -1044,8 +1044,8 @@ onMounted(() => {
   color: var(--ot-text-main);
   border-radius: 999px;
   padding: 0.18rem 0.55rem;
-  font-size: 0.73rem;
-  font-weight: 700;
+  font-size: 0.72rem;
+  font-weight: 500;
 }
 
 .ot-tag-row {
@@ -1068,9 +1068,9 @@ onMounted(() => {
 }
 
 .ot-confirm-section {
-  border-color: rgba(245, 158, 11, 0.45);
+  border-color: rgba(245, 158, 11, 0.38);
   background:
-    linear-gradient(135deg, rgba(245, 158, 11, 0.08), transparent 50%),
+    linear-gradient(135deg, rgba(245, 158, 11, 0.06), transparent 50%),
     var(--ot-card);
 }
 
@@ -1093,14 +1093,14 @@ onMounted(() => {
 .ot-section-header h2 {
   margin: 0;
   color: var(--ot-text-main);
-  font-size: 0.98rem;
-  font-weight: 700;
+  font-size: 0.95rem;
+  font-weight: 600;
 }
 
 .ot-section-header p {
   margin: 0.18rem 0 0;
   color: var(--ot-text-soft);
-  font-size: 0.78rem;
+  font-size: 0.77rem;
   line-height: 1.45;
 }
 
@@ -1135,9 +1135,9 @@ onMounted(() => {
 .ot-field-block label {
   display: block;
   color: var(--ot-text-soft);
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.045em;
+  font-size: 0.69rem;
+  font-weight: 500;
+  letter-spacing: 0.035em;
   text-transform: uppercase;
 }
 
@@ -1145,8 +1145,8 @@ onMounted(() => {
   display: block;
   margin-top: 0.28rem;
   color: var(--ot-text-main);
-  font-size: 1rem;
-  font-weight: 800;
+  font-size: 0.95rem;
+  font-weight: 500;
   line-height: 1.25;
   word-break: break-word;
 }
@@ -1188,8 +1188,8 @@ onMounted(() => {
   display: block;
   margin-top: 0.25rem;
   color: var(--ot-text-main);
-  font-size: 0.88rem;
-  font-weight: 700;
+  font-size: 0.86rem;
+  font-weight: 500;
   line-height: 1.35;
   word-break: break-word;
 }
@@ -1213,8 +1213,8 @@ onMounted(() => {
 
 .ot-info-line strong {
   color: var(--ot-text-main);
-  font-size: 0.86rem;
-  font-weight: 700;
+  font-size: 0.84rem;
+  font-weight: 500;
   text-align: right;
   word-break: break-word;
 }
@@ -1230,7 +1230,8 @@ onMounted(() => {
 .ot-reason-box p {
   margin: 0.3rem 0 0;
   color: var(--ot-text-main);
-  font-size: 0.88rem;
+  font-size: 0.86rem;
+  font-weight: 400;
   line-height: 1.55;
   white-space: pre-wrap;
 }
@@ -1279,8 +1280,8 @@ onMounted(() => {
 
 .employee-filter-count {
   color: var(--ot-text-soft);
-  font-size: 0.76rem;
-  font-weight: 600;
+  font-size: 0.75rem;
+  font-weight: 500;
   margin-left: auto;
 }
 
@@ -1293,15 +1294,16 @@ onMounted(() => {
 
 .ot-person-cell strong {
   color: var(--ot-text-main);
-  font-size: 0.83rem;
-  font-weight: 700;
+  font-size: 0.82rem;
+  font-weight: 500;
   line-height: 1.35;
 }
 
 .ot-person-cell small,
 .ot-muted-text {
   color: var(--ot-text-soft);
-  font-size: 0.75rem;
+  font-size: 0.74rem;
+  font-weight: 400;
 }
 
 .ot-table-empty,
@@ -1321,10 +1323,10 @@ onMounted(() => {
 
 :deep(.ot-soft-tag.p-tag) {
   border-radius: 999px;
-  font-size: 0.7rem;
-  font-weight: 700;
+  font-size: 0.69rem;
+  font-weight: 500;
   line-height: 1;
-  padding: 0.2rem 0.55rem;
+  padding: 0.18rem 0.5rem;
 }
 
 :deep(.ot-compact-table) {
@@ -1337,9 +1339,9 @@ onMounted(() => {
   background: var(--ot-table-head) !important;
   color: var(--ot-text-soft) !important;
   padding: 0.62rem 0.75rem !important;
-  font-size: 0.74rem !important;
-  font-weight: 800 !important;
-  letter-spacing: 0.035em;
+  font-size: 0.73rem !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.025em;
   text-transform: uppercase;
   white-space: nowrap;
   border-color: var(--ot-line) !important;
@@ -1370,17 +1372,6 @@ onMounted(() => {
   border-radius: 0.75rem;
 }
 
-.ot-page {
-  --ot-card: var(--p-content-background, var(--surface-card, #ffffff));
-  --ot-soft-bg: var(--p-surface-50, #f8fafc);
-  --ot-table-head: var(--p-surface-50, #f8fafc);
-  --ot-row-hover: var(--p-surface-100, #f1f5f9);
-  --ot-line: var(--p-content-border-color, var(--surface-border, #e2e8f0));
-  --ot-text-main: var(--p-text-color, #0f172a);
-  --ot-text-soft: var(--p-text-muted-color, #64748b);
-  --ot-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);
-}
-
 :global(.dark) .ot-page {
   --ot-card: var(--p-content-background, #111827);
   --ot-soft-bg: rgba(148, 163, 184, 0.08);
@@ -1389,7 +1380,7 @@ onMounted(() => {
   --ot-line: rgba(148, 163, 184, 0.22);
   --ot-text-main: #e5e7eb;
   --ot-text-soft: #94a3b8;
-  --ot-shadow: 0 14px 30px rgba(0, 0, 0, 0.18);
+  --ot-shadow: 0 14px 30px rgba(0, 0, 0, 0.16);
 }
 
 @media (max-width: 1280px) {

@@ -479,6 +479,7 @@ function buildApprovalInboxFilter(query, authUser) {
   const filter = {}
 
   const normalizedStatus = s(query.status).toUpperCase()
+
   if (normalizedStatus) {
     filter.status = normalizedStatus
   }
@@ -492,15 +493,12 @@ function buildApprovalInboxFilter(query, authUser) {
       throw err
     }
 
-    if (normalizedStatus === 'PENDING') {
-      filter.currentApproverEmployeeId = approverEmployeeId
-      filter.status = 'PENDING'
-    } else {
-      filter.$or = [
-        { currentApproverEmployeeId: approverEmployeeId },
-        { 'approvalSteps.approverEmployeeId': approverEmployeeId },
-      ]
-    }
+    // Show all requests related to this approver.
+    // Button/action is still controlled by currentApproverEmployeeId + canDecide.
+    filter.$or = [
+      { currentApproverEmployeeId: approverEmployeeId },
+      { 'approvalSteps.approverEmployeeId': approverEmployeeId },
+    ]
   }
 
   if (s(query.dayType)) {
@@ -1161,7 +1159,7 @@ async function getUpwardApproverChain(employeeId, options = {}) {
 
 async function resolveApprovalFlow(requesterEmployeeId, approverEmployeeIds = []) {
   const requesterId = s(requesterEmployeeId)
-  const selectedIds = approverEmployeeIds.map((id) => s(id))
+  const selectedIds = normalizeIdArray(approverEmployeeIds)
 
   if (!requesterId || !mongoose.isValidObjectId(requesterId)) {
     const err = new Error('Requester employee profile is required')
@@ -1188,44 +1186,44 @@ async function resolveApprovalFlow(requesterEmployeeId, approverEmployeeIds = []
   }
 
   const upwardChain = await getUpwardApproverChain(requesterEmployeeId)
-  const orderIndexById = new Map(upwardChain.map((employee, index) => [String(employee._id), index]))
 
-  let previousOrder = -1
-  const steps = []
+  const orderIndexById = new Map(
+    upwardChain.map((employee, index) => [String(employee._id), index]),
+  )
 
-  for (let i = 0; i < selectedIds.length; i += 1) {
-    const approverId = selectedIds[i]
-    const order = orderIndexById.get(approverId)
+  const invalidApproverId = selectedIds.find((approverId) => {
+    return orderIndexById.get(approverId) === undefined
+  })
 
-    if (order === undefined) {
-      const err = new Error(
-        'Selected approver must be from the requester upward organization chain',
-      )
-      err.status = 400
-      throw err
-    }
+  if (invalidApproverId) {
+    const err = new Error(
+      'Selected approver must be from the requester upward organization chain',
+    )
+    err.status = 400
+    throw err
+  }
 
-    if (order <= previousOrder) {
-      const err = new Error('Approvers must follow organization hierarchy order')
-      err.status = 400
-      throw err
-    }
+  // Important:
+  // Backend sorts approvers by org chart order.
+  // Frontend selected order does not matter.
+  const sortedSelectedIds = [...selectedIds].sort((a, b) => {
+    return orderIndexById.get(a) - orderIndexById.get(b)
+  })
 
-    previousOrder = order
+  const steps = sortedSelectedIds.map((approverId, index) => {
+    const approver = upwardChain[orderIndexById.get(approverId)]
 
-    const approver = upwardChain[order]
-
-    steps.push({
-      stepNo: i + 1,
+    return {
+      stepNo: index + 1,
       approverEmployeeId: approver._id,
       approverCode: s(approver.employeeNo || approver.employeeCode || approver.code),
       approverName: s(approver.displayName || approver.employeeName || approver.name),
-      status: i === 0 ? 'PENDING' : 'WAITING',
+      status: index === 0 ? 'PENDING' : 'WAITING',
       actedAt: null,
       actedBy: null,
       remark: '',
-    })
-  }
+    }
+  })
 
   return {
     approvalSteps: steps,
@@ -1378,6 +1376,7 @@ function mapListItem(doc, authUser) {
   const approvalSteps = Array.isArray(doc.approvalSteps) ? doc.approvalSteps : []
   const effectiveEmployees = effectiveEmployeesForDoc(doc)
   const approvalContext = buildApprovalActionContext(doc, authUser)
+  const approvalDisplay = buildApprovalDisplay(doc)
 
   return {
     id: String(doc._id),
@@ -1461,6 +1460,16 @@ function mapListItem(doc, authUser) {
     approvalStepCount: approvalSteps.length,
     approvalSteps: approvalSteps.map(mapApprovalStepOutput),
 
+    approvalDisplay,
+    approvalDisplayType: approvalDisplay.type,
+    approvalDisplayLabel: approvalDisplay.label,
+    approvalDisplaySubLabel: approvalDisplay.subLabel,
+    approvalDisplaySeverity: approvalDisplay.severity,
+    approvalDisplayStepNo: approvalDisplay.stepNo,
+    approvalDisplayApproverName: approvalDisplay.approverName,
+    approvalDisplayApproverCode: approvalDisplay.approverCode,
+    approvalDisplayActedAt: approvalDisplay.actedAt,
+
     currentApprovalStepStatus: approvalContext.currentApprovalStepStatus,
     currentApproverName: approvalContext.currentApproverName,
     currentApproverCode: approvalContext.currentApproverCode,
@@ -1483,6 +1492,146 @@ function mapListItem(doc, authUser) {
   }
 }
 
+function approverDisplayName(step = {}) {
+  const name = s(step?.approverName)
+
+  if (name) return name
+
+  return 'Unknown approver'
+}
+
+function sortApprovalSteps(steps = []) {
+  return [...(Array.isArray(steps) ? steps : [])].sort((a, b) => {
+    return Number(a?.stepNo || 0) - Number(b?.stepNo || 0)
+  })
+}
+
+function findLastStepByStatus(steps = [], status) {
+  const normalizedStatus = s(status).toUpperCase()
+  const sorted = sortApprovalSteps(steps)
+
+  return (
+    [...sorted]
+      .reverse()
+      .find((step) => s(step?.status).toUpperCase() === normalizedStatus) || null
+  )
+}
+
+function buildApprovalDisplay(doc) {
+  const status = s(doc?.status).toUpperCase()
+  const steps = sortApprovalSteps(doc?.approvalSteps)
+  const totalSteps = steps.length
+
+  const currentStep =
+    findCurrentApprovalStep(doc) ||
+    steps.find((step) => s(step?.status).toUpperCase() === 'PENDING') ||
+    null
+
+  const rejectedStep = findLastStepByStatus(steps, 'REJECTED')
+  const lastApprovedStep = findLastStepByStatus(steps, 'APPROVED')
+
+  if (status === 'APPROVED') {
+    return {
+      type: 'APPROVED',
+      severity: 'success',
+      label: lastApprovedStep
+        ? `Approved by ${approverDisplayName(lastApprovedStep)}`
+        : 'Approved',
+      subLabel: lastApprovedStep
+        ? `Final step ${Number(lastApprovedStep.stepNo || totalSteps)} / ${totalSteps}`
+        : '',
+      stepNo: lastApprovedStep ? Number(lastApprovedStep.stepNo || 0) : null,
+      approverName: s(lastApprovedStep?.approverName),
+      approverCode: s(lastApprovedStep?.approverCode),
+      actedAt: lastApprovedStep?.actedAt || null,
+    }
+  }
+
+  if (status === 'REJECTED') {
+    return {
+      type: 'REJECTED',
+      severity: 'danger',
+      label: rejectedStep
+        ? `Rejected by ${approverDisplayName(rejectedStep)}`
+        : 'Rejected',
+      subLabel: rejectedStep
+        ? `Step ${Number(rejectedStep.stepNo || 0)} / ${totalSteps}`
+        : '',
+      stepNo: rejectedStep ? Number(rejectedStep.stepNo || 0) : null,
+      approverName: s(rejectedStep?.approverName),
+      approverCode: s(rejectedStep?.approverCode),
+      actedAt: rejectedStep?.actedAt || null,
+    }
+  }
+
+  if (status === 'PENDING_REQUESTER_CONFIRMATION') {
+    return {
+      type: 'REQUESTER_CONFIRMATION',
+      severity: 'warning',
+      label: `Waiting for requester ${s(doc?.requesterName) || ''} to confirm`,
+      subLabel: 'Approver adjusted employee list',
+      stepNo: Number(doc?.currentApprovalStep || 0) || null,
+      approverName: '',
+      approverCode: '',
+      actedAt: null,
+    }
+  }
+
+  if (status === 'REQUESTER_DISAGREED') {
+    return {
+      type: 'REQUESTER_DISAGREED',
+      severity: 'danger',
+      label: `Requester ${s(doc?.requesterName) || ''} disagreed`,
+      subLabel: 'Adjusted employee list was not accepted',
+      stepNo: Number(doc?.currentApprovalStep || 0) || null,
+      approverName: '',
+      approverCode: '',
+      actedAt: doc?.requesterConfirmedAt || null,
+    }
+  }
+
+  if (status === 'CANCELLED') {
+    return {
+      type: 'CANCELLED',
+      severity: 'secondary',
+      label: 'Cancelled',
+      subLabel: '',
+      stepNo: null,
+      approverName: '',
+      approverCode: '',
+      actedAt: null,
+    }
+  }
+
+  if (status === 'PENDING') {
+    return {
+      type: 'WAITING',
+      severity: 'warning',
+      label: currentStep
+        ? `Waiting for ${approverDisplayName(currentStep)} to approve`
+        : 'Waiting for approval',
+      subLabel: currentStep
+        ? `Step ${Number(currentStep.stepNo || 0)} / ${totalSteps}`
+        : '',
+      stepNo: currentStep ? Number(currentStep.stepNo || 0) : null,
+      approverName: s(currentStep?.approverName),
+      approverCode: s(currentStep?.approverCode),
+      actedAt: null,
+    }
+  }
+
+  return {
+    type: status || 'UNKNOWN',
+    severity: 'secondary',
+    label: status || '-',
+    subLabel: '',
+    stepNo: null,
+    approverName: '',
+    approverCode: '',
+    actedAt: null,
+  }
+}
+
 function mapDetail(doc, authUser) {
   const requestedEmployees = Array.isArray(doc.requestedEmployees) ? doc.requestedEmployees : []
   const approvedEmployees = Array.isArray(doc.approvedEmployees) ? doc.approvedEmployees : []
@@ -1490,6 +1639,7 @@ function mapDetail(doc, authUser) {
     ? doc.proposedApprovedEmployees
     : []
   const effectiveEmployees = effectiveEmployeesForDoc(doc)
+  const approvalDisplay = buildApprovalDisplay(doc)
 
   return {
     id: String(doc._id),
@@ -1561,6 +1711,16 @@ function mapDetail(doc, authUser) {
           remark: s(step.remark),
         }))
       : [],
+
+    approvalDisplay,
+    approvalDisplayType: approvalDisplay.type,
+    approvalDisplayLabel: approvalDisplay.label,
+    approvalDisplaySubLabel: approvalDisplay.subLabel,
+    approvalDisplaySeverity: approvalDisplay.severity,
+    approvalDisplayStepNo: approvalDisplay.stepNo,
+    approvalDisplayApproverName: approvalDisplay.approverName,
+    approvalDisplayApproverCode: approvalDisplay.approverCode,
+    approvalDisplayActedAt: approvalDisplay.actedAt,
 
     currentApprovalStep: Number(doc.currentApprovalStep || 1),
     currentApproverEmployeeId: doc.currentApproverEmployeeId
