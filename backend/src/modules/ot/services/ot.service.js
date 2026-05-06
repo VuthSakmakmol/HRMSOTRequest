@@ -11,6 +11,8 @@ const Employee = require('../../org/models/Employee')
 const Department = require('../../org/models/Department')
 const Position = require('../../org/models/Position')
 
+const employeeScopeService = require('../../org/services/employeeScope.service')
+
 const { getDayType } = require('../utils/dayClassifier')
 const Holiday = require('../../calendar/models/Holiday')
 
@@ -742,6 +744,11 @@ async function resolveEmployeeSnapshot(employeeId) {
     position,
     shift,
   }
+}
+
+
+async function assertSelectedEmployeesInsideRequesterScope(authUser, employeeIds = []) {
+  await employeeScopeService.assertEmployeesInsideManagedScope(authUser, employeeIds)
 }
 
 async function resolveEmployeesSnapshotsWithContext(employeeIds = []) {
@@ -1774,6 +1781,8 @@ async function create(payload, authUser, options = {}) {
     throw err
   }
 
+  await assertSelectedEmployeesInsideRequesterScope(authUser, uniqueEmployeeIds)
+
   await ensureNoDuplicateOTEmployeesForDate({
     otDate: payload.otDate,
     employeeIds: uniqueEmployeeIds,
@@ -1903,6 +1912,8 @@ async function update(id, payload, authUser, options = {}) {
     err.status = 400
     throw err
   }
+
+  await assertSelectedEmployeesInsideRequesterScope(authUser, uniqueEmployeeIds)
 
   await ensureNoDuplicateOTEmployeesForDate({
     otDate: payload.otDate,

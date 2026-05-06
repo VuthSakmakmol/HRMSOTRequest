@@ -64,6 +64,14 @@ const employeeSchema = new Schema(
       index: true,
     },
 
+    lineManagerIds: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: 'Employee',
+        index: true,
+      },
+    ],
+
     phone: {
       type: String,
       default: '',
@@ -116,6 +124,19 @@ employeeSchema.pre('validate', function preValidate(next) {
     return next(err)
   }
 
+  if (!Array.isArray(this.lineManagerIds)) {
+    this.lineManagerIds = []
+  }
+
+  this.lineManagerIds = [
+    ...new Set(
+      this.lineManagerIds
+        .map((item) => String(item || '').trim())
+        .filter(Boolean)
+        .filter((item) => !sameId(this._id, item)),
+    ),
+  ]
+
   next()
 })
 
@@ -146,6 +167,7 @@ employeeSchema.index({ departmentId: 1, lineId: 1, positionId: 1, isActive: 1 })
 employeeSchema.index({ lineId: 1, positionId: 1, isActive: 1 })
 employeeSchema.index({ shiftId: 1, isActive: 1 })
 employeeSchema.index({ reportsToEmployeeId: 1, isActive: 1 })
+employeeSchema.index({ lineManagerIds: 1, isActive: 1 })
 employeeSchema.index({ createdAt: -1 })
 
 module.exports = mongoose.model('Employee', employeeSchema)

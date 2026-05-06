@@ -11,6 +11,7 @@ const Shift = require('../../shift/models/Shift')
 const Account = require('../../auth/models/Account')
 const accountService = require('../../auth/services/account.service')
 const { importEmployeeRowSchema } = require('../validators/employee.validation')
+const employeeScopeService = require('./employeeScope.service')
 
 function s(v) {
   return String(v ?? '').trim()
@@ -103,6 +104,49 @@ function formatDateDDMMYYYY(value) {
   if (!isValidDateParts(year, month, day)) return ''
 
   return `${pad2(day)}/${pad2(month)}/${year}`
+}
+
+function normalizeObjectIdString(value) {
+  if (!value) return ''
+  return String(value?._id || value?.id || value || '').trim()
+}
+
+function idsAreSame(a, b) {
+  return normalizeObjectIdString(a) !== '' && normalizeObjectIdString(a) === normalizeObjectIdString(b)
+}
+
+function uniqueIdStrings(values = []) {
+  return [
+    ...new Set(
+      (Array.isArray(values) ? values : [])
+        .map((item) => normalizeObjectIdString(item))
+        .filter(Boolean),
+    ),
+  ]
+}
+
+function compareEmployeeSort(a, b) {
+  return `${a.employeeNo || ''} ${a.displayName || ''} ${a._id || ''}`.localeCompare(
+    `${b.employeeNo || ''} ${b.displayName || ''} ${b._id || ''}`,
+  )
+}
+
+function buildLineManagersSummary(lineManagers = []) {
+  const managers = Array.isArray(lineManagers) ? lineManagers : []
+
+  return managers
+    .filter(Boolean)
+    .map((manager) => ({
+      _id: String(manager._id || manager.id || ''),
+      id: String(manager._id || manager.id || ''),
+      employeeNo: manager.employeeNo || '',
+      displayName: manager.displayName || '',
+    }))
+    .filter((manager) => manager.id)
+}
+
+function getLineManagerIdsFromDoc(doc) {
+  return uniqueIdStrings(doc?.lineManagerIds || [])
 }
 
 function parseExcelSerialDate(value) {
@@ -399,6 +443,14 @@ function sanitize(doc, accountDoc = null) {
     reportsToEmployeeNo: doc.reportsToEmployeeId?.employeeNo || '',
     reportsToEmployeeName: doc.reportsToEmployeeId?.displayName || '',
 
+    lineManagerIds: getLineManagerIdsFromDoc(doc),
+    lineManagers: buildLineManagersSummary(doc.lineManagerIds),
+    lineManagerNames: buildLineManagersSummary(doc.lineManagerIds)
+      .map((manager) =>
+        [manager.employeeNo, manager.displayName].filter(Boolean).join(' - '),
+      )
+      .join(', '),
+
     phone: doc.phone || '',
     email: doc.email || '',
     joinDate: doc.joinDate || null,
@@ -437,11 +489,14 @@ function sanitizeOrgNode(doc) {
     ...buildShiftSummary(doc.shiftId),
 
     reportsToEmployeeId: doc.reportsToEmployeeId?._id
-      ? String(doc.reportsToEmployeeId._id)
-      : doc.reportsToEmployeeId
-        ? String(doc.reportsToEmployeeId)
-        : null,
-    reportsToEmployeeName: doc.reportsToEmployeeId?.displayName || '',
+          ? String(doc.reportsToEmployeeId._id)
+          : doc.reportsToEmployeeId
+            ? String(doc.reportsToEmployeeId)
+            : null,
+        reportsToEmployeeName: doc.reportsToEmployeeId?.displayName || '',
+
+        lineManagerIds: getLineManagerIdsFromDoc(doc),
+        lineManagers: buildLineManagersSummary(doc.lineManagerIds),
     isActive: !!doc.isActive,
   }
 }
@@ -715,101 +770,16 @@ async function createProvisionedAccount(employeeDoc) {
 }
 
 async function resolveCurrentUserEmployeeId(currentUser) {
-  const directEmployeeId =
-    currentUser?.employeeId ||
-    currentUser?.employee?._id ||
-    currentUser?.employee?.id ||
-    currentUser?.profile?.employeeId
-
-  if (directEmployeeId && mongoose.Types.ObjectId.isValid(String(directEmployeeId))) {
-    return String(directEmployeeId)
-  }
-
-  const accountId =
-    currentUser?.accountId ||
-    currentUser?.id ||
-    currentUser?._id ||
-    currentUser?.sub
-
-  if (accountId && mongoose.Types.ObjectId.isValid(String(accountId))) {
-    const account = await Account.findById(accountId, 'employeeId').lean()
-    if (account?.employeeId && mongoose.Types.ObjectId.isValid(String(account.employeeId))) {
-      return String(account.employeeId)
-    }
-  }
-
-  return null
+  return employeeScopeService.resolveCurrentUserEmployeeId(currentUser)
 }
 
 async function getScopedEmployeeIds(currentUser) {
-  const isRootAdmin = !!currentUser?.isRootAdmin
-
-  const canViewAll =
-    isRootAdmin ||
-    hasAnyPermission(currentUser, [
-      'EMPLOYEE_VIEW_ALL',
-      'ORG_EMPLOYEE_VIEW_ALL',
-      'ORG.EMPLOYEE_VIEW_ALL',
-      'ROOT_ADMIN',
-    ])
-
-  const baseEmployees = await Employee.find(
-    { isActive: true },
-    { _id: 1, reportsToEmployeeId: 1 },
-  ).lean()
-
-  if (canViewAll) {
-    return new Set(baseEmployees.map((x) => String(x._id)))
-  }
-
-  const myEmployeeId = await resolveCurrentUserEmployeeId(currentUser)
-  if (!myEmployeeId) return new Set()
-
-  const childrenMap = new Map()
-
-  for (const emp of baseEmployees) {
-    const managerId = emp.reportsToEmployeeId ? String(emp.reportsToEmployeeId) : ''
-
-    if (!childrenMap.has(managerId)) {
-      childrenMap.set(managerId, [])
-    }
-
-    childrenMap.get(managerId).push(String(emp._id))
-  }
-
-  const result = new Set([String(myEmployeeId)])
-  const queue = [...(childrenMap.get(String(myEmployeeId)) || [])]
-
-  while (queue.length) {
-    const currentId = queue.shift()
-
-    if (!currentId || result.has(currentId)) continue
-
-    result.add(currentId)
-
-    const children = childrenMap.get(currentId) || []
-
-    for (const childId of children) {
-      if (!result.has(childId)) {
-        queue.push(childId)
-      }
-    }
-  }
-
-  return result
+  return employeeScopeService.getScopedEmployeeIds(currentUser)
 }
 
-async function buildEmployeeScopeFilter(currentUser) {
-  const scopedIds = await getScopedEmployeeIds(currentUser)
-  if (!scopedIds.size) {
-    return { _id: { $in: [] } }
-  }
 
-  return {
-    _id: {
-      $in: Array.from(scopedIds).map((id) => new mongoose.Types.ObjectId(id)),
-    },
-  }
+async function buildEmployeeScopeFilter(currentUser) {
+  return employeeScopeService.buildEmployeeScopeFilter(currentUser)
 }
 
 function makeOrgTreeNode(emp, children = [], expanded = false, highlighted = false) {
@@ -1879,6 +1849,133 @@ async function getOrgChart(id) {
     focusEmployee: sanitizeOrgNode(focusDoc),
     upwardChain: upwardDocs.map(sanitizeOrgNode),
     directReports: directReportDocs.map(sanitizeOrgNode),
+  }
+}
+
+async function syncSameLineManagersForAllEmployees() {
+  const [employees, positions] = await Promise.all([
+    Employee.find(
+      { isActive: true },
+      {
+        _id: 1,
+        employeeNo: 1,
+        displayName: 1,
+        departmentId: 1,
+        positionId: 1,
+        lineId: 1,
+        reportsToEmployeeId: 1,
+        lineManagerIds: 1,
+        isActive: 1,
+      },
+    )
+      .sort({ employeeNo: 1, displayName: 1, _id: 1 })
+      .lean(),
+
+    Position.find(
+      { isActive: true },
+      {
+        _id: 1,
+        departmentId: 1,
+        reportsToPositionId: 1,
+        managerScope: 1,
+      },
+    ).lean(),
+  ])
+
+  const positionById = new Map(
+    positions.map((position) => [String(position._id), position]),
+  )
+
+  const managersByPositionDepartmentLine = new Map()
+
+  for (const employee of employees) {
+    const positionId = normalizeObjectIdString(employee.positionId)
+    const departmentId = normalizeObjectIdString(employee.departmentId)
+    const lineId = normalizeObjectIdString(employee.lineId)
+
+    if (!positionId || !departmentId || !lineId) continue
+
+    const key = `${positionId}:${departmentId}:${lineId}`
+
+    if (!managersByPositionDepartmentLine.has(key)) {
+      managersByPositionDepartmentLine.set(key, [])
+    }
+
+    managersByPositionDepartmentLine.get(key).push(employee)
+  }
+
+  for (const managers of managersByPositionDepartmentLine.values()) {
+    managers.sort(compareEmployeeSort)
+  }
+
+  const operations = []
+
+  for (const employee of employees) {
+    const employeeId = normalizeObjectIdString(employee._id)
+    const position = positionById.get(normalizeObjectIdString(employee.positionId))
+
+    if (!position?.reportsToPositionId) continue
+
+    const managerScope = String(position.managerScope || 'SAME_LINE').trim().toUpperCase()
+
+    // Only auto-sync SAME_LINE positions.
+    // GLOBAL/manual hierarchy remains controlled by normal reportsToEmployeeId.
+    if (managerScope !== 'SAME_LINE') continue
+
+    const parentPositionId = normalizeObjectIdString(position.reportsToPositionId)
+    const departmentId = normalizeObjectIdString(employee.departmentId)
+    const lineId = normalizeObjectIdString(employee.lineId)
+
+    let lineManagers = []
+
+    if (parentPositionId && departmentId && lineId) {
+      const key = `${parentPositionId}:${departmentId}:${lineId}`
+
+      lineManagers = (managersByPositionDepartmentLine.get(key) || []).filter(
+        (manager) => !idsAreSame(manager._id, employeeId),
+      )
+    }
+
+    const nextLineManagerIds = uniqueIdStrings(lineManagers.map((manager) => manager._id))
+    const nextPrimaryManagerId = nextLineManagerIds[0] || null
+
+    const currentPrimaryManagerId = normalizeObjectIdString(employee.reportsToEmployeeId)
+    const currentLineManagerIds = uniqueIdStrings(employee.lineManagerIds || [])
+
+    const primaryChanged = currentPrimaryManagerId !== String(nextPrimaryManagerId || '')
+    const lineManagersChanged =
+      currentLineManagerIds.length !== nextLineManagerIds.length ||
+      currentLineManagerIds.some((managerId, index) => managerId !== nextLineManagerIds[index])
+
+    if (!primaryChanged && !lineManagersChanged) continue
+
+    operations.push({
+      updateOne: {
+        filter: { _id: employee._id },
+        update: {
+          $set: {
+            reportsToEmployeeId: nextPrimaryManagerId,
+            lineManagerIds: nextLineManagerIds,
+          },
+        },
+      },
+    })
+  }
+
+  if (!operations.length) {
+    return {
+      matched: 0,
+      modified: 0,
+    }
+  }
+
+  const result = await Employee.bulkWrite(operations, {
+    ordered: false,
+  })
+
+  return {
+    matched: result.matchedCount || 0,
+    modified: result.modifiedCount || 0,
   }
 }
 
