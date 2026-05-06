@@ -237,6 +237,35 @@ const displayedEmployees = computed(() => {
   return Array.from(map.values())
 })
 
+const managedDisplayedEmployees = computed(() =>
+  displayedEmployees.value.filter((employee) => !employee?.isOutsideManaged),
+)
+
+const outsideDisplayedEmployees = computed(() =>
+  displayedEmployees.value.filter((employee) => employee?.isOutsideManaged),
+)
+
+const splitEmployeeGroups = computed(() => [
+  {
+    key: 'managed',
+    title: 'My employees',
+    helper: 'Employees under your approval scope.',
+    icon: 'pi pi-users',
+    rows: managedDisplayedEmployees.value,
+    severity: 'success',
+    emptyText: 'No employee found in your team.',
+  },
+  {
+    key: 'outside',
+    title: 'Other employees',
+    helper: 'Employees outside your team. Select only if needed.',
+    icon: 'pi pi-exclamation-triangle',
+    rows: outsideDisplayedEmployees.value,
+    severity: 'warn',
+    emptyText: 'No outside employee found.',
+  },
+])
+
 function toTrimmedString(value) {
   return String(value ?? '').trim()
 }
@@ -692,6 +721,7 @@ function mergeUniqueRows(existingRows = [], incomingRows = []) {
 
   for (const row of existingRows) {
     const id = getEmployeeId(row)
+
     if (id) {
       map.set(
         id,
@@ -1411,6 +1441,104 @@ onBeforeUnmount(() => {
           </div>
 
           <div
+            v-else-if="employeeScope === 'ALL'"
+            class="ot-employee-split"
+          >
+            <section
+              v-for="group in splitEmployeeGroups"
+              :key="group.key"
+              class="ot-employee-panel"
+              :class="`is-${group.key}`"
+            >
+              <div class="ot-employee-panel-header">
+                <div class="min-w-0">
+                  <div class="ot-employee-panel-title">
+                    <i :class="group.icon" />
+                    <span>{{ group.title }}</span>
+                  </div>
+
+                  <p>{{ group.helper }}</p>
+                </div>
+
+                <Tag
+                  :value="`${group.rows.length}`"
+                  :severity="group.severity"
+                />
+              </div>
+
+              <div
+                v-if="!group.rows.length"
+                class="ot-panel-empty"
+              >
+                {{ group.emptyText }}
+              </div>
+
+              <div
+                v-else
+                class="ot-employee-grid ot-panel-grid"
+              >
+                <button
+                  v-for="employee in group.rows"
+                  :key="employee._id"
+                  type="button"
+                  class="ot-employee-card"
+                  :class="{
+                    'is-selected': selectedIds.has(employee._id),
+                    'is-outside-managed': employee.isOutsideManaged,
+                  }"
+                  @click="toggleEmployee(employee)"
+                >
+                  <span class="ot-check-circle">
+                    <i
+                      v-if="selectedIds.has(employee._id)"
+                      class="pi pi-check"
+                    />
+                  </span>
+
+                  <span class="ot-employee-name">
+                    {{ employee.displayName }}
+                  </span>
+
+                  <span class="ot-employee-id">
+                    ID: {{ employee.employeeNo || 'No ID' }}
+                  </span>
+
+                  <span class="ot-employee-meta">
+                    <i class="pi pi-sitemap" />
+                    {{ employee.lineCode || employee.lineName || 'No line' }}
+                  </span>
+
+                  <span class="ot-employee-meta">
+                    <i class="pi pi-clock" />
+                    {{ employee.shiftCode || 'No shift' }}
+                  </span>
+
+                  <span class="ot-employee-position">
+                    <i class="pi pi-briefcase" />
+                    {{ employee.positionName || 'No position' }}
+                  </span>
+
+                  <div class="ot-card-tags">
+                    <Tag
+                      v-if="employee.isSelf"
+                      value="Self"
+                      severity="success"
+                      class="ot-self-tag"
+                    />
+
+                    <Tag
+                      v-if="employee.isOutsideManaged"
+                      value="Outside team"
+                      severity="warn"
+                      class="ot-outside-tag"
+                    />
+                  </div>
+                </button>
+              </div>
+            </section>
+          </div>
+
+          <div
             v-else
             class="ot-employee-grid"
           >
@@ -1678,6 +1806,82 @@ onBeforeUnmount(() => {
   gap: 0.65rem;
 }
 
+.ot-employee-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.ot-employee-panel {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--ot-border);
+  border-radius: 1rem;
+  background: var(--ot-surface);
+  padding: 0.75rem;
+}
+
+.ot-employee-panel.is-managed {
+  border-color: color-mix(in srgb, #22c55e 28%, var(--ot-border));
+}
+
+.ot-employee-panel.is-outside {
+  border-color: color-mix(in srgb, #f59e0b 45%, var(--ot-border));
+  background:
+    linear-gradient(135deg, rgba(245, 158, 11, 0.08), transparent),
+    var(--ot-surface);
+}
+
+.ot-employee-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid var(--ot-border);
+  padding-bottom: 0.65rem;
+}
+
+.ot-employee-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--ot-text);
+}
+
+.ot-employee-panel-title i {
+  font-size: 0.82rem;
+  color: var(--ot-text-muted);
+}
+
+.ot-employee-panel-header p {
+  margin-top: 0.18rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--ot-text-muted);
+}
+
+.ot-panel-grid {
+  grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));
+}
+
+.ot-panel-empty {
+  display: flex;
+  min-height: 180px;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--ot-border);
+  border-radius: 0.85rem;
+  padding: 1rem;
+  text-align: center;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--ot-text-muted);
+}
+
 .ot-employee-card {
   position: relative;
   min-height: 136px;
@@ -1882,6 +2086,10 @@ onBeforeUnmount(() => {
 
   .ot-count-box {
     flex: 1 1 90px;
+  }
+
+  .ot-employee-split {
+    grid-template-columns: 1fr;
   }
 
   .ot-employee-grid {

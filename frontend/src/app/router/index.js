@@ -1,4 +1,6 @@
 // frontend/src/app/router/index.js
+// frontend/src/app/router/index.js
+
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/modules/auth/auth.store'
 
@@ -8,10 +10,15 @@ import LoginView from '@/modules/auth/views/LoginView.vue'
 import AccountsView from '@/modules/auth/views/AccountsView.vue'
 import SystemRoleView from '@/modules/access/views/SystemRoleView.vue'
 import PermissionsView from '@/modules/access/views/PermissionsView.vue'
+
+import DashboardView from '@/modules/dashboard/views/DashboardView.vue'
+
 import DepartmentView from '@/modules/org/views/DepartmentView.vue'
 import PositionView from '@/modules/org/views/PositionView.vue'
 import EmployeeView from '@/modules/org/views/EmployeeView.vue'
 import OrgChartView from '@/modules/org/views/OrgChartView.vue'
+import LineView from '@/modules/org/views/LineView.vue'
+
 import HolidayListView from '@/modules/calendar/views/HolidayListView.vue'
 import ShiftListView from '@/modules/shift/views/ShiftListView.vue'
 
@@ -22,7 +29,6 @@ import OTRequestDetailView from '@/modules/ot/views/OTRequestDetailView.vue'
 import OTRequestEditView from '@/modules/ot/views/OTRequestEditView.vue'
 import OTCalculationPolicyListView from '@/modules/ot/views/OTCalculationPolicyListView.vue'
 import ShiftOTOptionListView from '@/modules/ot/views/ShiftOTOptionListView.vue'
-import LineView from '@/modules/org/views/LineView.vue'
 
 import AttendanceImportView from '@/modules/attendance/views/AttendanceImportView.vue'
 import AttendanceRecordsView from '@/modules/attendance/views/AttendanceRecordsView.vue'
@@ -94,8 +100,25 @@ const routes = [
     children: [
       {
         path: '',
-        redirect: '/auth/accounts',
+        redirect: '/dashboard',
       },
+
+      // =========================
+      // Dashboard
+      // =========================
+      {
+        path: 'dashboard',
+        name: 'dashboard',
+        component: DashboardView,
+        meta: {
+          requiresAuth: true,
+          title: 'Dashboard',
+        },
+      },
+
+      // =========================
+      // Auth / Access
+      // =========================
       {
         path: 'auth/accounts',
         name: 'accounts',
@@ -128,13 +151,13 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'Roles',
-          requiredAnyPermissions: [
-            'ROLE_VIEW',
-            'ROLE_CREATE',
-            'ROLE_UPDATE',
-          ],
+          requiredAnyPermissions: ['ROLE_VIEW', 'ROLE_CREATE', 'ROLE_UPDATE'],
         },
       },
+
+      // =========================
+      // Organization
+      // =========================
       {
         path: 'org/departments',
         name: 'departments',
@@ -170,11 +193,7 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'Production Lines',
-          requiredAnyPermissions: [
-            'LINE_VIEW',
-            'LINE_CREATE',
-            'LINE_UPDATE',
-          ],
+          requiredAnyPermissions: ['LINE_VIEW', 'LINE_CREATE', 'LINE_UPDATE'],
         },
       },
       {
@@ -201,6 +220,10 @@ const routes = [
           requiredAnyPermissions: ['EMPLOYEE_VIEW'],
         },
       },
+
+      // =========================
+      // Calendar / Shift
+      // =========================
       {
         path: 'calendar/holidays',
         name: 'holidays',
@@ -222,11 +245,7 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'Shift Master',
-          requiredAnyPermissions: [
-            'SHIFT_VIEW',
-            'SHIFT_CREATE',
-            'SHIFT_UPDATE',
-          ],
+          requiredAnyPermissions: ['SHIFT_VIEW', 'SHIFT_CREATE', 'SHIFT_UPDATE'],
         },
       },
 
@@ -360,6 +379,9 @@ const routes = [
         },
       },
 
+      // =========================
+      // Errors
+      // =========================
       {
         path: '403',
         name: 'forbidden',

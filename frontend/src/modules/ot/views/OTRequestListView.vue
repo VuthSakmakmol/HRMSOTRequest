@@ -606,7 +606,7 @@ onBeforeUnmount(() => {
         scrollHeight="500px"
         :sortField="filters.sortField"
         :sortOrder="filters.sortOrder"
-        tableStyle="min-width: 104rem"
+        tableStyle="min-width: 96rem"
         class="ot-request-table"
         :virtualScrollerOptions="useVirtualScroll ? {
           lazy: true,
@@ -715,16 +715,6 @@ onBeforeUnmount(() => {
         >
           <template #body="{ data }">
             <span v-if="data">{{ formatTimeRange(data) }}</span>
-          </template>
-        </Column>
-
-        <Column
-          field="breakMinutes"
-          header="Break"
-          style="min-width: 8rem"
-        >
-          <template #body="{ data }">
-            <span v-if="data">{{ data.breakMinutes ?? 0 }} min</span>
           </template>
         </Column>
 

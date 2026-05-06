@@ -5,10 +5,13 @@ const requireAuth = require('../../../middlewares/requireAuth')
 const requirePermission = require('../../../middlewares/requirePermission.middleware')
 const shiftOtOptionRoutes = require('./shiftOtOption.routes')
 const otPolicyRoutes = require('./otPolicy.routes')
+const dashboardRoutes = require('./dashboard.routes')
 
 const router = express.Router()
 
 router.use(requireAuth)
+
+router.use('/dashboard', dashboardRoutes)
 
 router.post(
   '/requests',

@@ -5,6 +5,7 @@ const multer = require('multer')
 const attendanceController = require('../controllers/attendance.controller')
 const requireAuth = require('../../../middlewares/requireAuth')
 const requirePermission = require('../../../middlewares/requirePermission.middleware')
+const dashboardRoutes = require('./dashboard.routes')
 
 const router = express.Router()
 
@@ -16,6 +17,10 @@ const upload = multer({
 })
 
 router.use(requireAuth)
+
+
+router.use('/dashboard', dashboardRoutes)
+
 
 router.get(
   '/import/sample',

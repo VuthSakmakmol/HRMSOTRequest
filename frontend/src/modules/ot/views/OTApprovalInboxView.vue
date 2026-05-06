@@ -1,5 +1,7 @@
 <!-- frontend/src/modules/ot/views/OTApprovalInboxView.vue -->
 <script setup>
+// frontend/src/modules/ot/views/OTApprovalInboxView.vue
+
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
@@ -84,6 +86,14 @@ const selectedApprovedCount = computed(() => decisionDialog.selectedApprovedEmpl
 
 const removedCount = computed(() =>
   Math.max(0, decisionEmployees.value.length - decisionDialog.selectedApprovedEmployeeIds.length),
+)
+
+const allowedDecisionEmployees = computed(() =>
+  decisionEmployees.value.filter((employee) => isEmployeeSelected(employee)),
+)
+
+const removedDecisionEmployees = computed(() =>
+  decisionEmployees.value.filter((employee) => !isEmployeeSelected(employee)),
 )
 
 let searchTimer = null
@@ -384,6 +394,54 @@ function employeeIdOf(employee) {
   return String(employee?.employeeId || employee?._id || employee?.id || '').trim()
 }
 
+function employeeNameOf(employee) {
+  return String(
+    employee?.employeeName ||
+      employee?.displayName ||
+      employee?.name ||
+      employee?.fullName ||
+      '-',
+  ).trim() || '-'
+}
+
+function employeeCodeOf(employee) {
+  return String(
+    employee?.employeeCode ||
+      employee?.employeeNo ||
+      employee?.code ||
+      employee?.loginId ||
+      '-',
+  ).trim() || '-'
+}
+
+function employeePositionOf(employee) {
+  return String(
+    employee?.positionName ||
+      employee?.position?.name ||
+      employee?.positionTitle ||
+      '-',
+  ).trim() || '-'
+}
+
+function employeeDepartmentOf(employee) {
+  return String(
+    employee?.departmentName ||
+      employee?.department?.name ||
+      '-',
+  ).trim() || '-'
+}
+
+function employeeLineOf(employee) {
+  const code = String(employee?.lineCode || employee?.line?.code || '').trim()
+  const name = String(employee?.lineName || employee?.line?.name || '').trim()
+
+  if (code && name) return `${code} · ${name}`
+  if (code) return code
+  if (name) return name
+
+  return ''
+}
+
 function openDecision(row, action) {
   if (!canDecide(row)) return
 
@@ -410,26 +468,51 @@ function isEmployeeSelected(employee) {
   return decisionDialog.selectedApprovedEmployeeIds.includes(id)
 }
 
-function toggleApprovedEmployee(employee) {
+function moveEmployeeToAllowed(employee) {
   if (decisionDialog.action !== 'APPROVE') return
 
   const id = employeeIdOf(employee)
-
   if (!id) return
 
-  if (decisionDialog.selectedApprovedEmployeeIds.includes(id)) {
-    if (decisionDialog.selectedApprovedEmployeeIds.length === 1) return
-
-    decisionDialog.selectedApprovedEmployeeIds =
-      decisionDialog.selectedApprovedEmployeeIds.filter((item) => item !== id)
-
-    return
-  }
+  if (decisionDialog.selectedApprovedEmployeeIds.includes(id)) return
 
   decisionDialog.selectedApprovedEmployeeIds = [
     ...decisionDialog.selectedApprovedEmployeeIds,
     id,
   ]
+}
+
+function moveEmployeeToRemoved(employee) {
+  if (decisionDialog.action !== 'APPROVE') return
+
+  const id = employeeIdOf(employee)
+  if (!id) return
+
+  if (!decisionDialog.selectedApprovedEmployeeIds.includes(id)) return
+
+  if (decisionDialog.selectedApprovedEmployeeIds.length === 1) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Validation',
+      detail: 'Please keep at least 1 approved employee.',
+      life: 2500,
+    })
+    return
+  }
+
+  decisionDialog.selectedApprovedEmployeeIds =
+    decisionDialog.selectedApprovedEmployeeIds.filter((item) => item !== id)
+}
+
+function toggleApprovedEmployee(employee) {
+  if (decisionDialog.action !== 'APPROVE') return
+
+  if (isEmployeeSelected(employee)) {
+    moveEmployeeToRemoved(employee)
+    return
+  }
+
+  moveEmployeeToAllowed(employee)
 }
 
 function selectAllEmployees() {
@@ -706,9 +789,6 @@ onBeforeUnmount(() => {
   <div class="flex flex-col gap-4">
     <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
       <div>
-        <div class="text-sm font-semibold text-[color:var(--ot-text)]">
-          My OT Approval Requests
-        </div>
       </div>
 
       <div class="flex flex-wrap items-center gap-2">
@@ -1103,47 +1183,97 @@ onBeforeUnmount(() => {
       v-model:visible="decisionDialog.visible"
       modal
       :closable="!decisionDialog.loading"
-      :style="{ width: '64rem', maxWidth: '96vw' }"
-      :header="decisionDialog.action === 'APPROVE' ? 'Approve / Adjust OT Request' : 'Reject OT Request'"
+      class="ot-decision-dialog"
+      :style="{ width: '82rem', maxWidth: '98vw' }"
     >
-      <div class="space-y-4">
+      <template #header>
+        <div class="ot-decision-header">
+          <div class="min-w-0">
+            <div class="ot-decision-eyebrow">
+              OT approval decision
+            </div>
+
+            <div class="ot-decision-title">
+              {{ decisionDialog.action === 'APPROVE' ? 'Approve / Adjust OT Request' : 'Reject OT Request' }}
+            </div>
+          </div>
+
+          <div
+            v-if="decisionDialog.row"
+            class="ot-decision-header-tags"
+          >
+            <Tag
+              :value="decisionDialog.row.requestNo || '-'"
+              severity="info"
+              class="ot-status-tag"
+            />
+
+            <Tag
+              v-if="decisionDialog.action === 'APPROVE'"
+              :value="`${selectedApprovedCount} allowed`"
+              severity="success"
+              class="ot-status-tag ot-status-approved"
+            />
+
+            <Tag
+              v-if="decisionDialog.action === 'APPROVE' && removedCount > 0"
+              :value="`${removedCount} removed`"
+              severity="warning"
+              class="ot-status-tag ot-status-pending"
+            />
+          </div>
+        </div>
+      </template>
+
+      <div class="ot-decision-body">
         <div
           v-if="decisionDialog.row"
-          class="rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-4 py-3 text-sm"
+          class="ot-decision-summary"
         >
-          <div class="font-medium text-[color:var(--ot-text)]">
-            {{ decisionDialog.row.requestNo }}
+          <div class="ot-summary-main">
+            <div class="ot-summary-request-no">
+              {{ decisionDialog.row.requestNo || '-' }}
+            </div>
+
+            <div class="ot-summary-owner">
+              {{ formatRequester(decisionDialog.row).name }}
+              <span>{{ formatRequester(decisionDialog.row).employeeNo }}</span>
+            </div>
           </div>
 
-          <div class="mt-1 text-[color:var(--ot-text-muted)]">
-            Request owner: {{ formatRequester(decisionDialog.row).name }}
+          <div class="ot-summary-grid">
+            <div class="ot-summary-item">
+              <span>OT Date</span>
+              <strong>{{ decisionDialog.row.otDate || '-' }}</strong>
+            </div>
+
+            <div class="ot-summary-item">
+              <span>Time</span>
+              <strong>{{ formatTimeRange(decisionDialog.row) }}</strong>
+            </div>
+
+            <div class="ot-summary-item">
+              <span>Mode</span>
+              <strong>{{ requestModeLabel(decisionDialog.row) }}</strong>
+            </div>
+
+            <div class="ot-summary-item">
+              <span>OT Option</span>
+              <strong>{{ formatOtOptionLabel(decisionDialog.row) }}</strong>
+            </div>
+
+            <div class="ot-summary-item">
+              <span>Timing</span>
+              <strong>{{ timingModeLabel(getTimingMode(decisionDialog.row)) }}</strong>
+            </div>
+
+            <div class="ot-summary-item">
+              <span>Requested</span>
+              <strong>{{ formatRequestedMinutes(decisionDialog.row) }}</strong>
+            </div>
           </div>
 
-          <div class="mt-1 text-[color:var(--ot-text-muted)]">
-            OT date: {{ decisionDialog.row.otDate || '-' }} • {{ formatTimeRange(decisionDialog.row) }}
-          </div>
-
-          <div class="mt-1 text-[color:var(--ot-text-muted)]">
-            Mode: {{ requestModeLabel(decisionDialog.row) }}
-          </div>
-
-          <div class="mt-1 text-[color:var(--ot-text-muted)]">
-            OT option: {{ formatOtOptionLabel(decisionDialog.row) }}
-          </div>
-
-          <div class="mt-1 text-[color:var(--ot-text-muted)]">
-            Timing mode: {{ timingModeLabel(getTimingMode(decisionDialog.row)) }}
-          </div>
-
-          <div class="mt-1 text-[color:var(--ot-text-muted)]">
-            Requested: {{ formatRequestedMinutes(decisionDialog.row) }}
-          </div>
-
-          <div class="mt-1 text-[color:var(--ot-text-muted)]">
-            Hours: {{ formatHours(decisionDialog.row) }}
-          </div>
-
-          <div class="mt-3 flex flex-wrap gap-2">
+          <div class="ot-summary-tags">
             <Tag
               :value="`Requested ${Number(decisionDialog.row?.requestedEmployeeCount || 0)} staff`"
               severity="secondary"
@@ -1157,100 +1287,177 @@ onBeforeUnmount(() => {
             />
 
             <Tag
-              v-if="decisionDialog.action === 'APPROVE'"
-              :value="`Selected ${selectedApprovedCount} staff`"
-              severity="success"
-              class="ot-status-tag ot-status-approved"
-            />
-
-            <Tag
-              v-if="decisionDialog.action === 'APPROVE' && removedCount > 0"
-              :value="`Removed ${removedCount}`"
-              severity="warning"
-              class="ot-status-tag ot-status-pending"
+              :value="`${formatHours(decisionDialog.row)} hours`"
+              severity="secondary"
+              class="ot-status-tag"
             />
           </div>
         </div>
 
         <template v-if="decisionDialog.action === 'APPROVE'">
-          <div class="rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-bg)] p-4">
-            <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <div class="text-sm font-medium text-[color:var(--ot-text)]">
-                  Select final approved employees
-                </div>
-
-                <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
-                  Remove anyone who should not continue to final approved OT staff.
-                </div>
+          <div class="ot-adjust-toolbar">
+            <div>
+              <div class="ot-adjust-title">
+                Adjust final approved employees
               </div>
 
-              <Button
-                label="Select All"
-                icon="pi pi-check-square"
-                size="small"
-                severity="secondary"
-                outlined
-                @click="selectAllEmployees"
-              />
+              <div class="ot-adjust-help">
+                Move employees between allowed and removed before submitting approval.
+              </div>
             </div>
 
-            <div
-              v-if="decisionEmployees.length"
-              class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3"
-            >
-              <button
-                v-for="employee in decisionEmployees"
-                :key="employeeIdOf(employee)"
-                type="button"
-                class="rounded-2xl border px-4 py-3 text-left transition"
-                :class="
-                  isEmployeeSelected(employee)
-                    ? 'border-primary bg-primary/10 ring-1 ring-primary/25'
-                    : 'border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] hover:border-primary/40'
-                "
-                @click="toggleApprovedEmployee(employee)"
-              >
-                <div class="flex items-start gap-3">
-                  <div
-                    class="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border"
-                    :class="
-                      isEmployeeSelected(employee)
-                        ? 'border-primary bg-primary text-white'
-                        : 'border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] text-transparent'
-                    "
-                  >
-                    <i class="pi pi-check text-[12px]" />
+            <Button
+              label="Allow All"
+              icon="pi pi-check-square"
+              size="small"
+              severity="secondary"
+              outlined
+              :disabled="decisionDialog.loading || !removedDecisionEmployees.length"
+              @click="selectAllEmployees"
+            />
+          </div>
+
+          <div class="ot-adjust-split">
+            <section class="ot-adjust-panel is-allowed">
+              <div class="ot-adjust-panel-header">
+                <div>
+                  <div class="ot-panel-title">
+                    <i class="pi pi-check-circle" />
+                    <span>Allowed staff</span>
                   </div>
 
-                  <div class="min-w-0 flex-1">
-                    <div class="font-medium text-[color:var(--ot-text)]">
-                      {{ employee.employeeName || '-' }}
-                    </div>
-
-                    <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
-                      {{ employee.employeeCode || '-' }}
-                    </div>
-
-                    <div class="mt-2 text-xs text-[color:var(--ot-text-muted)]">
-                      {{ employee.departmentName || '-' }} · {{ employee.positionName || '-' }}
-                    </div>
-                  </div>
+                  <p>These employees will continue for OT approval.</p>
                 </div>
-              </button>
-            </div>
 
-            <div
-              v-else
-              class="rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-4 py-6 text-center text-sm text-[color:var(--ot-text-muted)]"
-            >
-              No employees available for this approval.
-            </div>
+                <Tag
+                  :value="`${allowedDecisionEmployees.length}`"
+                  severity="success"
+                  class="ot-status-tag ot-status-approved"
+                />
+              </div>
+
+              <div
+                v-if="allowedDecisionEmployees.length"
+                class="ot-adjust-card-grid"
+              >
+                <button
+                  v-for="employee in allowedDecisionEmployees"
+                  :key="employeeIdOf(employee)"
+                  type="button"
+                  class="ot-adjust-card is-allowed"
+                  :disabled="decisionDialog.loading"
+                  @click="moveEmployeeToRemoved(employee)"
+                >
+                  <span class="ot-adjust-card-icon">
+                    <i class="pi pi-check" />
+                  </span>
+
+                  <span class="ot-adjust-card-main">
+                    <strong>{{ employeeNameOf(employee) }}</strong>
+                    <em>{{ employeeCodeOf(employee) }}</em>
+                  </span>
+
+                  <span class="ot-adjust-card-meta">
+                    {{ employeePositionOf(employee) }}
+                  </span>
+
+                  <span class="ot-adjust-card-meta">
+                    {{ employeeDepartmentOf(employee) }}
+                  </span>
+
+                  <span
+                    v-if="employeeLineOf(employee)"
+                    class="ot-adjust-card-meta"
+                  >
+                    {{ employeeLineOf(employee) }}
+                  </span>
+
+                  <span class="ot-adjust-card-action">
+                    Click to remove
+                  </span>
+                </button>
+              </div>
+
+              <div
+                v-else
+                class="ot-adjust-empty"
+              >
+                No allowed employees.
+              </div>
+            </section>
+
+            <section class="ot-adjust-panel is-removed">
+              <div class="ot-adjust-panel-header">
+                <div>
+                  <div class="ot-panel-title">
+                    <i class="pi pi-ban" />
+                    <span>Not allowed / removed</span>
+                  </div>
+
+                  <p>These employees will be removed from approved OT staff.</p>
+                </div>
+
+                <Tag
+                  :value="`${removedDecisionEmployees.length}`"
+                  severity="warning"
+                  class="ot-status-tag ot-status-pending"
+                />
+              </div>
+
+              <div
+                v-if="removedDecisionEmployees.length"
+                class="ot-adjust-card-grid"
+              >
+                <button
+                  v-for="employee in removedDecisionEmployees"
+                  :key="employeeIdOf(employee)"
+                  type="button"
+                  class="ot-adjust-card is-removed"
+                  :disabled="decisionDialog.loading"
+                  @click="moveEmployeeToAllowed(employee)"
+                >
+                  <span class="ot-adjust-card-icon">
+                    <i class="pi pi-times" />
+                  </span>
+
+                  <span class="ot-adjust-card-main">
+                    <strong>{{ employeeNameOf(employee) }}</strong>
+                    <em>{{ employeeCodeOf(employee) }}</em>
+                  </span>
+
+                  <span class="ot-adjust-card-meta">
+                    {{ employeePositionOf(employee) }}
+                  </span>
+
+                  <span class="ot-adjust-card-meta">
+                    {{ employeeDepartmentOf(employee) }}
+                  </span>
+
+                  <span
+                    v-if="employeeLineOf(employee)"
+                    class="ot-adjust-card-meta"
+                  >
+                    {{ employeeLineOf(employee) }}
+                  </span>
+
+                  <span class="ot-adjust-card-action">
+                    Click to allow
+                  </span>
+                </button>
+              </div>
+
+              <div
+                v-else
+                class="ot-adjust-empty"
+              >
+                No removed employees.
+              </div>
+            </section>
           </div>
         </template>
 
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
+        <div class="ot-remark-box">
+          <label class="ot-remark-label">
             Remark
             <span
               v-if="decisionDialog.action === 'REJECT'"
@@ -1260,7 +1467,7 @@ onBeforeUnmount(() => {
 
           <Textarea
             v-model.trim="decisionDialog.remark"
-            rows="4"
+            rows="3"
             autoResize
             class="w-full"
             :placeholder="
@@ -1271,7 +1478,7 @@ onBeforeUnmount(() => {
           />
         </div>
 
-        <div class="flex justify-end gap-2">
+        <div class="ot-decision-footer">
           <Button
             label="Cancel"
             text
@@ -1360,6 +1567,375 @@ onBeforeUnmount(() => {
 
 :deep(.action-btn .p-button-icon) {
   font-size: 0.72rem !important;
+}
+
+/* Decision dialog */
+:deep(.ot-decision-dialog .p-dialog-header) {
+  border-bottom: 1px solid var(--ot-border);
+  padding: 0.9rem 1rem !important;
+}
+
+:deep(.ot-decision-dialog .p-dialog-content) {
+  background: var(--ot-bg) !important;
+  padding: 0.85rem !important;
+}
+
+.ot-decision-header {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.ot-decision-eyebrow {
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ot-text-muted);
+}
+
+.ot-decision-title {
+  margin-top: 0.12rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--ot-text);
+}
+
+.ot-decision-header-tags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+
+.ot-decision-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.ot-decision-summary {
+  border: 1px solid var(--ot-border);
+  border-radius: 1rem;
+  background: var(--ot-surface);
+  padding: 0.8rem;
+}
+
+.ot-summary-main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border-bottom: 1px solid var(--ot-border);
+  padding-bottom: 0.65rem;
+}
+
+.ot-summary-request-no {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--ot-text);
+}
+
+.ot-summary-owner {
+  text-align: right;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--ot-text);
+}
+
+.ot-summary-owner span {
+  display: block;
+  margin-top: 0.08rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--ot-text-muted);
+}
+
+.ot-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-top: 0.65rem;
+}
+
+.ot-summary-item {
+  min-width: 0;
+  border: 1px solid var(--ot-border);
+  border-radius: 0.75rem;
+  background: var(--ot-bg);
+  padding: 0.55rem 0.65rem;
+}
+
+.ot-summary-item span {
+  display: block;
+  font-size: 0.66rem;
+  font-weight: 500;
+  color: var(--ot-text-muted);
+}
+
+.ot-summary-item strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 0.15rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--ot-text);
+}
+
+.ot-summary-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.65rem;
+}
+
+.ot-adjust-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border: 1px solid var(--ot-border);
+  border-radius: 1rem;
+  background: var(--ot-surface);
+  padding: 0.75rem 0.85rem;
+}
+
+.ot-adjust-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ot-text);
+}
+
+.ot-adjust-help {
+  margin-top: 0.12rem;
+  font-size: 0.74rem;
+  font-weight: 500;
+  color: var(--ot-text-muted);
+}
+
+.ot-adjust-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.ot-adjust-panel {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--ot-border);
+  border-radius: 1rem;
+  background: var(--ot-surface);
+  padding: 0.75rem;
+}
+
+.ot-adjust-panel.is-allowed {
+  border-color: color-mix(in srgb, #22c55e 34%, var(--ot-border));
+  background:
+    linear-gradient(135deg, rgba(34, 197, 94, 0.08), transparent),
+    var(--ot-surface);
+}
+
+.ot-adjust-panel.is-removed {
+  border-color: color-mix(in srgb, #f59e0b 45%, var(--ot-border));
+  background:
+    linear-gradient(135deg, rgba(245, 158, 11, 0.08), transparent),
+    var(--ot-surface);
+}
+
+.ot-adjust-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border-bottom: 1px solid var(--ot-border);
+  padding-bottom: 0.6rem;
+}
+
+.ot-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 0.38rem;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--ot-text);
+}
+
+.ot-panel-title i {
+  font-size: 0.78rem;
+  color: var(--ot-text-muted);
+}
+
+.ot-adjust-panel-header p {
+  margin-top: 0.12rem;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--ot-text-muted);
+}
+
+.ot-adjust-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
+  gap: 0.5rem;
+  margin-top: 0.65rem;
+  max-height: 22rem;
+  overflow: auto;
+  padding-right: 0.15rem;
+}
+
+.ot-adjust-card {
+  position: relative;
+  min-height: 7.2rem;
+  cursor: pointer;
+  border: 1px solid var(--ot-border);
+  border-radius: 0.85rem;
+  background: var(--ot-surface);
+  padding: 0.62rem 0.62rem 0.58rem;
+  text-align: left;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.ot-adjust-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
+}
+
+.ot-adjust-card:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.ot-adjust-card.is-allowed {
+  border-color: color-mix(in srgb, #22c55e 40%, var(--ot-border));
+}
+
+.ot-adjust-card.is-removed {
+  border-color: color-mix(in srgb, #f59e0b 45%, var(--ot-border));
+}
+
+.ot-adjust-card-icon {
+  position: absolute;
+  top: 0.52rem;
+  right: 0.52rem;
+  display: inline-flex;
+  width: 1.35rem;
+  height: 1.35rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  font-size: 0.62rem;
+}
+
+.ot-adjust-card.is-allowed .ot-adjust-card-icon {
+  background: rgba(34, 197, 94, 0.15);
+  color: #16a34a;
+}
+
+.ot-adjust-card.is-removed .ot-adjust-card-icon {
+  background: rgba(245, 158, 11, 0.18);
+  color: #b45309;
+}
+
+.ot-adjust-card-main {
+  display: block;
+  min-width: 0;
+  padding-right: 1.6rem;
+}
+
+.ot-adjust-card-main strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ot-text);
+}
+
+.ot-adjust-card-main em {
+  display: block;
+  margin-top: 0.12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.68rem;
+  font-style: normal;
+  font-weight: 500;
+  color: var(--ot-text-muted);
+}
+
+.ot-adjust-card-meta {
+  display: block;
+  overflow: hidden;
+  margin-top: 0.22rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: var(--ot-text-muted);
+}
+
+.ot-adjust-card-action {
+  display: inline-flex;
+  margin-top: 0.48rem;
+  border-radius: 999px;
+  padding: 0.16rem 0.42rem;
+  font-size: 0.62rem;
+  font-weight: 600;
+}
+
+.ot-adjust-card.is-allowed .ot-adjust-card-action {
+  background: rgba(245, 158, 11, 0.12);
+  color: #b45309;
+}
+
+.ot-adjust-card.is-removed .ot-adjust-card-action {
+  background: rgba(34, 197, 94, 0.12);
+  color: #15803d;
+}
+
+.ot-adjust-empty {
+  display: flex;
+  min-height: 12rem;
+  align-items: center;
+  justify-content: center;
+  margin-top: 0.65rem;
+  border: 1px dashed var(--ot-border);
+  border-radius: 0.85rem;
+  padding: 1rem;
+  text-align: center;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--ot-text-muted);
+}
+
+.ot-remark-box {
+  border: 1px solid var(--ot-border);
+  border-radius: 1rem;
+  background: var(--ot-surface);
+  padding: 0.8rem;
+}
+
+.ot-remark-label {
+  display: block;
+  margin-bottom: 0.45rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ot-text);
+}
+
+.ot-decision-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
 }
 
 /* Status colors */
@@ -1520,5 +2096,52 @@ onBeforeUnmount(() => {
   background: rgba(14, 165, 233, 0.18) !important;
   color: #7dd3fc !important;
   border-color: rgba(14, 165, 233, 0.45) !important;
+}
+
+:global(.dark) .ot-adjust-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.22);
+}
+
+@media (max-width: 1200px) {
+  .ot-summary-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 768px) {
+  .ot-decision-header,
+  .ot-summary-main,
+  .ot-adjust-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ot-decision-header-tags {
+    justify-content: flex-start;
+  }
+
+  .ot-summary-owner {
+    text-align: left;
+  }
+
+  .ot-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ot-adjust-split {
+    grid-template-columns: 1fr;
+  }
+
+  .ot-adjust-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    max-height: none;
+  }
+}
+
+@media (max-width: 520px) {
+  .ot-summary-grid,
+  .ot-adjust-card-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

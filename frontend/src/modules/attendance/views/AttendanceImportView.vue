@@ -300,9 +300,8 @@ function onSort(event) {
     importNo: 'importNo',
     fileName: 'fileName',
     status: 'status',
-    importedAt: 'importedAt',
     createdAt: 'createdAt',
-    updatedAt: 'updatedAt',
+    rowCount: 'rowCount',
   }
 
   filters.sortField = fieldMap[event.sortField] || 'createdAt'
@@ -636,9 +635,6 @@ onBeforeUnmount(() => {
               >
                 {{ formatFileName(data) }}
               </div>
-              <div class="mt-0.5 text-xs text-[color:var(--ot-text-muted)]">
-                {{ data.mimeType || 'Excel file' }}
-              </div>
             </div>
           </template>
         </Column>
@@ -673,7 +669,7 @@ onBeforeUnmount(() => {
           </template>
         </Column>
 
-        <Column field="importedAt" header="Imported At" sortable style="min-width: 14rem">
+        <Column field="createdAt" header="Imported At" sortable style="min-width: 14rem">
           <template #body="{ data }">
             <span v-if="data" class="text-sm">
               {{ formatDateTime(data.importedAt || data.createdAt) }}
@@ -681,13 +677,7 @@ onBeforeUnmount(() => {
           </template>
         </Column>
 
-        <Column field="createdAt" header="Created" sortable style="min-width: 14rem">
-          <template #body="{ data }">
-            <span v-if="data" class="text-sm">
-              {{ formatDateTime(data.createdAt) }}
-            </span>
-          </template>
-        </Column>
+
 
         <Column header="Action" style="width: 8rem; min-width: 8rem">
           <template #body="{ data }">
