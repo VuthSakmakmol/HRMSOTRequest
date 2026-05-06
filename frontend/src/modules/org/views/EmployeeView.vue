@@ -899,10 +899,31 @@ function shiftLabel(row) {
 }
 
 function managerLabel(row) {
+  const lineManagers = Array.isArray(row?.lineManagers) ? row.lineManagers : []
+
+  if (lineManagers.length) {
+    return lineManagers
+      .map((manager) =>
+        [manager.employeeNo, manager.displayName].filter(Boolean).join(' - '),
+      )
+      .filter(Boolean)
+      .join(', ')
+  }
+
+  if (row?.lineManagerNames) {
+    return row.lineManagerNames
+  }
+
   const manager = row?.reportsToEmployeeId
+
   if (!manager) return row?.reportsToEmployeeName || '-'
   if (typeof manager === 'string') return row?.reportsToEmployeeName || manager
-  return [manager.employeeNo, manager.displayName].filter(Boolean).join(' - ') || row?.reportsToEmployeeName || '-'
+
+  return (
+    [manager.employeeNo, manager.displayName].filter(Boolean).join(' - ') ||
+    row?.reportsToEmployeeName ||
+    '-'
+  )
 }
 
 function formatDateTime(value) {
@@ -1225,9 +1246,15 @@ onBeforeUnmount(() => {
           </template>
         </Column>
 
-        <Column header="Manager" style="min-width: 15rem">
+        <Column header="Manager" style="min-width: 22rem">
           <template #body="{ data }">
-            <span v-if="data" class="line-clamp-1">{{ managerLabel(data) }}</span>
+            <span
+              v-if="data"
+              class="line-clamp-2"
+              :title="managerLabel(data)"
+            >
+              {{ managerLabel(data) }}
+            </span>
           </template>
         </Column>
 

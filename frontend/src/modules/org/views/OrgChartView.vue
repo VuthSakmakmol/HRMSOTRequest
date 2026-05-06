@@ -68,10 +68,23 @@ const canvasOuterStyle = computed(() => ({
   minHeight: `${Math.max(420, Math.round(520 * zoom.value))}px`,
 }))
 
+function normalizeLineManagers(value) {
+  if (!Array.isArray(value)) return []
+
+  return value
+    .map((manager) => ({
+      id: s(manager?.id || manager?._id),
+      employeeNo: s(manager?.employeeNo),
+      displayName: s(manager?.displayName),
+    }))
+    .filter((manager) => manager.id || manager.employeeNo || manager.displayName)
+}
+
 function normalizeTreeNode(node) {
   if (!node) return null
 
   const data = node.data || {}
+  const lineManagers = normalizeLineManagers(data.lineManagers)
 
   return {
     key: s(node.key || data.id),
@@ -82,11 +95,30 @@ function normalizeTreeNode(node) {
       employeeNo: s(data.employeeNo),
       title: s(data.title || 'No position'),
       department: s(data.department || 'No department'),
+
+      lineCode: s(data.lineCode),
+      lineName: s(data.lineName),
+
       shiftCode: s(data.shiftCode),
       shiftName: s(data.shiftName),
       shiftType: s(data.shiftType),
+
       isActive: typeof data.isActive === 'boolean' ? data.isActive : false,
       reportsToEmployeeId: s(data.reportsToEmployeeId) || null,
+
+      lineManagerIds: Array.isArray(data.lineManagerIds)
+        ? data.lineManagerIds.map((id) => s(id)).filter(Boolean)
+        : [],
+
+      lineManagers,
+
+      lineManagerNames: lineManagers
+        .map((manager) =>
+          [manager.employeeNo, manager.displayName].filter(Boolean).join(' - '),
+        )
+        .filter(Boolean)
+        .join(', '),
+
       highlighted: !!data.highlighted,
     },
     children: Array.isArray(node.children)

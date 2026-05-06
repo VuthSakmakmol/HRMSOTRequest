@@ -1,4 +1,5 @@
 // backend/src/modules/org/services/employee.service.js
+// backend/src/modules/org/services/employee.service.js
 
 const mongoose = require('mongoose')
 const XLSX = require('xlsx')
@@ -10,8 +11,8 @@ const ProductionLine = require('../models/ProductionLine')
 const Shift = require('../../shift/models/Shift')
 const Account = require('../../auth/models/Account')
 const accountService = require('../../auth/services/account.service')
-const { importEmployeeRowSchema } = require('../validators/employee.validation')
 const employeeScopeService = require('./employeeScope.service')
+const { importEmployeeRowSchema } = require('../validators/employee.validation')
 
 function s(v) {
   return String(v ?? '').trim()
@@ -112,7 +113,10 @@ function normalizeObjectIdString(value) {
 }
 
 function idsAreSame(a, b) {
-  return normalizeObjectIdString(a) !== '' && normalizeObjectIdString(a) === normalizeObjectIdString(b)
+  return (
+    normalizeObjectIdString(a) !== '' &&
+    normalizeObjectIdString(a) === normalizeObjectIdString(b)
+  )
 }
 
 function uniqueIdStrings(values = []) {
@@ -136,12 +140,16 @@ function buildLineManagersSummary(lineManagers = []) {
 
   return managers
     .filter(Boolean)
-    .map((manager) => ({
-      _id: String(manager._id || manager.id || ''),
-      id: String(manager._id || manager.id || ''),
-      employeeNo: manager.employeeNo || '',
-      displayName: manager.displayName || '',
-    }))
+    .map((manager) => {
+      const managerId = normalizeObjectIdString(manager)
+
+      return {
+        _id: managerId,
+        id: managerId,
+        employeeNo: manager.employeeNo || '',
+        displayName: manager.displayName || '',
+      }
+    })
     .filter((manager) => manager.id)
 }
 
@@ -366,6 +374,17 @@ function buildLineSummary(lineValue) {
   }
 }
 
+function getPermissionCodes(user) {
+  return Array.isArray(user?.effectivePermissionCodes)
+    ? user.effectivePermissionCodes.map((x) => s(x).toUpperCase()).filter(Boolean)
+    : []
+}
+
+function hasAnyPermission(user, codes = []) {
+  const set = new Set(getPermissionCodes(user))
+  return codes.some((code) => set.has(s(code).toUpperCase()))
+}
+
 function canLookupAllEmployees(currentUser) {
   return (
     currentUser?.isRootAdmin === true ||
@@ -407,6 +426,8 @@ async function buildEmployeeLookupScopeFilter(query, currentUser) {
 function sanitize(doc, accountDoc = null) {
   if (!doc) return null
 
+  const lineManagers = buildLineManagersSummary(doc.lineManagerIds)
+
   return {
     _id: String(doc._id),
     id: String(doc._id),
@@ -444,11 +465,12 @@ function sanitize(doc, accountDoc = null) {
     reportsToEmployeeName: doc.reportsToEmployeeId?.displayName || '',
 
     lineManagerIds: getLineManagerIdsFromDoc(doc),
-    lineManagers: buildLineManagersSummary(doc.lineManagerIds),
-    lineManagerNames: buildLineManagersSummary(doc.lineManagerIds)
+    lineManagers,
+    lineManagerNames: lineManagers
       .map((manager) =>
         [manager.employeeNo, manager.displayName].filter(Boolean).join(' - '),
       )
+      .filter(Boolean)
       .join(', '),
 
     phone: doc.phone || '',
@@ -489,27 +511,17 @@ function sanitizeOrgNode(doc) {
     ...buildShiftSummary(doc.shiftId),
 
     reportsToEmployeeId: doc.reportsToEmployeeId?._id
-          ? String(doc.reportsToEmployeeId._id)
-          : doc.reportsToEmployeeId
-            ? String(doc.reportsToEmployeeId)
-            : null,
-        reportsToEmployeeName: doc.reportsToEmployeeId?.displayName || '',
+      ? String(doc.reportsToEmployeeId._id)
+      : doc.reportsToEmployeeId
+        ? String(doc.reportsToEmployeeId)
+        : null,
+    reportsToEmployeeName: doc.reportsToEmployeeId?.displayName || '',
 
-        lineManagerIds: getLineManagerIdsFromDoc(doc),
-        lineManagers: buildLineManagersSummary(doc.lineManagerIds),
+    lineManagerIds: getLineManagerIdsFromDoc(doc),
+    lineManagers: buildLineManagersSummary(doc.lineManagerIds),
+
     isActive: !!doc.isActive,
   }
-}
-
-function getPermissionCodes(user) {
-  return Array.isArray(user?.effectivePermissionCodes)
-    ? user.effectivePermissionCodes.map((x) => s(x).toUpperCase()).filter(Boolean)
-    : []
-}
-
-function hasAnyPermission(user, codes = []) {
-  const set = new Set(getPermissionCodes(user))
-  return codes.some((code) => set.has(s(code).toUpperCase()))
 }
 
 async function ensureDepartmentExists(departmentId) {
@@ -668,11 +680,6 @@ async function findAutoManagerIdByPositionAndLine({
     }
   }
 
-  // GLOBAL:
-  // Do not filter by line.
-  // Do not filter by department.
-  // Example: Sewer-Supervisor Line 02 -> HRSS Supervisor / HR Manager from HR department.
-
   if (employeeId) {
     filter._id = { $ne: employeeId }
   }
@@ -777,7 +784,6 @@ async function getScopedEmployeeIds(currentUser) {
   return employeeScopeService.getScopedEmployeeIds(currentUser)
 }
 
-
 async function buildEmployeeScopeFilter(currentUser) {
   return employeeScopeService.buildEmployeeScopeFilter(currentUser)
 }
@@ -803,20 +809,43 @@ function makeOrgTreeNode(emp, children = [], expanded = false, highlighted = fal
       shiftEndTime: emp.shiftEndTime || '',
       isActive: !!emp.isActive,
       reportsToEmployeeId: emp.reportsToEmployeeId ? String(emp.reportsToEmployeeId) : null,
+      lineManagerIds: Array.isArray(emp.lineManagerIds) ? emp.lineManagerIds : [],
+      lineManagers: Array.isArray(emp.lineManagers) ? emp.lineManagers : [],
       highlighted,
     },
     children,
   }
 }
 
-function buildTreeRecursive(rootId, employeeMap, childrenMap, expandedIds, highlightedIds) {
+function buildTreeRecursive(
+  rootId,
+  employeeMap,
+  childrenMap,
+  expandedIds,
+  highlightedIds,
+  pathIds = new Set(),
+) {
   const emp = employeeMap.get(rootId)
   if (!emp) return null
 
+  // Prevent infinite loop if duplicated/multi-parent structure creates a cycle.
+  if (pathIds.has(rootId)) return null
+
+  const nextPathIds = new Set(pathIds)
+  nextPathIds.add(rootId)
+
   const childIds = childrenMap.get(rootId) || []
+
   const children = childIds
     .map((childId) =>
-      buildTreeRecursive(childId, employeeMap, childrenMap, expandedIds, highlightedIds),
+      buildTreeRecursive(
+        childId,
+        employeeMap,
+        childrenMap,
+        expandedIds,
+        highlightedIds,
+        nextPathIds,
+      ),
     )
     .filter(Boolean)
 
@@ -828,19 +857,34 @@ function buildTreeRecursive(rootId, employeeMap, childrenMap, expandedIds, highl
   )
 }
 
-function collectAncestorIds(startId, employeeMap) {
-  const result = []
+function collectAncestorIds(startId, employeeMap, parentIdsByEmployeeId = new Map()) {
+  const result = new Set()
+  const queue = [startId]
   const visited = new Set()
-  let currentId = startId
 
-  while (currentId && !visited.has(currentId)) {
+  while (queue.length) {
+    const currentId = queue.shift()
+
+    if (!currentId || visited.has(currentId)) continue
+
     visited.add(currentId)
-    result.push(currentId)
+    result.add(currentId)
+
+    const parentIds = parentIdsByEmployeeId.get(currentId) || []
     const current = employeeMap.get(currentId)
-    currentId = current?.reportsToEmployeeId ? String(current.reportsToEmployeeId) : null
+
+    if (!parentIds.length && current?.reportsToEmployeeId) {
+      parentIds.push(String(current.reportsToEmployeeId))
+    }
+
+    for (const parentId of parentIds) {
+      if (parentId && !visited.has(parentId)) {
+        queue.push(parentId)
+      }
+    }
   }
 
-  return result.reverse()
+  return Array.from(result)
 }
 
 function searchEmployees(allEmployees, keyword) {
@@ -858,6 +902,7 @@ function searchEmployees(allEmployees, keyword) {
       emp.lineCode,
       emp.shiftName,
       emp.shiftCode,
+      emp.lineManagerNames,
     ]
       .map((v) => s(v).toLowerCase())
       .some((v) => v.includes(q))
@@ -951,8 +996,11 @@ function normalizeLookupQuery(query = {}) {
 }
 
 function buildEmployeeLookupItem(doc) {
+  const lineManagers = buildLineManagersSummary(doc.lineManagerIds)
+
   return {
     id: String(doc._id),
+    _id: String(doc._id),
     employeeNo: doc.employeeNo || '',
     displayName: doc.displayName || '',
     label: [doc.employeeNo, doc.displayName].filter(Boolean).join(' - '),
@@ -983,6 +1031,15 @@ function buildEmployeeLookupItem(doc) {
         : null,
     reportsToEmployeeNo: doc.reportsToEmployeeId?.employeeNo || '',
     reportsToEmployeeName: doc.reportsToEmployeeId?.displayName || '',
+
+    lineManagerIds: getLineManagerIdsFromDoc(doc),
+    lineManagers,
+    lineManagerNames: lineManagers
+      .map((manager) =>
+        [manager.employeeNo, manager.displayName].filter(Boolean).join(' - '),
+      )
+      .filter(Boolean)
+      .join(', '),
 
     phone: doc.phone || '',
     email: doc.email || '',
@@ -1018,10 +1075,11 @@ async function lookup(rawQuery = {}, currentUser = null) {
   const [items, total] = await Promise.all([
     Employee.find(filter)
       .populate('departmentId', 'name code')
-      .populate('positionId', 'name code reportsToPositionId')
+      .populate('positionId', 'name code reportsToPositionId managerScope')
       .populate('lineId', 'code name')
       .populate('shiftId', 'code name type startTime endTime crossMidnight')
       .populate('reportsToEmployeeId', 'employeeNo displayName')
+      .populate('lineManagerIds', 'employeeNo displayName')
       .sort({ displayName: 1, employeeNo: 1 })
       .skip(skip)
       .limit(query.limit)
@@ -1071,11 +1129,12 @@ function buildEmployeeExportRows(items = []) {
     Position: item.positionName || '',
     'Line Code': item.lineCode || '',
     'Line Name': item.lineName || '',
+    'Line Managers': item.lineManagerNames || '',
+    'Primary Manager Employee No': item.reportsToEmployeeNo || '',
+    'Primary Manager Name': item.reportsToEmployeeName || '',
     'Shift Code': item.shiftCode || '',
     'Shift Name': item.shiftName || '',
     'Shift Type': item.shiftType || '',
-    'Manager Employee No': item.reportsToEmployeeNo || '',
-    'Manager Name': item.reportsToEmployeeName || '',
     Phone: item.phone || '',
     Email: item.email || '',
     'Join Date': formatDateDDMMYYYY(item.joinDate),
@@ -1143,7 +1202,11 @@ async function getOrgTree(
 
   const allDocs = await Employee.find(
     {
-      _id: { $in: Array.from(scopedIds).map((id) => new mongoose.Types.ObjectId(id)) },
+      _id: {
+        $in: Array.from(scopedIds)
+          .filter((id) => mongoose.Types.ObjectId.isValid(id))
+          .map((id) => new mongoose.Types.ObjectId(id)),
+      },
       ...(includeInactive ? {} : { isActive: true }),
     },
     {
@@ -1154,6 +1217,7 @@ async function getOrgTree(
       lineId: 1,
       shiftId: 1,
       reportsToEmployeeId: 1,
+      lineManagerIds: 1,
       isActive: 1,
       email: 1,
     },
@@ -1162,38 +1226,87 @@ async function getOrgTree(
     .populate('positionId', 'name')
     .populate('lineId', 'code name')
     .populate('shiftId', 'code name type startTime endTime crossMidnight')
+    .populate('lineManagerIds', 'employeeNo displayName')
     .lean()
 
-  const normalized = allDocs.map((doc) => ({
-    _id: String(doc._id),
-    employeeNo: doc.employeeNo || '',
-    displayName: doc.displayName || '',
-    departmentId: doc.departmentId?._id ? String(doc.departmentId._id) : null,
-    departmentName: doc.departmentId?.name || '',
-    positionId: doc.positionId?._id ? String(doc.positionId._id) : null,
-    positionName: doc.positionId?.name || '',
-    ...buildLineSummary(doc.lineId),
-    ...buildShiftSummary(doc.shiftId),
-    reportsToEmployeeId: doc.reportsToEmployeeId ? String(doc.reportsToEmployeeId) : null,
-    isActive: !!doc.isActive,
-    email: doc.email || '',
-  }))
+  const normalized = allDocs.map((doc) => {
+    const lineManagers = buildLineManagersSummary(doc.lineManagerIds)
+
+    return {
+      _id: String(doc._id),
+      employeeNo: doc.employeeNo || '',
+      displayName: doc.displayName || '',
+      departmentId: doc.departmentId?._id ? String(doc.departmentId._id) : null,
+      departmentName: doc.departmentId?.name || '',
+      positionId: doc.positionId?._id ? String(doc.positionId._id) : null,
+      positionName: doc.positionId?.name || '',
+      ...buildLineSummary(doc.lineId),
+      ...buildShiftSummary(doc.shiftId),
+      reportsToEmployeeId: doc.reportsToEmployeeId
+        ? String(doc.reportsToEmployeeId)
+        : null,
+      lineManagerIds: getLineManagerIdsFromDoc(doc),
+      lineManagers,
+      lineManagerNames: lineManagers
+        .map((manager) =>
+          [manager.employeeNo, manager.displayName].filter(Boolean).join(' - '),
+        )
+        .filter(Boolean)
+        .join(', '),
+      isActive: !!doc.isActive,
+      email: doc.email || '',
+    }
+  })
 
   const employeeMap = new Map()
-  const childrenMap = new Map()
 
   for (const emp of normalized) {
     employeeMap.set(emp._id, emp)
-
-    const managerId = emp.reportsToEmployeeId || ''
-    if (!childrenMap.has(managerId)) childrenMap.set(managerId, [])
-    childrenMap.get(managerId).push(emp._id)
   }
 
-  for (const [managerId, childIds] of childrenMap.entries()) {
+  const childrenMap = new Map()
+  const parentIdsByEmployeeId = new Map()
+
+  for (const emp of normalized) {
+    const lineManagerIds = Array.isArray(emp.lineManagerIds)
+      ? emp.lineManagerIds.map((id) => s(id)).filter(Boolean)
+      : []
+
+    // Line-aware tree:
+    // If employee has line managers, show this employee under every line manager.
+    // If no line managers, fall back to normal primary reportsToEmployeeId.
+    const candidateParentIds = lineManagerIds.length
+      ? lineManagerIds
+      : emp.reportsToEmployeeId
+        ? [s(emp.reportsToEmployeeId)]
+        : []
+
+    const validParentIds = [
+      ...new Set(
+        candidateParentIds.filter((parentId) => {
+          if (!parentId) return false
+          if (parentId === emp._id) return false
+          return employeeMap.has(parentId)
+        }),
+      ),
+    ]
+
+    parentIdsByEmployeeId.set(emp._id, validParentIds)
+
+    for (const parentId of validParentIds) {
+      if (!childrenMap.has(parentId)) {
+        childrenMap.set(parentId, [])
+      }
+
+      childrenMap.get(parentId).push(emp._id)
+    }
+  }
+
+  for (const childIds of childrenMap.values()) {
     childIds.sort((a, b) => {
       const aa = employeeMap.get(a)
       const bb = employeeMap.get(b)
+
       return `${aa?.displayName || ''} ${aa?.employeeNo || ''}`.localeCompare(
         `${bb?.displayName || ''} ${bb?.employeeNo || ''}`,
       )
@@ -1201,12 +1314,18 @@ async function getOrgTree(
   }
 
   const rootCandidates = normalized
-    .filter((emp) => !emp.reportsToEmployeeId || !employeeMap.has(emp.reportsToEmployeeId))
+    .filter((emp) => {
+      const parentIds = parentIdsByEmployeeId.get(emp._id) || []
+      return !parentIds.length
+    })
     .sort((a, b) => {
-      return `${a.displayName} ${a.employeeNo}`.localeCompare(`${b.displayName} ${b.employeeNo}`)
+      return `${a.displayName} ${a.employeeNo}`.localeCompare(
+        `${b.displayName} ${b.employeeNo}`,
+      )
     })
 
   let selectedRootId = s(rootEmployeeId)
+
   if (!selectedRootId || !employeeMap.has(selectedRootId)) {
     selectedRootId = rootCandidates[0]?._id || ''
   }
@@ -1219,14 +1338,18 @@ async function getOrgTree(
 
   if (matchedIds.length) {
     for (const matchId of matchedIds) {
-      const path = collectAncestorIds(matchId, employeeMap)
-      for (const id of path) expandedIds.add(id)
+      const path = collectAncestorIds(matchId, employeeMap, parentIdsByEmployeeId)
+
+      for (const id of path) {
+        expandedIds.add(id)
+      }
     }
   } else if (selectedRootId) {
     expandedIds.add(selectedRootId)
   }
 
   let tree = []
+
   if (selectedRootId) {
     const rootNode = buildTreeRecursive(
       selectedRootId,
@@ -1234,12 +1357,23 @@ async function getOrgTree(
       childrenMap,
       expandedIds,
       highlightedIds,
+      new Set(),
     )
-    if (rootNode) tree = [rootNode]
+
+    if (rootNode) {
+      tree = [rootNode]
+    }
   } else {
     tree = rootCandidates
       .map((root) =>
-        buildTreeRecursive(root._id, employeeMap, childrenMap, expandedIds, highlightedIds),
+        buildTreeRecursive(
+          root._id,
+          employeeMap,
+          childrenMap,
+          expandedIds,
+          highlightedIds,
+          new Set(),
+        ),
       )
       .filter(Boolean)
   }
@@ -1258,6 +1392,8 @@ async function getOrgTree(
       shiftCode: emp.shiftCode,
       shiftStartTime: emp.shiftStartTime,
       shiftEndTime: emp.shiftEndTime,
+      lineManagerIds: emp.lineManagerIds,
+      lineManagers: emp.lineManagers,
     })),
     matchedEmployeeIds: matchedIds,
     expandedEmployeeIds: Array.from(expandedIds),
@@ -1292,10 +1428,11 @@ async function list(
   const [items, total, accountByEmployeeId] = await Promise.all([
     Employee.find(filter)
       .populate('departmentId', 'name code')
-      .populate('positionId', 'name code reportsToPositionId')
+      .populate('positionId', 'name code reportsToPositionId managerScope')
       .populate('lineId', 'code name')
       .populate('shiftId', 'code name type startTime endTime crossMidnight')
       .populate('reportsToEmployeeId', 'employeeNo displayName')
+      .populate('lineManagerIds', 'employeeNo displayName')
       .sort(sort)
       .skip(skip)
       .limit(limit)
@@ -1340,10 +1477,11 @@ async function exportExcel(
   const [items, accountByEmployeeId] = await Promise.all([
     Employee.find(filter)
       .populate('departmentId', 'name code')
-      .populate('positionId', 'name code reportsToPositionId')
+      .populate('positionId', 'name code reportsToPositionId managerScope')
       .populate('lineId', 'code name')
       .populate('shiftId', 'code name type startTime endTime crossMidnight')
       .populate('reportsToEmployeeId', 'employeeNo displayName')
+      .populate('lineManagerIds', 'employeeNo displayName')
       .sort(sort)
       .lean(),
     loadAccountMapForEmployees(),
@@ -1563,7 +1701,7 @@ async function importExcel(file, currentUser = null) {
     ).lean(),
     Employee.find(
       { employeeNo: { $in: allEmployeeNosToLookup } },
-      '_id employeeNo displayName email departmentId positionId lineId shiftId reportsToEmployeeId',
+      '_id employeeNo displayName email departmentId positionId lineId shiftId reportsToEmployeeId lineManagerIds',
     ).lean(),
     emails.length
       ? Employee.find({ email: { $in: emails } }, '_id employeeNo email').lean()
@@ -1679,6 +1817,7 @@ async function importExcel(file, currentUser = null) {
         lineId: line?._id || null,
         shiftId: shift._id,
         reportsToEmployeeId: finalManagerId || null,
+        lineManagerIds: [],
         phone: row.phone || '',
         email: row.email || '',
         joinDate: row.joinDate || null,
@@ -1698,6 +1837,7 @@ async function importExcel(file, currentUser = null) {
         lineId: created.lineId,
         shiftId: created.shiftId,
         reportsToEmployeeId: created.reportsToEmployeeId,
+        lineManagerIds: created.lineManagerIds,
       })
 
       if (row.email) {
@@ -1751,6 +1891,8 @@ async function importExcel(file, currentUser = null) {
     }
   }
 
+  await syncSameLineManagersForAllEmployees()
+
   return {
     fileName: file.fileName || 'employee-import.xlsx',
     summary: {
@@ -1766,13 +1908,14 @@ async function getById(id) {
   const [doc, accountDoc] = await Promise.all([
     Employee.findById(id)
       .populate('departmentId', 'name code')
-      .populate('positionId', 'name code reportsToPositionId')
+      .populate('positionId', 'name code reportsToPositionId managerScope')
       .populate('lineId', 'code name')
       .populate(
         'shiftId',
         'code name type startTime breakStartTime breakEndTime endTime crossMidnight',
       )
       .populate('reportsToEmployeeId', 'employeeNo displayName')
+      .populate('lineManagerIds', 'employeeNo displayName')
       .lean(),
     Account.findOne({ employeeId: id }, 'loginId isActive employeeId').lean(),
   ])
@@ -1789,10 +1932,11 @@ async function getById(id) {
 async function getOrgChart(id) {
   const focusDoc = await Employee.findById(id)
     .populate('departmentId', 'name code')
-    .populate('positionId', 'name code reportsToPositionId')
+    .populate('positionId', 'name code reportsToPositionId managerScope')
     .populate('lineId', 'code name')
     .populate('shiftId', 'code name type startTime endTime crossMidnight')
     .populate('reportsToEmployeeId', 'employeeNo displayName')
+    .populate('lineManagerIds', 'employeeNo displayName')
     .lean()
 
   if (!focusDoc) {
@@ -1815,10 +1959,11 @@ async function getOrgChart(id) {
 
     const managerDoc = await Employee.findById(currentManagerId)
       .populate('departmentId', 'name code')
-      .populate('positionId', 'name code reportsToPositionId')
+      .populate('positionId', 'name code reportsToPositionId managerScope')
       .populate('lineId', 'code name')
       .populate('shiftId', 'code name type startTime endTime crossMidnight')
       .populate('reportsToEmployeeId', 'employeeNo displayName')
+      .populate('lineManagerIds', 'employeeNo displayName')
       .lean()
 
     if (!managerDoc) break
@@ -1838,10 +1983,11 @@ async function getOrgChart(id) {
     reportsToEmployeeId: focusDoc._id,
   })
     .populate('departmentId', 'name code')
-    .populate('positionId', 'name code reportsToPositionId')
+    .populate('positionId', 'name code reportsToPositionId managerScope')
     .populate('lineId', 'code name')
     .populate('shiftId', 'code name type startTime endTime crossMidnight')
     .populate('reportsToEmployeeId', 'employeeNo displayName')
+    .populate('lineManagerIds', 'employeeNo displayName')
     .sort({ displayName: 1, employeeNo: 1 })
     .lean()
 
@@ -1918,8 +2064,6 @@ async function syncSameLineManagersForAllEmployees() {
 
     const managerScope = String(position.managerScope || 'SAME_LINE').trim().toUpperCase()
 
-    // Only auto-sync SAME_LINE positions.
-    // GLOBAL/manual hierarchy remains controlled by normal reportsToEmployeeId.
     if (managerScope !== 'SAME_LINE') continue
 
     const parentPositionId = normalizeObjectIdString(position.reportsToPositionId)
@@ -2004,6 +2148,7 @@ async function create(payload) {
     lineId: payload.lineId || null,
     shiftId: payload.shiftId,
     reportsToEmployeeId: reportsToEmployeeId || null,
+    lineManagerIds: [],
     phone: s(payload.phone),
     email: s(payload.email),
     joinDate: payload.joinDate || null,
@@ -2021,12 +2166,15 @@ async function create(payload) {
     throw error
   }
 
+  await syncSameLineManagersForAllEmployees()
+
   const fresh = await Employee.findById(doc._id)
     .populate('departmentId', 'name code')
-    .populate('positionId', 'name code reportsToPositionId')
+    .populate('positionId', 'name code reportsToPositionId managerScope')
     .populate('lineId', 'code name')
     .populate('shiftId', 'code name type startTime endTime crossMidnight')
     .populate('reportsToEmployeeId', 'employeeNo displayName')
+    .populate('lineManagerIds', 'employeeNo displayName')
     .lean()
 
   return sanitize(
@@ -2126,6 +2274,8 @@ async function update(id, payload) {
 
   await doc.save()
 
+  await syncSameLineManagersForAllEmployees()
+
   let accountDoc = await Account.findOne(
     { employeeId: doc._id },
     'loginId isActive employeeId',
@@ -2161,10 +2311,11 @@ async function update(id, payload) {
 
   const fresh = await Employee.findById(doc._id)
     .populate('departmentId', 'name code')
-    .populate('positionId', 'name code reportsToPositionId')
+    .populate('positionId', 'name code reportsToPositionId managerScope')
     .populate('lineId', 'code name')
     .populate('shiftId', 'code name type startTime endTime crossMidnight')
     .populate('reportsToEmployeeId', 'employeeNo displayName')
+    .populate('lineManagerIds', 'employeeNo displayName')
     .lean()
 
   return sanitize(fresh, accountDoc)
@@ -2181,4 +2332,5 @@ module.exports = {
   getOrgTree,
   create,
   update,
+  syncSameLineManagersForAllEmployees,
 }
