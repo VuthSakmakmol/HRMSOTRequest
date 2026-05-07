@@ -1,254 +1,303 @@
 // backend/src/modules/ot/validators/ot.validation.js
+const mongoose = require('mongoose')
 const { z } = require('zod')
 
-const objectIdSchema = z
-  .string()
-  .trim()
-  .regex(/^[a-fA-F0-9]{24}$/, 'Invalid id')
-
-const otDateSchema = z
-  .string()
-  .trim()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, 'otDate must be YYYY-MM-DD')
-
-const timeSchema = z
-  .string()
-  .trim()
-  .regex(/^([01]\d|2[0-3]):([0-5]\d)$/, 'Time must be HH:mm')
-
-const optionalTimeSchema = z
-  .string()
-  .trim()
-  .regex(/^([01]\d|2[0-3]):([0-5]\d)$/, 'Time must be HH:mm')
-  .optional()
-  .or(z.literal(''))
-  .transform((value) => String(value || '').trim())
-
-function hhmmToMinutes(value) {
-  const [hh, mm] = String(value).split(':').map(Number)
-  return hh * 60 + mm
+function s(value) {
+  return String(value ?? '').trim()
 }
 
-function validateUniqueIds(ids = [], ctx, path) {
-  const seen = new Set()
+function upper(value) {
+  return s(value).toUpperCase()
+}
 
-  ids.forEach((id, index) => {
-    const normalized = String(id).toLowerCase()
+function emptyToUndefined(value) {
+  const text = s(value)
+  return text ? text : undefined
+}
 
-    if (seen.has(normalized)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: [path, index],
-        message: 'Duplicate id is not allowed',
+function optionalTrimmedString(max = 2000) {
+  return z
+    .preprocess(
+      (value) => s(value),
+      z.string().max(max, `Must be at most ${max} characters`),
+    )
+    .optional()
+    .default('')
+}
+
+function requiredTrimmedString(label, max = 255) {
+  return z.preprocess(
+    (value) => s(value),
+    z
+      .string({
+        required_error: `${label} is required`,
+        invalid_type_error: `${label} is required`,
       })
-    }
-
-    seen.add(normalized)
-  })
+      .min(1, `${label} is required`)
+      .max(max, `${label} must be at most ${max} characters`),
+  )
 }
 
-const baseOTRequestSchema = z
-  .object({
-    employeeIds: z
-      .array(objectIdSchema)
-      .min(1, 'Please select at least 1 employee')
-      .max(200, 'You can select up to 200 employees at one time'),
-
-    otDate: otDateSchema,
-
-    startTime: optionalTimeSchema,
-    endTime: optionalTimeSchema,
-    breakMinutes: z.coerce
-      .number()
-      .int()
-      .min(0, 'breakMinutes must be at least 0')
-      .default(0),
-
-    shiftOtOptionId: z
-      .string()
-      .trim()
-      .default('')
-      .refine((value) => !value || /^[a-fA-F0-9]{24}$/.test(value), {
-        message: 'shiftOtOptionId must be a valid id',
+function optionalUpperEnum(values, label) {
+  return z
+    .preprocess(
+      (value) => {
+        const text = upper(value)
+        return text || undefined
+      },
+      z.enum(values, {
+        invalid_type_error: `${label} is invalid`,
       }),
+    )
+    .optional()
+}
 
-    reason: z
-      .string()
-      .trim()
-      .min(1, 'reason is required')
-      .max(1000, 'reason must not exceed 1000 characters'),
+function requiredUpperEnum(values, label) {
+  return z.preprocess(
+    (value) => upper(value),
+    z.enum(values, {
+      required_error: `${label} is required`,
+      invalid_type_error: `${label} is invalid`,
+    }),
+  )
+}
 
-    approverEmployeeIds: z
-      .array(objectIdSchema)
-      .min(1, 'Please select at least 1 approver')
-      .max(4, 'You can select up to 4 approvers only'),
-  })
-  .superRefine((data, ctx) => {
-    validateUniqueIds(data.employeeIds, ctx, 'employeeIds')
-    validateUniqueIds(data.approverEmployeeIds, ctx, 'approverEmployeeIds')
+const objectIdSchema = z.preprocess(
+  (value) => s(value),
+  z
+    .string()
+    .min(1, 'ID is required')
+    .refine((value) => mongoose.isValidObjectId(value), {
+      message: 'Invalid ID',
+    }),
+)
 
-    const hasShiftOtOptionId = Boolean(String(data.shiftOtOptionId || '').trim())
-    const hasStartTime = Boolean(String(data.startTime || '').trim())
-    const hasEndTime = Boolean(String(data.endTime || '').trim())
+function optionalObjectIdSchema(label = 'ID') {
+  return z
+    .preprocess(
+      (value) => emptyToUndefined(value),
+      z
+        .string()
+        .refine((value) => mongoose.isValidObjectId(value), {
+          message: `Invalid ${label}`,
+        }),
+    )
+    .optional()
+}
 
-    if (!hasShiftOtOptionId) {
-      if (!hasStartTime) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['startTime'],
-          message: 'startTime is required when shiftOtOptionId is not provided',
-        })
-      }
+const ymdSchema = z.preprocess(
+  (value) => s(value),
+  z
+    .string({
+      required_error: 'Date is required',
+      invalid_type_error: 'Date is required',
+    })
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD'),
+)
 
-      if (!hasEndTime) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['endTime'],
-          message: 'endTime is required when shiftOtOptionId is not provided',
-        })
-      }
+const optionalYmdSchema = z
+  .preprocess(
+    (value) => emptyToUndefined(value),
+    z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD'),
+  )
+  .optional()
 
-      if (hasStartTime && hasEndTime) {
-        if (hhmmToMinutes(data.endTime) <= hhmmToMinutes(data.startTime)) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: ['endTime'],
-            message: 'endTime must be later than startTime',
-          })
-        }
-      }
-    }
+const hhmmSchema = z
+  .preprocess(
+    (value) => emptyToUndefined(value),
+    z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/, 'Time must be HH:mm'),
+  )
+  .optional()
 
-    if (hasShiftOtOptionId && hasStartTime && hasEndTime) {
-      if (hhmmToMinutes(data.endTime) <= hhmmToMinutes(data.startTime)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['endTime'],
-          message: 'endTime must be later than startTime',
-        })
-      }
-    }
-  })
+const positivePageSchema = z.preprocess(
+  (value) => Number(value || 1),
+  z.number().int().min(1).default(1),
+)
 
-const createOTRequestSchema = baseOTRequestSchema
-const updateOTRequestSchema = baseOTRequestSchema
+const limitSchema = z.preprocess(
+  (value) => Number(value || 10),
+  z.number().int().min(1).max(100).default(10),
+)
 
-const unavailableOTEmployeesQuerySchema = z.object({
-  otDate: otDateSchema,
+const sortOrderSchema = z
+  .preprocess(
+    (value) => {
+      const text = s(value).toLowerCase()
+      return text || 'desc'
+    },
+    z.enum(['asc', 'desc']),
+  )
+  .default('desc')
+
+const OT_STATUS = [
+  'PENDING',
+  'PENDING_REQUESTER_CONFIRMATION',
+  'APPROVED',
+  'REJECTED',
+  'REQUESTER_DISAGREED',
+  'CANCELLED',
+]
+
+const OT_DAY_TYPE = ['WORKING_DAY', 'SUNDAY', 'HOLIDAY']
+
+const OT_SORT_FIELDS = [
+  'createdAt',
+  'otDate',
+  'requestNo',
+  'requesterName',
+  'status',
+  'totalHours',
+  'employeeCount',
+]
+
+const createOTRequestSchema = z.object({
+  employeeIds: z
+    .array(objectIdSchema, {
+      required_error: 'Please select at least 1 employee',
+      invalid_type_error: 'employeeIds must be an array',
+    })
+    .min(1, 'Please select at least 1 employee')
+    .max(200, 'You can select up to 200 employees only'),
+
+  otDate: ymdSchema,
+
+  // New process: frontend sends shiftOtOptionId, backend derives timing.
+  shiftOtOptionId: objectIdSchema,
+
+  // Optional now.
+  reason: optionalTrimmedString(2000),
+
+  // Legacy/manual fields kept optional so old payloads will not break validation.
+  // Current service requires shiftOtOptionId and does not need these.
+  startTime: hhmmSchema,
+  endTime: hhmmSchema,
+  breakMinutes: z
+    .preprocess(
+      (value) => {
+        if (value === undefined || value === null || value === '') return 0
+        return Number(value)
+      },
+      z.number().int().min(0).max(1440),
+    )
+    .optional()
+    .default(0),
+})
+
+const updateOTRequestSchema = z.object({
+  employeeIds: z
+    .array(objectIdSchema, {
+      required_error: 'Please select at least 1 employee',
+      invalid_type_error: 'employeeIds must be an array',
+    })
+    .min(1, 'Please select at least 1 employee')
+    .max(200, 'You can select up to 200 employees only'),
+
+  otDate: ymdSchema,
+
+  shiftOtOptionId: objectIdSchema,
+
+  reason: optionalTrimmedString(2000),
+
+  startTime: hhmmSchema,
+  endTime: hhmmSchema,
+  breakMinutes: z
+    .preprocess(
+      (value) => {
+        if (value === undefined || value === null || value === '') return 0
+        return Number(value)
+      },
+      z.number().int().min(0).max(1440),
+    )
+    .optional()
+    .default(0),
 })
 
 const listOTRequestsQuerySchema = z.object({
-  page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce.number().int().min(1).max(100).default(10),
-  search: z.string().trim().default(''),
+  page: positivePageSchema,
+  limit: limitSchema,
 
-  status: z.string().trim().default(''),
-  dayType: z.string().trim().default(''),
+  search: z
+    .preprocess((value) => s(value), z.string().max(200))
+    .optional()
+    .default(''),
 
-  employeeId: z.string().trim().default(''),
-  departmentId: z.string().trim().default(''),
-  positionId: z.string().trim().default(''),
+  status: optionalUpperEnum(OT_STATUS, 'Status'),
+  dayType: optionalUpperEnum(OT_DAY_TYPE, 'Day type'),
 
-  otDateFrom: z.string().trim().default(''),
-  otDateTo: z.string().trim().default(''),
+  employeeId: optionalObjectIdSchema('employeeId'),
+  departmentId: optionalObjectIdSchema('departmentId'),
+  positionId: optionalObjectIdSchema('positionId'),
+
+  otDateFrom: optionalYmdSchema,
+  otDateTo: optionalYmdSchema,
 
   sortBy: z
-    .enum([
-      'createdAt',
-      'otDate',
-      'requestNo',
-      'requesterName',
-      'status',
-      'totalHours',
-      'employeeCount',
-    ])
+    .preprocess(
+      (value) => {
+        const text = s(value)
+        return text || 'createdAt'
+      },
+      z.enum(OT_SORT_FIELDS),
+    )
+    .optional()
     .default('createdAt'),
 
-  sortOrder: z.enum(['asc', 'desc']).default('desc'),
+  sortOrder: sortOrderSchema,
 })
 
 const listOTApprovalInboxQuerySchema = z.object({
-  page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce.number().int().min(1).max(100).default(10),
-  search: z.string().trim().default(''),
+  page: positivePageSchema,
+  limit: limitSchema,
 
-  status: z.string().trim().default(''),
-  dayType: z.string().trim().default(''),
-  otDateFrom: z.string().trim().default(''),
-  otDateTo: z.string().trim().default(''),
+  search: z
+    .preprocess((value) => s(value), z.string().max(200))
+    .optional()
+    .default(''),
+
+  status: optionalUpperEnum(OT_STATUS, 'Status'),
+  dayType: optionalUpperEnum(OT_DAY_TYPE, 'Day type'),
+
+  otDateFrom: optionalYmdSchema,
+  otDateTo: optionalYmdSchema,
 
   sortBy: z
-    .enum([
-      'createdAt',
-      'otDate',
-      'requestNo',
-      'requesterName',
-      'status',
-      'totalHours',
-      'employeeCount',
-    ])
+    .preprocess(
+      (value) => {
+        const text = s(value)
+        return text || 'createdAt'
+      },
+      z.enum(OT_SORT_FIELDS),
+    )
+    .optional()
     .default('createdAt'),
 
-  sortOrder: z.enum(['asc', 'desc']).default('desc'),
+  sortOrder: sortOrderSchema,
+})
+
+const unavailableOTEmployeesQuerySchema = z.object({
+  otDate: ymdSchema,
 })
 
 const otRequestIdParamSchema = z.object({
   id: objectIdSchema,
 })
 
-const otApprovalDecisionSchema = z
-  .object({
-    action: z.enum(['APPROVE', 'REJECT']),
+const otApprovalDecisionSchema = z.object({
+  action: requiredUpperEnum(['APPROVE', 'REJECT'], 'Action'),
 
-    approvedEmployeeIds: z
-      .array(objectIdSchema)
-      .max(200, 'You can approve up to 200 employees at one time')
-      .default([]),
+  remark: optionalTrimmedString(1000),
 
-    remark: z
-      .string()
-      .trim()
-      .max(1000, 'remark must not exceed 1000 characters')
-      .default(''),
-  })
-  .superRefine((data, ctx) => {
-    validateUniqueIds(data.approvedEmployeeIds, ctx, 'approvedEmployeeIds')
+  approvedEmployeeIds: z
+    .array(objectIdSchema)
+    .max(200, 'You can approve up to 200 employees only')
+    .optional()
+    .default([]),
+})
 
-    if (data.action === 'APPROVE' && !data.approvedEmployeeIds.length) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['approvedEmployeeIds'],
-        message: 'Please select at least 1 approved employee',
-      })
-    }
-
-    if (data.action === 'REJECT' && !String(data.remark || '').trim()) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['remark'],
-        message: 'remark is required when rejecting',
-      })
-    }
-  })
-
-const otRequesterConfirmationSchema = z
-  .object({
-    action: z.enum(['AGREE', 'DISAGREE']),
-    remark: z
-      .string()
-      .trim()
-      .max(1000, 'remark must not exceed 1000 characters')
-      .default(''),
-  })
-  .superRefine((data, ctx) => {
-    if (data.action === 'DISAGREE' && !String(data.remark || '').trim()) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['remark'],
-        message: 'remark is required when disagreeing',
-      })
-    }
-  })
+const otRequesterConfirmationSchema = z.object({
+  action: requiredUpperEnum(['AGREE', 'DISAGREE'], 'Action'),
+  remark: optionalTrimmedString(1000),
+})
 
 module.exports = {
   createOTRequestSchema,

@@ -1,8 +1,10 @@
 // backend/src/modules/ot/routes/index.js
 const express = require('express')
+
 const otController = require('../controllers/ot.controller')
 const requireAuth = require('../../../middlewares/requireAuth')
 const requirePermission = require('../../../middlewares/requirePermission.middleware')
+
 const shiftOtOptionRoutes = require('./shiftOtOption.routes')
 const otPolicyRoutes = require('./otPolicy.routes')
 const dashboardRoutes = require('./dashboard.routes')
@@ -59,6 +61,12 @@ router.post(
   '/approvals/:id/decision',
   requirePermission('OT_REQUEST_APPROVE'),
   otController.decideOTRequest,
+)
+
+router.get(
+  '/acknowledgements',
+  requirePermission('OT_REQUEST_ACKNOWLEDGE'),
+  otController.listMyAcknowledgementInbox,
 )
 
 router.get(

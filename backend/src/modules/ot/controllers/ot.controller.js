@@ -1,6 +1,9 @@
 // backend/src/modules/ot/controllers/ot.controller.js
 const mongoose = require('mongoose')
+
 const otService = require('../services/ot.service')
+const otAcknowledgementService = require('../services/otAcknowledgement.service')
+
 const {
   createOTRequestSchema,
   updateOTRequestSchema,
@@ -175,6 +178,20 @@ async function exportOTApprovalInboxExcel(req, res, next) {
   }
 }
 
+async function listMyAcknowledgementInbox(req, res, next) {
+  try {
+    const query = parse(listOTApprovalInboxQuerySchema, req.query || {})
+    const data = await otAcknowledgementService.list(query, req.user)
+
+    res.json({
+      ok: true,
+      data,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
 async function decideOTRequest(req, res, next) {
   try {
     const params = parse(otRequestIdParamSchema, req.params || {})
@@ -230,6 +247,7 @@ module.exports = {
   getShiftOTOptionsByShift,
   listMyApprovalInbox,
   exportOTApprovalInboxExcel,
+  listMyAcknowledgementInbox,
   decideOTRequest,
   requesterConfirmOTRequest,
 }

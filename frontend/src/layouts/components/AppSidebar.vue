@@ -235,7 +235,15 @@ const navGroups = computed(() => {
             'OT_REQUEST_CREATE',
             'OT_REQUEST_UPDATE',
             'OT_REQUEST_APPROVE',
+            'OT_REQUEST_ACKNOWLEDGE',
           ],
+        },
+        {
+          key: 'ot-acknowledgements',
+          label: 'Acknowledge Inbox',
+          icon: 'pi pi-info-circle',
+          to: '/ot/acknowledgements',
+          permissions: ['OT_REQUEST_ACKNOWLEDGE'],
         },
         {
           key: 'ot-approvals',

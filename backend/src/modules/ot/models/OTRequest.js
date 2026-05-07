@@ -15,7 +15,17 @@ const OT_STATUS = [
 ]
 
 const OT_DAY_TYPE = ['WORKING_DAY', 'SUNDAY', 'HOLIDAY']
-const OT_APPROVAL_STEP_STATUS = ['WAITING', 'PENDING', 'APPROVED', 'REJECTED']
+
+const OT_APPROVAL_STEP_TYPE = ['APPROVER', 'ACKNOWLEDGE']
+
+const OT_APPROVAL_STEP_STATUS = [
+  'WAITING',
+  'PENDING',
+  'APPROVED',
+  'REJECTED',
+  'ACKNOWLEDGED',
+]
+
 const OT_REQUESTER_CONFIRMATION_STATUS = [
   'NOT_REQUIRED',
   'PENDING',
@@ -117,6 +127,15 @@ const OTApprovalStepSchema = new mongoose.Schema(
       type: Number,
       required: true,
       min: 1,
+    },
+
+    stepType: {
+      type: String,
+      enum: OT_APPROVAL_STEP_TYPE,
+      required: true,
+      default: 'APPROVER',
+      trim: true,
+      uppercase: true,
     },
 
     approverEmployeeId: {
@@ -330,7 +349,6 @@ const OTRequestSchema = new mongoose.Schema(
       index: true,
     },
 
-    // ===== old fields kept for backward compatibility =====
     startTime: {
       type: String,
       required: true,
@@ -362,7 +380,6 @@ const OTRequestSchema = new mongoose.Schema(
       min: 0,
     },
 
-    // ===== new shift / OT option fields =====
     shiftId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Shift',
@@ -484,8 +501,8 @@ const OTRequestSchema = new mongoose.Schema(
 
     reason: {
       type: String,
-      required: true,
       trim: true,
+      default: '',
       maxlength: 2000,
     },
 
@@ -494,9 +511,9 @@ const OTRequestSchema = new mongoose.Schema(
       required: true,
       validate: {
         validator(value) {
-          return Array.isArray(value) && value.length >= 1 && value.length <= 4
+          return Array.isArray(value) && value.length >= 1 && value.length <= 20
         },
-        message: 'approvalSteps must contain 1 to 4 approvers',
+        message: 'approvalSteps must contain 1 to 20 workflow steps',
       },
     },
 
@@ -658,6 +675,7 @@ OTRequestSchema.pre('validate', function normalizeFields(next) {
 
   if (Array.isArray(this.approvalSteps)) {
     for (const step of this.approvalSteps) {
+      step.stepType = s(step.stepType || 'APPROVER').toUpperCase()
       step.approverCode = s(step.approverCode)
       step.approverName = s(step.approverName)
       step.status = s(step.status).toUpperCase()

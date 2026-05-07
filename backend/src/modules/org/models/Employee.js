@@ -72,6 +72,19 @@ const employeeSchema = new Schema(
       },
     ],
 
+    // OT workflow role for automatic OT approval chain
+    // NONE = skip in OT workflow
+    // APPROVER = must approve
+    // ACKNOWLEDGE = only informed / visible, no approve button
+    otWorkflowRole: {
+      type: String,
+      enum: ['NONE', 'APPROVER', 'ACKNOWLEDGE'],
+      default: 'NONE',
+      uppercase: true,
+      trim: true,
+      index: true,
+    },
+
     phone: {
       type: String,
       default: '',
@@ -109,6 +122,7 @@ employeeSchema.pre('validate', function preValidate(next) {
   this.displayName = cleanString(this.displayName)
   this.phone = cleanString(this.phone)
   this.email = cleanString(this.email).toLowerCase()
+  this.otWorkflowRole = cleanString(this.otWorkflowRole || 'NONE').toUpperCase()
 
   if (!this.lineId) {
     this.lineId = null
@@ -168,6 +182,7 @@ employeeSchema.index({ lineId: 1, positionId: 1, isActive: 1 })
 employeeSchema.index({ shiftId: 1, isActive: 1 })
 employeeSchema.index({ reportsToEmployeeId: 1, isActive: 1 })
 employeeSchema.index({ lineManagerIds: 1, isActive: 1 })
+employeeSchema.index({ otWorkflowRole: 1, isActive: 1 })
 employeeSchema.index({ createdAt: -1 })
 
 module.exports = mongoose.model('Employee', employeeSchema)

@@ -145,6 +145,12 @@ const PERMISSIONS = [
     description: 'Allow reading employee options for selectors and dropdowns only',
   },
   {
+    code: 'EMPLOYEE_LOOKUP_ALL',
+    name: 'Lookup All Employees',
+    module: 'ORG',
+    description: 'Allow reading all employee options across managed scope limits',
+  },
+  {
     code: 'EMPLOYEE_CREATE',
     name: 'Create Employees',
     module: 'ORG',
@@ -261,7 +267,7 @@ const PERMISSIONS = [
     description: 'Allow reading shift options for selectors and dropdowns only',
   },
 
-  // OT
+  // OT Request Workflow
   {
     code: 'OT_REQUEST_VIEW',
     name: 'View OT Requests',
@@ -285,6 +291,12 @@ const PERMISSIONS = [
     name: 'Approve OT Requests',
     module: 'OT',
     description: 'Allow approving OT requests',
+  },
+  {
+    code: 'OT_REQUEST_ACKNOWLEDGE',
+    name: 'Acknowledge OT Requests',
+    module: 'OT',
+    description: 'Allow viewing OT requests where the user is included as an acknowledge/FYI person',
   },
   {
     code: 'OT_ADD_OTHER_LINE_EMPLOYEE',

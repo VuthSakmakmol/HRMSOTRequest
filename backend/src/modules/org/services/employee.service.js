@@ -18,6 +18,24 @@ function s(v) {
   return String(v ?? '').trim()
 }
 
+function upper(v) {
+  return s(v).toUpperCase()
+}
+
+function normalizeOTWorkflowRole(value) {
+  const role = upper(value || 'NONE')
+  return ['NONE', 'APPROVER', 'ACKNOWLEDGE'].includes(role) ? role : 'NONE'
+}
+
+function otWorkflowRoleLabel(value) {
+  const role = normalizeOTWorkflowRole(value)
+
+  if (role === 'APPROVER') return 'Approver'
+  if (role === 'ACKNOWLEDGE') return 'Acknowledge'
+
+  return 'None'
+}
+
 function escapeRegex(v) {
   return String(v).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
@@ -427,6 +445,7 @@ function sanitize(doc, accountDoc = null) {
   if (!doc) return null
 
   const lineManagers = buildLineManagersSummary(doc.lineManagerIds)
+  const workflowRole = normalizeOTWorkflowRole(doc.otWorkflowRole)
 
   return {
     _id: String(doc._id),
@@ -472,6 +491,9 @@ function sanitize(doc, accountDoc = null) {
       )
       .filter(Boolean)
       .join(', '),
+
+    otWorkflowRole: workflowRole,
+    otWorkflowRoleLabel: otWorkflowRoleLabel(workflowRole),
 
     phone: doc.phone || '',
     email: doc.email || '',
@@ -520,6 +542,7 @@ function sanitizeOrgNode(doc) {
     lineManagerIds: getLineManagerIdsFromDoc(doc),
     lineManagers: buildLineManagersSummary(doc.lineManagerIds),
 
+    otWorkflowRole: normalizeOTWorkflowRole(doc.otWorkflowRole),
     isActive: !!doc.isActive,
   }
 }
@@ -807,6 +830,7 @@ function makeOrgTreeNode(emp, children = [], expanded = false, highlighted = fal
       shiftCode: emp.shiftCode || '',
       shiftStartTime: emp.shiftStartTime || '',
       shiftEndTime: emp.shiftEndTime || '',
+      otWorkflowRole: normalizeOTWorkflowRole(emp.otWorkflowRole),
       isActive: !!emp.isActive,
       reportsToEmployeeId: emp.reportsToEmployeeId ? String(emp.reportsToEmployeeId) : null,
       lineManagerIds: Array.isArray(emp.lineManagerIds) ? emp.lineManagerIds : [],
@@ -828,7 +852,6 @@ function buildTreeRecursive(
   const emp = employeeMap.get(rootId)
   if (!emp) return null
 
-  // Prevent infinite loop if duplicated/multi-parent structure creates a cycle.
   if (pathIds.has(rootId)) return null
 
   const nextPathIds = new Set(pathIds)
@@ -903,6 +926,7 @@ function searchEmployees(allEmployees, keyword) {
       emp.shiftName,
       emp.shiftCode,
       emp.lineManagerNames,
+      emp.otWorkflowRole,
     ]
       .map((v) => s(v).toLowerCase())
       .some((v) => v.includes(q))
@@ -930,6 +954,7 @@ function buildEmployeeListFilter(
       { displayName: regex },
       { phone: regex },
       { email: regex },
+      { otWorkflowRole: regex },
     ]
   }
 
@@ -1041,6 +1066,9 @@ function buildEmployeeLookupItem(doc) {
       .filter(Boolean)
       .join(', '),
 
+    otWorkflowRole: normalizeOTWorkflowRole(doc.otWorkflowRole),
+    otWorkflowRoleLabel: otWorkflowRoleLabel(doc.otWorkflowRole),
+
     phone: doc.phone || '',
     email: doc.email || '',
     isActive: !!doc.isActive,
@@ -1132,6 +1160,7 @@ function buildEmployeeExportRows(items = []) {
     'Line Managers': item.lineManagerNames || '',
     'Primary Manager Employee No': item.reportsToEmployeeNo || '',
     'Primary Manager Name': item.reportsToEmployeeName || '',
+    'OT Workflow Role': item.otWorkflowRole || 'NONE',
     'Shift Code': item.shiftCode || '',
     'Shift Name': item.shiftName || '',
     'Shift Type': item.shiftType || '',
@@ -1170,6 +1199,7 @@ function normalizeImportRow(raw = {}) {
     lineCode: s(raw.lineCode || raw['Line Code']).toUpperCase(),
     shiftCode: s(raw.shiftCode || raw['Shift Code']).toUpperCase(),
     reportsToEmployeeNo: s(raw.reportsToEmployeeNo || raw['Reports To Employee No']).toUpperCase(),
+    otWorkflowRole: normalizeOTWorkflowRole(raw.otWorkflowRole || raw['OT Workflow Role']),
     phone: s(raw.phone || raw.Phone),
     email: s(raw.email || raw.Email).toLowerCase(),
     joinDate: normalizeImportDateDDMMYYYY(rawJoinDate),
@@ -1218,6 +1248,7 @@ async function getOrgTree(
       shiftId: 1,
       reportsToEmployeeId: 1,
       lineManagerIds: 1,
+      otWorkflowRole: 1,
       isActive: 1,
       email: 1,
     },
@@ -1253,6 +1284,7 @@ async function getOrgTree(
         )
         .filter(Boolean)
         .join(', '),
+      otWorkflowRole: normalizeOTWorkflowRole(doc.otWorkflowRole),
       isActive: !!doc.isActive,
       email: doc.email || '',
     }
@@ -1272,9 +1304,6 @@ async function getOrgTree(
       ? emp.lineManagerIds.map((id) => s(id)).filter(Boolean)
       : []
 
-    // Line-aware tree:
-    // If employee has line managers, show this employee under every line manager.
-    // If no line managers, fall back to normal primary reportsToEmployeeId.
     const candidateParentIds = lineManagerIds.length
       ? lineManagerIds
       : emp.reportsToEmployeeId
@@ -1392,6 +1421,7 @@ async function getOrgTree(
       shiftCode: emp.shiftCode,
       shiftStartTime: emp.shiftStartTime,
       shiftEndTime: emp.shiftEndTime,
+      otWorkflowRole: normalizeOTWorkflowRole(emp.otWorkflowRole),
       lineManagerIds: emp.lineManagerIds,
       lineManagers: emp.lineManagers,
     })),
@@ -1511,6 +1541,7 @@ async function downloadImportSample() {
       'Line Code': 'LINE-01',
       'Shift Code': 'DAY',
       'Reports To Employee No': '',
+      'OT Workflow Role': 'APPROVER',
       Phone: '012345678',
       Email: 'mra@company.com',
       'Join Date': '30/04/2026',
@@ -1524,6 +1555,7 @@ async function downloadImportSample() {
       'Line Code': 'LINE-01',
       'Shift Code': 'DAY',
       'Reports To Employee No': '',
+      'OT Workflow Role': 'NONE',
       Phone: '098765432',
       Email: 'worker001@company.com',
       'Join Date': '30/04/2026',
@@ -1545,6 +1577,10 @@ async function downloadImportSample() {
     [
       'Reports To Employee No',
       'Optional. If Position has ReportsToPositionId, system auto-finds manager. SAME_LINE uses parent position + same line. GLOBAL uses parent position across departments/lines',
+    ],
+    [
+      'OT Workflow Role',
+      'Optional. Use NONE, APPROVER, or ACKNOWLEDGE. APPROVER must approve OT. ACKNOWLEDGE is only informed. Blank = NONE',
     ],
     ['Phone', 'Optional'],
     ['Email', 'Optional. Must be valid and unique if provided'],
@@ -1648,6 +1684,7 @@ async function importExcel(file, currentUser = null) {
       lineCode: s(data.lineCode).toUpperCase(),
       shiftCode: s(data.shiftCode).toUpperCase(),
       reportsToEmployeeNo: s(data.reportsToEmployeeNo).toUpperCase(),
+      otWorkflowRole: normalizeOTWorkflowRole(data.otWorkflowRole),
       email: s(data.email).toLowerCase(),
       joinDate: s(data.joinDate),
       isActive: typeof data.isActive === 'boolean' ? data.isActive : true,
@@ -1701,7 +1738,7 @@ async function importExcel(file, currentUser = null) {
     ).lean(),
     Employee.find(
       { employeeNo: { $in: allEmployeeNosToLookup } },
-      '_id employeeNo displayName email departmentId positionId lineId shiftId reportsToEmployeeId lineManagerIds',
+      '_id employeeNo displayName email departmentId positionId lineId shiftId reportsToEmployeeId lineManagerIds otWorkflowRole',
     ).lean(),
     emails.length
       ? Employee.find({ email: { $in: emails } }, '_id employeeNo email').lean()
@@ -1818,6 +1855,7 @@ async function importExcel(file, currentUser = null) {
         shiftId: shift._id,
         reportsToEmployeeId: finalManagerId || null,
         lineManagerIds: [],
+        otWorkflowRole: normalizeOTWorkflowRole(row.otWorkflowRole),
         phone: row.phone || '',
         email: row.email || '',
         joinDate: row.joinDate || null,
@@ -1838,6 +1876,7 @@ async function importExcel(file, currentUser = null) {
         shiftId: created.shiftId,
         reportsToEmployeeId: created.reportsToEmployeeId,
         lineManagerIds: created.lineManagerIds,
+        otWorkflowRole: created.otWorkflowRole,
       })
 
       if (row.email) {
@@ -1862,6 +1901,7 @@ async function importExcel(file, currentUser = null) {
           lineId: line?._id || null,
           shiftId: shift._id,
           reportsToEmployeeId: finalManagerId || null,
+          otWorkflowRole: normalizeOTWorkflowRole(row.otWorkflowRole),
           phone: row.phone || '',
           email: row.email || '',
           joinDate: row.joinDate || null,
@@ -1881,6 +1921,7 @@ async function importExcel(file, currentUser = null) {
       lineId: line?._id || null,
       shiftId: shift._id,
       reportsToEmployeeId: finalManagerId || null,
+      otWorkflowRole: normalizeOTWorkflowRole(row.otWorkflowRole),
     })
 
     if (row.email) {
@@ -2011,6 +2052,7 @@ async function syncSameLineManagersForAllEmployees() {
         lineId: 1,
         reportsToEmployeeId: 1,
         lineManagerIds: 1,
+        otWorkflowRole: 1,
         isActive: 1,
       },
     )
@@ -2149,6 +2191,7 @@ async function create(payload) {
     shiftId: payload.shiftId,
     reportsToEmployeeId: reportsToEmployeeId || null,
     lineManagerIds: [],
+    otWorkflowRole: normalizeOTWorkflowRole(payload.otWorkflowRole),
     phone: s(payload.phone),
     email: s(payload.email),
     joinDate: payload.joinDate || null,
@@ -2205,6 +2248,10 @@ async function update(id, payload) {
   const nextDisplayName =
     payload.displayName !== undefined ? s(payload.displayName) : s(doc.displayName)
   const nextEmail = payload.email !== undefined ? s(payload.email).toLowerCase() : s(doc.email)
+  const nextOTWorkflowRole =
+    payload.otWorkflowRole !== undefined
+      ? normalizeOTWorkflowRole(payload.otWorkflowRole)
+      : normalizeOTWorkflowRole(doc.otWorkflowRole)
 
   const nextDepartmentId =
     payload.departmentId !== undefined ? payload.departmentId : doc.departmentId
@@ -2253,6 +2300,10 @@ async function update(id, payload) {
     })
 
     doc.reportsToEmployeeId = reportsToEmployeeId || null
+  }
+
+  if (payload.otWorkflowRole !== undefined) {
+    doc.otWorkflowRole = nextOTWorkflowRole
   }
 
   if (payload.phone !== undefined) {

@@ -50,3 +50,7 @@ export function exportOTApprovalInboxExcel(params = {}) {
     responseType: 'blob',
   })
 }
+
+export function getOTAcknowledgementInbox(params = {}) {
+  return api.get('/ot/acknowledgements', { params })
+}

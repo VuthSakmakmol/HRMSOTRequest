@@ -7,6 +7,15 @@ function isObjectId(value) {
   return mongoose.Types.ObjectId.isValid(String(value))
 }
 
+function s(value) {
+  return String(value ?? '').trim()
+}
+
+function normalizeOTWorkflowRole(value) {
+  const role = s(value || 'NONE').toUpperCase()
+  return ['NONE', 'APPROVER', 'ACKNOWLEDGE'].includes(role) ? role : 'NONE'
+}
+
 const booleanLike = z.union([z.boolean(), z.string(), z.number()]).optional()
 
 function toBoolean(value, defaultValue = undefined) {
@@ -63,6 +72,14 @@ const emailField = z
   .or(z.literal(''))
   .default('')
 
+const otWorkflowRoleField = z
+  .union([z.string(), z.null(), z.undefined()])
+  .transform((value) => normalizeOTWorkflowRole(value))
+  .refine(
+    (value) => ['NONE', 'APPROVER', 'ACKNOWLEDGE'].includes(value),
+    'Invalid OT workflow role',
+  )
+
 const listQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(10),
@@ -80,6 +97,7 @@ const listQuerySchema = z.object({
       'displayName',
       'joinDate',
       'isActive',
+      'otWorkflowRole',
     ])
     .default('createdAt'),
   sortOrder: z.enum(['asc', 'desc']).default('desc'),
@@ -100,6 +118,7 @@ const exportQuerySchema = z.object({
       'displayName',
       'joinDate',
       'isActive',
+      'otWorkflowRole',
     ])
     .default('createdAt'),
   sortOrder: z.enum(['asc', 'desc']).default('desc'),
@@ -122,14 +141,13 @@ const createEmployeeSchema = z
     departmentId: objectIdField('Department'),
     positionId: objectIdField('Position'),
 
-    // Optional because some office/admin employees may not belong to a production line.
     lineId: optionalObjectIdField('Line'),
 
     shiftId: objectIdField('Shift'),
 
-    // Manual manager is still accepted, but service will auto-overwrite it when:
-    // position.reportsToPositionId exists AND lineId exists.
     reportsToEmployeeId: optionalObjectIdField('reportsToEmployeeId'),
+
+    otWorkflowRole: otWorkflowRoleField.default('NONE'),
 
     phone: phoneField,
     email: emailField,
@@ -169,6 +187,8 @@ const updateEmployeeSchema = z
     shiftId: objectIdField('Shift').optional(),
     reportsToEmployeeId: optionalObjectIdField('reportsToEmployeeId').optional(),
 
+    otWorkflowRole: otWorkflowRoleField.optional(),
+
     phone: z.string().trim().max(30, 'Phone is too long').optional(),
 
     email: z
@@ -192,6 +212,7 @@ const updateEmployeeSchema = z
       data.lineId !== undefined ||
       data.shiftId !== undefined ||
       data.reportsToEmployeeId !== undefined ||
+      data.otWorkflowRole !== undefined ||
       data.phone !== undefined ||
       data.email !== undefined ||
       data.joinDate !== undefined ||
@@ -262,6 +283,8 @@ const importEmployeeRowSchema = z.object({
       if (value === undefined || value === null) return ''
       return String(value).trim()
     }),
+
+  otWorkflowRole: otWorkflowRoleField.default('NONE'),
 
   phone: z
     .union([z.string(), z.null(), z.undefined()])

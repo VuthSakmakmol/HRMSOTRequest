@@ -6,14 +6,12 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 
-import OTApproverChainView from '@/modules/ot/components/OTApproverChainView.vue'
 import OTDetailView from '@/modules/ot/components/OTDetailView.vue'
 import OTEmployeeMultiPicker from '@/modules/ot/components/OTEmployeeMultiPicker.vue'
 import OTSubmitBar from '@/modules/ot/components/OTSubmitBar.vue'
 import api from '@/shared/services/api'
 import {
   createOTRequest,
-  getAllowedOTApproverChain,
   getShiftOTOptionsByShift,
 } from '@/modules/ot/ot.api'
 
@@ -21,13 +19,11 @@ const router = useRouter()
 const toast = useToast()
 
 const submitting = ref(false)
-const loadingApproverChain = ref(false)
 const loadingRequester = ref(false)
 const loadingShiftOptions = ref(false)
 const loadingUnavailableEmployees = ref(false)
 
 const selectedEmployees = ref([])
-const approverChain = ref([])
 const requesterEmployee = ref(null)
 const shiftOptions = ref([])
 const unavailableEmployees = ref([])
@@ -39,7 +35,6 @@ const form = reactive({
   otDate: null,
   shiftOtOptionId: '',
   reason: '',
-  approverEmployeeIds: [],
 })
 
 const selectedEmployeeIds = computed(() =>
@@ -47,12 +42,6 @@ const selectedEmployeeIds = computed(() =>
     .map((item) => String(item?._id || item?.id || item?.employeeId || '').trim())
     .filter(Boolean),
 )
-
-const requesterEmployeeId = computed(() =>
-  String(requesterEmployee.value?._id || '').trim(),
-)
-
-const selectableApproverChain = computed(() => approverChain.value.slice(0, 4))
 
 const selectedOTOption = computed(() =>
   shiftOptions.value.find((item) => item.id === form.shiftOtOptionId) || null,
@@ -69,26 +58,6 @@ const unavailableEmployeeMap = computed(() => {
 
   return map
 })
-
-function normalizeApproverChainResponse(res) {
-  const rows =
-    res?.data?.data?.items ||
-    res?.data?.data?.rows ||
-    res?.data?.data ||
-    res?.data ||
-    []
-
-  if (!Array.isArray(rows)) return []
-
-  return rows
-    .map((item, index) => ({
-      orderNo: Number(item?.orderNo || index + 1),
-      employeeId: String(item?.employeeId || item?._id || '').trim(),
-      employeeNo: String(item?.employeeNo || '').trim(),
-      displayName: String(item?.displayName || item?.name || '').trim(),
-    }))
-    .filter((item) => item.employeeId && item.displayName)
-}
 
 function normalizeMeResponse(res) {
   const root =
@@ -293,11 +262,6 @@ const requestPreview = computed(() => {
   }
 })
 
-function clearApproverSelection() {
-  approverChain.value = []
-  form.approverEmployeeIds = []
-}
-
 function clearShiftOptions() {
   shiftOptions.value = []
   form.shiftOtOptionId = ''
@@ -399,50 +363,6 @@ async function loadRequesterEmployee() {
   }
 }
 
-async function loadApproverChainForRequester() {
-  try {
-    const employeeId = requesterEmployeeId.value
-    clearApproverSelection()
-
-    if (!employeeId) return
-
-    loadingApproverChain.value = true
-
-    const res = await getAllowedOTApproverChain(employeeId)
-    approverChain.value = normalizeApproverChainResponse(res)
-  } catch (error) {
-    clearApproverSelection()
-    toast.add({
-      severity: 'error',
-      summary: 'Approver chain failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Unable to load approver chain.',
-      life: 3000,
-    })
-  } finally {
-    loadingApproverChain.value = false
-  }
-}
-
-function onApproverToggle({ index, checked }) {
-  const chain = selectableApproverChain.value
-
-  if (!chain[index]) return
-
-  if (checked) {
-    form.approverEmployeeIds = chain
-      .slice(0, index + 1)
-      .map((item) => item.employeeId)
-    return
-  }
-
-  form.approverEmployeeIds = chain
-    .slice(0, index)
-    .map((item) => item.employeeId)
-}
-
 async function loadShiftOptionsForSharedShift() {
   const state = selectedShiftState.value
 
@@ -515,9 +435,6 @@ function buildPayload() {
     otDate: formatYMD(form.otDate),
     shiftOtOptionId: String(form.shiftOtOptionId || '').trim(),
     reason: String(form.reason || '').trim(),
-    approverEmployeeIds: form.approverEmployeeIds
-      .map((id) => String(id).trim())
-      .filter(Boolean),
   }
 }
 
@@ -538,8 +455,6 @@ function validateBeforeSubmit(payload) {
   }
 
   if (!payload.shiftOtOptionId) return 'Please select OT option.'
-  if (!payload.reason) return 'Please enter reason.'
-  if (!payload.approverEmployeeIds.length) return 'Please select at least 1 approver.'
 
   return ''
 }
@@ -574,12 +489,30 @@ function normalizeDuplicateEmployees(error) {
     .filter((item) => item.employeeId)
 }
 
-function removeDuplicateEmployeesFromSelection(duplicates = []) {
-  const duplicateIdSet = new Set(
-    duplicates.map((item) => String(item.employeeId || '').trim()).filter(Boolean),
-  )
+function normalizeMissingClockInEmployees(error) {
+  const payload = getErrorPayload(error)
 
-  if (!duplicateIdSet.size) return 0
+  const rows =
+    payload?.details?.missingEmployees ||
+    payload?.data?.missingEmployees ||
+    payload?.missingEmployees ||
+    []
+
+  if (!Array.isArray(rows)) return []
+
+  return rows
+    .map((item) => ({
+      employeeId: String(item?.employeeId || '').trim(),
+      employeeNo: String(item?.employeeNo || '').trim(),
+      employeeName: String(item?.employeeName || '').trim(),
+      employeeLabel: String(item?.employeeLabel || '').trim(),
+    }))
+    .filter((item) => item.employeeId)
+}
+
+function removeEmployeesFromSelectionByIds(employeeIds = []) {
+  const idSet = new Set(employeeIds.map((id) => String(id || '').trim()).filter(Boolean))
+  if (!idSet.size) return 0
 
   const beforeCount = selectedEmployees.value.length
 
@@ -591,10 +524,16 @@ function removeDuplicateEmployeesFromSelection(duplicates = []) {
         '',
     ).trim()
 
-    return !duplicateIdSet.has(employeeId)
+    return !idSet.has(employeeId)
   })
 
   return beforeCount - selectedEmployees.value.length
+}
+
+function removeDuplicateEmployeesFromSelection(duplicates = []) {
+  return removeEmployeesFromSelectionByIds(
+    duplicates.map((item) => item.employeeId),
+  )
 }
 
 function buildDuplicateToastMessage(duplicates = []) {
@@ -613,6 +552,23 @@ function buildDuplicateToastMessage(duplicates = []) {
   const moreText = duplicates.length > 5 ? ` and ${duplicates.length - 5} more` : ''
 
   return `These employees already have OT request on this date. Removed from selection: ${preview}${moreText}.`
+}
+
+function buildMissingClockInToastMessage(missing = []) {
+  const preview = missing
+    .slice(0, 5)
+    .map((item) => {
+      return (
+        item.employeeLabel ||
+        [item.employeeNo, item.employeeName].filter(Boolean).join(' - ') ||
+        item.employeeId
+      )
+    })
+    .join(', ')
+
+  const moreText = missing.length > 5 ? ` and ${missing.length - 5} more` : ''
+
+  return `Today OT requires attendance time-in. Removed from selection: ${preview}${moreText}.`
 }
 
 async function submit() {
@@ -662,6 +618,27 @@ async function submit() {
       return
     }
 
+    const missingClockInEmployees = normalizeMissingClockInEmployees(error)
+
+    if (missingClockInEmployees.length) {
+      const removedCount = removeEmployeesFromSelectionByIds(
+        missingClockInEmployees.map((item) => item.employeeId),
+      )
+
+      toast.add({
+        severity: 'warn',
+        summary: 'Attendance time-in required',
+        detail:
+          removedCount > 0
+            ? buildMissingClockInToastMessage(missingClockInEmployees)
+            : error?.response?.data?.message ||
+              buildMissingClockInToastMessage(missingClockInEmployees),
+        life: 8000,
+      })
+
+      return
+    }
+
     toast.add({
       severity: 'error',
       summary: 'Create failed',
@@ -682,7 +659,6 @@ function goBack() {
 
 onMounted(async () => {
   await loadRequesterEmployee()
-  await loadApproverChainForRequester()
 })
 </script>
 
@@ -708,19 +684,25 @@ onMounted(async () => {
       />
 
       <div class="ot-approval-side">
-        <OTApproverChainView
-          :loading-requester="loadingRequester"
-          :loading-approver-chain="loadingApproverChain"
-          :requester-employee-id="requesterEmployeeId"
-          :requester-employee="requesterEmployee"
-          :approver-chain="approverChain"
-          :selected-approver-employee-ids="form.approverEmployeeIds"
-          @toggle="onApproverToggle"
-        />
+        <div class="auto-workflow-card">
+          <div class="auto-workflow-icon">
+            <i class="pi pi-sitemap"></i>
+          </div>
+
+          <div>
+            <div class="auto-workflow-title">
+              Approval workflow is automatic
+            </div>
+
+            <div class="auto-workflow-text">
+              The system will follow the employee organization chart. Employees marked as Approver must approve, and employees marked as Acknowledge will only be informed.
+            </div>
+          </div>
+        </div>
 
         <OTSubmitBar
           :submitting="submitting"
-          :disabled="loadingRequester || loadingApproverChain || loadingShiftOptions || loadingUnavailableEmployees"
+          :disabled="loadingRequester || loadingShiftOptions || loadingUnavailableEmployees"
           @submit="submit"
           @back="goBack"
         />
@@ -746,6 +728,51 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+}
+
+.auto-workflow-card {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  border: 1px solid var(--ot-border, #e2e8f0);
+  background: var(--ot-surface, #ffffff);
+  border-radius: 1rem;
+  padding: 1rem;
+}
+
+.auto-workflow-icon {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 0.8rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(14, 165, 233, 0.1);
+  color: #0284c7;
+  flex-shrink: 0;
+}
+
+.auto-workflow-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--ot-text, #0f172a);
+}
+
+.auto-workflow-text {
+  margin-top: 0.25rem;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--ot-text-muted, #64748b);
+}
+
+:global(.dark) .auto-workflow-card {
+  background: rgba(15, 23, 42, 0.72);
+  border-color: rgba(148, 163, 184, 0.22);
+}
+
+:global(.dark) .auto-workflow-icon {
+  background: rgba(56, 189, 248, 0.14);
+  color: #7dd3fc;
 }
 
 @media (min-width: 1280px) {

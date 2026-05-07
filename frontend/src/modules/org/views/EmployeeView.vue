@@ -83,6 +83,7 @@ const form = reactive({
   lineId: '',
   shiftId: '',
   reportsToEmployeeId: '',
+  otWorkflowRole: 'NONE',
   phone: '',
   email: '',
   joinDate: '',
@@ -103,6 +104,12 @@ const statusOptions = [
 const accountModeOptions = [
   { label: 'Create without account', value: 'WITHOUT_ACCOUNT' },
   { label: 'Create with account', value: 'WITH_ACCOUNT' },
+]
+
+const otWorkflowRoleOptions = [
+  { label: 'None', value: 'NONE' },
+  { label: 'Approver', value: 'APPROVER' },
+  { label: 'Acknowledge', value: 'ACKNOWLEDGE' },
 ]
 
 const isEditMode = computed(() => !!editingEmployeeId.value)
@@ -705,6 +712,7 @@ function resetForm() {
   form.lineId = ''
   form.shiftId = ''
   form.reportsToEmployeeId = ''
+  form.otWorkflowRole = 'NONE'
   form.phone = ''
   form.email = ''
   form.joinDate = ''
@@ -768,6 +776,8 @@ async function openEditDialog(row) {
     row?.reportsToEmployeeId ||
     ''
 
+  form.otWorkflowRole = String(row?.otWorkflowRole || 'NONE').toUpperCase()
+
   form.phone = row?.phone || ''
   form.email = row?.email || ''
   form.joinDate = row?.joinDate ? String(row.joinDate).slice(0, 10) : ''
@@ -802,6 +812,7 @@ async function submitEmployee() {
       lineId: String(form.lineId || '').trim() || null,
       shiftId: String(form.shiftId || '').trim(),
       reportsToEmployeeId: manualManagerId,
+      otWorkflowRole: String(form.otWorkflowRole || 'NONE').trim().toUpperCase(),
       phone: String(form.phone || '').trim(),
       email: String(form.email || '').trim().toLowerCase(),
       joinDate: String(form.joinDate || '').trim() || null,
@@ -860,6 +871,24 @@ function accountSeverity(row) {
 
 function accountStatusLabel(row) {
   return row?.hasAccount ? 'Has Account' : 'No Account'
+}
+
+function otWorkflowRoleLabel(value) {
+  const role = String(value || 'NONE').toUpperCase()
+
+  if (role === 'APPROVER') return 'Approver'
+  if (role === 'ACKNOWLEDGE') return 'Acknowledge'
+
+  return 'None'
+}
+
+function otWorkflowRoleSeverity(value) {
+  const role = String(value || 'NONE').toUpperCase()
+
+  if (role === 'APPROVER') return 'success'
+  if (role === 'ACKNOWLEDGE') return 'info'
+
+  return 'secondary'
 }
 
 function departmentLabel(row) {
@@ -1188,7 +1217,7 @@ onBeforeUnmount(() => {
         scrollHeight="500px"
         :sortField="filters.sortField"
         :sortOrder="filters.sortOrder"
-        tableStyle="min-width: 116rem"
+        tableStyle="min-width: 126rem"
         class="employee-table"
         :virtualScrollerOptions="useVirtualScroll ? {
           lazy: true,
@@ -1255,6 +1284,17 @@ onBeforeUnmount(() => {
             >
               {{ managerLabel(data) }}
             </span>
+          </template>
+        </Column>
+
+        <Column field="otWorkflowRole" header="OT Role" style="min-width: 10rem">
+          <template #body="{ data }">
+            <Tag
+              v-if="data"
+              :value="otWorkflowRoleLabel(data.otWorkflowRole)"
+              :severity="otWorkflowRoleSeverity(data.otWorkflowRole)"
+              class="ot-status-tag"
+            />
           </template>
         </Column>
 
@@ -1463,6 +1503,23 @@ onBeforeUnmount(() => {
             class="text-[color:var(--ot-text-muted)]"
           >
             Manual manager is used only when the selected position does not have a parent position rule.
+          </small>
+        </div>
+
+        <div class="space-y-2">
+          <label class="text-sm font-medium text-[color:var(--ot-text)]">
+            OT Workflow Role
+          </label>
+          <Select
+            v-model="form.otWorkflowRole"
+            :options="otWorkflowRoleOptions"
+            optionLabel="label"
+            optionValue="value"
+            placeholder="Select OT workflow role"
+            class="w-full"
+          />
+          <small class="text-[color:var(--ot-text-muted)]">
+            Approver must approve OT. Acknowledge is only informed. None is skipped.
           </small>
         </div>
 
