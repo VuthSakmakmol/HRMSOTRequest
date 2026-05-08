@@ -1267,18 +1267,6 @@ onBeforeUnmount(() => {
 
         <template #expansion="{ data }">
           <div class="ot-expanded-box">
-            <div class="ot-expanded-header">
-              <div class="min-w-0">
-                <div class="ot-expanded-title">
-                  Employees inside request
-                </div>
-
-                <div class="ot-expanded-subtitle">
-                  {{ data.requestNo || '-' }} · {{ getEmployeeCount(data) }} staff
-                </div>
-              </div>
-            </div>
-
             <div
               v-if="getTargetEmployees(data).length"
               class="ot-expanded-content"

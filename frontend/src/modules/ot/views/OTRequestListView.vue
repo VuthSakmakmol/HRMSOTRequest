@@ -15,6 +15,7 @@ import InputIcon from 'primevue/inputicon'
 import InputText from 'primevue/inputtext'
 import Select from 'primevue/select'
 import Tag from 'primevue/tag'
+import AppTableLoading from '@/shared/components/AppTableLoading.vue'
 
 import { useAuthStore } from '@/modules/auth/auth.store'
 import {
@@ -49,6 +50,9 @@ const filters = reactive({
 const canCreateRequest = computed(() => auth.hasAnyPermission(['OT_REQUEST_CREATE']))
 const canUpdateRequest = computed(() => auth.hasAnyPermission(['OT_REQUEST_UPDATE']))
 const canVerifyAttendance = computed(() => auth.hasAnyPermission(['ATTENDANCE_VERIFY']))
+const firstLoading = computed(() => {
+  return backgroundLoading.value && !bootstrapped.value && !hasAnyData.value
+})
 
 const statusOptions = [
   { label: 'All Status', value: '' },
@@ -786,26 +790,36 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </div>
+      
 
-      <DataTable
-        v-model:expandedRows="expandedRows"
-        :value="rows"
-        dataKey="id"
-        lazy
-        scrollable
-        scrollHeight="500px"
-        tableStyle="width: max-content; min-width: 100%; table-layout: auto;"
-        class="ot-request-table"
-        :virtualScrollerOptions="useVirtualScroll ? {
-          lazy: true,
-          onLazyLoad: onVirtualLazyLoad,
-          itemSize: 64,
-          delay: 0,
-          showLoader: false,
-          loading: false,
-          numToleratedItems: 12,
-        } : null"
-      >
+      <AppTableLoading
+          v-if="firstLoading"
+          title="Loading OT requests"
+          message="Fetching OT request records..."
+          :rows="8"
+          :columns="9"
+        />
+
+        <DataTable
+          v-else
+          v-model:expandedRows="expandedRows"
+          :value="rows"
+          dataKey="id"
+          lazy
+          scrollable
+          scrollHeight="500px"
+          tableStyle="width: max-content; min-width: 100%; table-layout: auto;"
+          class="ot-request-table"
+          :virtualScrollerOptions="useVirtualScroll ? {
+            lazy: true,
+            onLazyLoad: onVirtualLazyLoad,
+            itemSize: 64,
+            delay: 0,
+            showLoader: false,
+            loading: false,
+            numToleratedItems: 12,
+          } : null"
+        >
         <template #empty>
           <div
             v-if="bootstrapped"
@@ -948,18 +962,6 @@ onBeforeUnmount(() => {
 
         <template #expansion="{ data }">
           <div class="ot-expanded-box">
-            <div class="ot-expanded-header">
-              <div class="min-w-0">
-                <div class="ot-expanded-title">
-                  Employees inside request
-                </div>
-
-                <div class="ot-expanded-subtitle">
-                  {{ data.requestNo || '-' }} · {{ getEmployeeCount(data) }} staff
-                </div>
-              </div>
-            </div>
-
             <div
               v-if="getTargetEmployees(data).length"
               class="ot-expanded-content"

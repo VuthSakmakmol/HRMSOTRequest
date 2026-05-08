@@ -194,56 +194,68 @@ const OTCalculationPolicySnapshotSchema = new mongoose.Schema(
       ref: 'OTCalculationPolicy',
       default: null,
     },
+
     code: {
       type: String,
       trim: true,
       default: '',
     },
+
     name: {
       type: String,
       trim: true,
       default: '',
     },
+
     minEligibleMinutes: {
       type: Number,
       min: 0,
       default: 0,
     },
+
     roundUnitMinutes: {
       type: Number,
       min: 1,
       default: 30,
     },
+
     roundMethod: {
       type: String,
       trim: true,
       default: '',
     },
+
     graceAfterShiftEndMinutes: {
       type: Number,
       min: 0,
       default: 0,
     },
+
     allowApprovedOtWithoutExactClockOut: {
       type: Boolean,
       default: false,
     },
+
     allowPreShiftOT: {
       type: Boolean,
       default: false,
     },
+
     allowPostShiftOT: {
       type: Boolean,
       default: true,
     },
+
     capByRequestedMinutes: {
       type: Boolean,
       default: true,
     },
+
     treatForgetScanInAsPending: {
       type: Boolean,
       default: true,
     },
+
     treatForgetScanOutAsPending: {
       type: Boolean,
       default: true,
@@ -704,6 +716,9 @@ OTRequestSchema.pre('validate', function normalizeFields(next) {
   next()
 })
 
+/**
+ * List / requester / filter indexes
+ */
 OTRequestSchema.index({ requesterEmployeeId: 1, otDate: -1 })
 OTRequestSchema.index({ requesterName: 1 })
 OTRequestSchema.index({ status: 1, otDate: -1 })
@@ -713,8 +728,19 @@ OTRequestSchema.index({ currentApproverEmployeeId: 1, status: 1, otDate: -1 })
 OTRequestSchema.index({ finalApproverEmployeeId: 1, status: 1, otDate: -1 })
 OTRequestSchema.index({ shiftId: 1, otDate: -1 })
 OTRequestSchema.index({ shiftOtOptionId: 1, otDate: -1 })
-OTRequestSchema.index({ createdAt: -1 })
 
+/**
+ * Faster newest-first list pages.
+ * Useful for OTRequestListView and Approval Inbox when sorting by createdAt.
+ */
+OTRequestSchema.index({ createdAt: -1, _id: -1 })
+OTRequestSchema.index({ otDate: -1, createdAt: -1, _id: -1 })
+OTRequestSchema.index({ status: 1, createdAt: -1, _id: -1 })
+OTRequestSchema.index({ dayType: 1, createdAt: -1, _id: -1 })
+
+/**
+ * Duplicate OT employee/date checking indexes.
+ */
 OTRequestSchema.index({ otDate: 1, status: 1, 'requestedEmployees.employeeId': 1 })
 OTRequestSchema.index({ otDate: 1, status: 1, 'approvedEmployees.employeeId': 1 })
 OTRequestSchema.index({ otDate: 1, status: 1, 'proposedApprovedEmployees.employeeId': 1 })

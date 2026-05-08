@@ -16,6 +16,7 @@ import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 
 import { getOTAcknowledgementInbox } from '@/modules/ot/ot.api'
+import AppTableLoading from '@/shared/components/AppTableLoading.vue'
 
 const toast = useToast()
 
@@ -58,6 +59,9 @@ const loadedCount = computed(() => rows.value.filter(Boolean).length)
 const summaryText = computed(() => `${loadedCount.value} of ${totalRequests.value}`)
 const hasAnyData = computed(() => rows.value.some(Boolean))
 const useVirtualScroll = computed(() => totalRequests.value > PAGE_SIZE)
+const firstLoading = computed(() => {
+  return backgroundLoading.value && !bootstrapped.value && !hasAnyData.value
+})
 
 let searchTimer = null
 let currentRequestId = 0
@@ -442,7 +446,9 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
     }
 
     bootstrapped.value = true
-  } catch (error) {
+  }catch (error) {
+    bootstrapped.value = true
+
     toast.add({
       severity: 'error',
       summary: 'Load failed',
@@ -453,7 +459,6 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
     backgroundLoading.value = false
   }
 }
-
 async function reloadFirstPage({ keepVisible = true, resetExpanded = false } = {}) {
   if (resetExpanded) {
     expandedRows.value = {}
@@ -618,25 +623,34 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <DataTable
-        v-model:expandedRows="expandedRows"
-        :value="rows"
-        dataKey="id"
-        lazy
-        scrollable
-        scrollHeight="500px"
-        tableStyle="width: max-content; min-width: 100%; table-layout: auto;"
-        class="ot-ack-table"
-        :virtualScrollerOptions="useVirtualScroll ? {
-          lazy: true,
-          onLazyLoad: onVirtualLazyLoad,
-          itemSize: 64,
-          delay: 0,
-          showLoader: false,
-          loading: false,
-          numToleratedItems: 12,
-        } : null"
-      >
+      <AppTableLoading
+          v-if="firstLoading"
+          title="Loading acknowledgement inbox"
+          message="Fetching acknowledgement OT requests..."
+          :rows="8"
+          :columns="8"
+        />
+
+        <DataTable
+          v-else
+          v-model:expandedRows="expandedRows"
+          :value="rows"
+          dataKey="id"
+          lazy
+          scrollable
+          scrollHeight="500px"
+          tableStyle="width: max-content; min-width: 100%; table-layout: auto;"
+          class="ot-ack-table"
+          :virtualScrollerOptions="useVirtualScroll ? {
+            lazy: true,
+            onLazyLoad: onVirtualLazyLoad,
+            itemSize: 64,
+            delay: 0,
+            showLoader: false,
+            loading: false,
+            numToleratedItems: 12,
+          } : null"
+        >
         <template #empty>
           <div
             v-if="bootstrapped"
@@ -739,17 +753,6 @@ onBeforeUnmount(() => {
 
         <template #expansion="{ data }">
           <div class="ot-expanded-box">
-            <div class="ot-expanded-header">
-              <div class="min-w-0">
-                <div class="ot-expanded-title">
-                  Employees inside request
-                </div>
-
-                <div class="ot-expanded-subtitle">
-                  {{ data.requestNo || '-' }} · {{ getEmployeeCount(data) }} staff
-                </div>
-              </div>
-            </div>
 
             <div
               v-if="getTargetEmployees(data).length"
