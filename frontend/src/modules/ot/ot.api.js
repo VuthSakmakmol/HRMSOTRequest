@@ -36,6 +36,21 @@ export function getShiftOTOptionsByShift(shiftId) {
   return api.get(`/ot/shift-options/by-shift/${shiftId}`)
 }
 
+export function getShiftLookupOptions(params = {}) {
+  return api.get('/shift/lookup', {
+    params: {
+      page: 1,
+      limit: 100,
+      isActive: true,
+      ...params,
+    },
+  })
+}
+
+export function getUnavailableOTEmployees(params = {}) {
+  return api.get('/ot/requests/unavailable-employees', { params })
+}
+
 export function getOTApprovalInbox(params = {}) {
   return api.get('/ot/approvals', { params })
 }

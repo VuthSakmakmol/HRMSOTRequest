@@ -585,3 +585,40 @@ function sidebarItemClass(to, collapsed = false) {
   background: var(--ot-surface) !important;
 }
 </style>
+
+<!-- 
+Passport exp cannot => visa
+Passport 2 year, at least 1 year before renew. 
+if less than 1 year cannot continue Visa (under table)
+
+first coming to wok - 6 month
+renew - 1 year
+
+
+Srey lanka : 
+- T visa 
+Pay 30$
+must have bank statement 6 months
+2000$
+ticket come/back
+booking hotel
+if come to meeting (must have invite letter date to date)
+Passport and Photo 
+
+- E visa
+ticket 1 way (no need go back)
+work permit, invitation letter, MOC, patent, Hotel booking, passport
+10 days before join date (prevent, no count sunday or holiday)
+
+continue Visa
+T - visa
+1 month , + 1 
+
+if come to work 
+E - visa 
+6 month = 158$
+1 year = 288$
+
+
+
+-->

@@ -1,189 +1,198 @@
-<!-- frontend/src/modules/ot/views/OTRequestDetailView.vue -->
+<!-- frontend/src/modules/ot/components/OTDetailView.vue -->
 <script setup>
-// frontend/src/modules/ot/views/OTRequestDetailView.vue
+// frontend/src/modules/ot/components/OTDetailView.vue
 
-import { computed, onMounted, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useToast } from 'primevue/usetoast'
 
-import Button from 'primevue/button'
-import Column from 'primevue/column'
-import DataTable from 'primevue/datatable'
-import IconField from 'primevue/iconfield'
-import InputIcon from 'primevue/inputicon'
-import InputText from 'primevue/inputtext'
+import Card from 'primevue/card'
+import DatePicker from 'primevue/datepicker'
 import Message from 'primevue/message'
 import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 import Textarea from 'primevue/textarea'
 
-import { useAuthStore } from '@/modules/auth/auth.store'
-import {
-  getOTRequestById,
-  requesterConfirmOTRequest,
-} from '@/modules/ot/ot.api'
+import { getHolidays } from '@/modules/calendar/holiday.api'
 
-const route = useRoute()
-const router = useRouter()
+const props = defineProps({
+  form: {
+    type: Object,
+    required: true,
+  },
+
+  shiftOptions: {
+    type: Array,
+    default: () => [],
+  },
+
+  loadingShifts: {
+    type: Boolean,
+    default: false,
+  },
+
+  otOptions: {
+    type: Array,
+    default: () => [],
+  },
+
+  loadingOtOptions: {
+    type: Boolean,
+    default: false,
+  },
+
+  selectedShift: {
+    type: Object,
+    default: null,
+  },
+
+  selectedOTOption: {
+    type: Object,
+    default: null,
+  },
+
+  requestPreview: {
+    type: Object,
+    default: null,
+  },
+
+  selectedEmployeeCount: {
+    type: Number,
+    default: 0,
+  },
+
+  checkingAvailability: {
+    type: Boolean,
+    default: false,
+  },
+})
+
 const toast = useToast()
-const auth = useAuthStore()
 
-const loading = ref(false)
-const actionLoading = ref(false)
-const detail = ref(null)
-const requesterRemark = ref('')
+const loadingCalendar = ref(false)
+const monthHolidayRows = ref([])
 
-const employeeListType = ref('APPROVED')
-const employeeKeyword = ref('')
+const selectedDateYMD = computed(() => formatYMD(props.form.otDate))
+const selectedDateLabel = computed(() => formatPrettyDate(props.form.otDate))
 
-const requestId = computed(() => String(route.params.id || '').trim())
-
-const canUpdateRequest = computed(() => auth.hasAnyPermission(['OT_REQUEST_UPDATE']))
-const canVerifyAttendance = computed(() => auth.hasAnyPermission(['ATTENDANCE_VERIFY']))
-const canRequesterConfirmAction = computed(
-  () => canUpdateRequest.value && !!detail.value?.canRequesterConfirm,
-)
-
-const requestedEmployees = computed(() =>
-  Array.isArray(detail.value?.requestedEmployees) ? detail.value.requestedEmployees : [],
-)
-
-const approvedEmployees = computed(() =>
-  Array.isArray(detail.value?.approvedEmployees) ? detail.value.approvedEmployees : [],
-)
-
-const proposedApprovedEmployees = computed(() =>
-  Array.isArray(detail.value?.proposedApprovedEmployees)
-    ? detail.value.proposedApprovedEmployees
-    : [],
-)
-
-const removedEmployees = computed(() => {
-  const finalList = proposedApprovedEmployees.value.length
-    ? proposedApprovedEmployees.value
-    : approvedEmployees.value
-
-  const finalIdSet = new Set(
-    finalList
-      .map((item) => String(item?.employeeId || '').trim())
-      .filter(Boolean),
-  )
-
-  return requestedEmployees.value.filter((item) => {
-    const employeeId = String(item?.employeeId || '').trim()
-    return employeeId && !finalIdSet.has(employeeId)
-  })
+const selectedMonth = computed(() => {
+  const source = props.form.otDate ? new Date(props.form.otDate) : new Date()
+  if (Number.isNaN(source.getTime())) return new Date()
+  return source
 })
 
-const approvalSteps = computed(() =>
-  Array.isArray(detail.value?.approvalSteps) ? detail.value.approvalSteps : [],
-)
+const holidayMap = computed(() => {
+  const map = new Map()
 
-const isLegacyManualMode = computed(() => {
-  const shiftId = String(detail.value?.shiftId || '').trim()
-  const shiftOtOptionId = String(detail.value?.shiftOtOptionId || '').trim()
-
-  return !shiftId && !shiftOtOptionId
-})
-
-const comparisonSummary = computed(() => detail.value?.comparisonSummary || {})
-
-const requestWindowLabel = computed(() => {
-  const start = String(detail.value?.requestStartTime || detail.value?.startTime || '').trim()
-  const end = String(detail.value?.requestEndTime || detail.value?.endTime || '').trim()
-
-  if (!start && !end) return '-'
-
-  return [start, end].filter(Boolean).join(' - ')
-})
-
-const modeLabel = computed(() =>
-  isLegacyManualMode.value ? 'Legacy Manual' : 'Shift OT Option',
-)
-
-const modeSeverity = computed(() =>
-  isLegacyManualMode.value ? 'contrast' : 'info',
-)
-
-const employeeListOptions = computed(() => {
-  const options = [
-    {
-      label: `Approved (${approvedEmployees.value.length})`,
-      value: 'APPROVED',
-    },
-    {
-      label: `Requested (${requestedEmployees.value.length})`,
-      value: 'REQUESTED',
-    },
-  ]
-
-  if (proposedApprovedEmployees.value.length) {
-    options.push({
-      label: `Proposed (${proposedApprovedEmployees.value.length})`,
-      value: 'PROPOSED',
-    })
+  for (const item of monthHolidayRows.value) {
+    const key = normalizeDateKey(item?.date)
+    if (key) map.set(key, item)
   }
 
-  if (removedEmployees.value.length) {
-    options.push({
-      label: `Removed (${removedEmployees.value.length})`,
-      value: 'REMOVED',
-    })
+  return map
+})
+
+const selectedHoliday = computed(() => {
+  const key = selectedDateYMD.value
+  return key ? holidayMap.value.get(key) || null : null
+})
+
+const selectedDayType = computed(() => {
+  if (!props.form.otDate) return '—'
+
+  const key = selectedDateYMD.value
+  if (key && holidayMap.value.has(key)) return 'HOLIDAY'
+
+  const date = new Date(props.form.otDate)
+  if (Number.isNaN(date.getTime())) return '—'
+
+  if (date.getDay() === 0) return 'SUNDAY'
+  return 'WORKING_DAY'
+})
+
+const selectedDaySeverity = computed(() => {
+  if (selectedDayType.value === 'HOLIDAY') return 'danger'
+  if (selectedDayType.value === 'SUNDAY') return 'warning'
+  if (selectedDayType.value === 'WORKING_DAY') return 'success'
+  return 'secondary'
+})
+
+const stepState = computed(() => {
+  if (!selectedDateYMD.value) {
+    return {
+      severity: 'info',
+      message: 'Step 1: Choose OT date first.',
+    }
   }
 
-  return options
+  if (!props.form.shiftId) {
+    return {
+      severity: 'info',
+      message: 'Step 2: Choose shift to load OT options.',
+    }
+  }
+
+  if (props.loadingOtOptions) {
+    return {
+      severity: 'info',
+      message: 'Loading OT options for selected shift...',
+    }
+  }
+
+  if (!props.otOptions.length) {
+    return {
+      severity: 'warn',
+      message: 'No active OT option is configured for this shift.',
+    }
+  }
+
+  if (!props.form.shiftOtOptionId) {
+    return {
+      severity: 'info',
+      message: 'Step 3: Choose OT option.',
+    }
+  }
+
+  return {
+    severity: 'success',
+    message: 'Step 4: Choose employees. Your managed employees will be auto-selected.',
+  }
 })
 
-const activeEmployeeRows = computed(() => {
-  if (employeeListType.value === 'REQUESTED') return requestedEmployees.value
-  if (employeeListType.value === 'PROPOSED') return proposedApprovedEmployees.value
-  if (employeeListType.value === 'REMOVED') return removedEmployees.value
-
-  return approvedEmployees.value
-})
-
-const filteredEmployeeRows = computed(() => {
-  const keyword = String(employeeKeyword.value || '').trim().toLowerCase()
-
-  if (!keyword) return activeEmployeeRows.value
-
-  return activeEmployeeRows.value.filter((employee) => {
-    const text = [
-      employee?.employeeCode,
-      employee?.employeeName,
-      employee?.departmentName,
-      employee?.positionName,
-    ]
-      .filter(Boolean)
-      .join(' ')
-      .toLowerCase()
-
-    return text.includes(keyword)
-  })
-})
-
-function normalizePayload(res) {
-  return res?.data?.data || res?.data || null
+function pad2(value) {
+  return String(value).padStart(2, '0')
 }
 
-function upper(value) {
-  return String(value || '').trim().toUpperCase()
+function formatYMD(value) {
+  if (!value) return ''
+
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
 }
 
-function formatDateTime(value) {
-  if (!value) return '-'
+function normalizeDateKey(value) {
+  const raw = String(value || '').trim()
 
-  try {
-    return new Date(value).toLocaleString([], {
-      year: 'numeric',
-      month: 'short',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-  } catch {
-    return String(value)
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) {
+    return raw.slice(0, 10)
   }
+
+  return formatYMD(value)
+}
+
+function formatPrettyDate(value) {
+  if (!value) return 'No date selected'
+
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return 'No date selected'
+
+  return date.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  })
 }
 
 function formatMinutesLabel(value) {
@@ -196,889 +205,313 @@ function formatMinutesLabel(value) {
 
   if (hh && mm) return `${hh}h ${mm}m`
   if (hh) return `${hh}h`
-
   return `${mm}m`
 }
 
-function getStatusSeverity(status) {
-  switch (upper(status)) {
-    case 'APPROVED':
-      return 'success'
-    case 'PENDING':
-    case 'PENDING_REQUESTER_CONFIRMATION':
-      return 'warning'
-    case 'REJECTED':
-    case 'REQUESTER_DISAGREED':
-      return 'danger'
-    case 'CANCELLED':
-      return 'secondary'
-    default:
-      return 'contrast'
-  }
+function timingModeLabel(value) {
+  const normalized = String(value || '').trim().toUpperCase()
+
+  if (normalized === 'FIXED_TIME') return 'Fixed Time'
+  return 'After Shift End'
 }
 
-function getDayTypeSeverity(dayType) {
-  switch (upper(dayType)) {
-    case 'HOLIDAY':
-      return 'danger'
-    case 'SUNDAY':
-      return 'warning'
-    case 'WORKING_DAY':
-      return 'success'
-    default:
-      return 'secondary'
-  }
+function normalizePayload(res) {
+  return res?.data?.data || res?.data || {}
 }
 
-function getApprovalStepSeverity(status) {
-  switch (upper(status)) {
-    case 'APPROVED':
-      return 'success'
-    case 'PENDING':
-      return 'warning'
-    case 'REJECTED':
-      return 'danger'
-    case 'WAITING':
-      return 'secondary'
-    default:
-      return 'contrast'
-  }
+function normalizeHolidayItems(payload) {
+  if (Array.isArray(payload?.items)) return payload.items
+  if (Array.isArray(payload?.rows)) return payload.rows
+  return []
 }
 
-function getRequesterConfirmationSeverity(status) {
-  switch (upper(status)) {
-    case 'AGREED':
-    case 'CONFIRMED':
-      return 'success'
-    case 'PENDING':
-      return 'warning'
-    case 'DISAGREED':
-      return 'danger'
-    case 'NOT_REQUIRED':
-      return 'secondary'
-    default:
-      return 'contrast'
-  }
-}
+async function fetchMonthHolidays() {
+  const source = selectedMonth.value
+  const year = source.getFullYear()
+  const month = source.getMonth() + 1
 
-function approverLabel(row) {
-  const name = String(row?.approverName || '').trim()
-  return name || '-'
-}
-
-function safeNumber(value) {
-  const numberValue = Number(value || 0)
-  return Number.isFinite(numberValue) ? numberValue : 0
-}
-
-function policyValue(key, fallback = '-') {
-  const policy = detail.value?.otCalculationPolicySnapshot || {}
-  const value = policy[key]
-
-  if (value === true) return 'YES'
-  if (value === false) return 'NO'
-  if (value === 0) return 0
-
-  return value || fallback
-}
-
-async function fetchDetail() {
-  if (!requestId.value) return
-
-  loading.value = true
+  loadingCalendar.value = true
 
   try {
-    const res = await getOTRequestById(requestId.value)
-    detail.value = normalizePayload(res)
-
-    if (
-      (employeeListType.value === 'PROPOSED' && !proposedApprovedEmployees.value.length) ||
-      (employeeListType.value === 'REMOVED' && !removedEmployees.value.length)
-    ) {
-      employeeListType.value = 'APPROVED'
-    }
-  } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Load failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to load OT request detail.',
-      life: 3500,
+    const res = await getHolidays({
+      page: 1,
+      limit: 100,
+      search: '',
+      isActive: true,
+      year,
+      month,
+      sortBy: 'date',
+      sortOrder: 'asc',
     })
-  } finally {
-    loading.value = false
-  }
-}
 
-function goBack() {
-  router.push('/ot/requests')
-}
+    monthHolidayRows.value = normalizeHolidayItems(normalizePayload(res))
+  } catch (error) {
+    monthHolidayRows.value = []
 
-function goEdit() {
-  if (!requestId.value || !canUpdateRequest.value) return
-  router.push(`/ot/requests/${requestId.value}/edit`)
-}
-
-function goVerifyAttendance() {
-  if (!requestId.value || !canVerifyAttendance.value) return
-  router.push(`/attendance/ot-verification/${requestId.value}`)
-}
-
-async function submitRequesterConfirmation(action) {
-  if (!requestId.value || actionLoading.value) return
-  if (!canRequesterConfirmAction.value) return
-
-  const remark = String(requesterRemark.value || '').trim()
-
-  if (action === 'DISAGREE' && !remark) {
     toast.add({
       severity: 'warn',
-      summary: 'Validation',
-      detail: 'Remark is required when disagreeing.',
-      life: 2500,
-    })
-    return
-  }
-
-  actionLoading.value = true
-
-  try {
-    const res = await requesterConfirmOTRequest(requestId.value, {
-      action,
-      remark,
-    })
-
-    detail.value = normalizePayload(res)
-    requesterRemark.value = ''
-    employeeListType.value = 'APPROVED'
-
-    toast.add({
-      severity: 'success',
-      summary: 'Updated',
-      detail:
-        action === 'AGREE'
-          ? 'Requester confirmation completed successfully.'
-          : 'Requester disagreement submitted successfully.',
-      life: 2500,
-    })
-  } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Action failed',
+      summary: 'Holiday calendar unavailable',
       detail:
         error?.response?.data?.message ||
         error?.message ||
-        'Failed to submit requester confirmation.',
-      life: 3500,
+        'Unable to load internal holiday calendar.',
+      life: 3000,
     })
   } finally {
-    actionLoading.value = false
+    loadingCalendar.value = false
   }
 }
 
+watch(
+  () => `${selectedMonth.value.getFullYear()}-${selectedMonth.value.getMonth() + 1}`,
+  () => {
+    fetchMonthHolidays()
+  },
+)
+
 onMounted(() => {
-  fetchDetail()
+  fetchMonthHolidays()
 })
 </script>
 
 <template>
-  <div class="ot-page">
-    <section class="ot-page-header">
-      <div class="min-w-0">
-        <div class="ot-title-row">
-          <Button
-            icon="pi pi-arrow-left"
-            severity="secondary"
-            text
-            rounded
-            size="small"
-            aria-label="Back"
-            @click="goBack"
-          />
-
-          <div class="min-w-0">
-            <div class="ot-title-line">
-              <h1>OT Request Detail</h1>
-
-              <span
-                v-if="detail?.requestNo"
-                class="ot-request-badge"
-              >
-                {{ detail.requestNo }}
-              </span>
-            </div>
+  <Card class="ot-setup-card">
+    <template #content>
+      <div class="ot-setup-head">
+        <div class="min-w-0">
+          <div class="ot-setup-eyebrow">
+            Create OT Request
           </div>
+
+          <h2 class="ot-setup-title">
+            OT setup
+          </h2>
+
+          <p class="ot-setup-subtitle">
+            Choose date, shift, OT option, then select employees.
+          </p>
         </div>
 
-        <div
-          v-if="detail"
-          class="ot-tag-row"
-        >
+        <div class="ot-setup-tags">
           <Tag
-            :value="detail.status || '-'"
-            :severity="getStatusSeverity(detail.status)"
-            class="ot-soft-tag"
+            :value="selectedDayType"
+            :severity="selectedDaySeverity"
+            class="ot-pill-tag"
           />
 
           <Tag
-            :value="detail.dayType || '-'"
-            :severity="getDayTypeSeverity(detail.dayType)"
-            class="ot-soft-tag"
-          />
-
-          <Tag
-            :value="modeLabel"
-            :severity="modeSeverity"
-            class="ot-soft-tag"
-          />
-
-          <Tag
-            :value="`Requester: ${detail.requesterConfirmationStatus || '-'}`"
-            :severity="getRequesterConfirmationSeverity(detail.requesterConfirmationStatus)"
-            class="ot-soft-tag"
+            :value="`${selectedEmployeeCount} selected`"
+            severity="info"
+            class="ot-pill-tag"
           />
         </div>
       </div>
 
-      <div class="ot-header-actions">
-        <Button
-          label="Refresh"
-          icon="pi pi-refresh"
-          outlined
-          size="small"
-          :loading="loading"
-          @click="fetchDetail"
-        />
-
-        <Button
-          v-if="canVerifyAttendance"
-          label="Verify Attendance"
-          icon="pi pi-check-square"
-          severity="success"
-          outlined
-          size="small"
-          @click="goVerifyAttendance"
-        />
-
-        <Button
-          v-if="detail?.canEdit && canUpdateRequest"
-          label="Edit"
-          icon="pi pi-pencil"
-          size="small"
-          @click="goEdit"
-        />
-      </div>
-    </section>
-
-    <div
-      v-if="loading"
-      class="ot-empty-state"
-    >
-      Loading OT request...
-    </div>
-
-    <template v-else-if="detail">
       <Message
-        v-if="canRequesterConfirmAction"
-        severity="warn"
+        :severity="stepState.severity"
         :closable="false"
-        class="ot-message"
+        class="m-0"
       >
-        This request is waiting for requester confirmation because the approver adjusted the approved employee list.
+        {{ stepState.message }}
       </Message>
 
-      <section
-        v-if="canRequesterConfirmAction"
-        class="ot-section ot-confirm-section"
-      >
-        <div class="ot-section-header">
-          <div>
-            <h2>Requester Confirmation</h2>
+      <div class="ot-setup-grid">
+        <div class="ot-field">
+          <label class="ot-field-label">
+            1. OT Date <span class="ot-required-star">*</span>
+          </label>
+
+          <DatePicker
+            v-model="form.otDate"
+            dateFormat="yy-mm-dd"
+            showIcon
+            showButtonBar
+            class="w-full"
+            inputClass="w-full"
+            placeholder="Choose OT date"
+          />
+
+          <div class="ot-date-card">
+            <div>
+              <span>Selected Date</span>
+              <strong>{{ selectedDateLabel }}</strong>
+            </div>
+
+            <div>
+              <span>Day Type</span>
+              <strong>{{ selectedDayType }}</strong>
+            </div>
+
+            <div
+              v-if="selectedHoliday"
+              class="ot-holiday-box"
+            >
+              <span>Holiday</span>
+              <strong>{{ selectedHoliday.name }}</strong>
+              <small>{{ normalizeDateKey(selectedHoliday.date) }}</small>
+            </div>
+
+            <div
+              v-else-if="loadingCalendar"
+              class="ot-calendar-note"
+            >
+              Checking internal calendar...
+            </div>
           </div>
         </div>
 
-        <div class="ot-metric-grid three">
-          <div class="ot-metric-card">
-            <span>Requested Staff</span>
-            <strong>{{ comparisonSummary.requestedEmployeeCount ?? 0 }}</strong>
-          </div>
+        <div class="ot-field">
+          <label class="ot-field-label">
+            2. Shift <span class="ot-required-star">*</span>
+          </label>
 
-          <div class="ot-metric-card">
-            <span>Current Approved</span>
-            <strong>{{ comparisonSummary.approvedEmployeeCount ?? 0 }}</strong>
-          </div>
+          <Select
+            v-model="form.shiftId"
+            :options="shiftOptions"
+            optionLabel="optionLabel"
+            optionValue="id"
+            class="w-full"
+            placeholder="Choose shift"
+            :loading="loadingShifts"
+            :disabled="!form.otDate || loadingShifts"
+          />
 
-          <div class="ot-metric-card">
-            <span>Proposed Approved</span>
-            <strong>{{ comparisonSummary.proposedApprovedEmployeeCount ?? 0 }}</strong>
+          <div
+            v-if="selectedShift"
+            class="ot-shift-card"
+          >
+            <div>
+              <span>Shift</span>
+              <strong>{{ selectedShift.label }}</strong>
+            </div>
+
+            <div>
+              <span>Time</span>
+              <strong>
+                {{ selectedShift.startTime || '-' }} - {{ selectedShift.endTime || '-' }}
+              </strong>
+            </div>
+
+            <div v-if="selectedShift.breakStartTime || selectedShift.breakEndTime">
+              <span>Break</span>
+              <strong>
+                {{ selectedShift.breakStartTime || '-' }} - {{ selectedShift.breakEndTime || '-' }}
+              </strong>
+            </div>
           </div>
         </div>
 
-        <div class="ot-field-block">
-          <label>Remark</label>
+        <div class="ot-field">
+          <label class="ot-field-label">
+            3. OT Option <span class="ot-required-star">*</span>
+          </label>
+
+          <Select
+            v-model="form.shiftOtOptionId"
+            :options="otOptions"
+            optionLabel="optionLabel"
+            optionValue="id"
+            class="w-full"
+            placeholder="Choose OT option"
+            :loading="loadingOtOptions"
+            :disabled="!form.shiftId || loadingOtOptions || !otOptions.length"
+          />
+
+          <div
+            v-if="requestPreview && selectedOTOption"
+            class="ot-option-preview"
+          >
+            <div class="ot-preview-box">
+              <span>Timing</span>
+              <strong>{{ timingModeLabel(requestPreview.timingMode) }}</strong>
+            </div>
+
+            <div class="ot-preview-box">
+              <span>Duration</span>
+              <strong>{{ formatMinutesLabel(requestPreview.requestedMinutes) }}</strong>
+            </div>
+
+            <div class="ot-preview-box">
+              <span>Start</span>
+              <strong>{{ requestPreview.requestStartTime || '-' }}</strong>
+            </div>
+
+            <div class="ot-preview-box">
+              <span>End</span>
+              <strong>{{ requestPreview.requestEndTime || '-' }}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div class="ot-field">
+          <label class="ot-field-label">
+            4. Reason <span class="ot-optional-text">Optional</span>
+          </label>
 
           <Textarea
-            v-model.trim="requesterRemark"
-            rows="3"
+            v-model.trim="form.reason"
+            rows="4"
             autoResize
             class="w-full"
-            placeholder="Optional for Agree, required for Disagree"
+            placeholder="Reason is optional. Add note only if needed."
           />
         </div>
+      </div>
 
-        <div class="ot-action-row">
-          <Button
-            label="Agree"
-            icon="pi pi-check"
-            size="small"
-            :loading="actionLoading"
-            @click="submitRequesterConfirmation('AGREE')"
-          />
-
-          <Button
-            label="Disagree"
-            icon="pi pi-times"
-            severity="danger"
-            outlined
-            size="small"
-            :loading="actionLoading"
-            @click="submitRequesterConfirmation('DISAGREE')"
-          />
-        </div>
-      </section>
-
-      <section class="ot-metric-grid">
-        <div class="ot-metric-card">
-          <span>Requester</span>
-          <strong>{{ detail.requesterName || '-' }}</strong>
-          <small>{{ detail.requesterEmployeeNo || '-' }}</small>
-        </div>
-
-        <div class="ot-metric-card">
-          <span>OT Date</span>
-          <strong>{{ detail.otDate || '-' }}</strong>
-          <small>{{ detail.dayType || '-' }}</small>
-        </div>
-
-        <div class="ot-metric-card">
-          <span>Current Step</span>
-          <strong>{{ detail.currentApprovalStep ?? 1 }}</strong>
-          <small>{{ approvalSteps.length }} total step(s)</small>
-        </div>
-
-        <div class="ot-metric-card">
-          <span>Requested Staff</span>
-          <strong>{{ detail.requestedEmployeeCount ?? 0 }}</strong>
-          <small>Original list</small>
-        </div>
-
-        <div class="ot-metric-card">
-          <span>Approved Staff</span>
-          <strong>{{ detail.approvedEmployeeCount ?? 0 }}</strong>
-          <small>Current list</small>
-        </div>
-
-        <div class="ot-metric-card">
-          <span>Duration</span>
-          <strong>{{ formatMinutesLabel(detail.requestedMinutes ?? detail.totalMinutes ?? 0) }}</strong>
-          <small>{{ safeNumber(detail.requestedMinutes ?? detail.totalMinutes) }} min</small>
-        </div>
-      </section>
-
-      <section class="ot-two-column">
-        <div class="ot-section wide">
-          <div class="ot-section-header">
-            <div>
-              <h2>OT Request Summary</h2>
-            </div>
-          </div>
-
-          <div class="ot-info-grid three">
-            <div class="ot-info-item">
-              <span>Request Window</span>
-              <strong>{{ requestWindowLabel }}</strong>
-            </div>
-
-            <div class="ot-info-item">
-              <span>Requested Minutes</span>
-              <strong>{{ detail.requestedMinutes ?? detail.totalMinutes ?? 0 }}</strong>
-            </div>
-
-            <div class="ot-info-item">
-              <span>Requested Duration</span>
-              <strong>{{ formatMinutesLabel(detail.requestedMinutes ?? detail.totalMinutes ?? 0) }}</strong>
-            </div>
-
-            <div class="ot-info-item">
-              <span>Legacy Start</span>
-              <strong>{{ detail.startTime || '-' }}</strong>
-            </div>
-
-            <div class="ot-info-item">
-              <span>Legacy End</span>
-              <strong>{{ detail.endTime || '-' }}</strong>
-            </div>
-
-            <div class="ot-info-item">
-              <span>Break Minutes</span>
-              <strong>{{ detail.breakMinutes ?? 0 }}</strong>
-            </div>
-          </div>
-
-          <div class="ot-reason-box">
-            <span>Reason</span>
-            <p>{{ detail.reason || '-' }}</p>
-          </div>
-        </div>
-
-        <div class="ot-section">
-          <div class="ot-section-header">
-            <div>
-              <h2>Shift / OT Option</h2>
-            </div>
-          </div>
-
-          <div class="ot-info-list">
-            <div class="ot-info-line">
-              <span>Shift</span>
-              <strong>
-                {{ detail.shiftCode || '-' }}
-                {{ detail.shiftName ? `· ${detail.shiftName}` : '' }}
-              </strong>
-            </div>
-
-            <div class="ot-info-line">
-              <span>Shift Type</span>
-              <strong>{{ detail.shiftType || '-' }}</strong>
-            </div>
-
-            <div class="ot-info-line">
-              <span>Shift Start</span>
-              <strong>{{ detail.shiftStartTime || '-' }}</strong>
-            </div>
-
-            <div class="ot-info-line">
-              <span>Shift End</span>
-              <strong>{{ detail.shiftEndTime || '-' }}</strong>
-            </div>
-
-            <div class="ot-info-line">
-              <span>Cross Midnight</span>
-              <strong>
-                {{
-                  detail.shiftCrossMidnight === true
-                    ? 'YES'
-                    : detail.shiftCrossMidnight === false
-                      ? 'NO'
-                      : '-'
-                }}
-              </strong>
-            </div>
-
-            <div class="ot-info-line">
-              <span>OT Option</span>
-              <strong>{{ detail.shiftOtOptionLabel || '-' }}</strong>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section
-        v-if="detail.otCalculationPolicySnapshot && (detail.otCalculationPolicySnapshot.code || detail.otCalculationPolicySnapshot.name)"
-        class="ot-section"
+      <div
+        v-if="selectedOTOption?.calculationPolicy"
+        class="ot-policy-box"
       >
-        <div class="ot-section-header">
-          <div>
-            <h2>Policy Snapshot</h2>
-          </div>
-        </div>
-
-        <div class="ot-info-grid four">
-          <div class="ot-info-item">
-            <span>Policy Code</span>
-            <strong>{{ policyValue('code') }}</strong>
-          </div>
-
-          <div class="ot-info-item">
-            <span>Policy Name</span>
-            <strong>{{ policyValue('name') }}</strong>
-          </div>
-
-          <div class="ot-info-item">
-            <span>Min Eligible</span>
-            <strong>{{ policyValue('minEligibleMinutes', 0) }} min</strong>
-          </div>
-
-          <div class="ot-info-item">
-            <span>Round Unit</span>
-            <strong>{{ policyValue('roundUnitMinutes', 0) }} min</strong>
-          </div>
-
-          <div class="ot-info-item">
-            <span>Round Method</span>
-            <strong>{{ policyValue('roundMethod') }}</strong>
-          </div>
-
-          <div class="ot-info-item">
-            <span>Grace After Shift End</span>
-            <strong>{{ policyValue('graceAfterShiftEndMinutes', 0) }} min</strong>
-          </div>
-
-          <div class="ot-info-item">
-            <span>Allow Pre-Shift OT</span>
-            <strong>{{ policyValue('allowPreShiftOT') }}</strong>
-          </div>
-
-          <div class="ot-info-item">
-            <span>Allow Post-Shift OT</span>
-            <strong>{{ policyValue('allowPostShiftOT') }}</strong>
-          </div>
-
-          <div class="ot-info-item">
-            <span>Cap By Request</span>
-            <strong>{{ policyValue('capByRequestedMinutes') }}</strong>
-          </div>
-
-          <div class="ot-info-item">
-            <span>Forget Scan In Pending</span>
-            <strong>{{ policyValue('treatForgetScanInAsPending') }}</strong>
-          </div>
-
-          <div class="ot-info-item">
-            <span>Forget Scan Out Pending</span>
-            <strong>{{ policyValue('treatForgetScanOutAsPending') }}</strong>
-          </div>
-        </div>
-      </section>
-
-      <section class="ot-section">
-        <div class="ot-section-header employee-header">
-          <div>
-            <h2>Employees</h2>
-          </div>
-
-          <div class="employee-tools">
-            <Select
-              v-model="employeeListType"
-              :options="employeeListOptions"
-              optionLabel="label"
-              optionValue="value"
-              size="small"
-              class="employee-list-select"
-            />
-
-            <IconField class="employee-search">
-              <InputIcon class="pi pi-search" />
-
-              <InputText
-                v-model="employeeKeyword"
-                placeholder="Search employee"
-                size="small"
-                class="w-full"
-              />
-            </IconField>
-          </div>
-        </div>
-
-        <div class="employee-count-row">
-          <Tag
-            :value="`Requested ${requestedEmployees.length}`"
-            severity="secondary"
-            class="ot-soft-tag"
-          />
+        <div class="ot-policy-head">
+          <span>Calculation Policy</span>
 
           <Tag
-            :value="`Approved ${approvedEmployees.length}`"
+            :value="selectedOTOption.calculationPolicy.code || '—'"
             severity="info"
-            class="ot-soft-tag"
           />
-
-          <Tag
-            v-if="proposedApprovedEmployees.length"
-            :value="`Proposed ${proposedApprovedEmployees.length}`"
-            severity="warning"
-            class="ot-soft-tag"
-          />
-
-          <Tag
-            v-if="removedEmployees.length"
-            :value="`Removed ${removedEmployees.length}`"
-            severity="danger"
-            class="ot-soft-tag"
-          />
-
-          <span class="employee-filter-count">
-            Showing {{ filteredEmployeeRows.length }} of {{ activeEmployeeRows.length }}
-          </span>
         </div>
 
-        <DataTable
-          :value="filteredEmployeeRows"
-          dataKey="employeeId"
-          scrollable
-          scrollHeight="320px"
-          size="small"
-          class="ot-compact-table"
-        >
-          <template #empty>
-            <div class="ot-table-empty">
-              No employees found.
-            </div>
-          </template>
+        <div class="ot-policy-grid">
+          <div class="ot-policy-item">
+            <span>Name</span>
+            <strong>{{ selectedOTOption.calculationPolicy.name || '-' }}</strong>
+          </div>
 
-          <Column
-            header="Employee"
-            style="min-width: 16rem"
-          >
-            <template #body="{ data }">
-              <div class="ot-person-cell">
-                <strong>{{ data.employeeName || '-' }}</strong>
-                <small>{{ data.employeeCode || '-' }}</small>
-              </div>
-            </template>
-          </Column>
+          <div class="ot-policy-item">
+            <span>Min Eligible</span>
+            <strong>{{ selectedOTOption.calculationPolicy.minEligibleMinutes ?? 0 }} min</strong>
+          </div>
 
-          <Column
-            header="Work Info"
-            style="min-width: 18rem"
-          >
-            <template #body="{ data }">
-              <div class="ot-person-cell">
-                <strong>{{ data.positionName || '-' }}</strong>
-                <small>{{ data.departmentName || '-' }}</small>
-              </div>
-            </template>
-          </Column>
-        </DataTable>
-      </section>
+          <div class="ot-policy-item">
+            <span>Round Unit</span>
+            <strong>{{ selectedOTOption.calculationPolicy.roundUnitMinutes ?? 0 }} min</strong>
+          </div>
 
-      <section class="ot-section">
-        <div class="ot-section-header compact">
-          <div>
-            <h2>Approval Steps</h2>
-            <p>{{ approvalSteps.length }} approval step(s)</p>
+          <div class="ot-policy-item">
+            <span>Round Method</span>
+            <strong>{{ selectedOTOption.calculationPolicy.roundMethod || '-' }}</strong>
           </div>
         </div>
+      </div>
 
-        <DataTable
-          :value="approvalSteps"
-          dataKey="stepNo"
-          scrollable
-          scrollHeight="360px"
-          size="small"
-          class="ot-compact-table"
-        >
-          <template #empty>
-            <div class="ot-table-empty">
-              No approval steps found.
-            </div>
-          </template>
-
-          <Column
-            field="stepNo"
-            header="Step"
-            style="min-width: 5rem"
-          />
-
-          <Column
-            header="Approver"
-            style="min-width: 15rem"
-          >
-            <template #body="{ data }">
-              <div class="ot-person-cell">
-                <strong>{{ approverLabel(data) }}</strong>
-                <small>Step {{ data.stepNo || '-' }}</small>
-              </div>
-            </template>
-          </Column>
-
-          <Column
-            header="Status"
-            style="min-width: 8rem"
-          >
-            <template #body="{ data }">
-              <Tag
-                :value="data.status || '-'"
-                :severity="getApprovalStepSeverity(data.status)"
-                class="ot-soft-tag"
-              />
-            </template>
-          </Column>
-
-          <Column
-            field="actedAt"
-            header="Acted At"
-            style="min-width: 13rem"
-          >
-            <template #body="{ data }">
-              {{ formatDateTime(data.actedAt) }}
-            </template>
-          </Column>
-
-          <Column
-            field="remark"
-            header="Remark"
-            style="min-width: 18rem"
-          >
-            <template #body="{ data }">
-              <span class="ot-muted-text">{{ data.remark || '-' }}</span>
-            </template>
-          </Column>
-        </DataTable>
-      </section>
-
-      <section
-        v-if="detail.lastAdjustmentByEmployeeName || detail.requesterConfirmationRemark"
-        class="ot-section"
+      <Message
+        v-if="checkingAvailability"
+        severity="info"
+        :closable="false"
+        class="m-0"
       >
-        <div class="ot-section-header">
-          <div>
-            <h2>Adjustment / Confirmation</h2>
-          </div>
-        </div>
-
-        <div class="ot-info-grid four">
-          <div class="ot-info-item">
-            <span>Last Adjustment By</span>
-            <strong>{{ detail.lastAdjustmentByEmployeeName || '-' }}</strong>
-            <small>{{ detail.lastAdjustmentByEmployeeNo || '' }}</small>
-          </div>
-
-          <div class="ot-info-item">
-            <span>Last Adjustment At</span>
-            <strong>{{ formatDateTime(detail.lastAdjustmentAt) }}</strong>
-          </div>
-
-          <div class="ot-info-item wide">
-            <span>Last Adjustment Remark</span>
-            <strong>{{ detail.lastAdjustmentRemark || '-' }}</strong>
-          </div>
-
-          <div class="ot-info-item">
-            <span>Requester Confirmed At</span>
-            <strong>{{ formatDateTime(detail.requesterConfirmedAt) }}</strong>
-          </div>
-
-          <div class="ot-info-item wide">
-            <span>Requester Confirmation Remark</span>
-            <strong>{{ detail.requesterConfirmationRemark || '-' }}</strong>
-          </div>
-        </div>
-      </section>
+        Checking employees already used in OT on this date...
+      </Message>
     </template>
-
-    <div
-      v-else
-      class="ot-empty-state"
-    >
-      OT request not found.
-    </div>
-  </div>
+  </Card>
 </template>
 
 <style scoped>
-.ot-page {
-  --ot-card: var(--p-content-background, var(--surface-card, #ffffff));
-  --ot-soft-bg: var(--p-surface-50, #f8fafc);
-  --ot-table-head: var(--p-surface-50, #f8fafc);
-  --ot-row-hover: var(--p-surface-100, #f1f5f9);
-  --ot-line: var(--p-content-border-color, var(--surface-border, #e2e8f0));
-  --ot-text-main: var(--p-text-color, #0f172a);
-  --ot-text-soft: var(--p-text-muted-color, #64748b);
-  --ot-shadow: 0 10px 28px rgba(15, 23, 42, 0.055);
-
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
+:deep(.ot-setup-card .p-card-body) {
+  padding: 1rem !important;
 }
 
-.ot-page strong {
-  font-weight: 500;
-}
-
-.ot-page-header,
-.ot-section,
-.ot-empty-state {
-  border: 1px solid var(--ot-line);
-  background: var(--ot-card);
-  border-radius: 1.15rem;
-  box-shadow: var(--ot-shadow);
-}
-
-.ot-page-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1rem;
-}
-
-.ot-title-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.7rem;
-}
-
-.ot-title-line {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.ot-title-line h1 {
-  margin: 0;
-  color: var(--ot-text-main);
-  font-size: 1.08rem;
-  font-weight: 600;
-  line-height: 1.3;
-}
-
-.ot-request-badge {
-  display: inline-flex;
-  align-items: center;
-  border: 1px solid var(--ot-line);
-  background: var(--ot-soft-bg);
-  color: var(--ot-text-main);
-  border-radius: 999px;
-  padding: 0.18rem 0.55rem;
-  font-size: 0.72rem;
-  font-weight: 500;
-}
-
-.ot-tag-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-  margin-top: 0.7rem;
-  padding-left: 2.7rem;
-}
-
-.ot-header-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 0.45rem;
-}
-
-.ot-message {
-  border-radius: 1rem;
-}
-
-.ot-confirm-section {
-  border-color: rgba(245, 158, 11, 0.38);
-  background:
-    linear-gradient(135deg, rgba(245, 158, 11, 0.06), transparent 50%),
-    var(--ot-card);
-}
-
-.ot-section {
-  padding: 1rem;
-}
-
-.ot-section-header {
+.ot-setup-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -1086,369 +519,205 @@ onMounted(() => {
   margin-bottom: 0.85rem;
 }
 
-.ot-section-header.compact {
-  margin-bottom: 0.65rem;
+.ot-setup-eyebrow {
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ot-text-muted);
 }
 
-.ot-section-header h2 {
-  margin: 0;
-  color: var(--ot-text-main);
-  font-size: 0.95rem;
+.ot-setup-title {
+  margin-top: 0.15rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--ot-text);
+}
+
+.ot-setup-subtitle {
+  margin-top: 0.2rem;
+  font-size: 0.78rem;
+  color: var(--ot-text-muted);
+}
+
+.ot-setup-tags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.ot-setup-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.85rem;
+  margin-top: 0.9rem;
+}
+
+.ot-field {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.ot-field-label {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--ot-text);
+}
+
+.ot-required-star {
+  color: #ef4444;
   font-weight: 600;
 }
 
-.ot-section-header p {
-  margin: 0.18rem 0 0;
-  color: var(--ot-text-soft);
-  font-size: 0.77rem;
-  line-height: 1.45;
+.ot-optional-text {
+  margin-left: 0.25rem;
+  color: var(--ot-text-muted);
+  font-size: 0.72rem;
+  font-weight: 500;
 }
 
-.ot-two-column {
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr);
-  gap: 1rem;
-}
-
-.ot-metric-grid {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 0.75rem;
-}
-
-.ot-metric-grid.three {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.ot-metric-card {
-  border: 1px solid var(--ot-line);
-  background: var(--ot-card);
+.ot-date-card,
+.ot-shift-card,
+.ot-option-preview,
+.ot-policy-box {
+  border: 1px solid var(--ot-border);
   border-radius: 1rem;
-  padding: 0.8rem;
-  min-width: 0;
+  background: var(--ot-bg);
+  padding: 0.75rem;
 }
 
-.ot-metric-card span,
-.ot-info-item span,
-.ot-info-line span,
-.ot-reason-box span,
-.ot-field-block label {
+.ot-date-card,
+.ot-shift-card {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.ot-date-card span,
+.ot-shift-card span,
+.ot-preview-box span,
+.ot-policy-item span,
+.ot-holiday-box span {
   display: block;
-  color: var(--ot-text-soft);
-  font-size: 0.69rem;
+  margin-bottom: 0.15rem;
+  font-size: 0.66rem;
   font-weight: 500;
-  letter-spacing: 0.035em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
+  color: var(--ot-text-muted);
 }
 
-.ot-metric-card strong {
+.ot-date-card strong,
+.ot-shift-card strong,
+.ot-preview-box strong,
+.ot-policy-item strong,
+.ot-holiday-box strong {
   display: block;
-  margin-top: 0.28rem;
-  color: var(--ot-text-main);
-  font-size: 0.95rem;
+  font-size: 0.84rem;
   font-weight: 500;
-  line-height: 1.25;
-  word-break: break-word;
+  color: var(--ot-text);
 }
 
-.ot-metric-card small,
-.ot-info-item small {
+.ot-holiday-box {
+  border: 1px solid rgba(220, 38, 38, 0.28);
+  border-radius: 0.85rem;
+  background: rgba(220, 38, 38, 0.08);
+  padding: 0.65rem;
+}
+
+.ot-holiday-box strong,
+.ot-holiday-box small {
+  color: #dc2626;
+}
+
+.ot-holiday-box small {
   display: block;
-  margin-top: 0.2rem;
-  color: var(--ot-text-soft);
+  margin-top: 0.15rem;
   font-size: 0.72rem;
 }
 
-.ot-info-grid {
+.ot-calendar-note {
+  font-size: 0.76rem;
+  color: var(--ot-text-muted);
+}
+
+.ot-option-preview {
   display: grid;
-  gap: 0.7rem;
-}
-
-.ot-info-grid.three {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.ot-info-grid.four {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.ot-info-item {
-  border: 1px solid var(--ot-line);
-  background: var(--ot-soft-bg);
-  border-radius: 0.95rem;
-  padding: 0.75rem;
-  min-width: 0;
-}
-
-.ot-info-item.wide {
-  grid-column: span 2;
-}
-
-.ot-info-item strong {
-  display: block;
-  margin-top: 0.25rem;
-  color: var(--ot-text-main);
-  font-size: 0.86rem;
-  font-weight: 500;
-  line-height: 1.35;
-  word-break: break-word;
-}
-
-.ot-info-list {
-  display: flex;
-  flex-direction: column;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.55rem;
 }
 
-.ot-info-line {
+.ot-preview-box {
+  border: 1px solid var(--ot-border);
+  border-radius: 0.85rem;
+  background: var(--ot-surface);
+  padding: 0.65rem;
+}
+
+.ot-policy-box {
+  margin-top: 0.9rem;
+}
+
+.ot-policy-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  border: 1px solid var(--ot-line);
-  background: var(--ot-soft-bg);
-  border-radius: 0.9rem;
-  padding: 0.7rem 0.75rem;
+  margin-bottom: 0.75rem;
 }
 
-.ot-info-line strong {
-  color: var(--ot-text-main);
-  font-size: 0.84rem;
-  font-weight: 500;
-  text-align: right;
-  word-break: break-word;
+.ot-policy-head span {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ot-text);
 }
 
-.ot-reason-box {
-  margin-top: 0.8rem;
-  border: 1px solid var(--ot-line);
-  background: var(--ot-soft-bg);
-  border-radius: 0.95rem;
-  padding: 0.85rem;
+.ot-policy-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.55rem;
 }
 
-.ot-reason-box p {
-  margin: 0.3rem 0 0;
-  color: var(--ot-text-main);
-  font-size: 0.86rem;
-  font-weight: 400;
-  line-height: 1.55;
-  white-space: pre-wrap;
+.ot-policy-item {
+  border: 1px solid var(--ot-border);
+  border-radius: 0.85rem;
+  background: var(--ot-surface);
+  padding: 0.65rem;
 }
 
-.ot-field-block {
-  margin-top: 0.85rem;
+:deep(.ot-pill-tag.p-tag) {
+  min-height: 1.35rem !important;
+  padding: 0.12rem 0.48rem !important;
+  font-size: 0.7rem !important;
+  font-weight: 500 !important;
+  border-radius: 999px !important;
 }
 
-.ot-field-block label {
-  margin-bottom: 0.35rem;
-}
-
-.ot-action-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.45rem;
-  margin-top: 0.85rem;
-}
-
-.employee-header {
-  align-items: center;
-}
-
-.employee-tools {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-width: 0;
-}
-
-.employee-list-select {
-  width: 13rem;
-}
-
-.employee-search {
-  width: 16rem;
-}
-
-.employee-count-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.45rem;
-  margin-bottom: 0.7rem;
-}
-
-.employee-filter-count {
-  color: var(--ot-text-soft);
-  font-size: 0.75rem;
-  font-weight: 500;
-  margin-left: auto;
-}
-
-.ot-person-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 0.12rem;
-  min-width: 0;
-}
-
-.ot-person-cell strong {
-  color: var(--ot-text-main);
-  font-size: 0.82rem;
-  font-weight: 500;
-  line-height: 1.35;
-}
-
-.ot-person-cell small,
-.ot-muted-text {
-  color: var(--ot-text-soft);
-  font-size: 0.74rem;
-  font-weight: 400;
-}
-
-.ot-table-empty,
-.ot-empty-state {
-  color: var(--ot-text-soft);
-  text-align: center;
-  font-size: 0.85rem;
-}
-
-.ot-table-empty {
-  padding: 1.75rem 1rem;
-}
-
-.ot-empty-state {
-  padding: 2.5rem 1rem;
-}
-
-:deep(.ot-soft-tag.p-tag) {
-  border-radius: 999px;
-  font-size: 0.69rem;
-  font-weight: 500;
-  line-height: 1;
-  padding: 0.18rem 0.5rem;
-}
-
-:deep(.ot-compact-table) {
-  border: 1px solid var(--ot-line);
-  border-radius: 0.95rem;
-  overflow: hidden;
-}
-
-:deep(.ot-compact-table .p-datatable-thead > tr > th) {
-  background: var(--ot-table-head) !important;
-  color: var(--ot-text-soft) !important;
-  padding: 0.62rem 0.75rem !important;
-  font-size: 0.73rem !important;
-  font-weight: 600 !important;
-  letter-spacing: 0.025em;
-  text-transform: uppercase;
-  white-space: nowrap;
-  border-color: var(--ot-line) !important;
-}
-
-:deep(.ot-compact-table .p-datatable-tbody > tr > td) {
-  padding: 0.62rem 0.75rem !important;
-  font-size: 0.82rem !important;
-  vertical-align: middle !important;
-  border-color: var(--ot-line) !important;
-}
-
-:deep(.ot-compact-table .p-datatable-tbody > tr) {
-  background: var(--ot-card) !important;
-}
-
-:deep(.ot-compact-table .p-datatable-tbody > tr:hover) {
-  background: var(--ot-row-hover) !important;
-}
-
-:deep(.p-button.p-button-sm) {
-  border-radius: 0.65rem;
-}
-
-:deep(.p-inputtextarea),
 :deep(.p-inputtext),
 :deep(.p-select) {
-  border-radius: 0.75rem;
+  font-size: 0.86rem;
 }
 
-:global(.dark) .ot-page {
-  --ot-card: var(--p-content-background, #111827);
-  --ot-soft-bg: rgba(148, 163, 184, 0.08);
-  --ot-table-head: rgba(148, 163, 184, 0.08);
-  --ot-row-hover: rgba(148, 163, 184, 0.1);
-  --ot-line: rgba(148, 163, 184, 0.22);
-  --ot-text-main: #e5e7eb;
-  --ot-text-soft: #94a3b8;
-  --ot-shadow: 0 14px 30px rgba(0, 0, 0, 0.16);
-}
-
-@media (max-width: 1280px) {
-  .ot-metric-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .ot-info-grid.four {
+@media (min-width: 768px) {
+  .ot-setup-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .ot-two-column {
-    grid-template-columns: 1fr;
+  .ot-policy-grid {
+    grid-template-columns: 1.4fr repeat(3, minmax(0, 1fr));
   }
 }
 
-@media (max-width: 768px) {
-  .ot-page-header {
-    flex-direction: column;
+@media (min-width: 1280px) {
+  .ot-setup-grid {
+    grid-template-columns: 290px 300px minmax(300px, 1fr) minmax(280px, 0.9fr);
+    align-items: start;
   }
 
-  .ot-header-actions {
-    width: 100%;
-    justify-content: flex-start;
-  }
-
-  .ot-tag-row {
-    padding-left: 0;
-  }
-
-  .ot-metric-grid,
-  .ot-metric-grid.three,
-  .ot-info-grid.three,
-  .ot-info-grid.four {
-    grid-template-columns: 1fr;
-  }
-
-  .ot-info-item.wide {
-    grid-column: span 1;
-  }
-
-  .ot-info-line {
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .ot-info-line strong {
-    text-align: left;
-  }
-
-  .employee-header {
-    align-items: flex-start;
-  }
-
-  .employee-tools {
-    width: 100%;
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .employee-list-select,
-  .employee-search {
-    width: 100%;
-  }
-
-  .employee-filter-count {
-    width: 100%;
-    margin-left: 0;
+  .ot-option-preview {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 </style>

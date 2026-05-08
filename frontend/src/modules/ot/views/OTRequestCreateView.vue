@@ -10,6 +10,7 @@ import OTDetailView from '@/modules/ot/components/OTDetailView.vue'
 import OTEmployeeMultiPicker from '@/modules/ot/components/OTEmployeeMultiPicker.vue'
 import OTSubmitBar from '@/modules/ot/components/OTSubmitBar.vue'
 import api from '@/shared/services/api'
+
 import {
   createOTRequest,
   getShiftOTOptionsByShift,
@@ -57,6 +58,105 @@ const unavailableEmployeeMap = computed(() => {
   }
 
   return map
+})
+
+function extractShiftInfo(employee) {
+  const shift =
+    employee?.shift ||
+    employee?.shiftInfo ||
+    employee?.assignedShift ||
+    {}
+
+  const shiftId = String(
+    employee?.shiftId ||
+      shift?._id ||
+      shift?.id ||
+      '',
+  ).trim()
+
+  if (!shiftId) return null
+
+  return {
+    shiftId,
+    code: String(employee?.shiftCode || shift?.code || '').trim(),
+    name: String(employee?.shiftName || shift?.name || '').trim(),
+  }
+}
+
+const selectedShiftState = computed(() => {
+  if (!selectedEmployees.value.length) {
+    return {
+      mode: 'none',
+      shift: null,
+      message: '',
+    }
+  }
+
+  const shiftInfos = selectedEmployees.value.map(extractShiftInfo)
+  const missingShiftCount = shiftInfos.filter((item) => !item?.shiftId).length
+
+  if (missingShiftCount > 0) {
+    return {
+      mode: 'missing',
+      shift: null,
+      message: 'Some selected employees do not have assigned shift information.',
+    }
+  }
+
+  const uniqueShiftIds = Array.from(new Set(shiftInfos.map((item) => item.shiftId)))
+
+  if (uniqueShiftIds.length > 1) {
+    return {
+      mode: 'mixed',
+      shift: null,
+      message: 'Selected employees belong to different shifts. Please use the picker to keep one shift only.',
+    }
+  }
+
+  return {
+    mode: 'ready',
+    shift: shiftInfos[0],
+    message: '',
+  }
+})
+
+const sharedShift = computed(() => selectedShiftState.value.shift || null)
+
+const sharedShiftIdForPicker = computed(() => {
+  return selectedShiftState.value.mode === 'ready'
+    ? String(sharedShift.value?.shiftId || '').trim()
+    : ''
+})
+
+const sharedShiftLabelForPicker = computed(() => {
+  if (selectedShiftState.value.mode !== 'ready') return ''
+
+  return [sharedShift.value?.code, sharedShift.value?.name]
+    .filter(Boolean)
+    .join(' · ')
+})
+
+const requestPreview = computed(() => {
+  if (!sharedShift.value || !selectedOTOption.value) return null
+
+  const requestedMinutes = Number(selectedOTOption.value.requestedMinutes || 0)
+
+  return {
+    timingMode: String(selectedOTOption.value.timingMode || 'AFTER_SHIFT_END')
+      .trim()
+      .toUpperCase(),
+    requestStartTime: String(selectedOTOption.value.requestStartTime || '').trim(),
+    requestEndTime: String(selectedOTOption.value.requestEndTime || '').trim(),
+    requestedMinutes,
+    requestedHours: Number(
+      selectedOTOption.value.requestedHours ||
+        (requestedMinutes / 60).toFixed(2),
+    ),
+  }
+})
+
+const canAutoSelectEmployees = computed(() => {
+  return Boolean(formatYMD(form.otDate)) && !loadingUnavailableEmployees.value
 })
 
 function normalizeMeResponse(res) {
@@ -181,87 +281,6 @@ function normalizeShiftOptionsResponse(res) {
     .filter((item) => item.id && item.label)
 }
 
-function extractShiftInfo(employee) {
-  const shift =
-    employee?.shift ||
-    employee?.shiftInfo ||
-    employee?.assignedShift ||
-    {}
-
-  const shiftId = String(
-    employee?.shiftId ||
-      shift?._id ||
-      shift?.id ||
-      '',
-  ).trim()
-
-  if (!shiftId) return null
-
-  return {
-    shiftId,
-    code: String(employee?.shiftCode || shift?.code || '').trim(),
-    name: String(employee?.shiftName || shift?.name || '').trim(),
-  }
-}
-
-const selectedShiftState = computed(() => {
-  if (!selectedEmployees.value.length) {
-    return {
-      mode: 'none',
-      shift: null,
-      message: '',
-    }
-  }
-
-  const shiftInfos = selectedEmployees.value.map(extractShiftInfo)
-  const missingShiftCount = shiftInfos.filter((item) => !item?.shiftId).length
-
-  if (missingShiftCount > 0) {
-    return {
-      mode: 'missing',
-      shift: null,
-      message: 'Some selected employees do not have assigned shift information.',
-    }
-  }
-
-  const uniqueShiftIds = Array.from(new Set(shiftInfos.map((item) => item.shiftId)))
-
-  if (uniqueShiftIds.length > 1) {
-    return {
-      mode: 'mixed',
-      shift: null,
-      message: 'Selected employees belong to different shifts. Please use the Shift filter or select one shift only.',
-    }
-  }
-
-  return {
-    mode: 'ready',
-    shift: shiftInfos[0],
-    message: '',
-  }
-})
-
-const sharedShift = computed(() => selectedShiftState.value.shift || null)
-
-const requestPreview = computed(() => {
-  if (!sharedShift.value || !selectedOTOption.value) return null
-
-  const requestedMinutes = Number(selectedOTOption.value.requestedMinutes || 0)
-
-  return {
-    timingMode: String(selectedOTOption.value.timingMode || 'AFTER_SHIFT_END')
-      .trim()
-      .toUpperCase(),
-    requestStartTime: String(selectedOTOption.value.requestStartTime || '').trim(),
-    requestEndTime: String(selectedOTOption.value.requestEndTime || '').trim(),
-    requestedMinutes,
-    requestedHours: Number(
-      selectedOTOption.value.requestedHours ||
-        (requestedMinutes / 60).toFixed(2),
-    ),
-  }
-})
-
 function clearShiftOptions() {
   shiftOptions.value = []
   form.shiftOtOptionId = ''
@@ -308,9 +327,7 @@ async function loadUnavailableEmployeesForDate() {
 
   unavailableEmployees.value = []
 
-  if (!otDate) {
-    return
-  }
+  if (!otDate) return
 
   loadingUnavailableEmployees.value = true
 
@@ -425,6 +442,8 @@ watch(
 watch(
   () => formatYMD(form.otDate),
   async () => {
+    selectedEmployees.value = []
+    clearShiftOptions()
     await loadUnavailableEmployeesForDate()
   },
 )
@@ -443,8 +462,8 @@ function validateBeforeSubmit(payload) {
     return 'Please wait until OT availability check finishes.'
   }
 
+  if (!payload.otDate) return 'Please select OT date first.'
   if (!payload.employeeIds.length) return 'Please select at least 1 employee.'
-  if (!payload.otDate) return 'Please select OT date from the internal calendar.'
 
   if (selectedShiftState.value.mode === 'missing') {
     return 'Some selected employees do not have assigned shift information.'
@@ -472,9 +491,7 @@ function normalizeDuplicateEmployees(error) {
     payload?.data?.duplicates ||
     []
 
-  if (!Array.isArray(duplicates)) {
-    return []
-  }
+  if (!Array.isArray(duplicates)) return []
 
   return duplicates
     .map((item) => ({
@@ -528,12 +545,6 @@ function removeEmployeesFromSelectionByIds(employeeIds = []) {
   })
 
   return beforeCount - selectedEmployees.value.length
-}
-
-function removeDuplicateEmployeesFromSelection(duplicates = []) {
-  return removeEmployeesFromSelectionByIds(
-    duplicates.map((item) => item.employeeId),
-  )
 }
 
 function buildDuplicateToastMessage(duplicates = []) {
@@ -601,7 +612,9 @@ async function submit() {
     const duplicates = normalizeDuplicateEmployees(error)
 
     if (duplicates.length) {
-      const removedCount = removeDuplicateEmployeesFromSelection(duplicates)
+      const removedCount = removeEmployeesFromSelectionByIds(
+        duplicates.map((item) => item.employeeId),
+      )
 
       toast.add({
         severity: 'warn',
@@ -664,49 +677,37 @@ onMounted(async () => {
 
 <template>
   <div class="ot-create-page">
+    <OTDetailView
+      :form="form"
+      :selected-employee-count="selectedEmployeeIds.length"
+      :selected-shift-state="selectedShiftState"
+      :shift-options="shiftOptions"
+      :loading-shift-options="loadingShiftOptions"
+      :selected-ot-option="selectedOTOption"
+      :request-preview="requestPreview"
+    />
+
     <OTEmployeeMultiPicker
       v-model="selectedEmployees"
       auto-select-all
-      :auto-select-ready="Boolean(form.otDate) && !loadingUnavailableEmployees"
+      :ot-date="formatYMD(form.otDate)"
+      :selected-shift-id="sharedShiftIdForPicker"
+      :selected-shift-label="sharedShiftLabelForPicker"
+      :auto-select-ready="canAutoSelectEmployees"
       :blocked-employee-map="unavailableEmployeeMap"
       :blocked-loading="loadingUnavailableEmployees"
     />
 
     <div class="ot-create-bottom-grid">
-      <OTDetailView
-        :form="form"
-        :selected-employee-count="selectedEmployeeIds.length"
-        :selected-shift-state="selectedShiftState"
-        :shift-options="shiftOptions"
-        :loading-shift-options="loadingShiftOptions"
-        :selected-ot-option="selectedOTOption"
-        :request-preview="requestPreview"
-      />
-
-      <div class="ot-approval-side">
-        <div class="auto-workflow-card">
-          <div class="auto-workflow-icon">
-            <i class="pi pi-sitemap"></i>
-          </div>
-
-          <div>
-            <div class="auto-workflow-title">
-              Approval workflow is automatic
-            </div>
-
-            <div class="auto-workflow-text">
-              The system will follow the employee organization chart. Employees marked as Approver must approve, and employees marked as Acknowledge will only be informed.
-            </div>
-          </div>
-        </div>
-
-        <OTSubmitBar
-          :submitting="submitting"
-          :disabled="loadingRequester || loadingShiftOptions || loadingUnavailableEmployees"
-          @submit="submit"
-          @back="goBack"
-        />
+      <div class="auto-workflow-card">
       </div>
+
+      <OTSubmitBar
+        :submitting="submitting"
+        :disabled="loadingRequester || loadingShiftOptions || loadingUnavailableEmployees"
+        @submit="submit"
+        @back="goBack"
+      />
     </div>
   </div>
 </template>
@@ -724,21 +725,6 @@ onMounted(async () => {
   gap: 1rem;
 }
 
-.ot-approval-side {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.auto-workflow-card {
-  display: flex;
-  gap: 0.75rem;
-  align-items: flex-start;
-  border: 1px solid var(--ot-border, #e2e8f0);
-  background: var(--ot-surface, #ffffff);
-  border-radius: 1rem;
-  padding: 1rem;
-}
 
 .auto-workflow-icon {
   width: 2.25rem;
@@ -775,9 +761,9 @@ onMounted(async () => {
   color: #7dd3fc;
 }
 
-@media (min-width: 1280px) {
+@media (min-width: 1024px) {
   .ot-create-bottom-grid {
-    grid-template-columns: minmax(0, 1fr) minmax(360px, 420px);
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: start;
   }
 }

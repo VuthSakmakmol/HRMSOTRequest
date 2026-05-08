@@ -7,12 +7,12 @@ import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
-import Dropdown from 'primevue/dropdown'
 import IconField from 'primevue/iconfield'
 import InputIcon from 'primevue/inputicon'
 import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
 import ProgressSpinner from 'primevue/progressspinner'
+import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 
 import api from '@/shared/services/api'
@@ -25,9 +25,39 @@ const props = defineProps({
     default: () => [],
   },
 
+  otDate: {
+    type: String,
+    default: '',
+  },
+
+  selectedShiftId: {
+    type: String,
+    default: '',
+  },
+
+  selectedShiftLabel: {
+    type: String,
+    default: '',
+  },
+
   autoSelectAll: {
     type: Boolean,
+    default: false,
+  },
+
+  autoSelectReady: {
+    type: Boolean,
     default: true,
+  },
+
+  blockedEmployeeMap: {
+    type: Object,
+    default: () => ({}),
+  },
+
+  blockedLoading: {
+    type: Boolean,
+    default: false,
   },
 })
 
@@ -35,76 +65,70 @@ const emit = defineEmits(['update:modelValue'])
 
 const toast = useToast()
 
-const PAGE_SIZE = 24
-const MAX_AUTO_SELECT_PAGES = 100
+const PAGE_SIZE = 30
+const BULK_PAGE_SIZE = 100
+const MAX_BULK_PAGES = 100
 
 const dialogVisible = ref(false)
 const scrollRef = ref(null)
 
+const loadingAccess = ref(false)
+const loadingLines = ref(false)
 const loading = ref(false)
 const loadingMore = ref(false)
-const loadingSelf = ref(false)
-const loadingLines = ref(false)
-const loadingShifts = ref(false)
-const selectingAllMatching = ref(false)
+const selectingManaged = ref(false)
 
 const search = ref('')
 const selectedLineId = ref('')
-const selectedShiftId = ref('')
 const employeeScope = ref('MANAGED')
 const canSelectOtherEmployees = ref(false)
 
 const employees = ref([])
-const selfEmployee = ref(null)
 const remoteLineOptions = ref([])
-const remoteShiftOptions = ref([])
 
 const managedEmployeeIds = ref(new Set())
-const managedEmployeeIdsLoaded = ref(false)
+const managedIdsLoaded = ref(false)
 
 const page = ref(1)
 const total = ref(0)
-const hasMore = ref(true)
-
-const selectAllMode = ref(props.autoSelectAll)
+const hasMore = ref(false)
 
 let searchTimer = null
 let requestSeq = 0
+let autoSelectKey = ''
 
-const selectedRows = computed(() =>
-  Array.isArray(props.modelValue) ? props.modelValue : [],
-)
+const selectedRows = computed(() => (Array.isArray(props.modelValue) ? props.modelValue : []))
 
-const selectedIds = computed(() =>
-  new Set(
-    selectedRows.value
-      .map((item) => getEmployeeId(item))
-      .filter(Boolean),
-  ),
-)
+const selectedIds = computed(() => {
+  return new Set(selectedRows.value.map((item) => getEmployeeId(item)).filter(Boolean))
+})
 
 const selectedCount = computed(() => selectedRows.value.length)
 
-const outsideSelectedCount = computed(() =>
-  selectedRows.value.filter((item) => item?.isOutsideManaged === true).length,
-)
+const outsideSelectedCount = computed(() => {
+  return selectedRows.value.filter((item) => item?.isOutsideManaged === true).length
+})
+
+const managedSelectedCount = computed(() => {
+  return Math.max(0, selectedCount.value - outsideSelectedCount.value)
+})
+
+const blockedStamp = computed(() => {
+  const map = props.blockedEmployeeMap || {}
+  return Object.keys(map).sort().join('|')
+})
 
 const loadedCountLabel = computed(() => {
   const loaded = employees.value.length
   const all = total.value || loaded
-
   return `${loaded}/${all}`
 })
 
-const selectedPreview = computed(() => selectedRows.value.slice(0, 12))
-
-const selectLoadedLabel = computed(() => {
-  if (employeeScope.value === 'MANAGED') {
-    return 'Select Matching'
-  }
-
-  return 'Select Loaded'
+const canUsePicker = computed(() => {
+  return Boolean(props.otDate && props.autoSelectReady)
 })
+
+const selectedPreview = computed(() => selectedRows.value.slice(0, 12))
 
 const employeeScopeOptions = computed(() => {
   const options = [
@@ -124,117 +148,40 @@ const employeeScopeOptions = computed(() => {
   return options
 })
 
-const scopeTagLabel = computed(() => {
-  return employeeScope.value === 'ALL' ? 'All employees' : 'My employees'
-})
-
-const localLineOptions = computed(() => {
-  const map = new Map()
-
-  for (const row of [...employees.value, ...selectedRows.value, selfEmployee.value]) {
-    if (!row) continue
-
-    const line = extractLineFields(row)
-    if (!line.lineId) continue
-
-    const label =
-      [line.lineCode, line.lineName].filter(Boolean).join(' · ') ||
-      'Unnamed line'
-
-    map.set(line.lineId, {
-      label,
-      value: line.lineId,
-    })
-  }
-
-  return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label))
-})
-
-const lineOptions = computed(() => {
-  const map = new Map()
-
-  for (const row of remoteLineOptions.value) {
-    if (row.value) map.set(row.value, row)
-  }
-
-  for (const row of localLineOptions.value) {
-    if (row.value) map.set(row.value, row)
-  }
-
-  return [
-    {
-      label: 'All lines',
-      value: '',
-    },
-    ...Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label)),
-  ]
-})
-
-const localShiftOptions = computed(() => {
-  const map = new Map()
-
-  for (const row of [...employees.value, ...selectedRows.value, selfEmployee.value]) {
-    if (!row) continue
-
-    const shift = extractShiftFields(row)
-    if (!shift.shiftId) continue
-
-    const label =
-      [shift.shiftCode, shift.shiftName].filter(Boolean).join(' · ') ||
-      'Unnamed shift'
-
-    map.set(shift.shiftId, {
-      label,
-      value: shift.shiftId,
-    })
-  }
-
-  return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label))
-})
-
-const shiftOptions = computed(() => {
-  const map = new Map()
-
-  for (const row of remoteShiftOptions.value) {
-    if (row.value) map.set(row.value, row)
-  }
-
-  for (const row of localShiftOptions.value) {
-    if (row.value) map.set(row.value, row)
-  }
-
-  return [
-    {
-      label: 'All shifts',
-      value: '',
-    },
-    ...Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label)),
-  ]
-})
+const lineOptions = computed(() => [
+  {
+    label: 'All lines',
+    value: '',
+  },
+  ...remoteLineOptions.value,
+])
 
 const displayedEmployees = computed(() => {
-  const map = new Map()
+  const keyword = toTrimmedString(search.value).toLowerCase()
+  const lineId = toTrimmedString(selectedLineId.value)
 
-  const self = selfEmployee.value
+  return employees.value
+    .filter((employee) => {
+      if (lineId && toTrimmedString(employee?.lineId) !== lineId) return false
 
-  if (self?._id && employeeMatchesLocalFilters(self)) {
-    map.set(self._id, {
-      ...self,
-      isSelf: true,
+      if (!keyword) return true
+
+      const haystack = [
+        employee.employeeNo,
+        employee.displayName,
+        employee.lineCode,
+        employee.lineName,
+        employee.positionName,
+        employee.shiftCode,
+        employee.shiftName,
+        employee.isOutsideManaged ? 'outside other employee' : 'my employee managed team',
+      ]
+        .join(' ')
+        .toLowerCase()
+
+      return haystack.includes(keyword)
     })
-  }
-
-  for (const row of employees.value) {
-    if (!row?._id) continue
-    if (!employeeMatchesLocalFilters(row)) continue
-
-    map.set(row._id, {
-      ...row,
-      isSelf: row._id === self?._id,
-    })
-  }
-
-  return Array.from(map.values())
+    .sort(compareEmployeeRows)
 })
 
 const managedDisplayedEmployees = computed(() =>
@@ -245,26 +192,9 @@ const outsideDisplayedEmployees = computed(() =>
   displayedEmployees.value.filter((employee) => employee?.isOutsideManaged),
 )
 
-const splitEmployeeGroups = computed(() => [
-  {
-    key: 'managed',
-    title: 'My employees',
-    helper: 'Employees under your approval scope.',
-    icon: 'pi pi-users',
-    rows: managedDisplayedEmployees.value,
-    severity: 'success',
-    emptyText: 'No employee found in your team.',
-  },
-  {
-    key: 'outside',
-    title: 'Other employees',
-    helper: 'Employees outside your team. Select only if needed.',
-    icon: 'pi pi-exclamation-triangle',
-    rows: outsideDisplayedEmployees.value,
-    severity: 'warn',
-    emptyText: 'No outside employee found.',
-  },
-])
+const managedLineGroups = computed(() => buildLineGroups(managedDisplayedEmployees.value, 'managed'))
+const outsideLineGroups = computed(() => buildLineGroups(outsideDisplayedEmployees.value, 'outside'))
+const allLineGroups = computed(() => buildLineGroups(displayedEmployees.value, 'all'))
 
 function toTrimmedString(value) {
   return String(value ?? '').trim()
@@ -285,7 +215,6 @@ function normalizeBoolean(...values) {
 
     if (typeof value === 'string') {
       const normalized = value.trim().toLowerCase()
-
       if (['true', '1', 'yes', 'y'].includes(normalized)) return true
       if (['false', '0', 'no', 'n'].includes(normalized)) return false
     }
@@ -326,9 +255,7 @@ function extractAuthAccess(res) {
   const permissionSet = new Set(permissionCodes)
   const roleSet = new Set(roleCodes)
 
-  const isRootAdmin =
-    root?.isRootAdmin === true ||
-    roleSet.has('ROOT_ADMIN')
+  const isRootAdmin = root?.isRootAdmin === true || roleSet.has('ROOT_ADMIN')
 
   const canLookupAll =
     isRootAdmin ||
@@ -342,8 +269,6 @@ function extractAuthAccess(res) {
   return {
     isRootAdmin,
     canLookupAll,
-    permissionCodes,
-    roleCodes,
   }
 }
 
@@ -364,20 +289,10 @@ function extractLineFields(source = {}) {
   const lineCode = toTrimmedString(source?.lineCode || lineObj?.code || '')
   const lineName = toTrimmedString(source?.lineName || lineObj?.name || '')
 
-  const hasLinePayload = Boolean(lineId || lineCode || lineName)
-
   return {
     lineId,
     lineCode,
     lineName,
-    line: hasLinePayload
-      ? {
-          _id: lineId,
-          id: lineId,
-          code: lineCode,
-          name: lineName,
-        }
-      : null,
   }
 }
 
@@ -398,25 +313,9 @@ function extractShiftFields(source = {}) {
   const shiftCode = toTrimmedString(source?.shiftCode || shiftObj?.code || '')
   const shiftName = toTrimmedString(source?.shiftName || shiftObj?.name || '')
   const shiftType = toTrimmedString(source?.shiftType || shiftObj?.type || '')
-  const shiftStartTime = toTrimmedString(
-    source?.shiftStartTime || shiftObj?.startTime || '',
-  )
-  const shiftEndTime = toTrimmedString(
-    source?.shiftEndTime || shiftObj?.endTime || '',
-  )
-  const shiftCrossMidnight = normalizeBoolean(
-    source?.shiftCrossMidnight,
-    shiftObj?.crossMidnight,
-  )
-
-  const hasShiftPayload = Boolean(
-    shiftId ||
-      shiftCode ||
-      shiftName ||
-      shiftType ||
-      shiftStartTime ||
-      shiftEndTime,
-  )
+  const shiftStartTime = toTrimmedString(source?.shiftStartTime || shiftObj?.startTime || '')
+  const shiftEndTime = toTrimmedString(source?.shiftEndTime || shiftObj?.endTime || '')
+  const shiftCrossMidnight = normalizeBoolean(source?.shiftCrossMidnight, shiftObj?.crossMidnight)
 
   return {
     shiftId,
@@ -426,40 +325,21 @@ function extractShiftFields(source = {}) {
     shiftStartTime,
     shiftEndTime,
     shiftCrossMidnight,
-    shift: hasShiftPayload
-      ? {
-          _id: shiftId,
-          id: shiftId,
-          code: shiftCode,
-          name: shiftName,
-          type: shiftType,
-          startTime: shiftStartTime,
-          endTime: shiftEndTime,
-          crossMidnight: shiftCrossMidnight,
-        }
-      : null,
   }
 }
 
 function isOutsideManagedEmployee(employeeId, explicitValue = undefined) {
-  if (explicitValue === true || explicitValue === false) {
-    return explicitValue
-  }
+  if (explicitValue === true || explicitValue === false) return explicitValue
 
   const id = toTrimmedString(employeeId)
   if (!id) return false
-
-  if (!managedEmployeeIdsLoaded.value) {
-    return false
-  }
+  if (!managedIdsLoaded.value) return false
 
   return !managedEmployeeIds.value.has(id)
 }
 
 function normalizeEmployeeRecord(source = {}, options = {}) {
-  const { isSelf = false, isOutsideManaged = undefined } = options
-
-  const _id = toTrimmedString(source?._id || source?.id || source?.employeeId || '')
+  const id = toTrimmedString(source?._id || source?.id || source?.employeeId || '')
 
   const employeeNo = toTrimmedString(
     source?.employeeNo ||
@@ -484,27 +364,27 @@ function normalizeEmployeeRecord(source = {}, options = {}) {
       '',
   )
 
-  if (!_id || !displayName) return null
+  if (!id || !displayName) return null
+
+  const line = extractLineFields(source)
+  const shift = extractShiftFields(source)
 
   return {
-    _id,
-    id: _id,
+    _id: id,
+    id,
     employeeNo,
     displayName,
     positionName,
-    ...extractLineFields(source),
-    ...extractShiftFields(source),
-    isSelf,
+    ...line,
+    ...shift,
     isOutsideManaged: isOutsideManagedEmployee(
-      _id,
-      isOutsideManaged ?? source?.isOutsideManaged,
+      id,
+      options.isOutsideManaged ?? source?.isOutsideManaged,
     ),
   }
 }
 
-function normalizeEmployeesResponse(res, options = {}) {
-  const { markOutsideManaged = true } = options
-
+function normalizeEmployeeLookupResponse(res, options = {}) {
   const root = res?.data?.data || res?.data || {}
 
   const rows =
@@ -520,18 +400,16 @@ function normalizeEmployeesResponse(res, options = {}) {
     ? rows
         .map((item) =>
           normalizeEmployeeRecord(item, {
-            isOutsideManaged: markOutsideManaged
-              ? isOutsideManagedEmployee(getEmployeeId(item), item?.isOutsideManaged)
-              : false,
+            isOutsideManaged:
+              options.markOutsideManaged === true
+                ? isOutsideManagedEmployee(getEmployeeId(item), item?.isOutsideManaged)
+                : false,
           }),
         )
         .filter(Boolean)
     : []
 
-  const pagination =
-    root?.pagination ||
-    res?.data?.pagination ||
-    {}
+  const pagination = root?.pagination || res?.data?.pagination || {}
 
   const totalRows = Number(
     pagination?.total ??
@@ -549,74 +427,13 @@ function normalizeEmployeesResponse(res, options = {}) {
       ? root.hasMore
       : typeof pagination?.hasMore === 'boolean'
         ? pagination.hasMore
-        : page.value < totalPages
+        : Number(pagination?.page || page.value) < totalPages
 
   return {
     rows: normalizedRows,
     total: totalRows,
     hasMore: responseHasMore,
   }
-}
-
-function normalizeAuthMeUser(res) {
-  const user = extractAuthRoot(res)
-
-  const employee =
-    user?.employee ||
-    user?.employeeProfile ||
-    user?.employeeInfo ||
-    {}
-
-  return {
-    employeeId: toTrimmedString(
-      employee?._id ||
-        employee?.id ||
-        user?.employeeId ||
-        '',
-    ),
-
-    employeeNo: toTrimmedString(
-      employee?.employeeNo ||
-        user?.employeeNo ||
-        user?.loginId ||
-        '',
-    ),
-
-    displayName: toTrimmedString(
-      employee?.displayName ||
-        employee?.name ||
-        user?.displayName ||
-        user?.name ||
-        user?.loginId ||
-        '',
-    ),
-  }
-}
-
-function getNormalizedRowsFromEmployeeResponse(res, options = {}) {
-  const normalized = normalizeEmployeesResponse(res, options)
-  return Array.isArray(normalized?.rows) ? normalized.rows : []
-}
-
-function findSelfEmployeeFromRows(rows = [], authUser = {}) {
-  const employeeId = toTrimmedString(authUser.employeeId)
-  const employeeNo = toTrimmedString(authUser.employeeNo).toLowerCase()
-  const displayName = toTrimmedString(authUser.displayName).toLowerCase()
-
-  return (
-    rows.find((row) => {
-      const rowId = toTrimmedString(row?._id || row?.id)
-      const rowNo = toTrimmedString(row?.employeeNo).toLowerCase()
-      const rowName = toTrimmedString(row?.displayName).toLowerCase()
-
-      if (employeeId && rowId === employeeId) return true
-      if (employeeNo && rowNo === employeeNo) return true
-      if (employeeNo && rowName === employeeNo) return true
-      if (displayName && rowName === displayName) return true
-
-      return false
-    }) || null
-  )
 }
 
 function normalizeLineOptionsResponse(res) {
@@ -652,119 +469,137 @@ function normalizeLineOptionsResponse(res) {
   return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label))
 }
 
-function normalizeShiftOptionsResponse(res) {
-  const root = res?.data?.data || res?.data || {}
-
-  const rows =
-    root?.items ||
-    root?.rows ||
-    root?.shifts ||
-    root?.data ||
-    res?.data?.items ||
-    res?.data?.rows ||
-    []
-
-  if (!Array.isArray(rows)) return []
-
-  const map = new Map()
-
-  for (const row of rows) {
-    const id = toTrimmedString(row?._id || row?.id || row?.shiftId)
-    if (!id) continue
-
-    const code = toTrimmedString(row?.code || row?.shiftCode)
-    const name = toTrimmedString(row?.name || row?.shiftName)
-    const label = [code, name].filter(Boolean).join(' · ') || 'Unnamed shift'
-
-    map.set(id, {
-      label,
-      value: id,
-    })
-  }
-
-  return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label))
+function compareEmployeeRows(a, b) {
+  return `${a?.employeeNo || ''} ${a?.displayName || ''}`.localeCompare(
+    `${b?.employeeNo || ''} ${b?.displayName || ''}`,
+  )
 }
 
-function employeeMatchesLocalFilters(employee) {
-  const keyword = toTrimmedString(search.value).toLowerCase()
-  const lineId = toTrimmedString(selectedLineId.value)
-  const shiftId = toTrimmedString(selectedShiftId.value)
-
-  if (lineId && toTrimmedString(employee?.lineId) !== lineId) {
-    return false
-  }
-
-  if (shiftId && toTrimmedString(employee?.shiftId) !== shiftId) {
-    return false
-  }
-
-  if (!keyword) return true
-
-  const haystack = [
-    employee?.employeeNo,
-    employee?.displayName,
-    employee?.positionName,
-    employee?.lineCode,
-    employee?.lineName,
-    employee?.shiftCode,
-    employee?.isSelf ? 'self me myself mine' : '',
-    employee?.isOutsideManaged ? 'outside team other employee' : '',
-  ]
-    .join(' ')
-    .toLowerCase()
-
-  return haystack.includes(keyword)
+function buildEmployeeDisplay(employee = {}) {
+  return [employee?.employeeNo || 'No ID', employee?.displayName || 'Unknown']
+    .filter(Boolean)
+    .join(' - ')
 }
 
-function mergeUniqueRows(existingRows = [], incomingRows = []) {
-  const map = new Map()
+function buildLineLabel(employee = {}) {
+  return (
+    [employee?.lineCode, employee?.lineName].filter(Boolean).join(' · ') ||
+    'No line'
+  )
+}
 
-  for (const row of existingRows) {
-    const id = getEmployeeId(row)
+function buildShiftLabel(employee = {}) {
+  return (
+    [employee?.shiftCode, employee?.shiftName].filter(Boolean).join(' · ') ||
+    'No shift'
+  )
+}
 
-    if (id) {
-      map.set(
-        id,
-        normalizeEmployeeRecord(row, {
-          isSelf: row?.isSelf === true,
-          isOutsideManaged: row?.isOutsideManaged === true,
-        }),
-      )
+function getBlockedRecord(employee) {
+  const id = getEmployeeId(employee)
+  if (!id) return null
+
+  const map = props.blockedEmployeeMap || {}
+
+  if (map instanceof Map) {
+    return map.get(id) || null
+  }
+
+  return map[id] || null
+}
+
+function getEmployeeBlockInfo(employee) {
+  const id = getEmployeeId(employee)
+
+  if (!id) {
+    return {
+      blocked: true,
+      reason: 'Invalid employee.',
     }
   }
 
-  for (const row of incomingRows) {
-    const normalized = normalizeEmployeeRecord(row, {
-      isSelf: row?.isSelf === true,
-      isOutsideManaged: row?.isOutsideManaged === true,
-    })
+  const unavailable = getBlockedRecord(employee)
 
-    const id = getEmployeeId(normalized)
-    if (id) map.set(id, normalized)
+  if (unavailable) {
+    const requestNo = toTrimmedString(unavailable?.requestNo)
+    const status = toTrimmedString(unavailable?.statusLabel || unavailable?.status)
+
+    return {
+      blocked: true,
+      reason: requestNo
+        ? `Already in OT request ${requestNo}`
+        : status || 'Already unavailable for this date.',
+    }
   }
 
-  return Array.from(map.values()).filter(Boolean)
+  const shiftId = toTrimmedString(employee?.shiftId)
+
+  if (!shiftId) {
+    return {
+      blocked: true,
+      reason: 'Employee has no shift.',
+    }
+  }
+
+  if (props.selectedShiftId && shiftId !== props.selectedShiftId) {
+    return {
+      blocked: true,
+      reason: 'Employee shift does not match selected shift.',
+    }
+  }
+
+  return {
+    blocked: false,
+    reason: '',
+  }
+}
+
+function isSelected(employee) {
+  return selectedIds.value.has(getEmployeeId(employee))
+}
+
+function isEmployeeDisabled(employee) {
+  if (isSelected(employee)) return false
+  return getEmployeeBlockInfo(employee).blocked
+}
+
+function getSelectableRows(rows = []) {
+  return rows.filter((row) => !isEmployeeDisabled(row))
+}
+
+function mergeUniqueRows(rows = []) {
+  const map = new Map()
+
+  for (const item of rows) {
+    const normalized = normalizeEmployeeRecord(item, {
+      isOutsideManaged: item?.isOutsideManaged === true,
+    })
+
+    if (!normalized) continue
+    map.set(normalized._id, normalized)
+  }
+
+  return Array.from(map.values()).sort(compareEmployeeRows)
 }
 
 function emitSelected(rows = []) {
-  const normalizedRows = rows
-    .map((item) =>
-      normalizeEmployeeRecord(item, {
-        isSelf: item?.isSelf === true,
-        isOutsideManaged: item?.isOutsideManaged === true,
-      }),
-    )
-    .filter(Boolean)
-
-  emit('update:modelValue', mergeUniqueRows([], normalizedRows))
+  emit('update:modelValue', mergeUniqueRows(rows))
 }
 
 function selectRows(rows = []) {
-  emitSelected([...selectedRows.value, ...rows])
-}
+  const safeRows = getSelectableRows(rows)
 
-function replaceSelection(rows = []) {
-  emitSelected(rows)
+  if (!safeRows.length) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Cannot select',
+      detail: 'No selectable employee in this group.',
+      life: 2500,
+    })
+    return
+  }
+
+  emitSelected([...selectedRows.value, ...safeRows])
 }
 
 function removeRows(rows = []) {
@@ -775,248 +610,126 @@ function removeRows(rows = []) {
   )
 }
 
-function isSelected(employee) {
-  return selectedIds.value.has(getEmployeeId(employee))
+function clearSelected() {
+  emitSelected([])
 }
 
 function toggleEmployee(employee) {
-  const id = getEmployeeId(employee)
-  if (!id) return
-
   if (isSelected(employee)) {
-    selectAllMode.value = false
     removeRows([employee])
+    return
+  }
+
+  const blockInfo = getEmployeeBlockInfo(employee)
+
+  if (blockInfo.blocked) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Cannot select employee',
+      detail: blockInfo.reason,
+      life: 3000,
+    })
     return
   }
 
   selectRows([employee])
 }
 
-function clearSelected() {
-  selectAllMode.value = false
-  emitSelected([])
-}
+function buildLineGroups(rows = [], prefix = 'main') {
+  const map = new Map()
 
-async function selectAllLoaded() {
-  if (employeeScope.value === 'MANAGED') {
-    selectAllMode.value = true
-    await loadAllMatchingEmployeesForSelection()
-    return
+  for (const employee of rows) {
+    const lineId = toTrimmedString(employee?.lineId)
+    const lineKey = lineId || 'NO_LINE'
+
+    if (!map.has(lineKey)) {
+      map.set(lineKey, {
+        key: `${prefix}:${lineKey}`,
+        lineId,
+        label: buildLineLabel(employee),
+        rows: [],
+        count: 0,
+        selectedCount: 0,
+        disabledCount: 0,
+      })
+    }
+
+    const group = map.get(lineKey)
+
+    group.rows.push(employee)
+    group.count += 1
+
+    if (isSelected(employee)) group.selectedCount += 1
+    if (isEmployeeDisabled(employee) && !isSelected(employee)) group.disabledCount += 1
   }
 
-  selectAllMode.value = false
-  selectRows(displayedEmployees.value)
+  return Array.from(map.values())
+    .map((group) => ({
+      ...group,
+      rows: group.rows.sort(compareEmployeeRows),
+      selectableCount: group.rows.filter((row) => !isEmployeeDisabled(row)).length,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label))
 }
 
-function buildEmployeeParams(targetPage) {
-  const keyword = toTrimmedString(search.value)
-  const lineId = toTrimmedString(selectedLineId.value)
-  const shiftId = toTrimmedString(selectedShiftId.value)
+function selectLineGroup(group) {
+  selectRows(group.rows || [])
+}
 
+function clearLineGroup(group) {
+  removeRows(group.rows || [])
+}
+
+function buildEmployeeParams(targetPage, targetScope = employeeScope.value) {
   return {
     page: targetPage,
     limit: PAGE_SIZE,
-    search: keyword,
-    q: keyword,
-    lineId,
-    shiftId,
+    search: toTrimmedString(search.value),
+    q: toTrimmedString(search.value),
+    lineId: toTrimmedString(selectedLineId.value),
+    shiftId: toTrimmedString(props.selectedShiftId),
     isActive: true,
-    scope: employeeScope.value,
+    scope: targetScope,
   }
 }
 
-async function ensureManagedEmployeeIdsLoaded(options = {}) {
-  const { force = false } = options
-
-  if (managedEmployeeIdsLoaded.value && !force) return
-
-  const ids = new Set()
-  let currentPage = 1
-  let keepLoading = true
-
-  while (keepLoading) {
-    const res = await getEmployeeLookupOptions({
-      page: currentPage,
-      limit: 100,
-      search: '',
-      q: '',
-      isActive: true,
-      scope: 'MANAGED',
-    })
-
-    const payload = normalizeEmployeesResponse(res, {
-      markOutsideManaged: false,
-    })
-
-    for (const row of payload.rows) {
-      const id = getEmployeeId(row)
-      if (id) ids.add(id)
-    }
-
-    keepLoading = payload.hasMore === true && payload.rows.length > 0
-    currentPage += 1
-
-    if (currentPage > MAX_AUTO_SELECT_PAGES) {
-      keepLoading = false
-    }
+function buildBulkManagedParams(targetPage) {
+  return {
+    page: targetPage,
+    limit: BULK_PAGE_SIZE,
+    search: '',
+    q: '',
+    lineId: '',
+    shiftId: toTrimmedString(props.selectedShiftId),
+    isActive: true,
+    scope: 'MANAGED',
   }
-
-  managedEmployeeIds.value = ids
-  managedEmployeeIdsLoaded.value = true
 }
 
-async function loadAllMatchingEmployeesForSelection() {
-  if (employeeScope.value !== 'MANAGED') return
-  if (!selectAllMode.value) return
-  if (selectingAllMatching.value) return
-
-  selectingAllMatching.value = true
+async function loadAccess() {
+  loadingAccess.value = true
 
   try {
-    const allRows = []
-    const outsideRowsAlreadySelected = selectedRows.value.filter(
-      (item) => item?.isOutsideManaged === true,
-    )
-
-    let currentPage = 1
-    let keepLoading = true
-
-    while (keepLoading) {
-      const keyword = toTrimmedString(search.value)
-      const lineId = toTrimmedString(selectedLineId.value)
-      const shiftId = toTrimmedString(selectedShiftId.value)
-
-      const res = await getEmployeeLookupOptions({
-        page: currentPage,
-        limit: 100,
-        search: keyword,
-        q: keyword,
-        lineId,
-        shiftId,
-        isActive: true,
-        scope: 'MANAGED',
-      })
-
-      const payload = normalizeEmployeesResponse(res, {
-        markOutsideManaged: false,
-      })
-
-      allRows.push(...payload.rows)
-
-      keepLoading = payload.hasMore === true && payload.rows.length > 0
-      currentPage += 1
-
-      if (currentPage > MAX_AUTO_SELECT_PAGES) {
-        keepLoading = false
-      }
-    }
-
-    replaceSelection([...allRows, ...outsideRowsAlreadySelected])
-  } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Auto select failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Unable to auto-select all matching employees.',
-      life: 3000,
-    })
-  } finally {
-    selectingAllMatching.value = false
-  }
-}
-
-async function loadSelfEmployee() {
-  try {
-    loadingSelf.value = true
-
-    const meRes = await api.get('/auth/me')
-    const authUser = normalizeAuthMeUser(meRes)
-    const access = extractAuthAccess(meRes)
+    const res = await api.get('/auth/me')
+    const access = extractAuthAccess(res)
 
     canSelectOtherEmployees.value = access.canLookupAll
 
     if (!canSelectOtherEmployees.value && employeeScope.value === 'ALL') {
       employeeScope.value = 'MANAGED'
     }
-
-    await ensureManagedEmployeeIdsLoaded({ force: true })
-
-    const searchKeys = Array.from(
-      new Set(
-        [
-          authUser.employeeNo,
-          authUser.employeeId,
-          authUser.displayName,
-        ]
-          .map((item) => toTrimmedString(item))
-          .filter(Boolean),
-      ),
-    )
-
-    let found = null
-
-    for (const keyword of searchKeys) {
-      const res = await getEmployeeLookupOptions({
-        page: 1,
-        limit: 10,
-        search: keyword,
-        q: keyword,
-        isActive: true,
-        scope: 'MANAGED',
-      })
-
-      const rows = getNormalizedRowsFromEmployeeResponse(res, {
-        markOutsideManaged: false,
-      })
-
-      found = findSelfEmployeeFromRows(rows, authUser)
-
-      if (found) break
-    }
-
-    if (found) {
-      selfEmployee.value = {
-        ...found,
-        isSelf: true,
-        isOutsideManaged: false,
-      }
-      return
-    }
-
-    selfEmployee.value = null
-
-    toast.add({
-      severity: 'warn',
-      summary: 'Self employee not found',
-      detail:
-        'Your profile is logged in, but the employee master record was not found by employee lookup.',
-      life: 3500,
-    })
-  } catch (error) {
-    selfEmployee.value = null
-    managedEmployeeIds.value = new Set()
-    managedEmployeeIdsLoaded.value = true
-
-    toast.add({
-      severity: 'warn',
-      summary: 'Self employee load failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Unable to load your employee record.',
-      life: 3500,
-    })
+  } catch {
+    canSelectOtherEmployees.value = false
+    employeeScope.value = 'MANAGED'
   } finally {
-    loadingSelf.value = false
+    loadingAccess.value = false
   }
 }
 
 async function loadLineOptions() {
-  try {
-    loadingLines.value = true
+  loadingLines.value = true
 
+  try {
     const res = await getLineLookupOptions({
       page: 1,
       limit: 100,
@@ -1043,38 +756,48 @@ async function loadLineOptions() {
   }
 }
 
-async function loadShiftOptions() {
-  try {
-    loadingShifts.value = true
+async function loadManagedIds() {
+  managedEmployeeIds.value = new Set()
+  managedIdsLoaded.value = false
 
-    const res = await api.get('/shift/lookup', {
-      params: {
-        page: 1,
-        limit: 100,
-        isActive: true,
-      },
+  if (!props.otDate) {
+    managedIdsLoaded.value = true
+    return
+  }
+
+  const ids = new Set()
+  let currentPage = 1
+  let keepLoading = true
+
+  while (keepLoading) {
+    const res = await getEmployeeLookupOptions({
+      page: currentPage,
+      limit: BULK_PAGE_SIZE,
+      search: '',
+      q: '',
+      lineId: '',
+      shiftId: toTrimmedString(props.selectedShiftId),
+      isActive: true,
+      scope: 'MANAGED',
     })
 
-    remoteShiftOptions.value = normalizeShiftOptionsResponse(res)
-  } catch (error) {
-    remoteShiftOptions.value = []
+    const payload = normalizeEmployeeLookupResponse(res, {
+      markOutsideManaged: false,
+    })
 
-    if (error?.response?.status === 403) {
-      return
+    for (const row of payload.rows) {
+      const id = getEmployeeId(row)
+      if (id) ids.add(id)
     }
 
-    toast.add({
-      severity: 'warn',
-      summary: 'Shift filter unavailable',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Unable to load shift filter options.',
-      life: 2500,
-    })
-  } finally {
-    loadingShifts.value = false
+    keepLoading = payload.hasMore === true && payload.rows.length > 0
+    currentPage += 1
+
+    if (currentPage > MAX_BULK_PAGES) keepLoading = false
   }
+
+  managedEmployeeIds.value = ids
+  managedIdsLoaded.value = true
 }
 
 async function ensureScrollableFill() {
@@ -1083,7 +806,7 @@ async function ensureScrollableFill() {
   const el = scrollRef.value
   if (!el || loading.value || loadingMore.value || !hasMore.value) return
 
-  const needsMore = el.scrollHeight <= el.clientHeight + 80
+  const needsMore = el.scrollHeight <= el.clientHeight + 90
 
   if (needsMore) {
     await loadEmployees()
@@ -1092,6 +815,14 @@ async function ensureScrollableFill() {
 
 async function loadEmployees(options = {}) {
   const { reset = false } = options
+
+  if (!props.otDate) {
+    employees.value = []
+    total.value = 0
+    page.value = 1
+    hasMore.value = false
+    return
+  }
 
   if (loading.value || loadingMore.value) return
   if (!reset && !hasMore.value) return
@@ -1105,14 +836,16 @@ async function loadEmployees(options = {}) {
     loadingMore.value = true
   }
 
-  let shouldEnsureFill = false
-
   try {
+    if (employeeScope.value === 'ALL' && !managedIdsLoaded.value) {
+      await loadManagedIds()
+    }
+
     const res = await getEmployeeLookupOptions(buildEmployeeParams(targetPage))
 
     if (currentSeq !== requestSeq) return
 
-    const payload = normalizeEmployeesResponse(res, {
+    const payload = normalizeEmployeeLookupResponse(res, {
       markOutsideManaged: employeeScope.value === 'ALL',
     })
 
@@ -1128,20 +861,12 @@ async function loadEmployees(options = {}) {
       if (scrollRef.value) {
         scrollRef.value.scrollTop = 0
       }
-
-      if (selectAllMode.value && employeeScope.value === 'MANAGED') {
-        await loadAllMatchingEmployeesForSelection()
-      }
     } else {
-      employees.value = mergeUniqueRows(employees.value, payload.rows)
+      employees.value = mergeUniqueRows([...employees.value, ...payload.rows])
       page.value = targetPage + 1
-
-      if (selectAllMode.value && employeeScope.value === 'MANAGED') {
-        await loadAllMatchingEmployeesForSelection()
-      }
     }
 
-    shouldEnsureFill = true
+    await ensureScrollableFill()
   } catch (error) {
     if (reset) {
       employees.value = []
@@ -1165,17 +890,77 @@ async function loadEmployees(options = {}) {
       loadingMore.value = false
     }
   }
-
-  if (shouldEnsureFill) {
-    await ensureScrollableFill()
-  }
 }
 
 async function resetAndLoadEmployees() {
   page.value = 1
   hasMore.value = true
-
   await loadEmployees({ reset: true })
+}
+
+async function autoSelectManagedEmployees() {
+  if (!props.autoSelectAll) return
+  if (!props.autoSelectReady) return
+  if (!props.otDate) return
+  if (props.blockedLoading) return
+  if (selectingManaged.value) return
+
+  const nextKey = `${props.otDate}|${props.selectedShiftId}|${blockedStamp.value}`
+
+  if (autoSelectKey === nextKey) return
+
+  autoSelectKey = nextKey
+  selectingManaged.value = true
+
+  try {
+    const rows = []
+    let currentPage = 1
+    let keepLoading = true
+
+    while (keepLoading) {
+      const res = await getEmployeeLookupOptions(buildBulkManagedParams(currentPage))
+
+      const payload = normalizeEmployeeLookupResponse(res, {
+        markOutsideManaged: false,
+      })
+
+      rows.push(...payload.rows)
+
+      keepLoading = payload.hasMore === true && payload.rows.length > 0
+      currentPage += 1
+
+      if (currentPage > MAX_BULK_PAGES) keepLoading = false
+    }
+
+    const selectableRows = rows.filter((row) => !getEmployeeBlockInfo(row).blocked)
+
+    emitSelected(selectableRows)
+  } catch (error) {
+    toast.add({
+      severity: 'error',
+      summary: 'Auto select failed',
+      detail:
+        error?.response?.data?.message ||
+        error?.message ||
+        'Unable to auto-select your employees.',
+      life: 3000,
+    })
+  } finally {
+    selectingManaged.value = false
+  }
+}
+
+function removeInvalidSelectedRows() {
+  const beforeCount = selectedRows.value.length
+
+  const nextRows = selectedRows.value.filter((row) => {
+    const info = getEmployeeBlockInfo(row)
+    return !info.blocked
+  })
+
+  if (nextRows.length !== beforeCount) {
+    emitSelected(nextRows)
+  }
 }
 
 function handleScroll(event) {
@@ -1202,37 +987,53 @@ watch(search, () => {
 
   searchTimer = window.setTimeout(() => {
     resetAndLoadEmployees()
-  }, 280)
+  }, 260)
 })
 
 watch(selectedLineId, () => {
   resetAndLoadEmployees()
 })
 
-watch(selectedShiftId, () => {
-  resetAndLoadEmployees()
+watch(employeeScope, async () => {
+  await resetAndLoadEmployees()
 })
 
-watch(employeeScope, () => {
-  if (employeeScope.value === 'ALL') {
-    selectAllMode.value = false
-  }
+watch(
+  () => [props.otDate, props.selectedShiftId].join('|'),
+  async () => {
+    search.value = ''
+    selectedLineId.value = ''
+    employees.value = []
+    total.value = 0
+    page.value = 1
+    hasMore.value = false
+    autoSelectKey = ''
 
-  if (employeeScope.value === 'MANAGED' && !selectedRows.value.length) {
-    selectAllMode.value = props.autoSelectAll
-  }
+    if (!props.otDate) return
 
-  resetAndLoadEmployees()
-})
+    await loadManagedIds()
+    await resetAndLoadEmployees()
+    await autoSelectManagedEmployees()
+  },
+)
+
+watch(
+  () => [props.otDate, props.autoSelectReady, props.blockedLoading, blockedStamp.value].join('|'),
+  async () => {
+    removeInvalidSelectedRows()
+    await autoSelectManagedEmployees()
+  },
+)
 
 onMounted(async () => {
-  await loadSelfEmployee()
-
   await Promise.all([
+    loadAccess(),
     loadLineOptions(),
-    loadShiftOptions(),
-    resetAndLoadEmployees(),
   ])
+
+  await loadManagedIds()
+  await resetAndLoadEmployees()
+  await autoSelectManagedEmployees()
 })
 
 onBeforeUnmount(() => {
@@ -1245,7 +1046,7 @@ onBeforeUnmount(() => {
     <div class="ot-picker-summary">
       <div class="min-w-0">
         <h2 class="ot-picker-title">
-          Search & select employees <span class="ot-required-star">*</span>
+          2. Choose employees <span class="ot-required-star">*</span>
         </h2>
       </div>
 
@@ -1256,18 +1057,45 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="ot-count-box">
-          <span>Loaded</span>
-          <strong>{{ loadedCountLabel }}</strong>
+          <span>My Team</span>
+          <strong>{{ managedSelectedCount }}</strong>
+        </div>
+
+        <div
+          v-if="outsideSelectedCount"
+          class="ot-count-box is-warn"
+        >
+          <span>Other</span>
+          <strong>{{ outsideSelectedCount }}</strong>
         </div>
 
         <Button
-          label="Full Screen"
+          label="Open Picker"
           icon="pi pi-window-maximize"
           size="small"
+          :disabled="!props.otDate"
           @click="openPicker"
         />
       </div>
     </div>
+
+    <Message
+      v-if="!props.otDate"
+      severity="info"
+      :closable="false"
+      class="m-3"
+    >
+      Choose OT date first.
+    </Message>
+
+    <Message
+      v-else-if="props.blockedLoading"
+      severity="info"
+      :closable="false"
+      class="m-3"
+    >
+      Checking employees already used in OT on this date...
+    </Message>
 
     <div
       v-if="selectedPreview.length"
@@ -1279,9 +1107,8 @@ onBeforeUnmount(() => {
         class="ot-selected-chip"
         :class="{ 'is-outside-managed': employee.isOutsideManaged }"
       >
-        <span>{{ employee.displayName }}</span>
-        <small>{{ employee.employeeNo || 'No ID' }}</small>
-        <em v-if="employee.isOutsideManaged">Other</em>
+        <span>{{ employee.employeeNo || 'No ID' }}</span>
+        <small>{{ employee.displayName }}</small>
       </div>
 
       <Tag
@@ -1291,19 +1118,31 @@ onBeforeUnmount(() => {
       />
 
       <Tag
+        v-if="props.selectedShiftLabel"
+        :value="props.selectedShiftLabel"
+        severity="success"
+      />
+
+      <Tag
         v-if="outsideSelectedCount"
         :value="`${outsideSelectedCount} outside team`"
         severity="warn"
       />
+
+      <Tag
+        v-if="selectingManaged || props.blockedLoading"
+        value="Updating..."
+        severity="info"
+      />
     </div>
 
     <Message
-      v-else
-      severity="info"
+      v-else-if="props.otDate && props.autoSelectReady && !selectingManaged && !props.blockedLoading"
+      severity="warn"
       :closable="false"
       class="m-3"
     >
-      No employees selected.
+      No employee selected.
     </Message>
 
     <Dialog
@@ -1317,17 +1156,28 @@ onBeforeUnmount(() => {
         <div class="ot-dialog-header">
           <div class="min-w-0">
             <div class="ot-picker-eyebrow">
-              OT Employee Picker <span class="ot-required-star">*</span>
+              OT Employee Picker
             </div>
 
             <div class="ot-dialog-title">
-              Full screen employee selection
+              Select employees by line
             </div>
           </div>
 
           <div class="ot-dialog-tags">
             <Tag
-              :value="scopeTagLabel"
+              :value="`${selectedCount} selected`"
+              severity="contrast"
+            />
+
+            <Tag
+              v-if="props.selectedShiftLabel"
+              :value="props.selectedShiftLabel"
+              severity="success"
+            />
+
+            <Tag
+              :value="`${loadedCountLabel} loaded`"
               severity="info"
             />
 
@@ -1335,21 +1185,6 @@ onBeforeUnmount(() => {
               v-if="outsideSelectedCount"
               :value="`${outsideSelectedCount} outside team`"
               severity="warn"
-            />
-
-            <Tag
-              :value="selectAllMode ? 'Auto select ON' : 'Manual select'"
-              :severity="selectAllMode ? 'success' : 'secondary'"
-            />
-
-            <Tag
-              :value="`${selectedCount} selected`"
-              severity="contrast"
-            />
-
-            <Tag
-              :value="`${loadedCountLabel} loaded`"
-              severity="info"
             />
           </div>
         </div>
@@ -1363,21 +1198,21 @@ onBeforeUnmount(() => {
             <InputText
               v-model.trim="search"
               class="w-full"
-              placeholder="Search employee name, ID, line, position, or shift code..."
+              placeholder="Search ID, name, line, or shift..."
             />
           </IconField>
 
-          <Dropdown
+          <Select
             v-model="employeeScope"
             :options="employeeScopeOptions"
             optionLabel="label"
             optionValue="value"
             class="ot-scope-filter"
             placeholder="Employee scope"
-            :disabled="!canSelectOtherEmployees"
+            :disabled="loadingAccess || !canSelectOtherEmployees"
           />
 
-          <Dropdown
+          <Select
             v-model="selectedLineId"
             :options="lineOptions"
             optionLabel="label"
@@ -1387,24 +1222,14 @@ onBeforeUnmount(() => {
             :loading="loadingLines"
           />
 
-          <Dropdown
-            v-model="selectedShiftId"
-            :options="shiftOptions"
-            optionLabel="label"
-            optionValue="value"
-            class="ot-shift-filter"
-            placeholder="All shifts"
-            :loading="loadingShifts"
-          />
-
           <Button
-            :label="selectLoadedLabel"
+            label="Auto Select My Employees"
             icon="pi pi-check-square"
             severity="success"
             size="small"
-            :loading="selectingAllMatching"
-            :disabled="loading || loadingMore"
-            @click="selectAllLoaded"
+            :loading="selectingManaged || props.blockedLoading"
+            :disabled="!canUsePicker || selectingManaged || props.blockedLoading"
+            @click="autoSelectManagedEmployees"
           />
 
           <Button
@@ -1424,11 +1249,14 @@ onBeforeUnmount(() => {
           @scroll="handleScroll"
         >
           <div
-            v-if="loading || loadingSelf"
+            v-if="loading || loadingAccess || selectingManaged"
             class="ot-loading-state"
           >
             <ProgressSpinner style="width: 42px; height: 42px" strokeWidth="4" />
-            <span>Loading employees...</span>
+
+            <span>
+              {{ selectingManaged ? 'Auto-selecting your employees...' : 'Loading employees...' }}
+            </span>
           </div>
 
           <div
@@ -1437,55 +1265,266 @@ onBeforeUnmount(() => {
           >
             <i class="pi pi-users" />
             <strong>No employees found</strong>
-            <span>Try another keyword, line, shift, or employee scope.</span>
+            <span>Try another keyword or line filter.</span>
           </div>
 
           <div
             v-else-if="employeeScope === 'ALL'"
-            class="ot-employee-split"
+            class="ot-split-panels"
           >
-            <section
-              v-for="group in splitEmployeeGroups"
-              :key="group.key"
-              class="ot-employee-panel"
-              :class="`is-${group.key}`"
-            >
-              <div class="ot-employee-panel-header">
-                <div class="min-w-0">
-                  <div class="ot-employee-panel-title">
-                    <i :class="group.icon" />
-                    <span>{{ group.title }}</span>
+            <section class="ot-split-panel is-managed">
+              <div class="ot-panel-header">
+                <div>
+                  <div class="ot-panel-title">
+                    <i class="pi pi-users" />
+                    <span>My employees</span>
                   </div>
 
-                  <p>{{ group.helper }}</p>
+                  <p>Auto-selected by default.</p>
                 </div>
 
                 <Tag
-                  :value="`${group.rows.length}`"
-                  :severity="group.severity"
+                  :value="`${managedDisplayedEmployees.length}`"
+                  severity="success"
                 />
               </div>
 
               <div
-                v-if="!group.rows.length"
+                v-if="!managedLineGroups.length"
                 class="ot-panel-empty"
               >
-                {{ group.emptyText }}
+                No employee found in your team.
               </div>
 
               <div
                 v-else
-                class="ot-employee-grid ot-panel-grid"
+                class="ot-line-stack"
               >
+                <section
+                  v-for="group in managedLineGroups"
+                  :key="group.key"
+                  class="ot-line-group"
+                >
+                  <div class="ot-line-header">
+                    <div class="min-w-0">
+                      <div class="ot-line-title">
+                        {{ group.label }}
+                      </div>
+
+                      <div class="ot-line-subtitle">
+                        {{ group.selectedCount }}/{{ group.count }} selected
+                      </div>
+                    </div>
+
+                    <div class="ot-line-actions">
+                      <Button
+                        v-if="group.selectedCount"
+                        label="Clear line"
+                        size="small"
+                        severity="danger"
+                        text
+                        @click="clearLineGroup(group)"
+                      />
+
+                      <Button
+                        v-else
+                        label="Select line"
+                        size="small"
+                        severity="success"
+                        text
+                        :disabled="!group.selectableCount"
+                        @click="selectLineGroup(group)"
+                      />
+                    </div>
+                  </div>
+
+                  <div class="ot-employee-list">
+                    <button
+                      v-for="employee in group.rows"
+                      :key="employee._id"
+                      type="button"
+                      class="ot-employee-row"
+                      :class="{
+                        'is-selected': selectedIds.has(employee._id),
+                        'is-disabled': isEmployeeDisabled(employee),
+                        'is-outside-managed': employee.isOutsideManaged,
+                      }"
+                      :title="getEmployeeBlockInfo(employee).reason || buildEmployeeDisplay(employee)"
+                      :disabled="isEmployeeDisabled(employee)"
+                      @click="toggleEmployee(employee)"
+                    >
+                      <span class="ot-check-circle">
+                        <i
+                          v-if="selectedIds.has(employee._id)"
+                          class="pi pi-check"
+                        />
+                      </span>
+
+                      <span class="ot-employee-identity">
+                        <strong>{{ employee.employeeNo || 'No ID' }}</strong>
+                        <small>{{ employee.displayName }}</small>
+                        <em>{{ buildShiftLabel(employee) }}</em>
+                      </span>
+                    </button>
+                  </div>
+                </section>
+              </div>
+            </section>
+
+            <section class="ot-split-panel is-outside">
+              <div class="ot-panel-header">
+                <div>
+                  <div class="ot-panel-title">
+                    <i class="pi pi-exclamation-triangle" />
+                    <span>Other employees</span>
+                  </div>
+
+                  <p>Outside your team. Select only if needed.</p>
+                </div>
+
+                <Tag
+                  :value="`${outsideDisplayedEmployees.length}`"
+                  severity="warn"
+                />
+              </div>
+
+              <div
+                v-if="!outsideLineGroups.length"
+                class="ot-panel-empty"
+              >
+                No outside employee found.
+              </div>
+
+              <div
+                v-else
+                class="ot-line-stack"
+              >
+                <section
+                  v-for="group in outsideLineGroups"
+                  :key="group.key"
+                  class="ot-line-group"
+                >
+                  <div class="ot-line-header">
+                    <div class="min-w-0">
+                      <div class="ot-line-title">
+                        {{ group.label }}
+                      </div>
+
+                      <div class="ot-line-subtitle">
+                        {{ group.selectedCount }}/{{ group.count }} selected
+                      </div>
+                    </div>
+
+                    <div class="ot-line-actions">
+                      <Button
+                        v-if="group.selectedCount"
+                        label="Clear line"
+                        size="small"
+                        severity="danger"
+                        text
+                        @click="clearLineGroup(group)"
+                      />
+
+                      <Button
+                        v-else
+                        label="Select line"
+                        size="small"
+                        severity="warning"
+                        text
+                        :disabled="!group.selectableCount"
+                        @click="selectLineGroup(group)"
+                      />
+                    </div>
+                  </div>
+
+                  <div class="ot-employee-list">
+                    <button
+                      v-for="employee in group.rows"
+                      :key="employee._id"
+                      type="button"
+                      class="ot-employee-row is-outside-managed"
+                      :class="{
+                        'is-selected': selectedIds.has(employee._id),
+                        'is-disabled': isEmployeeDisabled(employee),
+                      }"
+                      :title="getEmployeeBlockInfo(employee).reason || buildEmployeeDisplay(employee)"
+                      :disabled="isEmployeeDisabled(employee)"
+                      @click="toggleEmployee(employee)"
+                    >
+                      <span class="ot-check-circle">
+                        <i
+                          v-if="selectedIds.has(employee._id)"
+                          class="pi pi-check"
+                        />
+                      </span>
+
+                      <span class="ot-employee-identity">
+                        <strong>{{ employee.employeeNo || 'No ID' }}</strong>
+                        <small>{{ employee.displayName }}</small>
+                        <em>{{ buildShiftLabel(employee) }}</em>
+                      </span>
+                    </button>
+                  </div>
+                </section>
+              </div>
+            </section>
+          </div>
+
+          <div
+            v-else
+            class="ot-line-stack"
+          >
+            <section
+              v-for="group in allLineGroups"
+              :key="group.key"
+              class="ot-line-group"
+            >
+              <div class="ot-line-header">
+                <div class="min-w-0">
+                  <div class="ot-line-title">
+                    {{ group.label }}
+                  </div>
+
+                  <div class="ot-line-subtitle">
+                    {{ group.selectedCount }}/{{ group.count }} selected
+                  </div>
+                </div>
+
+                <div class="ot-line-actions">
+                  <Button
+                    v-if="group.selectedCount"
+                    label="Clear line"
+                    size="small"
+                    severity="danger"
+                    text
+                    @click="clearLineGroup(group)"
+                  />
+
+                  <Button
+                    v-else
+                    label="Select line"
+                    size="small"
+                    severity="success"
+                    text
+                    :disabled="!group.selectableCount"
+                    @click="selectLineGroup(group)"
+                  />
+                </div>
+              </div>
+
+              <div class="ot-employee-list">
                 <button
                   v-for="employee in group.rows"
                   :key="employee._id"
                   type="button"
-                  class="ot-employee-card"
+                  class="ot-employee-row"
                   :class="{
                     'is-selected': selectedIds.has(employee._id),
+                    'is-disabled': isEmployeeDisabled(employee),
                     'is-outside-managed': employee.isOutsideManaged,
                   }"
+                  :title="getEmployeeBlockInfo(employee).reason || buildEmployeeDisplay(employee)"
+                  :disabled="isEmployeeDisabled(employee)"
                   @click="toggleEmployee(employee)"
                 >
                   <span class="ot-check-circle">
@@ -1495,118 +1534,22 @@ onBeforeUnmount(() => {
                     />
                   </span>
 
-                  <span class="ot-employee-name">
-                    {{ employee.displayName }}
+                  <span class="ot-employee-identity">
+                    <strong>{{ employee.employeeNo || 'No ID' }}</strong>
+                    <small>{{ employee.displayName }}</small>
+                    <em>{{ buildShiftLabel(employee) }}</em>
                   </span>
-
-                  <span class="ot-employee-id">
-                    ID: {{ employee.employeeNo || 'No ID' }}
-                  </span>
-
-                  <span class="ot-employee-meta">
-                    <i class="pi pi-sitemap" />
-                    {{ employee.lineCode || employee.lineName || 'No line' }}
-                  </span>
-
-                  <span class="ot-employee-meta">
-                    <i class="pi pi-clock" />
-                    {{ employee.shiftCode || 'No shift' }}
-                  </span>
-
-                  <span class="ot-employee-position">
-                    <i class="pi pi-briefcase" />
-                    {{ employee.positionName || 'No position' }}
-                  </span>
-
-                  <div class="ot-card-tags">
-                    <Tag
-                      v-if="employee.isSelf"
-                      value="Self"
-                      severity="success"
-                      class="ot-self-tag"
-                    />
-
-                    <Tag
-                      v-if="employee.isOutsideManaged"
-                      value="Outside team"
-                      severity="warn"
-                      class="ot-outside-tag"
-                    />
-                  </div>
                 </button>
               </div>
             </section>
           </div>
 
           <div
-            v-else
-            class="ot-employee-grid"
-          >
-            <button
-              v-for="employee in displayedEmployees"
-              :key="employee._id"
-              type="button"
-              class="ot-employee-card"
-              :class="{
-                'is-selected': selectedIds.has(employee._id),
-                'is-outside-managed': employee.isOutsideManaged,
-              }"
-              @click="toggleEmployee(employee)"
-            >
-              <span class="ot-check-circle">
-                <i
-                  v-if="selectedIds.has(employee._id)"
-                  class="pi pi-check"
-                />
-              </span>
-
-              <span class="ot-employee-name">
-                {{ employee.displayName }}
-              </span>
-
-              <span class="ot-employee-id">
-                ID: {{ employee.employeeNo || 'No ID' }}
-              </span>
-
-              <span class="ot-employee-meta">
-                <i class="pi pi-sitemap" />
-                {{ employee.lineCode || employee.lineName || 'No line' }}
-              </span>
-
-              <span class="ot-employee-meta">
-                <i class="pi pi-clock" />
-                {{ employee.shiftCode || 'No shift' }}
-              </span>
-
-              <span class="ot-employee-position">
-                <i class="pi pi-briefcase" />
-                {{ employee.positionName || 'No position' }}
-              </span>
-
-              <div class="ot-card-tags">
-                <Tag
-                  v-if="employee.isSelf"
-                  value="Self"
-                  severity="success"
-                  class="ot-self-tag"
-                />
-
-                <Tag
-                  v-if="employee.isOutsideManaged"
-                  value="Outside team"
-                  severity="warn"
-                  class="ot-outside-tag"
-                />
-              </div>
-            </button>
-          </div>
-
-          <div
             v-if="loadingMore"
             class="ot-more-loading"
           >
-            <ProgressSpinner style="width: 26px; height: 26px" strokeWidth="4" />
-            <span>Loading more employees...</span>
+            <ProgressSpinner style="width: 24px; height: 24px" strokeWidth="4" />
+            <span>Loading more...</span>
           </div>
 
           <div
@@ -1645,16 +1588,22 @@ onBeforeUnmount(() => {
   color: var(--ot-text-muted);
 }
 
-.ot-required-star {
-  color: #ef4444;
-  font-weight: 600;
-}
-
 .ot-picker-title {
-  margin-top: 0.2rem;
+  margin-top: 0.18rem;
   font-size: 1.05rem;
   font-weight: 600;
   color: var(--ot-text);
+}
+
+.ot-picker-subtitle {
+  margin-top: 0.22rem;
+  font-size: 0.78rem;
+  color: var(--ot-text-muted);
+}
+
+.ot-required-star {
+  color: #ef4444;
+  font-weight: 600;
 }
 
 .ot-picker-actions {
@@ -1662,21 +1611,26 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
-  gap: 0.5rem;
+  gap: 0.45rem;
 }
 
 .ot-count-box {
-  min-width: 84px;
+  min-width: 76px;
   border: 1px solid var(--ot-border);
-  border-radius: 0.95rem;
+  border-radius: 0.9rem;
   background: var(--ot-bg);
-  padding: 0.55rem 0.7rem;
+  padding: 0.45rem 0.65rem;
   text-align: center;
+}
+
+.ot-count-box.is-warn {
+  border-color: color-mix(in srgb, #f59e0b 45%, var(--ot-border));
+  background: color-mix(in srgb, #f59e0b 10%, var(--ot-bg));
 }
 
 .ot-count-box span {
   display: block;
-  font-size: 0.64rem;
+  font-size: 0.62rem;
   font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1685,8 +1639,8 @@ onBeforeUnmount(() => {
 
 .ot-count-box strong {
   display: block;
-  margin-top: 0.1rem;
-  font-size: 0.98rem;
+  margin-top: 0.08rem;
+  font-size: 0.96rem;
   font-weight: 600;
   color: var(--ot-text);
 }
@@ -1695,7 +1649,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.45rem;
+  gap: 0.42rem;
   border-top: 1px solid var(--ot-border);
   padding: 0.75rem 1rem 1rem;
 }
@@ -1703,12 +1657,12 @@ onBeforeUnmount(() => {
 .ot-selected-chip {
   display: inline-flex;
   align-items: center;
-  gap: 0.45rem;
-  max-width: 260px;
+  gap: 0.42rem;
+  max-width: 250px;
   border: 1px solid color-mix(in srgb, #22c55e 42%, var(--ot-border));
   border-radius: 999px;
   background: color-mix(in srgb, #22c55e 12%, var(--ot-surface));
-  padding: 0.35rem 0.65rem;
+  padding: 0.32rem 0.62rem;
 }
 
 .ot-selected-chip.is-outside-managed {
@@ -1717,30 +1671,19 @@ onBeforeUnmount(() => {
 }
 
 .ot-selected-chip span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.82rem;
-  font-weight: 500;
+  flex: 0 0 auto;
+  font-size: 0.74rem;
+  font-weight: 600;
   color: var(--ot-text);
 }
 
 .ot-selected-chip small {
-  flex: 0 0 auto;
-  font-size: 0.72rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.74rem;
   font-weight: 500;
   color: var(--ot-text-muted);
-}
-
-.ot-selected-chip em {
-  flex: 0 0 auto;
-  border-radius: 999px;
-  background: rgba(245, 158, 11, 0.18);
-  padding: 0.08rem 0.35rem;
-  font-size: 0.64rem;
-  font-style: normal;
-  font-weight: 600;
-  color: #b45309;
 }
 
 .ot-dialog-header {
@@ -1776,7 +1719,7 @@ onBeforeUnmount(() => {
 .ot-dialog-toolbar {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 0.65rem;
+  gap: 0.6rem;
   border: 1px solid var(--ot-border);
   border-radius: 1rem;
   background: var(--ot-surface);
@@ -1785,8 +1728,7 @@ onBeforeUnmount(() => {
 
 .ot-search-field,
 .ot-scope-filter,
-.ot-line-filter,
-.ot-shift-filter {
+.ot-line-filter {
   width: 100%;
 }
 
@@ -1800,210 +1742,10 @@ onBeforeUnmount(() => {
   padding: 0.75rem;
 }
 
-.ot-employee-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
-  gap: 0.65rem;
-}
-
-.ot-employee-split {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 0.75rem;
-  align-items: flex-start;
-}
-
-.ot-employee-panel {
-  min-width: 0;
-  overflow: hidden;
-  border: 1px solid var(--ot-border);
-  border-radius: 1rem;
-  background: var(--ot-surface);
-  padding: 0.75rem;
-}
-
-.ot-employee-panel.is-managed {
-  border-color: color-mix(in srgb, #22c55e 28%, var(--ot-border));
-}
-
-.ot-employee-panel.is-outside {
-  border-color: color-mix(in srgb, #f59e0b 45%, var(--ot-border));
-  background:
-    linear-gradient(135deg, rgba(245, 158, 11, 0.08), transparent),
-    var(--ot-surface);
-}
-
-.ot-employee-panel-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.75rem;
-  margin-bottom: 0.75rem;
-  border-bottom: 1px solid var(--ot-border);
-  padding-bottom: 0.65rem;
-}
-
-.ot-employee-panel-title {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  font-size: 0.92rem;
-  font-weight: 600;
-  color: var(--ot-text);
-}
-
-.ot-employee-panel-title i {
-  font-size: 0.82rem;
-  color: var(--ot-text-muted);
-}
-
-.ot-employee-panel-header p {
-  margin-top: 0.18rem;
-  font-size: 0.72rem;
-  font-weight: 500;
-  color: var(--ot-text-muted);
-}
-
-.ot-panel-grid {
-  grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));
-}
-
-.ot-panel-empty {
-  display: flex;
-  min-height: 180px;
-  align-items: center;
-  justify-content: center;
-  border: 1px dashed var(--ot-border);
-  border-radius: 0.85rem;
-  padding: 1rem;
-  text-align: center;
-  font-size: 0.82rem;
-  font-weight: 500;
-  color: var(--ot-text-muted);
-}
-
-.ot-employee-card {
-  position: relative;
-  min-height: 136px;
-  cursor: pointer;
-  border: 1px solid var(--ot-border);
-  border-radius: 1rem;
-  background: var(--ot-surface);
-  padding: 0.72rem 2.25rem 0.72rem 0.78rem;
-  text-align: left;
-  transition:
-    transform 0.16s ease,
-    border-color 0.16s ease,
-    background 0.16s ease,
-    box-shadow 0.16s ease;
-  box-shadow: none;
-}
-
-.ot-employee-card:hover {
-  transform: translateY(-1px);
-  border-color: color-mix(in srgb, #3b82f6 30%, var(--ot-border));
-  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.04);
-}
-
-.ot-employee-card.is-selected {
-  border-color: color-mix(in srgb, #22c55e 60%, var(--ot-border));
-  background:
-    linear-gradient(135deg, rgba(34, 197, 94, 0.1), rgba(59, 130, 246, 0.04)),
-    var(--ot-surface);
-  box-shadow: 0 4px 12px rgba(34, 197, 94, 0.06);
-}
-
-.ot-employee-card.is-outside-managed {
-  border-color: color-mix(in srgb, #f59e0b 50%, var(--ot-border));
-  background:
-    linear-gradient(135deg, rgba(245, 158, 11, 0.11), rgba(251, 191, 36, 0.04)),
-    var(--ot-surface);
-}
-
-.ot-employee-card.is-selected.is-outside-managed {
-  border-color: color-mix(in srgb, #f59e0b 72%, var(--ot-border));
-  background:
-    linear-gradient(135deg, rgba(245, 158, 11, 0.16), rgba(34, 197, 94, 0.08)),
-    var(--ot-surface);
-}
-
-.ot-check-circle {
-  position: absolute;
-  top: 0.58rem;
-  right: 0.58rem;
-  display: inline-flex;
-  width: 1.45rem;
-  height: 1.45rem;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--ot-border);
-  border-radius: 999px;
-  background: var(--ot-bg);
-  color: #16a34a;
-  font-size: 0.72rem;
-}
-
-.ot-employee-card.is-outside-managed .ot-check-circle {
-  border-color: rgba(245, 158, 11, 0.35);
-}
-
-.ot-employee-name {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-size: 1rem;
-  font-weight: 600;
-  line-height: 1.18;
-  color: var(--ot-text);
-}
-
-.ot-employee-id {
-  display: block;
-  margin-top: 0.4rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.75rem;
-  font-weight: 500;
-  color: var(--ot-text-muted);
-}
-
-.ot-employee-meta,
-.ot-employee-position {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  margin-top: 0.32rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.72rem;
-  font-weight: 500;
-  color: var(--ot-text-muted);
-}
-
-.ot-employee-meta i,
-.ot-employee-position i {
-  flex: 0 0 auto;
-  font-size: 0.7rem;
-}
-
-.ot-card-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-  margin-top: 0.5rem;
-}
-
-.ot-self-tag,
-.ot-outside-tag {
-  font-size: 0.68rem !important;
-}
-
 .ot-loading-state,
 .ot-empty-state {
   display: flex;
-  min-height: 320px;
+  min-height: 300px;
   flex-direction: column;
   align-items: center;
   justify-content: center;
@@ -2021,20 +1763,242 @@ onBeforeUnmount(() => {
   color: var(--ot-text);
 }
 
+.ot-split-panels {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.ot-split-panel {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--ot-border);
+  border-radius: 1rem;
+  background: var(--ot-surface);
+  padding: 0.75rem;
+}
+
+.ot-split-panel.is-managed {
+  border-color: color-mix(in srgb, #22c55e 28%, var(--ot-border));
+}
+
+.ot-split-panel.is-outside {
+  border-color: color-mix(in srgb, #f59e0b 45%, var(--ot-border));
+  background:
+    linear-gradient(135deg, rgba(245, 158, 11, 0.08), transparent),
+    var(--ot-surface);
+}
+
+.ot-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid var(--ot-border);
+  padding-bottom: 0.65rem;
+}
+
+.ot-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--ot-text);
+}
+
+.ot-panel-title i {
+  font-size: 0.82rem;
+  color: var(--ot-text-muted);
+}
+
+.ot-panel-header p {
+  margin-top: 0.18rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--ot-text-muted);
+}
+
+.ot-panel-empty {
+  display: flex;
+  min-height: 180px;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--ot-border);
+  border-radius: 0.85rem;
+  padding: 1rem;
+  text-align: center;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--ot-text-muted);
+}
+
+.ot-line-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.ot-line-group {
+  overflow: hidden;
+  border: 1px solid var(--ot-border);
+  border-radius: 0.95rem;
+  background: var(--ot-surface);
+}
+
+.ot-line-header {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border-bottom: 1px solid var(--ot-border);
+  background:
+    linear-gradient(135deg, rgba(59, 130, 246, 0.08), transparent),
+    var(--ot-surface);
+  padding: 0.68rem 0.78rem;
+}
+
+.ot-line-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ot-text);
+}
+
+.ot-line-subtitle {
+  margin-top: 0.12rem;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--ot-text-muted);
+}
+
+.ot-line-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.ot-employee-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 0.42rem;
+  padding: 0.6rem;
+}
+
+.ot-employee-row {
+  position: relative;
+  display: flex;
+  min-height: 56px;
+  cursor: pointer;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid var(--ot-border);
+  border-radius: 0.8rem;
+  background: var(--ot-surface);
+  padding: 0.5rem 0.6rem;
+  text-align: left;
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease,
+    transform 0.16s ease;
+}
+
+.ot-employee-row:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, #3b82f6 34%, var(--ot-border));
+}
+
+.ot-employee-row.is-selected {
+  border-color: color-mix(in srgb, #22c55e 62%, var(--ot-border));
+  background:
+    linear-gradient(135deg, rgba(34, 197, 94, 0.12), rgba(59, 130, 246, 0.04)),
+    var(--ot-surface);
+}
+
+.ot-employee-row.is-outside-managed {
+  border-color: color-mix(in srgb, #f59e0b 52%, var(--ot-border));
+}
+
+.ot-employee-row.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  transform: none;
+}
+
+.ot-check-circle {
+  display: inline-flex;
+  width: 1.28rem;
+  height: 1.28rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--ot-border);
+  border-radius: 999px;
+  background: var(--ot-bg);
+  color: #16a34a;
+  font-size: 0.66rem;
+}
+
+.ot-employee-row.is-selected .ot-check-circle {
+  border-color: color-mix(in srgb, #22c55e 62%, var(--ot-border));
+  background: rgba(34, 197, 94, 0.1);
+}
+
+.ot-employee-identity {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.08rem;
+}
+
+.ot-employee-identity strong,
+.ot-employee-identity small,
+.ot-employee-identity em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ot-employee-identity strong {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--ot-text);
+}
+
+.ot-employee-identity small {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--ot-text-muted);
+}
+
+.ot-employee-identity em {
+  font-size: 0.68rem;
+  font-style: normal;
+  font-weight: 500;
+  color: color-mix(in srgb, var(--ot-text-muted) 84%, #3b82f6);
+}
+
 .ot-more-loading {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 0.65rem;
   padding: 1rem;
-  font-size: 0.84rem;
+  font-size: 0.82rem;
   color: var(--ot-text-muted);
 }
 
 .ot-all-loaded {
   padding: 1rem;
   text-align: center;
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   font-weight: 500;
   color: var(--ot-text-muted);
 }
@@ -2050,50 +2014,33 @@ onBeforeUnmount(() => {
 }
 
 :deep(.ot-search-field .p-inputtext) {
-  min-height: 2.6rem !important;
-  padding-left: 2.45rem !important;
-  border-radius: 0.9rem !important;
+  min-height: 2.45rem !important;
 }
 
-:deep(.ot-search-field .p-inputicon) {
-  color: var(--ot-text-muted) !important;
+:deep(.p-button.p-button-sm) {
+  padding: 0.34rem 0.58rem !important;
+  font-size: 0.78rem !important;
+}
+
+:deep(.p-tag) {
+  font-weight: 500 !important;
 }
 
 @media (min-width: 768px) {
   .ot-dialog-toolbar {
     grid-template-columns:
       minmax(240px, 1fr)
-      minmax(150px, 190px)
-      minmax(170px, 230px)
-      minmax(170px, 230px)
+      170px
+      190px
       auto
       auto;
     align-items: center;
   }
 }
 
-@media (max-width: 768px) {
-  .ot-picker-summary,
-  .ot-dialog-header {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .ot-picker-actions,
-  .ot-dialog-tags {
-    justify-content: flex-start;
-  }
-
-  .ot-count-box {
-    flex: 1 1 90px;
-  }
-
-  .ot-employee-split {
-    grid-template-columns: 1fr;
-  }
-
-  .ot-employee-grid {
-    grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
+@media (min-width: 1280px) {
+  .ot-split-panels {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
 }
 </style>
