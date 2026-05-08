@@ -235,14 +235,9 @@ function buildVerificationRequestSearchFilter(search) {
 function mapVerificationRequestSearchItem(doc) {
   const requestedEmployees = Array.isArray(doc?.requestedEmployees) ? doc.requestedEmployees : []
   const approvedEmployees = Array.isArray(doc?.approvedEmployees) ? doc.approvedEmployees : []
-  const proposedApprovedEmployees = Array.isArray(doc?.proposedApprovedEmployees)
-    ? doc.proposedApprovedEmployees
-    : []
 
-  const effectiveApprovedCount =
-    upper(doc?.status) === 'PENDING_REQUESTER_CONFIRMATION' && proposedApprovedEmployees.length
-      ? proposedApprovedEmployees.length
-      : approvedEmployees.length
+  const requestedEmployeeCount = Number(doc.requestedEmployeeCount || requestedEmployees.length)
+  const approvedEmployeeCount = Number(doc.approvedEmployeeCount || approvedEmployees.length || 0)
 
   return {
     id: String(doc._id),
@@ -265,7 +260,6 @@ function mapVerificationRequestSearchItem(doc) {
     shiftOtOptionId: doc.shiftOtOptionId ? String(doc.shiftOtOptionId) : null,
     shiftOtOptionLabel: s(doc.shiftOtOptionLabel),
 
-    // ✅ important for dropdown / frontend display
     shiftOtOptionTimingMode: upper(doc.shiftOtOptionTimingMode),
     shiftOtOptionStartAfterShiftEndMinutes: Number(
       doc.shiftOtOptionStartAfterShiftEndMinutes || 0,
@@ -283,8 +277,9 @@ function mapVerificationRequestSearchItem(doc) {
     otCalculationPolicyId: doc.otCalculationPolicyId ? String(doc.otCalculationPolicyId) : null,
     otCalculationPolicySnapshot: doc.otCalculationPolicySnapshot || {},
 
-    requestedEmployeeCount: Number(doc.requestedEmployeeCount || requestedEmployees.length),
-    approvedEmployeeCount: Number(doc.approvedEmployeeCount || effectiveApprovedCount || 0),
+    employeeCount: requestedEmployeeCount,
+    requestedEmployeeCount,
+    approvedEmployeeCount,
 
     createdAt: doc.createdAt || null,
     updatedAt: doc.updatedAt || null,
@@ -293,14 +288,11 @@ function mapVerificationRequestSearchItem(doc) {
 
 async function searchOTRequestsForVerification(query = {}) {
   const page = Math.max(Number(query.page || 1), 1)
-  const limit = Math.min(Math.max(Number(query.limit || 10), 1), 20)
+  const limit = Math.min(Math.max(Number(query.limit || 10), 1), 100)
   const skip = (page - 1) * limit
 
   const filter = {
     ...buildVerificationRequestSearchFilter(query.search),
-    status: {
-      $nin: ['REJECTED', 'CANCELLED'],
-    },
   }
 
   if (s(query.status)) {
@@ -309,8 +301,14 @@ async function searchOTRequestsForVerification(query = {}) {
 
   if (s(query.otDateFrom) || s(query.otDateTo)) {
     filter.otDate = {}
-    if (s(query.otDateFrom)) filter.otDate.$gte = s(query.otDateFrom)
-    if (s(query.otDateTo)) filter.otDate.$lte = s(query.otDateTo)
+
+    if (s(query.otDateFrom)) {
+      filter.otDate.$gte = s(query.otDateFrom)
+    }
+
+    if (s(query.otDateTo)) {
+      filter.otDate.$lte = s(query.otDateTo)
+    }
   }
 
   const [items, total] = await Promise.all([
@@ -1108,16 +1106,6 @@ function mapPolicySnapshotForVerification(snapshot = {}, fallbackPolicy = null) 
 }
 
 function getEffectiveApprovedEmployeesForVerification(otRequest) {
-  const status = upper(otRequest?.status)
-
-  if (
-    status === 'PENDING_REQUESTER_CONFIRMATION' &&
-    Array.isArray(otRequest?.proposedApprovedEmployees) &&
-    otRequest.proposedApprovedEmployees.length
-  ) {
-    return otRequest.proposedApprovedEmployees
-  }
-
   if (Array.isArray(otRequest?.approvedEmployees) && otRequest.approvedEmployees.length) {
     return otRequest.approvedEmployees
   }
@@ -1229,14 +1217,6 @@ function buildVerificationOTRequestPayload(otRequest, approvedEmployees = [], op
     approvedEmployeeCount: Number(
       effectiveApprovedEmployees.length || otRequest.approvedEmployeeCount || 0,
     ),
-    proposedApprovedEmployeeCount: Number(
-      otRequest.proposedApprovedEmployeeCount ||
-        (Array.isArray(otRequest.proposedApprovedEmployees)
-          ? otRequest.proposedApprovedEmployees.length
-          : 0),
-    ),
-
-    requesterConfirmationStatus: upper(otRequest.requesterConfirmationStatus),
     requestedEmployees,
     approvedEmployees: effectiveApprovedEmployees,
   }

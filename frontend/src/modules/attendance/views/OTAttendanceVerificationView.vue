@@ -3,7 +3,7 @@
 // frontend/src/modules/attendance/views/OTAttendanceVerificationView.vue
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 
 import Button from 'primevue/button'
 import Card from 'primevue/card'
@@ -24,7 +24,6 @@ import {
 } from '@/modules/attendance/attendance.api'
 
 const route = useRoute()
-const router = useRouter()
 const toast = useToast()
 
 const loading = ref(false)
@@ -42,24 +41,22 @@ let requestSearchTimer = null
 let suppressRequestSearch = false
 
 const requestStatusOptions = [
-  { label: 'All OT Requests', value: '' },
+  { label: 'All Status', value: '' },
   { label: 'Pending', value: 'PENDING' },
-  { label: 'Pending Confirmation', value: 'PENDING_REQUESTER_CONFIRMATION' },
   { label: 'Approved', value: 'APPROVED' },
   { label: 'Rejected', value: 'REJECTED' },
-  { label: 'Requester Disagreed', value: 'REQUESTER_DISAGREED' },
   { label: 'Cancelled', value: 'CANCELLED' },
 ]
 
 const categoryOptions = [
   { label: 'All Results', value: '' },
   { label: 'Matched', value: 'MATCH' },
-  { label: 'Partial Credited', value: 'PARTIAL' },
-  { label: 'Match Without Exact Out', value: 'MATCH_WITHOUT_EXACT_OUT' },
-  { label: 'Mismatch', value: 'MISMATCH' },
-  { label: 'Approved Staff Absent', value: 'ABSENT_APPROVED' },
-  { label: 'Pending Review', value: 'PENDING_REVIEW' },
-  { label: 'Shift Mismatch', value: 'SHIFT_MISMATCH' },
+  { label: 'Accepted by Policy', value: 'MATCH_WITHOUT_EXACT_OUT' },
+  { label: 'Needs Check', value: 'MISMATCH' },
+  { label: 'Forget Scan In', value: 'FORGET_SCAN_IN' },
+  { label: 'Forget Scan Out', value: 'FORGET_SCAN_OUT' },
+  { label: 'OT Staff Absent', value: 'ABSENT_APPROVED' },
+  { label: 'Wrong Shift', value: 'SHIFT_MISMATCH' },
   { label: 'Not in OT Staff', value: 'NOT_APPROVED' },
   { label: 'Not Eligible', value: 'NOT_ELIGIBLE' },
 ]
@@ -80,9 +77,8 @@ const activeOtRequestId = computed(() => {
 const otRequest = computed(() => payload.value?.otRequest || {})
 const verification = computed(() => payload.value?.verification || {})
 
-const isFinalApprovedRequest = computed(() => {
-  return upper(otRequest.value?.status) === 'APPROVED'
-})
+const requestStatus = computed(() => upper(otRequest.value?.status))
+const isFinalApprovedRequest = computed(() => requestStatus.value === 'APPROVED')
 
 const attendedEmployees = computed(() => asArray(verification.value?.attendedEmployees))
 const absentFromApproved = computed(() => asArray(verification.value?.absentFromApproved))
@@ -99,10 +95,6 @@ const requestTimingMode = computed(() => {
   )
 })
 
-const isFixedTimeRequest = computed(() => {
-  return verification.value?.isFixedTimeOt === true || requestTimingMode.value === 'FIXED_TIME'
-})
-
 const requestRequestedOtLabel = computed(() =>
   formatMinutesLabel(
     verification.value?.requestedMinutes ??
@@ -115,6 +107,7 @@ const requestRequestedOtLabel = computed(() =>
 const requestShiftTime = computed(() => {
   const start = displayTime(otRequest.value?.shiftStartTime)
   const end = displayTime(otRequest.value?.shiftEndTime)
+
   return `${start} - ${end}`
 })
 
@@ -150,6 +143,7 @@ const requestPolicyLabel = computed(() => {
   ).trim()
 
   if (code && name) return `${code} · ${name}`
+
   return code || name || '-'
 })
 
@@ -192,7 +186,15 @@ const verificationRows = computed(() => {
   }
 
   for (const row of pendingReviewEmployees.value) {
-    put(row, 'PENDING_REVIEW', 'MISMATCH')
+    const status = upper(row?.attendanceStatus || row?.status)
+
+    if (status === 'FORGET_SCAN_IN') {
+      put(row, 'FORGET_SCAN_IN', 'MISMATCH')
+    } else if (status === 'FORGET_SCAN_OUT') {
+      put(row, 'FORGET_SCAN_OUT', 'MISMATCH')
+    } else {
+      put(row, 'FORGET_SCAN_OUT', 'MISMATCH')
+    }
   }
 
   for (const row of notEligibleEmployees.value) {
@@ -206,20 +208,32 @@ const verificationRows = computed(() => {
   return Array.from(map.values())
 })
 
-const partialVerificationRows = computed(() => {
-  return verificationRows.value.filter((row) => isPartialCredited(row))
+const forgetScanInRows = computed(() => {
+  return verificationRows.value.filter((row) => row.category === 'FORGET_SCAN_IN')
 })
 
-const hardMismatchVerificationRows = computed(() => {
+const forgetScanOutRows = computed(() => {
+  return verificationRows.value.filter((row) => row.category === 'FORGET_SCAN_OUT')
+})
+
+const needsCheckVerificationRows = computed(() => {
   return verificationRows.value.filter((row) => {
-    return row.result === 'MISMATCH' && !isPartialCredited(row)
+    return (
+      row.result === 'MISMATCH' &&
+      row.category !== 'FORGET_SCAN_IN' &&
+      row.category !== 'FORGET_SCAN_OUT'
+    )
   })
 })
 
 const summaryCards = computed(() => [
   {
-    label: 'OT Staff',
-    value: Number(verification.value?.approvedEmployeeCount || 0),
+    label: 'Request Staff',
+    value: Number(
+      verification.value?.approvedEmployeeCount ||
+        verification.value?.requestedEmployeeCount ||
+        0,
+    ),
     icon: 'pi pi-users',
     tone: 'blue',
   },
@@ -230,21 +244,21 @@ const summaryCards = computed(() => [
     tone: 'green',
   },
   {
-    label: 'Partial',
-    value: partialVerificationRows.value.length,
-    icon: 'pi pi-clock',
-    tone: 'yellow',
-  },
-  {
-    label: 'Mismatch',
-    value: hardMismatchVerificationRows.value.length,
+    label: 'Needs Check',
+    value: needsCheckVerificationRows.value.length,
     icon: 'pi pi-times-circle',
     tone: 'red',
   },
   {
-    label: 'Pending',
-    value: Number(verification.value?.pendingReviewCount || 0),
-    icon: 'pi pi-hourglass',
+    label: 'Forget In',
+    value: forgetScanInRows.value.length,
+    icon: 'pi pi-sign-in',
+    tone: 'violet',
+  },
+  {
+    label: 'Forget Out',
+    value: forgetScanOutRows.value.length,
+    icon: 'pi pi-sign-out',
     tone: 'violet',
   },
   {
@@ -266,16 +280,7 @@ const filteredVerificationRows = computed(() => {
   const category = String(tableCategory.value || '').trim()
 
   return verificationRows.value.filter((row) => {
-    if (category === 'PARTIAL' && !isPartialCredited(row)) return false
-
-    if (
-      category &&
-      category !== 'PARTIAL' &&
-      row.category !== category &&
-      row.result !== category
-    ) {
-      return false
-    }
+    if (!rowMatchesCategory(row, category)) return false
 
     if (!keyword) return true
 
@@ -284,11 +289,13 @@ const filteredVerificationRows = computed(() => {
       row.employeeName,
       row.categoryLabel,
       row.result,
-      resultDisplayLabel(row),
       resultMeaningLabel(row),
+      attendanceStatusLabel(row.attendanceStatus),
       row.attendanceStatus,
       row.rawDecision,
       row.reason,
+      row.clockIn,
+      row.clockOut,
     ]
       .join(' ')
       .toLowerCase()
@@ -336,6 +343,7 @@ function parseYMD(value) {
   if (!match) return null
 
   const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+
   return Number.isNaN(date.getTime()) ? null : date
 }
 
@@ -347,6 +355,7 @@ function normalizeTimeValue(value) {
   if (timeMatch) {
     const hh = String(Number(timeMatch[1])).padStart(2, '0')
     const mm = String(Number(timeMatch[2])).padStart(2, '0')
+
     return `${hh}:${mm}`
   }
 
@@ -366,6 +375,19 @@ function displayTime(...values) {
   }
 
   return '-'
+}
+
+function isMissingTime(value) {
+  const raw = s(value)
+  return !raw || raw === '-'
+}
+
+function scanTimeLabel(value) {
+  return isMissingTime(value) ? 'Missing' : value
+}
+
+function scanTimeTone(value) {
+  return isMissingTime(value) ? 'is-missing' : 'is-complete'
 }
 
 function formatMinutesLabel(value) {
@@ -395,10 +417,11 @@ function categoryPriority(category) {
   const priority = {
     MATCH: 1,
     MATCH_WITHOUT_EXACT_OUT: 2,
-    MISMATCH: 3,
-    NOT_APPROVED: 4,
-    NOT_ELIGIBLE: 5,
-    PENDING_REVIEW: 6,
+    FORGET_SCAN_IN: 3,
+    FORGET_SCAN_OUT: 3,
+    MISMATCH: 4,
+    NOT_APPROVED: 5,
+    NOT_ELIGIBLE: 6,
     SHIFT_MISMATCH: 7,
     ABSENT_APPROVED: 8,
   }
@@ -409,11 +432,12 @@ function categoryPriority(category) {
 function categoryLabel(category) {
   const labels = {
     MATCH: 'Matched',
-    MATCH_WITHOUT_EXACT_OUT: 'Match Without Exact Out',
-    MISMATCH: 'Mismatch',
-    ABSENT_APPROVED: 'Approved Staff Absent',
-    PENDING_REVIEW: 'Pending Review',
-    SHIFT_MISMATCH: 'Shift Mismatch',
+    MATCH_WITHOUT_EXACT_OUT: 'Accepted by Policy',
+    FORGET_SCAN_IN: 'Forget Scan In',
+    FORGET_SCAN_OUT: 'Forget Scan Out',
+    MISMATCH: 'Needs Check',
+    ABSENT_APPROVED: 'OT Staff Absent',
+    SHIFT_MISMATCH: 'Wrong Shift',
     NOT_APPROVED: 'Not in OT Staff',
     NOT_ELIGIBLE: 'Not Eligible',
   }
@@ -421,36 +445,37 @@ function categoryLabel(category) {
   return labels[category] || category || '-'
 }
 
-function categorySeverity(category) {
-  const normalized = upper(category)
+function rowMatchesCategory(row, category) {
+  const normalizedCategory = upper(category)
+  if (!normalizedCategory) return true
 
-  if (normalized === 'MATCH') return 'success'
-  if (normalized === 'MATCH_WITHOUT_EXACT_OUT') return 'success'
-  if (normalized === 'PENDING_REVIEW') return 'info'
-  if (normalized === 'ABSENT_APPROVED') return 'warning'
-  if (normalized === 'NOT_APPROVED') return 'info'
-  if (normalized === 'SHIFT_MISMATCH') return 'danger'
-  if (normalized === 'NOT_ELIGIBLE') return 'contrast'
-  if (normalized === 'MISMATCH') return 'danger'
+  const rowCategory = upper(row?.category)
+  const rowResult = upper(row?.result)
 
-  return 'secondary'
+  if (normalizedCategory === 'MATCH') {
+    return rowResult === 'MATCH'
+  }
+
+  if (normalizedCategory === 'MISMATCH') {
+    return (
+      rowResult === 'MISMATCH' &&
+      rowCategory !== 'FORGET_SCAN_IN' &&
+      rowCategory !== 'FORGET_SCAN_OUT'
+    )
+  }
+
+  return rowCategory === normalizedCategory
 }
 
 function statusSeverity(value) {
   const normalized = upper(value)
 
   if (['APPROVED', 'PRESENT', 'MATCH'].includes(normalized)) return 'success'
-  if (
-    ['PENDING', 'PENDING_REVIEW', 'PENDING_REQUESTER_CONFIRMATION', 'LATE'].includes(
-      normalized,
-    )
-  ) {
-    return 'warning'
-  }
+  if (['PENDING', 'LATE'].includes(normalized)) return 'warning'
+
   if (
     [
       'REJECTED',
-      'REQUESTER_DISAGREED',
       'ABSENT',
       'SHIFT_MISMATCH',
       'MISMATCH',
@@ -458,18 +483,20 @@ function statusSeverity(value) {
   ) {
     return 'danger'
   }
+
   if (['FORGET_SCAN_IN', 'FORGET_SCAN_OUT'].includes(normalized)) return 'info'
   if (['CANCELLED', 'OFF'].includes(normalized)) return 'secondary'
 
   return 'contrast'
 }
 
-function dayTypeSeverity(value) {
+function requestStatusSeverity(value) {
   const normalized = upper(value)
 
-  if (normalized === 'HOLIDAY') return 'danger'
-  if (normalized === 'SUNDAY') return 'warning'
-  if (normalized === 'WORKING_DAY') return 'success'
+  if (normalized === 'APPROVED') return 'success'
+  if (normalized === 'PENDING') return 'warning'
+  if (normalized === 'REJECTED') return 'danger'
+  if (normalized === 'CANCELLED') return 'secondary'
 
   return 'secondary'
 }
@@ -487,6 +514,24 @@ function timingModeSeverity(value) {
   return upper(value) === 'FIXED_TIME' ? 'warning' : 'info'
 }
 
+function attendanceStatusLabel(value) {
+  const normalized = upper(value)
+
+  const labels = {
+    PRESENT: 'Present',
+    LATE: 'Late',
+    ABSENT: 'Absent',
+    OFF: 'Off',
+    FORGET_SCAN_IN: 'Forget Scan In',
+    FORGET_SCAN_OUT: 'Forget Scan Out',
+    SHIFT_MISMATCH: 'Wrong Shift',
+    MISMATCH: 'Needs Check',
+    PENDING: 'Pending',
+  }
+
+  return labels[normalized] || normalized || '-'
+}
+
 function isPartialCredited(row) {
   const result = upper(row?.result)
   const requested = Number(row?.requestedMinutes || 0)
@@ -495,18 +540,13 @@ function isPartialCredited(row) {
   return result === 'MISMATCH' && requested > 0 && credited > 0 && credited < requested
 }
 
-function resultDisplayLabel(row) {
-  if (isPartialCredited(row)) return 'PARTIAL'
-  return upper(row?.result) === 'MATCH' ? 'MATCH' : 'MISMATCH'
-}
-
-function resultVisualSeverity(row) {
-  if (isPartialCredited(row)) return 'warning'
-  return upper(row?.result) === 'MATCH' ? 'success' : 'danger'
-}
-
 function resultMeaningTone(row) {
-  if (isPartialCredited(row)) return 'is-partial'
+  if (isPartialCredited(row)) return 'is-warning'
+
+  if (row?.category === 'FORGET_SCAN_IN' || row?.category === 'FORGET_SCAN_OUT') {
+    return 'is-forget'
+  }
+
   return upper(row?.result) === 'MATCH' ? 'is-match' : 'is-mismatch'
 }
 
@@ -520,9 +560,10 @@ function resultMeaningLabel(row) {
   const clockOut = s(row?.clockOut)
   const attendanceStatus = upper(row?.attendanceStatus)
 
+  if (category === 'FORGET_SCAN_IN') return 'Forget Scan In'
+  if (category === 'FORGET_SCAN_OUT') return 'Forget Scan Out'
   if (category === 'MATCH_WITHOUT_EXACT_OUT') return 'Accepted by policy'
   if (category === 'ABSENT_APPROVED') return 'OT staff absent'
-  if (category === 'PENDING_REVIEW') return 'Needs manual review'
   if (category === 'SHIFT_MISMATCH') return 'Wrong shift'
   if (category === 'NOT_APPROVED') return 'Not in OT staff'
   if (category === 'NOT_ELIGIBLE') return 'Not eligible for OT'
@@ -546,10 +587,8 @@ function requestStatusLabel(value) {
   const normalized = upper(value)
 
   if (normalized === 'PENDING') return 'Pending'
-  if (normalized === 'PENDING_REQUESTER_CONFIRMATION') return 'Pending Confirmation'
   if (normalized === 'APPROVED') return 'Approved'
   if (normalized === 'REJECTED') return 'Rejected'
-  if (normalized === 'REQUESTER_DISAGREED') return 'Requester Disagreed'
   if (normalized === 'CANCELLED') return 'Cancelled'
   if (normalized === 'DRAFT') return 'Draft'
 
@@ -561,6 +600,7 @@ function requestOptionLabel(row) {
   const status = requestStatusLabel(row?.status)
   const requester = s(row?.requesterName)
   const option = s(row?.shiftOtOptionLabel)
+
   const staffCount = Number(
     row?.employeeCount ||
       row?.approvedEmployeeCount ||
@@ -809,15 +849,6 @@ function clearAll() {
   clearCurrentResultOnly()
 }
 
-function goBack() {
-  if (window.history.length > 1) {
-    router.back()
-    return
-  }
-
-  router.push('/attendance/imports')
-}
-
 watch(
   () => [
     formatDateYMD(verificationDate.value),
@@ -847,57 +878,6 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="mx-auto flex w-full max-w-7xl flex-col gap-4 p-4 md:p-5">
-    <section
-      class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] shadow-sm"
-    >
-      <div class="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
-        <div class="min-w-0">
-          <div class="flex flex-wrap items-center gap-2">
-            <Tag
-              v-if="otRequest?.status"
-              :value="requestStatusLabel(otRequest.status)"
-              :severity="statusSeverity(otRequest.status)"
-              rounded
-            />
-
-            <Tag
-              v-if="payload"
-              :value="isFixedTimeRequest ? 'Fixed OT' : timingModeLabel(requestTimingMode)"
-              :severity="timingModeSeverity(requestTimingMode)"
-              rounded
-            />
-
-            <Tag
-              v-if="otRequest?.dayType"
-              :value="otRequest.dayType"
-              :severity="dayTypeSeverity(otRequest.dayType)"
-              rounded
-            />
-          </div>
-        </div>
-
-        <div class="flex flex-wrap items-center gap-2">
-          <Button
-            label="Back"
-            icon="pi pi-arrow-left"
-            severity="secondary"
-            outlined
-            size="small"
-            @click="goBack"
-          />
-
-          <Button
-            label="Refresh"
-            icon="pi pi-refresh"
-            size="small"
-            :loading="loading"
-            :disabled="!activeOtRequestId"
-            @click="loadData"
-          />
-        </div>
-      </div>
-    </section>
-
     <section
       class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] shadow-sm"
     >
@@ -947,7 +927,7 @@ onBeforeUnmount(() => {
             optionLabel="label"
             optionValue="value"
             class="w-full"
-            placeholder="All OT Requests"
+            placeholder="All Status"
           />
         </div>
 
@@ -970,10 +950,11 @@ onBeforeUnmount(() => {
         :closable="false"
         class="verification-warning"
       >
-        This OT request is currently {{ requestStatusLabel(otRequest.status) }}. Verification is for checking only until the request is finally approved.
+        This OT request is currently {{ requestStatusLabel(otRequest.status) }}.
+        You can verify for checking, but final OT payment should follow the final approved request.
       </Message>
 
-      <section class="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-7">
+      <section class="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-7">
         <div
           v-for="card in summaryCards"
           :key="card.label"
@@ -984,8 +965,13 @@ onBeforeUnmount(() => {
             <div class="text-[11px] font-medium uppercase tracking-[0.1em] opacity-75">
               {{ card.label }}
             </div>
-            <i :class="card.icon" class="text-xs opacity-70" />
+
+            <i
+              :class="card.icon"
+              class="text-xs opacity-70"
+            />
           </div>
+
           <div class="mt-1 text-xl font-medium leading-none">
             {{ card.value }}
           </div>
@@ -1002,7 +988,13 @@ onBeforeUnmount(() => {
 
         <div class="info-box xl:col-span-1">
           <div class="info-label">Status</div>
-          <div class="info-value">{{ requestStatusLabel(otRequest.status) }}</div>
+          <div class="info-value">
+            <Tag
+              :value="requestStatusLabel(otRequest.status)"
+              :severity="requestStatusSeverity(otRequest.status)"
+              class="verify-tag"
+            />
+          </div>
         </div>
 
         <div class="info-box xl:col-span-1">
@@ -1029,7 +1021,10 @@ onBeforeUnmount(() => {
 
         <div class="info-box">
           <div class="info-label">Policy</div>
-          <div class="info-value truncate" :title="requestPolicyLabel">
+          <div
+            class="info-value truncate"
+            :title="requestPolicyLabel"
+          >
             {{ requestPolicyLabel }}
           </div>
         </div>
@@ -1053,6 +1048,7 @@ onBeforeUnmount(() => {
             <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
               <IconField class="w-full sm:w-72">
                 <InputIcon class="pi pi-search" />
+
                 <InputText
                   v-model="tableSearch"
                   size="small"
@@ -1067,7 +1063,7 @@ onBeforeUnmount(() => {
                 optionLabel="label"
                 optionValue="value"
                 size="small"
-                class="w-full sm:w-52"
+                class="w-full sm:w-56"
                 placeholder="Result"
               />
             </div>
@@ -1078,7 +1074,7 @@ onBeforeUnmount(() => {
             dataKey="rowKey"
             scrollable
             scrollHeight="520px"
-            tableStyle="min-width: 98rem"
+            tableStyle="width: max-content; min-width: 100%;"
             class="verification-table"
             stripedRows
           >
@@ -1088,38 +1084,31 @@ onBeforeUnmount(() => {
               </div>
             </template>
 
-            <Column header="Verification" style="min-width: 13rem">
+            <Column header="Meaning">
               <template #body="{ data }">
-                <div class="verification-result-cell">
-                  <Tag
-                    :value="resultDisplayLabel(data)"
-                    :severity="resultVisualSeverity(data)"
-                    class="verify-tag result-main-tag"
-                  />
-
-                  <div
-                    class="result-meaning-label"
-                    :class="resultMeaningTone(data)"
-                    :title="data.reason || data.rawDecision || resultMeaningLabel(data)"
-                  >
-                    {{ resultMeaningLabel(data) }}
-                  </div>
+                <div
+                  class="result-meaning-label"
+                  :class="resultMeaningTone(data)"
+                  :title="data.reason || data.rawDecision || resultMeaningLabel(data)"
+                >
+                  {{ resultMeaningLabel(data) }}
                 </div>
               </template>
             </Column>
 
-            <Column header="Employee" style="min-width: 16rem">
+            <Column header="Employee">
               <template #body="{ data }">
                 <div class="font-medium text-[color:var(--ot-text)]">
                   {{ data.employeeNo || '-' }}
                 </div>
+
                 <div class="mt-0.5 text-xs text-[color:var(--ot-text-muted)]">
                   {{ data.employeeName || '-' }}
                 </div>
               </template>
             </Column>
 
-            <Column header="OT Type" style="min-width: 9rem">
+            <Column header="OT Type">
               <template #body="{ data }">
                 <Tag
                   :value="data.isFixed ? 'Fixed OT' : timingModeLabel(data.timingMode)"
@@ -1129,61 +1118,78 @@ onBeforeUnmount(() => {
               </template>
             </Column>
 
-            <Column header="Attendance" style="min-width: 13rem">
+            <Column header="Scan In">
               <template #body="{ data }">
-                <div class="flex flex-col gap-1 text-sm">
-                  <div>
-                    In:
-                    <span class="font-medium">{{ data.clockIn || '-' }}</span>
-                    · Out:
-                    <span class="font-medium">{{ data.clockOut || '-' }}</span>
-                  </div>
-                  <Tag
-                    :value="data.attendanceStatus || '-'"
-                    :severity="statusSeverity(data.attendanceStatus)"
-                    class="verify-tag w-fit"
-                  />
-                </div>
+                <span
+                  class="scan-time-chip"
+                  :class="scanTimeTone(data.clockIn)"
+                >
+                  {{ scanTimeLabel(data.clockIn) }}
+                </span>
               </template>
             </Column>
 
-            <Column header="Expected OT" style="min-width: 11rem">
+            <Column header="Scan Out">
+              <template #body="{ data }">
+                <span
+                  class="scan-time-chip"
+                  :class="scanTimeTone(data.clockOut)"
+                >
+                  {{ scanTimeLabel(data.clockOut) }}
+                </span>
+              </template>
+            </Column>
+
+            <Column header="Status">
+              <template #body="{ data }">
+                <Tag
+                  :value="attendanceStatusLabel(data.attendanceStatus)"
+                  :severity="statusSeverity(data.attendanceStatus)"
+                  class="verify-tag"
+                />
+              </template>
+            </Column>
+
+            <Column header="Expected OT">
               <template #body="{ data }">
                 <div class="font-medium text-[color:var(--ot-text)]">
                   {{ data.expectedOtTime }}
                 </div>
+
                 <div class="mt-0.5 text-xs text-[color:var(--ot-text-muted)]">
                   Requested: {{ formatMinutesLabel(data.requestedMinutes) }}
                 </div>
               </template>
             </Column>
 
-            <Column header="Credited OT" style="min-width: 10rem">
+            <Column header="Credited OT">
               <template #body="{ data }">
                 <div class="font-medium text-[color:var(--ot-text)]">
                   {{ formatMinutesLabel(data.roundedOtMinutes) }}
                 </div>
+
                 <div class="mt-0.5 text-xs text-[color:var(--ot-text-muted)]">
                   Actual: {{ formatMinutesLabel(data.actualOtMinutes) }}
                 </div>
               </template>
             </Column>
 
-            <Column header="Shift" style="min-width: 13rem">
+            <Column header="Shift">
               <template #body="{ data }">
                 <div class="font-medium text-[color:var(--ot-text)]">
                   {{ data.shiftName || '-' }}
                 </div>
+
                 <div class="mt-0.5 text-xs text-[color:var(--ot-text-muted)]">
                   {{ data.shiftTime }}
                 </div>
               </template>
             </Column>
 
-            <Column header="Reason" style="min-width: 25rem">
+            <Column header="Reason">
               <template #body="{ data }">
                 <div
-                  class="line-clamp-2 text-sm text-[color:var(--ot-text-muted)]"
+                  class="reason-cell line-clamp-2 text-sm text-[color:var(--ot-text-muted)]"
                   :title="data.reason"
                 >
                   {{ data.reason || data.rawDecision || '-' }}
@@ -1256,11 +1262,6 @@ onBeforeUnmount(() => {
   color: #15803d;
 }
 
-.tone-yellow {
-  background: color-mix(in srgb, #f59e0b 13%, var(--ot-surface));
-  color: #b45309;
-}
-
 .tone-red {
   background: color-mix(in srgb, #ef4444 9%, var(--ot-surface));
   color: #b91c1c;
@@ -1283,7 +1284,6 @@ onBeforeUnmount(() => {
 
 :global(.dark) .tone-blue,
 :global(.dark) .tone-green,
-:global(.dark) .tone-yellow,
 :global(.dark) .tone-red,
 :global(.dark) .tone-violet,
 :global(.dark) .tone-amber,
@@ -1318,65 +1318,58 @@ onBeforeUnmount(() => {
   color: var(--ot-text);
 }
 
-.verification-result-cell {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.35rem;
-}
-
-:deep(.p-tag.result-main-tag) {
-  min-width: 7.5rem;
-  justify-content: center;
-}
-
 .result-meaning-label {
-  max-width: 11.5rem;
+  width: fit-content;
   overflow: hidden;
   border-radius: 999px;
-  padding: 0.18rem 0.55rem;
-  font-size: 0.68rem;
+  padding: 0.22rem 0.65rem;
+  font-size: 0.72rem;
   font-weight: 500;
   line-height: 1.1;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.result-meaning-label.is-match {
-  background: color-mix(in srgb, #22c55e 15%, transparent);
-  color: #15803d;
+.scan-time-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.76rem;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
 }
 
-.result-meaning-label.is-partial {
-  background: color-mix(in srgb, #f59e0b 16%, transparent);
-  color: #b45309;
+.reason-cell {
+  max-width: clamp(14rem, 28vw, 30rem);
 }
 
-.result-meaning-label.is-mismatch {
-  background: color-mix(in srgb, #ef4444 13%, transparent);
-  color: #b91c1c;
-}
-
-:global(.dark) .result-meaning-label.is-match,
-:global(.dark) .result-meaning-label.is-partial,
-:global(.dark) .result-meaning-label.is-mismatch {
-  color: var(--ot-text);
+:deep(.verification-table .p-datatable-table) {
+  width: max-content !important;
+  min-width: 100% !important;
+  table-layout: auto !important;
 }
 
 :deep(.verification-table .p-datatable-thead > tr > th) {
+  width: auto !important;
   padding: 0.65rem 0.8rem !important;
+  white-space: nowrap !important;
 }
 
 :deep(.verification-table .p-datatable-tbody > tr > td) {
-  height: 72px !important;
+  width: auto !important;
+  height: 68px !important;
   padding: 0.55rem 0.8rem !important;
   vertical-align: middle !important;
+  white-space: nowrap !important;
 }
 
 :deep(.p-tag.verify-tag) {
   min-height: 1.3rem !important;
-  padding: 0.1rem 0.45rem !important;
-  font-size: 0.68rem !important;
+  padding: 0.1rem 0.5rem !important;
+  font-size: 0.7rem !important;
   font-weight: 500 !important;
   line-height: 1 !important;
   border-radius: 999px !important;
