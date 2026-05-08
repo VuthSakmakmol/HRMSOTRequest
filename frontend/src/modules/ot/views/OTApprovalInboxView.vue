@@ -7,6 +7,7 @@ import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
+import Checkbox from 'primevue/checkbox'
 import Column from 'primevue/column'
 import DataTable from 'primevue/datatable'
 import DatePicker from 'primevue/datepicker'
@@ -33,6 +34,8 @@ const SEARCH_DEBOUNCE_MS = 250
 const rows = ref([])
 const totalRecords = ref(0)
 const loadedPages = ref(new Set())
+const expandedRows = ref({})
+const selectedRequestIds = ref([])
 
 const bootstrapped = ref(false)
 const backgroundLoading = ref(false)
@@ -44,8 +47,6 @@ const filters = reactive({
   dayType: '',
   otDateFrom: null,
   otDateTo: null,
-  sortField: 'createdAt',
-  sortOrder: -1,
 })
 
 const decisionDialog = reactive({
@@ -55,6 +56,13 @@ const decisionDialog = reactive({
   remark: '',
   row: null,
   selectedApprovedEmployeeIds: [],
+})
+
+const bulkDialog = reactive({
+  visible: false,
+  loading: false,
+  remark: '',
+  rows: [],
 })
 
 const statusOptions = [
@@ -96,6 +104,32 @@ const removedDecisionEmployees = computed(() =>
   decisionEmployees.value.filter((employee) => !isEmployeeSelected(employee)),
 )
 
+const actionableLoadedRows = computed(() =>
+  rows.value.filter((row) => canSelectForBulk(row)),
+)
+
+const selectedBulkRows = computed(() => {
+  const selected = new Set(selectedRequestIds.value)
+
+  return rows.value.filter((row) => row && selected.has(rowIdOf(row)) && canSelectForBulk(row))
+})
+
+const selectedBulkCount = computed(() => selectedBulkRows.value.length)
+
+const allLoadedActionableSelected = computed(() => {
+  if (!actionableLoadedRows.value.length) return false
+
+  const selected = new Set(selectedRequestIds.value)
+
+  return actionableLoadedRows.value.every((row) => selected.has(rowIdOf(row)))
+})
+
+const bulkRequestCount = computed(() => bulkDialog.rows.length)
+
+const bulkEmployeeCount = computed(() =>
+  bulkDialog.rows.reduce((total, row) => total + getEmployeeCount(row), 0),
+)
+
 let searchTimer = null
 let currentRequestId = 0
 
@@ -105,6 +139,19 @@ function normalizePayload(res) {
 
 function normalizeItems(payload) {
   return Array.isArray(payload?.items) ? payload.items : []
+}
+
+function normalizeRow(row) {
+  if (!row) return row
+
+  return {
+    ...row,
+    id: String(row?.id || row?._id || '').trim(),
+  }
+}
+
+function rowIdOf(row) {
+  return String(row?.id || row?._id || '').trim()
 }
 
 function upper(value) {
@@ -119,16 +166,17 @@ function normalizeClassKey(value) {
     .replace(/\s+/g, '-')
 }
 
-function statusClass(value) {
-  return `ot-status-${normalizeClassKey(value || 'unknown')}`
+function firstText(...values) {
+  for (const value of values) {
+    const text = String(value || '').trim()
+    if (text) return text
+  }
+
+  return ''
 }
 
 function dayTypeClass(value) {
   return `ot-day-${normalizeClassKey(value || 'unknown')}`
-}
-
-function timingModeClass(value) {
-  return `ot-timing-${normalizeClassKey(value || 'unknown')}`
 }
 
 function approvalDisplay(row) {
@@ -178,17 +226,18 @@ function timingModeLabel(value) {
   return 'Timing N/A'
 }
 
-function timingModeSeverity(value) {
-  const normalized = upper(value)
-
-  if (normalized === 'FIXED_TIME') return 'warning'
-  if (normalized === 'AFTER_SHIFT_END') return 'info'
-
-  return 'secondary'
-}
-
 function formatDateYMD(value) {
   if (!value) return undefined
+
+  const raw = String(value || '').trim()
+
+  const ymdMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (ymdMatch) return raw
+
+  const dmyMatch = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+  if (dmyMatch) {
+    return `${dmyMatch[3]}-${dmyMatch[2]}-${dmyMatch[1]}`
+  }
 
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return undefined
@@ -200,6 +249,42 @@ function formatDateYMD(value) {
   return `${yyyy}-${mm}-${dd}`
 }
 
+function formatDateDMY(value) {
+  if (!value) return '-'
+
+  const raw = String(value || '').trim()
+
+  const ymdMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (ymdMatch) {
+    return `${ymdMatch[3]}/${ymdMatch[2]}/${ymdMatch[1]}`
+  }
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return raw || '-'
+
+  const dd = String(date.getDate()).padStart(2, '0')
+  const mm = String(date.getMonth() + 1).padStart(2, '0')
+  const yyyy = date.getFullYear()
+
+  return `${dd}/${mm}/${yyyy}`
+}
+
+function formatDateTimeDMY(value) {
+  if (!value) return '-'
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value || '-')
+
+  const dd = String(date.getDate()).padStart(2, '0')
+  const mm = String(date.getMonth() + 1).padStart(2, '0')
+  const yyyy = date.getFullYear()
+
+  const hh = String(date.getHours()).padStart(2, '0')
+  const min = String(date.getMinutes()).padStart(2, '0')
+
+  return `${dd}/${mm}/${yyyy}, ${hh}:${min}`
+}
+
 function buildQuery(page) {
   return {
     page,
@@ -209,8 +294,6 @@ function buildQuery(page) {
     dayType: filters.dayType || undefined,
     otDateFrom: formatDateYMD(filters.otDateFrom),
     otDateTo: formatDateYMD(filters.otDateTo),
-    sortBy: filters.sortField,
-    sortOrder: filters.sortOrder === 1 ? 'asc' : 'desc',
   }
 }
 
@@ -221,8 +304,6 @@ function buildExportQuery() {
     dayType: filters.dayType || undefined,
     otDateFrom: formatDateYMD(filters.otDateFrom),
     otDateTo: formatDateYMD(filters.otDateTo),
-    sortBy: filters.sortField,
-    sortOrder: filters.sortOrder === 1 ? 'asc' : 'desc',
   }
 }
 
@@ -249,16 +330,6 @@ function statusSeverity(value) {
   return 'secondary'
 }
 
-function formatDateTime(value) {
-  if (!value) return '-'
-
-  try {
-    return new Date(value).toLocaleString()
-  } catch {
-    return String(value)
-  }
-}
-
 function isLegacyManualMode(row) {
   const shiftId = String(row?.shiftId || '').trim()
   const shiftOtOptionId = String(row?.shiftOtOptionId || '').trim()
@@ -277,17 +348,6 @@ function formatTimeRange(row) {
   if (!start && !end) return '-'
 
   return [start, end].filter(Boolean).join(' - ')
-}
-
-function formatShiftLabel(row) {
-  const code = String(row?.shiftCode || '').trim()
-  const name = String(row?.shiftName || '').trim()
-
-  if (code && name) return `${code} · ${name}`
-  if (code) return code
-  if (name) return name
-
-  return '-'
 }
 
 function formatOtOptionLabel(row) {
@@ -360,21 +420,19 @@ function getEmployeeCount(row) {
   return getTargetEmployees(row).length
 }
 
-function currentStepLabel(row) {
-  const current = Number(row?.currentApprovalStep || row?.currentStep || 1)
-  const total = Array.isArray(row?.approvalSteps)
-    ? row.approvalSteps.length
-    : Number(row?.approvalStepCount || row?.totalApprovalSteps || 0)
-
-  return `Step ${current} / ${total || 0}`
-}
-
 function canDecide(row) {
   return row?.canDecide === true
 }
 
+function canSelectForBulk(row) {
+  if (!row) return false
+  if (!canDecide(row)) return false
+
+  return getTargetEmployees(row).some((employee) => employeeIdOf(employee))
+}
+
 function openView(row) {
-  const id = String(row?._id || row?.id || '').trim()
+  const id = rowIdOf(row)
 
   if (!id) return
 
@@ -431,15 +489,95 @@ function employeeDepartmentOf(employee) {
   ).trim() || '-'
 }
 
-function employeeLineOf(employee) {
-  const code = String(employee?.lineCode || employee?.line?.code || '').trim()
-  const name = String(employee?.lineName || employee?.line?.name || '').trim()
+function employeeLineOf(employee, row = null) {
+  const directLabel = firstText(
+    employee?.lineLabel,
+    employee?.productionLineLabel,
+    employee?.employeeLineLabel,
+    employee?.assignedLineLabel,
+    employee?.lineDisplay,
+    employee?.productionLineDisplay,
+    employee?.lineText,
+  )
+
+  if (directLabel) return directLabel
+
+  const code = firstText(
+    employee?.lineCode,
+    employee?.productionLineCode,
+    employee?.employeeLineCode,
+    employee?.assignedLineCode,
+    employee?.line?.code,
+    employee?.line?.lineCode,
+    employee?.productionLine?.code,
+    employee?.productionLine?.lineCode,
+    employee?.productionLineId?.code,
+    employee?.productionLineId?.lineCode,
+    employee?.lineId?.code,
+    employee?.lineId?.lineCode,
+    row?.lineCode,
+    row?.productionLineCode,
+    row?.line?.code,
+    row?.productionLine?.code,
+  )
+
+  const name = firstText(
+    employee?.lineName,
+    employee?.productionLineName,
+    employee?.employeeLineName,
+    employee?.assignedLineName,
+    employee?.line?.name,
+    employee?.line?.lineName,
+    employee?.productionLine?.name,
+    employee?.productionLine?.lineName,
+    employee?.productionLineId?.name,
+    employee?.productionLineId?.lineName,
+    employee?.lineId?.name,
+    employee?.lineId?.lineName,
+    row?.lineName,
+    row?.productionLineName,
+    row?.line?.name,
+    row?.productionLine?.name,
+  )
 
   if (code && name) return `${code} · ${name}`
   if (code) return code
   if (name) return name
 
-  return ''
+  const fallback = firstText(
+    employee?.lineNo,
+    employee?.lineNumber,
+    employee?.productionLineNo,
+    employee?.productionLineNumber,
+    employee?.line,
+    employee?.productionLine,
+  )
+
+  return fallback
+}
+
+function employeeOtTimeOf(employee, row) {
+  const employeeStart = String(
+    employee?.requestStartTime ||
+      employee?.startTime ||
+      employee?.otStartTime ||
+      employee?.approvedStartTime ||
+      '',
+  ).trim()
+
+  const employeeEnd = String(
+    employee?.requestEndTime ||
+      employee?.endTime ||
+      employee?.otEndTime ||
+      employee?.approvedEndTime ||
+      '',
+  ).trim()
+
+  if (employeeStart || employeeEnd) {
+    return [employeeStart, employeeEnd].filter(Boolean).join(' - ')
+  }
+
+  return formatTimeRange(row)
 }
 
 function openDecision(row, action) {
@@ -504,21 +642,92 @@ function moveEmployeeToRemoved(employee) {
     decisionDialog.selectedApprovedEmployeeIds.filter((item) => item !== id)
 }
 
-function toggleApprovedEmployee(employee) {
-  if (decisionDialog.action !== 'APPROVE') return
-
-  if (isEmployeeSelected(employee)) {
-    moveEmployeeToRemoved(employee)
-    return
-  }
-
-  moveEmployeeToAllowed(employee)
-}
-
 function selectAllEmployees() {
   decisionDialog.selectedApprovedEmployeeIds = decisionEmployees.value
     .map(employeeIdOf)
     .filter(Boolean)
+}
+
+function isRequestSelected(row) {
+  const id = rowIdOf(row)
+
+  return selectedRequestIds.value.includes(id)
+}
+
+function toggleRequestSelection(row, checked) {
+  const id = rowIdOf(row)
+
+  if (!id || !canSelectForBulk(row)) return
+
+  if (checked) {
+    if (selectedRequestIds.value.includes(id)) return
+
+    selectedRequestIds.value = [...selectedRequestIds.value, id]
+    return
+  }
+
+  selectedRequestIds.value = selectedRequestIds.value.filter((item) => item !== id)
+}
+
+function selectLoadedActionableRows() {
+  const ids = new Set(selectedRequestIds.value)
+
+  actionableLoadedRows.value.forEach((row) => {
+    const id = rowIdOf(row)
+    if (id) ids.add(id)
+  })
+
+  selectedRequestIds.value = Array.from(ids)
+}
+
+function unselectLoadedActionableRows() {
+  const loadedIds = new Set(actionableLoadedRows.value.map(rowIdOf).filter(Boolean))
+
+  selectedRequestIds.value = selectedRequestIds.value.filter((id) => !loadedIds.has(id))
+}
+
+function toggleLoadedSelection(checked) {
+  if (checked) {
+    selectLoadedActionableRows()
+    return
+  }
+
+  unselectLoadedActionableRows()
+}
+
+function clearBulkSelection() {
+  selectedRequestIds.value = []
+}
+
+function resetListViewState() {
+  expandedRows.value = {}
+  selectedRequestIds.value = []
+}
+
+function openBulkApproveSelected() {
+  if (!selectedBulkRows.value.length) {
+    toast.add({
+      severity: 'warn',
+      summary: 'No selected requests',
+      detail: 'Please select at least one actionable OT request.',
+      life: 2500,
+    })
+    return
+  }
+
+  bulkDialog.visible = true
+  bulkDialog.loading = false
+  bulkDialog.remark = ''
+  bulkDialog.rows = [...selectedBulkRows.value]
+}
+
+function closeBulkDialog() {
+  if (bulkDialog.loading) return
+
+  bulkDialog.visible = false
+  bulkDialog.loading = false
+  bulkDialog.remark = ''
+  bulkDialog.rows = []
 }
 
 async function fetchPage(page, { replace = false, silent = false } = {}) {
@@ -536,7 +745,7 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
     if (requestId !== currentRequestId) return
 
     const payload = normalizePayload(res)
-    const items = normalizeItems(payload)
+    const items = normalizeItems(payload).map(normalizeRow)
     const total = Number(payload?.pagination?.total || payload?.pagination?.totalRecords || 0)
 
     totalRecords.value = total
@@ -581,7 +790,11 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
   }
 }
 
-async function reloadFirstPage({ keepVisible = true } = {}) {
+async function reloadFirstPage({ keepVisible = true, resetState = false } = {}) {
+  if (resetState) {
+    resetListViewState()
+  }
+
   if (!keepVisible) {
     rows.value = []
     totalRecords.value = 0
@@ -598,7 +811,7 @@ function runSearchSoon() {
   window.clearTimeout(searchTimer)
 
   searchTimer = window.setTimeout(() => {
-    reloadFirstPage({ keepVisible: true })
+    reloadFirstPage({ keepVisible: true, resetState: true })
   }, SEARCH_DEBOUNCE_MS)
 }
 
@@ -607,15 +820,15 @@ function onSearchInput() {
 }
 
 function onStatusChange() {
-  reloadFirstPage({ keepVisible: true })
+  reloadFirstPage({ keepVisible: true, resetState: true })
 }
 
 function onDayTypeChange() {
-  reloadFirstPage({ keepVisible: true })
+  reloadFirstPage({ keepVisible: true, resetState: true })
 }
 
 function onDateChange() {
-  reloadFirstPage({ keepVisible: true })
+  reloadFirstPage({ keepVisible: true, resetState: true })
 }
 
 function clearFilters() {
@@ -624,26 +837,8 @@ function clearFilters() {
   filters.dayType = ''
   filters.otDateFrom = null
   filters.otDateTo = null
-  filters.sortField = 'createdAt'
-  filters.sortOrder = -1
 
-  reloadFirstPage({ keepVisible: true })
-}
-
-function onSort(event) {
-  const fieldMap = {
-    requestNo: 'requestNo',
-    otDate: 'otDate',
-    totalHours: 'totalHours',
-    dayType: 'dayType',
-    status: 'status',
-    createdAt: 'createdAt',
-  }
-
-  filters.sortField = fieldMap[event.sortField] || 'createdAt'
-  filters.sortOrder = typeof event.sortOrder === 'number' ? event.sortOrder : -1
-
-  reloadFirstPage({ keepVisible: true })
+  reloadFirstPage({ keepVisible: true, resetState: true })
 }
 
 async function onVirtualLazyLoad(event) {
@@ -714,8 +909,9 @@ async function onExportExcel() {
 
 async function submitDecision() {
   const row = decisionDialog.row
+  const id = rowIdOf(row)
 
-  if (!row?._id && !row?.id) return
+  if (!id) return
 
   if (decisionDialog.action === 'REJECT' && !String(decisionDialog.remark || '').trim()) {
     toast.add({
@@ -740,7 +936,7 @@ async function submitDecision() {
   try {
     decisionDialog.loading = true
 
-    await decideOTRequest(row._id || row.id, {
+    await decideOTRequest(id, {
       action: decisionDialog.action,
       approvedEmployeeIds:
         decisionDialog.action === 'APPROVE'
@@ -760,7 +956,7 @@ async function submitDecision() {
     })
 
     resetDecisionDialog()
-    await reloadFirstPage({ keepVisible: false })
+    await reloadFirstPage({ keepVisible: false, resetState: true })
   } catch (error) {
     toast.add({
       severity: 'error',
@@ -776,8 +972,78 @@ async function submitDecision() {
   }
 }
 
+async function submitBulkApproval() {
+  if (!bulkDialog.rows.length) return
+
+  try {
+    bulkDialog.loading = true
+
+    let successCount = 0
+    let failedCount = 0
+
+    for (const row of bulkDialog.rows) {
+      const id = rowIdOf(row)
+      const approvedEmployeeIds = getTargetEmployees(row)
+        .map(employeeIdOf)
+        .filter(Boolean)
+
+      if (!id || !approvedEmployeeIds.length) {
+        failedCount += 1
+        continue
+      }
+
+      try {
+        await decideOTRequest(id, {
+          action: 'APPROVE',
+          approvedEmployeeIds,
+          remark: bulkDialog.remark,
+        })
+
+        successCount += 1
+      } catch {
+        failedCount += 1
+      }
+    }
+
+    if (successCount > 0) {
+      toast.add({
+        severity: 'success',
+        summary: 'Bulk approval completed',
+        detail:
+          failedCount > 0
+            ? `${successCount} approved, ${failedCount} failed.`
+            : `${successCount} request(s) approved successfully.`,
+        life: 3500,
+      })
+    } else {
+      toast.add({
+        severity: 'error',
+        summary: 'Bulk approval failed',
+        detail: 'No request was approved.',
+        life: 3500,
+      })
+    }
+
+    closeBulkDialog()
+    clearBulkSelection()
+    await reloadFirstPage({ keepVisible: false, resetState: true })
+  } catch (error) {
+    toast.add({
+      severity: 'error',
+      summary: 'Bulk approval failed',
+      detail:
+        error?.response?.data?.message ||
+        error?.message ||
+        'Unable to approve selected requests.',
+      life: 4000,
+    })
+
+    bulkDialog.loading = false
+  }
+}
+
 onMounted(() => {
-  reloadFirstPage({ keepVisible: false })
+  reloadFirstPage({ keepVisible: false, resetState: true })
 })
 
 onBeforeUnmount(() => {
@@ -788,9 +1054,6 @@ onBeforeUnmount(() => {
 <template>
   <div class="flex flex-col gap-4">
     <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-      <div>
-      </div>
-
       <div class="flex flex-wrap items-center gap-2">
         <Button
           label="Export Excel"
@@ -800,6 +1063,24 @@ onBeforeUnmount(() => {
           size="small"
           :loading="exporting"
           @click="onExportExcel"
+        />
+
+        <Button
+          :label="`Approve Selected${selectedBulkCount ? ` (${selectedBulkCount})` : ''}`"
+          icon="pi pi-check"
+          size="small"
+          :disabled="!selectedBulkCount"
+          @click="openBulkApproveSelected"
+        />
+
+        <Button
+          v-if="selectedRequestIds.length"
+          label="Clear Selection"
+          icon="pi pi-times"
+          severity="secondary"
+          text
+          size="small"
+          @click="clearBulkSelection"
         />
       </div>
     </div>
@@ -848,7 +1129,7 @@ onBeforeUnmount(() => {
           <div class="w-full xl:w-[180px] xl:shrink-0">
             <DatePicker
               v-model="filters.otDateFrom"
-              dateFormat="yy-mm-dd"
+              dateFormat="dd/mm/yy"
               showIcon
               showButtonBar
               class="w-full"
@@ -862,7 +1143,7 @@ onBeforeUnmount(() => {
           <div class="w-full xl:w-[180px] xl:shrink-0">
             <DatePicker
               v-model="filters.otDateTo"
-              dateFormat="yy-mm-dd"
+              dateFormat="dd/mm/yy"
               showIcon
               showButtonBar
               class="w-full"
@@ -891,25 +1172,23 @@ onBeforeUnmount(() => {
       </div>
 
       <DataTable
+        v-model:expandedRows="expandedRows"
         :value="rows"
+        dataKey="id"
         lazy
-        removableSort
         scrollable
         scrollHeight="500px"
-        :sortField="filters.sortField"
-        :sortOrder="filters.sortOrder"
-        tableStyle="min-width: 112rem"
+        tableStyle="width: max-content; min-width: 100%; table-layout: auto;"
         class="ot-approval-table"
         :virtualScrollerOptions="useVirtualScroll ? {
           lazy: true,
           onLazyLoad: onVirtualLazyLoad,
-          itemSize: 78,
+          itemSize: 70,
           delay: 0,
           showLoader: false,
           loading: false,
           numToleratedItems: 12,
         } : null"
-        @sort="onSort"
       >
         <template #empty>
           <div
@@ -920,28 +1199,50 @@ onBeforeUnmount(() => {
           </div>
         </template>
 
-        <Column
-          field="requestNo"
-          header="Request No"
-          sortable
-          style="min-width: 10rem"
-        >
-          <template #body="{ data }">
-            <span
-              v-if="data"
-              class="font-medium"
+        <Column expander />
+
+        <Column header="">
+          <template #header>
+            <div
+              class="flex justify-center"
+              @click.stop
             >
+              <Checkbox
+                binary
+                :modelValue="allLoadedActionableSelected"
+                :disabled="!actionableLoadedRows.length"
+                @update:modelValue="toggleLoadedSelection"
+              />
+            </div>
+          </template>
+
+          <template #body="{ data }">
+            <div
+              v-if="data"
+              class="flex justify-center"
+              @click.stop
+            >
+              <Checkbox
+                binary
+                :modelValue="isRequestSelected(data)"
+                :disabled="!canSelectForBulk(data)"
+                @update:modelValue="(checked) => toggleRequestSelection(data, checked)"
+              />
+            </div>
+          </template>
+        </Column>
+
+        <Column field="requestNo" header="Request No">
+          <template #body="{ data }">
+            <span v-if="data" class="font-medium">
               {{ data.requestNo || '-' }}
             </span>
           </template>
         </Column>
 
-        <Column
-          header="Request Owner"
-          style="min-width: 15rem"
-        >
+        <Column header="Requester">
           <template #body="{ data }">
-            <div v-if="data">
+            <div v-if="data" class="requester-cell">
               <div class="font-medium text-[color:var(--ot-text)]">
                 {{ formatRequester(data).name }}
               </div>
@@ -953,47 +1254,20 @@ onBeforeUnmount(() => {
           </template>
         </Column>
 
-        <Column
-          field="status"
-          header="Approval Status"
-          sortable
-          style="min-width: 22rem"
-        >
+        <Column field="status" header="Approval Status">
           <template #body="{ data }">
-            <div
-              v-if="data"
-              class="approval-status-cell"
-            >
-              <div class="flex flex-wrap items-center gap-1.5">
-                <Tag
-                  :value="data.status || '-'"
-                  :severity="statusSeverity(data.status)"
-                  class="ot-status-tag"
-                  :class="statusClass(data.status)"
-                />
-
-                <Tag
-                  :value="approvalDisplay(data).label"
-                  :severity="approvalDisplaySeverity(data)"
-                  class="ot-status-tag approval-display-tag"
-                  :class="approvalDisplayClass(data)"
-                />
-              </div>
-
-              <div
-                v-if="approvalDisplay(data).subLabel"
-                class="approval-sub-label"
-              >
-                {{ approvalDisplay(data).subLabel }}
-              </div>
+            <div v-if="data" class="approval-status-cell">
+              <Tag
+                :value="approvalDisplay(data).label"
+                :severity="approvalDisplaySeverity(data)"
+                class="ot-status-tag approval-display-tag"
+                :class="approvalDisplayClass(data)"
+              />
             </div>
           </template>
         </Column>
 
-        <Column
-          header="Requested Staff"
-          style="min-width: 9rem"
-        >
+        <Column header="Requested Staff">
           <template #body="{ data }">
             <Tag
               v-if="data"
@@ -1004,10 +1278,7 @@ onBeforeUnmount(() => {
           </template>
         </Column>
 
-        <Column
-          header="Current Approved"
-          style="min-width: 10rem"
-        >
+        <Column header="Current Approved">
           <template #body="{ data }">
             <Tag
               v-if="data"
@@ -1018,85 +1289,19 @@ onBeforeUnmount(() => {
           </template>
         </Column>
 
-        <Column
-          field="otDate"
-          header="OT Date"
-          sortable
-          style="min-width: 10rem"
-        >
+        <Column field="otDate" header="OT Date">
           <template #body="{ data }">
-            <span v-if="data">{{ data.otDate || '-' }}</span>
+            <span v-if="data">{{ formatDateDMY(data.otDate) }}</span>
           </template>
         </Column>
 
-        <Column
-          header="Request Window"
-          style="min-width: 12rem"
-        >
+        <Column header="OT Time">
           <template #body="{ data }">
             <span v-if="data">{{ formatTimeRange(data) }}</span>
           </template>
         </Column>
 
-        <Column
-          header="OT Option"
-          style="min-width: 17rem"
-        >
-          <template #body="{ data }">
-            <div
-              v-if="data"
-              class="flex flex-col gap-1"
-            >
-              <div class="flex flex-wrap items-center gap-1.5">
-                <span class="font-medium text-[color:var(--ot-text)]">
-                  {{ formatOtOptionLabel(data) }}
-                </span>
-
-                <Tag
-                  v-if="!isLegacyManualMode(data)"
-                  :value="timingModeLabel(getTimingMode(data))"
-                  :severity="timingModeSeverity(getTimingMode(data))"
-                  class="ot-status-tag"
-                  :class="timingModeClass(getTimingMode(data))"
-                />
-              </div>
-
-              <span
-                v-if="!isLegacyManualMode(data)"
-                class="text-xs text-[color:var(--ot-text-muted)]"
-              >
-                {{ formatShiftLabel(data) }}
-              </span>
-            </div>
-          </template>
-        </Column>
-
-        <Column
-          header="Requested"
-          style="min-width: 9rem"
-        >
-          <template #body="{ data }">
-            <span v-if="data">{{ formatRequestedMinutes(data) }}</span>
-          </template>
-        </Column>
-
-        <Column
-          field="totalHours"
-          header="Hours"
-          sortable
-          style="min-width: 8rem"
-        >
-          <template #body="{ data }">
-            <span v-if="data">{{ formatHours(data) }}</span>
-          </template>
-        </Column>
-
-        <Column
-          field="dayType"
-          header="Day Type"
-          sortable
-          style="min-width: 9rem"
-        >
+        <Column field="dayType" header="Day Type">
           <template #body="{ data }">
             <Tag
               v-if="data"
@@ -1108,35 +1313,15 @@ onBeforeUnmount(() => {
           </template>
         </Column>
 
-        <Column
-          header="Current Step"
-          style="min-width: 10rem"
-        >
+        <Column field="createdAt" header="Created At">
           <template #body="{ data }">
-            <span v-if="data">{{ currentStepLabel(data) }}</span>
+            <span v-if="data">{{ formatDateTimeDMY(data.createdAt) }}</span>
           </template>
         </Column>
 
-        <Column
-          field="createdAt"
-          header="Created At"
-          sortable
-          style="min-width: 14rem"
-        >
+        <Column header="Actions">
           <template #body="{ data }">
-            <span v-if="data">{{ formatDateTime(data.createdAt) }}</span>
-          </template>
-        </Column>
-
-        <Column
-          header="Actions"
-          style="width: 16rem; min-width: 16rem"
-        >
-          <template #body="{ data }">
-            <div
-              v-if="data"
-              class="action-row"
-            >
+            <div v-if="data" class="action-row">
               <Button
                 label="View"
                 icon="pi pi-eye"
@@ -1169,6 +1354,72 @@ onBeforeUnmount(() => {
             </div>
           </template>
         </Column>
+
+        <template #expansion="{ data }">
+          <div class="ot-expanded-box">
+            <div class="ot-expanded-header">
+              <div class="min-w-0">
+                <div class="ot-expanded-title">
+                  Employees inside request
+                </div>
+
+                <div class="ot-expanded-subtitle">
+                  {{ data.requestNo || '-' }} · {{ getEmployeeCount(data) }} staff
+                </div>
+              </div>
+            </div>
+
+            <div
+              v-if="getTargetEmployees(data).length"
+              class="ot-expanded-content"
+            >
+              <div class="ot-expanded-responsive-table">
+                <div class="ot-expanded-grid-row is-head">
+                  <div>No</div>
+                  <div>ID</div>
+                  <div>Name</div>
+                  <div>Position</div>
+                  <div>OT Time</div>
+                  <div>Line</div>
+                </div>
+
+                <div
+                  v-for="(employee, index) in getTargetEmployees(data)"
+                  :key="employeeIdOf(employee) || index"
+                  class="ot-expanded-grid-row"
+                >
+                  <div class="cell-center">
+                    {{ index + 1 }}
+                  </div>
+
+                  <div class="cell-mono cell-wrap">
+                    {{ employeeCodeOf(employee) }}
+                  </div>
+
+                  <div class="cell-strong cell-wrap">
+                    {{ employeeNameOf(employee) }}
+                  </div>
+
+                  <div class="cell-wrap">
+                    {{ employeePositionOf(employee) }}
+                  </div>
+
+                  <div class="cell-center cell-mono cell-wrap">
+                    {{ employeeOtTimeOf(employee, data) }}
+                  </div>
+
+                  <div class="cell-center cell-wrap">
+                    {{ employeeLineOf(employee, data) || '-' }}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div v-else class="ot-expanded-empty">
+              No employee data found for this request.
+            </div>
+          </div>
+        </template>
       </DataTable>
 
       <div
@@ -1244,7 +1495,7 @@ onBeforeUnmount(() => {
           <div class="ot-summary-grid">
             <div class="ot-summary-item">
               <span>OT Date</span>
-              <strong>{{ decisionDialog.row.otDate || '-' }}</strong>
+              <strong>{{ formatDateDMY(decisionDialog.row.otDate) }}</strong>
             </div>
 
             <div class="ot-summary-item">
@@ -1378,10 +1629,7 @@ onBeforeUnmount(() => {
                 </button>
               </div>
 
-              <div
-                v-else
-                class="ot-adjust-empty"
-              >
+              <div v-else class="ot-adjust-empty">
                 No allowed employees.
               </div>
             </section>
@@ -1446,10 +1694,7 @@ onBeforeUnmount(() => {
                 </button>
               </div>
 
-              <div
-                v-else
-                class="ot-adjust-empty"
-              >
+              <div v-else class="ot-adjust-empty">
                 No removed employees.
               </div>
             </section>
@@ -1498,50 +1743,406 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </Dialog>
+
+    <Dialog
+      v-model:visible="bulkDialog.visible"
+      modal
+      :closable="!bulkDialog.loading"
+      class="ot-bulk-dialog"
+      :style="{ width: '52rem', maxWidth: '96vw' }"
+    >
+      <template #header>
+        <div class="ot-decision-header">
+          <div class="min-w-0">
+            <div class="ot-decision-eyebrow">
+              Bulk approval
+            </div>
+
+            <div class="ot-decision-title">
+              Approve multiple OT requests
+            </div>
+          </div>
+
+          <div class="ot-decision-header-tags">
+            <Tag
+              :value="`${bulkRequestCount} request(s)`"
+              severity="info"
+              class="ot-status-tag"
+            />
+
+            <Tag
+              :value="`${bulkEmployeeCount} staff`"
+              severity="success"
+              class="ot-status-tag ot-status-approved"
+            />
+          </div>
+        </div>
+      </template>
+
+      <div class="ot-bulk-body">
+        <div class="ot-bulk-warning">
+          This will approve all current employees inside each selected request.
+          Use the single request approval button if you need to remove employees first.
+        </div>
+
+        <div class="ot-bulk-list">
+          <div
+            v-for="row in bulkDialog.rows"
+            :key="rowIdOf(row)"
+            class="ot-bulk-item"
+          >
+            <div class="min-w-0">
+              <strong>{{ row.requestNo || '-' }}</strong>
+              <span>{{ formatRequester(row).name }} · {{ formatDateDMY(row.otDate) }}</span>
+            </div>
+
+            <Tag
+              :value="`${getEmployeeCount(row)} staff`"
+              severity="info"
+              class="ot-status-tag ot-count-approved"
+            />
+          </div>
+        </div>
+
+        <div class="ot-remark-box">
+          <label class="ot-remark-label">
+            Remark
+          </label>
+
+          <Textarea
+            v-model.trim="bulkDialog.remark"
+            rows="3"
+            autoResize
+            class="w-full"
+            placeholder="Optional remark for all selected approvals"
+          />
+        </div>
+
+        <div class="ot-decision-footer">
+          <Button
+            label="Cancel"
+            text
+            size="small"
+            :disabled="bulkDialog.loading"
+            @click="closeBulkDialog"
+          />
+
+          <Button
+            label="Approve All Selected"
+            icon="pi pi-check"
+            size="small"
+            :loading="bulkDialog.loading"
+            :disabled="!bulkDialog.rows.length"
+            @click="submitBulkApproval"
+          />
+        </div>
+      </div>
+    </Dialog>
   </div>
 </template>
 
 <style scoped>
+:deep(.ot-approval-table .p-datatable-table) {
+  width: max-content !important;
+  min-width: 100% !important;
+  table-layout: auto !important;
+}
+
 :deep(.ot-approval-table .p-datatable-thead > tr > th) {
-  padding: 0.72rem 0.9rem !important;
+  width: auto !important;
+  min-width: auto !important;
+  max-width: none !important;
+  padding: 0.62rem 0.72rem !important;
+  white-space: nowrap !important;
 }
 
 :deep(.ot-approval-table .p-datatable-tbody > tr > td) {
-  padding: 0.58rem 0.75rem !important;
-  height: 78px !important;
+  width: auto !important;
+  min-width: auto !important;
+  max-width: none !important;
+  height: 70px !important;
+  padding: 0.5rem 0.72rem !important;
   vertical-align: middle !important;
+  white-space: nowrap !important;
+}
+
+/* Expanded employee area */
+:deep(.ot-approval-table .p-datatable-row-expansion > td) {
+  height: auto !important;
+  padding: 0 !important;
+  white-space: normal !important;
+  overflow: hidden !important;
+}
+
+.ot-expanded-box {
+  position: sticky;
+  left: 0;
+  width: min(100%, 980px);
+  max-width: calc(100vw - 2rem);
+  overflow: hidden;
+  border-top: 1px solid var(--ot-border);
+  border-bottom: 1px solid var(--ot-border);
+  background:
+    linear-gradient(135deg, rgba(59, 130, 246, 0.05), transparent),
+    var(--ot-bg);
+  padding: 0.75rem;
+}
+
+.ot-expanded-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.55rem;
+}
+
+.ot-expanded-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ot-text);
+}
+
+.ot-expanded-subtitle {
+  margin-top: 0.08rem;
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: var(--ot-text-muted);
+}
+
+.ot-expanded-content {
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.ot-expanded-responsive-table {
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--ot-border);
+  border-radius: 0.85rem;
+  background: var(--ot-surface);
+}
+
+.ot-expanded-grid-row {
+  display: grid;
+  grid-template-columns:
+    2.7rem
+    minmax(4.8rem, 0.55fr)
+    minmax(8rem, 1.1fr)
+    minmax(7rem, 0.85fr)
+    minmax(6.4rem, 0.65fr)
+    minmax(4.8rem, 0.55fr);
+  align-items: stretch;
+}
+
+.ot-expanded-grid-row > div {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--ot-border);
+  padding: 0.46rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--ot-text);
+  line-height: 1.28;
+}
+
+.ot-expanded-grid-row.is-head > div {
+  background: color-mix(in srgb, var(--ot-bg) 82%, transparent);
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: var(--ot-text-muted);
+  white-space: nowrap;
+}
+
+.ot-expanded-grid-row:last-child > div {
+  border-bottom: 0;
+}
+
+.ot-expanded-grid-row:not(.is-head):hover > div {
+  background: color-mix(in srgb, var(--ot-bg) 68%, transparent);
+}
+
+.cell-center {
+  justify-content: center;
+  text-align: center;
+}
+
+.cell-mono {
+  font-variant-numeric: tabular-nums;
+}
+
+.cell-strong {
+  font-weight: 600 !important;
+}
+
+.cell-wrap {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.ot-expanded-empty {
+  border: 1px dashed var(--ot-border);
+  border-radius: 0.75rem;
+  padding: 0.85rem;
+  text-align: center;
+  font-size: 0.74rem;
+  font-weight: 500;
+  color: var(--ot-text-muted);
+}
+
+@media (max-width: 1200px) {
+  .ot-expanded-box {
+    width: min(100%, 900px);
+  }
+
+  .ot-expanded-grid-row {
+    grid-template-columns:
+      2.5rem
+      minmax(4.5rem, 0.52fr)
+      minmax(7rem, 1fr)
+      minmax(6.5rem, 0.75fr)
+      minmax(6rem, 0.62fr)
+      minmax(4.5rem, 0.5fr);
+  }
+
+  .ot-expanded-grid-row > div {
+    padding: 0.42rem 0.46rem;
+    font-size: 0.68rem;
+  }
+}
+
+@media (max-width: 768px) {
+  .ot-expanded-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ot-expanded-box {
+    width: calc(100vw - 1.5rem);
+    max-width: calc(100vw - 1.5rem);
+    padding: 0.55rem;
+  }
+
+  .ot-expanded-grid-row {
+    grid-template-columns:
+      1.7rem
+      minmax(3.4rem, 0.7fr)
+      minmax(4.6rem, 1.2fr)
+      minmax(4.2rem, 1fr)
+      minmax(4.6rem, 0.9fr)
+      minmax(3.1rem, 0.65fr);
+  }
+
+  .ot-expanded-grid-row > div {
+    padding: 0.34rem 0.28rem;
+    font-size: 0.58rem;
+    line-height: 1.2;
+  }
+
+  .ot-expanded-grid-row.is-head > div {
+    font-size: 0.56rem;
+  }
+}
+
+@media (max-width: 420px) {
+  .ot-expanded-box {
+    width: calc(100vw - 1rem);
+    max-width: calc(100vw - 1rem);
+    padding: 0.45rem;
+  }
+
+  .ot-expanded-grid-row {
+    grid-template-columns:
+      1.45rem
+      minmax(3rem, 0.68fr)
+      minmax(4.1rem, 1.15fr)
+      minmax(3.7rem, 0.95fr)
+      minmax(4.1rem, 0.9fr)
+      minmax(2.8rem, 0.6fr);
+  }
+
+  .ot-expanded-grid-row > div {
+    padding: 0.3rem 0.22rem;
+    font-size: 0.52rem;
+    line-height: 1.18;
+  }
+
+  .ot-expanded-grid-row.is-head > div {
+    font-size: 0.5rem;
+  }
+}
+
+/* Main table compact styles */
+:deep(.ot-approval-table .p-column-header-content) {
+  width: max-content;
+  white-space: nowrap;
+}
+
+:deep(.ot-approval-table .p-row-toggler) {
+  width: 1.75rem !important;
+  height: 1.75rem !important;
+}
+
+:deep(.ot-approval-table .p-checkbox) {
+  width: 1rem !important;
+  height: 1rem !important;
+}
+
+:deep(.ot-approval-table .p-checkbox-box) {
+  width: 1rem !important;
+  height: 1rem !important;
+}
+
+.requester-cell {
+  min-width: max-content;
+}
+
+.approval-status-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.action-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+:deep(.ot-approval-table .p-button.p-button-sm),
+:deep(.action-btn.p-button) {
+  min-height: 1.85rem !important;
+  padding: 0.3rem 0.52rem !important;
+  border-radius: 0.55rem !important;
+  font-size: 0.74rem !important;
+}
+
+:deep(.ot-approval-table .p-button.p-button-sm .p-button-icon),
+:deep(.action-btn .p-button-icon) {
+  font-size: 0.72rem !important;
+}
+
+:deep(.action-btn .p-button-label) {
+  font-weight: 500 !important;
 }
 
 :deep(.ot-approval-table .p-tag.ot-status-tag),
 :deep(.p-tag.ot-status-tag) {
   min-height: 1.35rem !important;
   padding: 0.12rem 0.48rem !important;
+  border: 1px solid transparent !important;
+  border-radius: 999px !important;
   font-size: 0.7rem !important;
   font-weight: 500 !important;
   line-height: 1 !important;
-  border-radius: 999px !important;
-  border: 1px solid transparent !important;
-}
-
-.action-row {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: 0.35rem;
-  white-space: nowrap;
-}
-
-.approval-status-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  min-width: 0;
-}
-
-.approval-sub-label {
-  color: var(--ot-text-muted, #64748b);
-  font-size: 0.72rem;
-  font-weight: 500;
+  white-space: nowrap !important;
 }
 
 :deep(.p-tag.approval-display-tag) {
@@ -1554,28 +2155,15 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-:deep(.action-btn.p-button) {
-  min-height: 1.9rem !important;
-  padding: 0.26rem 0.48rem !important;
-  font-size: 0.72rem !important;
-  border-radius: 0.55rem !important;
-}
-
-:deep(.action-btn .p-button-label) {
-  font-weight: 500 !important;
-}
-
-:deep(.action-btn .p-button-icon) {
-  font-size: 0.72rem !important;
-}
-
 /* Decision dialog */
-:deep(.ot-decision-dialog .p-dialog-header) {
+:deep(.ot-decision-dialog .p-dialog-header),
+:deep(.ot-bulk-dialog .p-dialog-header) {
   border-bottom: 1px solid var(--ot-border);
   padding: 0.9rem 1rem !important;
 }
 
-:deep(.ot-decision-dialog .p-dialog-content) {
+:deep(.ot-decision-dialog .p-dialog-content),
+:deep(.ot-bulk-dialog .p-dialog-content) {
   background: var(--ot-bg) !important;
   padding: 0.85rem !important;
 }
@@ -1938,6 +2526,62 @@ onBeforeUnmount(() => {
   gap: 0.5rem;
 }
 
+/* Bulk dialog */
+.ot-bulk-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.ot-bulk-warning {
+  border: 1px solid color-mix(in srgb, #f59e0b 42%, var(--ot-border));
+  border-radius: 0.9rem;
+  background: rgba(245, 158, 11, 0.08);
+  padding: 0.7rem 0.8rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--ot-text);
+}
+
+.ot-bulk-list {
+  display: grid;
+  gap: 0.45rem;
+  max-height: 18rem;
+  overflow: auto;
+}
+
+.ot-bulk-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border: 1px solid var(--ot-border);
+  border-radius: 0.85rem;
+  background: var(--ot-surface);
+  padding: 0.62rem 0.7rem;
+}
+
+.ot-bulk-item strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ot-text);
+}
+
+.ot-bulk-item span {
+  display: block;
+  margin-top: 0.1rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--ot-text-muted);
+}
+
 /* Status colors */
 :deep(.p-tag.ot-status-pending),
 :deep(.p-tag.ot-status-pending-requester-confirmation),
@@ -1988,38 +2632,6 @@ onBeforeUnmount(() => {
   background: #fee2e2 !important;
   color: #991b1b !important;
   border-color: #ef4444 !important;
-}
-
-/* Mode colors */
-:deep(.p-tag.ot-mode-shift-option) {
-  background: #dbeafe !important;
-  color: #1e40af !important;
-  border-color: #3b82f6 !important;
-}
-
-:deep(.p-tag.ot-mode-legacy-manual) {
-  background: #f3e8ff !important;
-  color: #6b21a8 !important;
-  border-color: #a855f7 !important;
-}
-
-/* Timing mode colors */
-:deep(.p-tag.ot-timing-fixed-time) {
-  background: #fef3c7 !important;
-  color: #92400e !important;
-  border-color: #f59e0b !important;
-}
-
-:deep(.p-tag.ot-timing-after-shift-end) {
-  background: #e0f2fe !important;
-  color: #075985 !important;
-  border-color: #38bdf8 !important;
-}
-
-:deep(.p-tag.ot-timing-unknown) {
-  background: #e5e7eb !important;
-  color: #374151 !important;
-  border-color: #9ca3af !important;
 }
 
 /* Count colors */
@@ -2098,6 +2710,11 @@ onBeforeUnmount(() => {
   border-color: rgba(14, 165, 233, 0.45) !important;
 }
 
+:global(.dark) .ot-mobile-no {
+  background: rgba(59, 130, 246, 0.2);
+  color: #93c5fd;
+}
+
 :global(.dark) .ot-adjust-card:hover {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.22);
 }
@@ -2106,42 +2723,133 @@ onBeforeUnmount(() => {
   .ot-summary-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+
+  .ot-expanded-box {
+    width: min(100%, 900px);
+  }
+
+  .ot-expanded-grid-row {
+    grid-template-columns:
+      2.5rem
+      minmax(4.5rem, 0.52fr)
+      minmax(7rem, 1fr)
+      minmax(6.5rem, 0.75fr)
+      minmax(6rem, 0.62fr)
+      minmax(4.5rem, 0.5fr);
+  }
+
+  .ot-expanded-grid-row > div {
+    padding: 0.42rem 0.46rem;
+    font-size: 0.68rem;
+  }
 }
 
 @media (max-width: 768px) {
-  .ot-decision-header,
-  .ot-summary-main,
-  .ot-adjust-toolbar {
+  .ot-expanded-header {
     flex-direction: column;
     align-items: stretch;
   }
 
-  .ot-decision-header-tags {
-    justify-content: flex-start;
+  .ot-expanded-box {
+    width: max-content;
+    min-width: 760px;
+    max-width: none;
+    padding: 0.6rem;
   }
 
-  .ot-summary-owner {
-    text-align: left;
+  .ot-expanded-content {
+    width: max-content;
+    min-width: 760px;
+    max-width: none;
+    overflow: visible;
   }
 
-  .ot-summary-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .ot-expanded-responsive-table {
+    width: max-content;
+    min-width: 760px;
+    max-width: none;
+    overflow: visible;
   }
 
-  .ot-adjust-split {
-    grid-template-columns: 1fr;
+  .ot-expanded-grid-row {
+    grid-template-columns:
+      2.4rem
+      5.8rem
+      8.8rem
+      8.2rem
+      7.4rem
+      10rem;
   }
 
-  .ot-adjust-card-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    max-height: none;
+  .ot-expanded-grid-row > div {
+    padding: 0.42rem 0.5rem;
+    font-size: 0.68rem;
+    line-height: 1.25;
+  }
+
+  .ot-expanded-grid-row.is-head > div {
+    font-size: 0.64rem;
+  }
+
+  .cell-wrap {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+}
+
+@media (max-width: 420px) {
+  .ot-expanded-box {
+    width: max-content;
+    min-width: 760px;
+    max-width: none;
+    padding: 0.55rem;
+  }
+
+  .ot-expanded-content {
+    width: max-content;
+    min-width: 760px;
+    max-width: none;
+  }
+
+  .ot-expanded-responsive-table {
+    width: max-content;
+    min-width: 760px;
+    max-width: none;
+  }
+
+  .ot-expanded-grid-row {
+    grid-template-columns:
+      2.3rem
+      5.6rem
+      8.5rem
+      8rem
+      7.2rem
+      10rem;
+  }
+
+  .ot-expanded-grid-row > div {
+    padding: 0.4rem 0.46rem;
+    font-size: 0.66rem;
+    line-height: 1.25;
+  }
+
+  .ot-expanded-grid-row.is-head > div {
+    font-size: 0.62rem;
   }
 }
 
 @media (max-width: 520px) {
   .ot-summary-grid,
-  .ot-adjust-card-grid {
+  .ot-adjust-card-grid,
+  .ot-mobile-info-grid {
     grid-template-columns: 1fr;
+  }
+
+  .ot-expanded-box {
+    width: calc(100vw - 1rem);
+    max-width: calc(100vw - 1rem);
+    padding: 0.55rem;
   }
 }
 </style>
