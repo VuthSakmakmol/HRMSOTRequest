@@ -26,7 +26,6 @@ import OTRequestListView from '@/modules/ot/views/OTRequestListView.vue'
 import OTRequestCreateView from '@/modules/ot/views/OTRequestCreateView.vue'
 import OTApprovalInboxView from '@/modules/ot/views/OTApprovalInboxView.vue'
 import OTAcknowledgeInboxView from '@/modules/ot/views/OTAcknowledgeInboxView.vue'
-import OTRequestDetailView from '@/modules/ot/views/OTRequestDetailView.vue'
 import OTRequestEditView from '@/modules/ot/views/OTRequestEditView.vue'
 import OTCalculationPolicyListView from '@/modules/ot/views/OTCalculationPolicyListView.vue'
 import ShiftOTOptionListView from '@/modules/ot/views/ShiftOTOptionListView.vue'
@@ -297,22 +296,6 @@ const routes = [
           requiresAuth: true,
           title: 'OT Acknowledge Inbox',
           requiredAnyPermissions: ['OT_REQUEST_ACKNOWLEDGE'],
-        },
-      },
-      {
-        path: 'ot/requests/:id',
-        name: 'ot-request-detail',
-        component: OTRequestDetailView,
-        meta: {
-          requiresAuth: true,
-          title: 'OT Request Detail',
-          requiredAnyPermissions: [
-            'OT_REQUEST_VIEW',
-            'OT_REQUEST_CREATE',
-            'OT_REQUEST_UPDATE',
-            'OT_REQUEST_APPROVE',
-            'OT_REQUEST_ACKNOWLEDGE',
-          ],
         },
       },
       {

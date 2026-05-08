@@ -2,6 +2,7 @@
 const mongoose = require('mongoose')
 
 const OTRequest = require('../models/OTRequest')
+const Employee = require('../../org/models/Employee')
 
 function s(value) {
   return String(value ?? '').trim()
@@ -9,6 +10,15 @@ function s(value) {
 
 function upper(value) {
   return s(value).toUpperCase()
+}
+
+function firstText(...values) {
+  for (const value of values) {
+    const text = s(value)
+    if (text) return text
+  }
+
+  return ''
 }
 
 function escapeRegex(value) {
@@ -24,6 +34,300 @@ function normalizeLimit(value) {
   const limit = Number(value || 10)
   if (!Number.isFinite(limit)) return 10
   return Math.min(Math.max(Math.floor(limit), 1), 100)
+}
+
+function normalizeLineSnapshot(source = {}) {
+  if (!source || typeof source !== 'object') {
+    return {
+      lineId: null,
+      lineCode: '',
+      lineName: '',
+      lineLabel: '',
+    }
+  }
+
+  const lineId = firstText(source._id, source.id, source.lineId, source.productionLineId)
+
+  const lineCode = firstText(
+    source.code,
+    source.lineCode,
+    source.productionLineCode,
+    source.employeeLineCode,
+    source.assignedLineCode,
+  )
+
+  const lineName = firstText(
+    source.name,
+    source.lineName,
+    source.productionLineName,
+    source.employeeLineName,
+    source.assignedLineName,
+  )
+
+  const lineLabel = firstText(
+    source.lineLabel,
+    source.productionLineLabel,
+    source.employeeLineLabel,
+    source.assignedLineLabel,
+    source.displayName,
+    source.label,
+    lineCode && lineName ? `${lineCode} · ${lineName}` : '',
+    lineCode,
+    lineName,
+  )
+
+  return {
+    lineId: lineId && mongoose.isValidObjectId(lineId) ? lineId : null,
+    lineCode,
+    lineName,
+    lineLabel,
+  }
+}
+
+function getDirectLineSnapshotFromEmployee(employee = {}) {
+  const nestedLine =
+    employee.line ||
+    employee.productionLine ||
+    employee.lineId ||
+    employee.productionLineId ||
+    null
+
+  if (nestedLine && typeof nestedLine === 'object') {
+    const nestedSnapshot = normalizeLineSnapshot(nestedLine)
+
+    if (nestedSnapshot.lineCode || nestedSnapshot.lineName || nestedSnapshot.lineLabel) {
+      return nestedSnapshot
+    }
+  }
+
+  const directSnapshot = normalizeLineSnapshot({
+    lineId: firstText(employee.lineId, employee.productionLineId),
+    lineCode: firstText(
+      employee.lineCode,
+      employee.productionLineCode,
+      employee.employeeLineCode,
+      employee.assignedLineCode,
+    ),
+    lineName: firstText(
+      employee.lineName,
+      employee.productionLineName,
+      employee.employeeLineName,
+      employee.assignedLineName,
+    ),
+    lineLabel: firstText(
+      employee.lineLabel,
+      employee.productionLineLabel,
+      employee.employeeLineLabel,
+      employee.assignedLineLabel,
+    ),
+  })
+
+  if (directSnapshot.lineCode || directSnapshot.lineName || directSnapshot.lineLabel) {
+    return directSnapshot
+  }
+
+  return {
+    lineId: directSnapshot.lineId,
+    lineCode: '',
+    lineName: '',
+    lineLabel: '',
+  }
+}
+
+function collectLineCandidateIds(employee = {}) {
+  const values = [
+    employee.lineId,
+    employee.productionLineId,
+    employee.employeeLineId,
+    employee.assignedLineId,
+    employee.line?._id,
+    employee.line?.id,
+    employee.productionLine?._id,
+    employee.productionLine?.id,
+  ]
+
+  return Array.from(
+    new Set(
+      values
+        .map((value) => s(value))
+        .filter((value) => value && mongoose.isValidObjectId(value)),
+    ),
+  )
+}
+
+async function findLineDocumentById(lineId) {
+  if (!lineId || !mongoose.isValidObjectId(lineId)) return null
+
+  const objectId = new mongoose.Types.ObjectId(lineId)
+
+  const collectionNames = [
+    'productionlines',
+    'production_lines',
+    'lines',
+    'orglines',
+    'production_line',
+  ]
+
+  for (const collectionName of collectionNames) {
+    try {
+      const doc = await mongoose.connection.collection(collectionName).findOne(
+        { _id: objectId },
+        {
+          projection: {
+            _id: 1,
+            code: 1,
+            name: 1,
+            lineCode: 1,
+            lineName: 1,
+            productionLineCode: 1,
+            productionLineName: 1,
+            displayName: 1,
+            label: 1,
+            isActive: 1,
+          },
+        },
+      )
+
+      if (doc) return doc
+    } catch {
+      // Try next possible collection name.
+    }
+  }
+
+  return null
+}
+
+async function resolveLineSnapshotFromEmployee(employee = {}) {
+  const directSnapshot = getDirectLineSnapshotFromEmployee(employee)
+
+  if (directSnapshot.lineCode || directSnapshot.lineName || directSnapshot.lineLabel) {
+    return directSnapshot
+  }
+
+  const candidateIds = collectLineCandidateIds(employee)
+
+  for (const lineId of candidateIds) {
+    const lineDoc = await findLineDocumentById(lineId)
+
+    if (lineDoc) {
+      return normalizeLineSnapshot(lineDoc)
+    }
+  }
+
+  return directSnapshot
+}
+
+function collectEmployeeIdsFromSnapshots(items = [], idSet = new Set()) {
+  for (const item of Array.isArray(items) ? items : []) {
+    const employeeId = s(item?.employeeId)
+
+    if (employeeId && mongoose.isValidObjectId(employeeId)) {
+      idSet.add(employeeId)
+    }
+  }
+
+  return idSet
+}
+
+function collectEmployeeIdsFromOTDocs(docs = []) {
+  const idSet = new Set()
+
+  for (const doc of Array.isArray(docs) ? docs : []) {
+    collectEmployeeIdsFromSnapshots(doc?.requestedEmployees, idSet)
+    collectEmployeeIdsFromSnapshots(doc?.approvedEmployees, idSet)
+    collectEmployeeIdsFromSnapshots(doc?.proposedApprovedEmployees, idSet)
+  }
+
+  return Array.from(idSet)
+}
+
+async function buildEmployeeMasterMapForOTDocs(docs = []) {
+  const employeeIds = collectEmployeeIdsFromOTDocs(docs)
+
+  if (!employeeIds.length) return new Map()
+
+  const objectIds = employeeIds.map((id) => new mongoose.Types.ObjectId(id))
+
+  const employees = await Employee.find({
+    _id: { $in: objectIds },
+  }).lean()
+
+  const map = new Map()
+
+  for (const employee of employees) {
+    const line = await resolveLineSnapshotFromEmployee(employee)
+
+    map.set(String(employee._id), {
+      employeeId: String(employee._id),
+      employeeCode: s(employee.employeeNo || employee.employeeCode || employee.code),
+      employeeName: s(employee.displayName || employee.employeeName || employee.name),
+      lineId: line.lineId,
+      lineCode: line.lineCode,
+      lineName: line.lineName,
+      lineLabel: line.lineLabel,
+    })
+  }
+
+  return map
+}
+
+function enrichEmployeeSnapshotWithMaster(item = {}, employeeMasterMap = new Map()) {
+  const employeeId = s(item?.employeeId)
+  const master = employeeMasterMap.get(employeeId) || {}
+
+  const lineId = firstText(item?.lineId, master.lineId)
+  const lineCode = firstText(item?.lineCode, master.lineCode)
+  const lineName = firstText(item?.lineName, master.lineName)
+
+  const lineLabel = firstText(
+    item?.lineLabel,
+    master.lineLabel,
+    lineCode && lineName ? `${lineCode} · ${lineName}` : '',
+    lineCode,
+    lineName,
+  )
+
+  return {
+    ...item,
+    employeeCode: firstText(item?.employeeCode, master.employeeCode),
+    employeeName: firstText(item?.employeeName, master.employeeName),
+
+    lineId: lineId && mongoose.isValidObjectId(lineId) ? lineId : null,
+    lineCode,
+    lineName,
+    lineLabel,
+  }
+}
+
+function enrichOTDocEmployeeSnapshots(doc = {}, employeeMasterMap = new Map()) {
+  return {
+    ...doc,
+
+    requestedEmployees: Array.isArray(doc.requestedEmployees)
+      ? doc.requestedEmployees.map((item) =>
+          enrichEmployeeSnapshotWithMaster(item, employeeMasterMap),
+        )
+      : [],
+
+    approvedEmployees: Array.isArray(doc.approvedEmployees)
+      ? doc.approvedEmployees.map((item) =>
+          enrichEmployeeSnapshotWithMaster(item, employeeMasterMap),
+        )
+      : [],
+
+    proposedApprovedEmployees: Array.isArray(doc.proposedApprovedEmployees)
+      ? doc.proposedApprovedEmployees.map((item) =>
+          enrichEmployeeSnapshotWithMaster(item, employeeMasterMap),
+        )
+      : [],
+  }
+}
+
+async function enrichOTDocsWithEmployeeMasterData(docs = []) {
+  const items = Array.isArray(docs) ? docs : []
+  const employeeMasterMap = await buildEmployeeMasterMapForOTDocs(items)
+
+  return items.map((doc) => enrichOTDocEmployeeSnapshots(doc, employeeMasterMap))
 }
 
 function buildSearchFilter(search) {
@@ -139,16 +443,31 @@ function buildFilter(query = {}, authUser = {}) {
 }
 
 function mapEmployeeOutput(item = {}) {
+  const lineCode = s(item?.lineCode)
+  const lineName = s(item?.lineName)
+
   return {
     employeeId: item?.employeeId ? String(item.employeeId) : null,
     employeeCode: s(item.employeeCode),
     employeeName: s(item.employeeName),
+
     departmentId: item?.departmentId ? String(item.departmentId) : null,
     departmentCode: s(item.departmentCode),
     departmentName: s(item.departmentName),
+
     positionId: item?.positionId ? String(item.positionId) : null,
     positionCode: s(item.positionCode),
     positionName: s(item.positionName),
+
+    lineId: item?.lineId ? String(item.lineId) : null,
+    lineCode,
+    lineName,
+    lineLabel: firstText(
+      item?.lineLabel,
+      lineCode && lineName ? `${lineCode} · ${lineName}` : '',
+      lineCode,
+      lineName,
+    ),
   }
 }
 
@@ -248,6 +567,12 @@ function mapListItem(doc, authUser) {
     reason: s(doc.reason),
 
     employeeCount: employees.length,
+    approvedEmployeeCount: employees.length,
+    requestedEmployeeCount: Number(
+      doc.requestedEmployeeCount ||
+        (Array.isArray(doc.requestedEmployees) ? doc.requestedEmployees.length : 0),
+    ),
+
     employees: employees.map(mapEmployeeOutput),
 
     acknowledgementStep: acknowledgementStep
@@ -286,8 +611,10 @@ async function list(query = {}, authUser = {}) {
     OTRequest.countDocuments(filter),
   ])
 
+  const enrichedItems = await enrichOTDocsWithEmployeeMasterData(items)
+
   return {
-    items: items.map((doc) => mapListItem(doc, authUser)),
+    items: enrichedItems.map((doc) => mapListItem(doc, authUser)),
     pagination: {
       page,
       limit,

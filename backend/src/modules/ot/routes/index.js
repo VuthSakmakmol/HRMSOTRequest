@@ -27,12 +27,6 @@ router.patch(
   otController.updateOTRequest,
 )
 
-router.post(
-  '/requests/:id/requester-confirmation',
-  requirePermission('OT_REQUEST_UPDATE'),
-  otController.requesterConfirmOTRequest,
-)
-
 router.get(
   '/requests/export',
   requirePermission('OT_REQUEST_VIEW'),

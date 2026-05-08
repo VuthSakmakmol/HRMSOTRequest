@@ -284,20 +284,9 @@ const otRequestIdParamSchema = z.object({
 
 const otApprovalDecisionSchema = z.object({
   action: requiredUpperEnum(['APPROVE', 'REJECT'], 'Action'),
-
-  remark: optionalTrimmedString(1000),
-
-  approvedEmployeeIds: z
-    .array(objectIdSchema)
-    .max(200, 'You can approve up to 200 employees only')
-    .optional()
-    .default([]),
-})
-
-const otRequesterConfirmationSchema = z.object({
-  action: requiredUpperEnum(['AGREE', 'DISAGREE'], 'Action'),
   remark: optionalTrimmedString(1000),
 })
+
 
 module.exports = {
   createOTRequestSchema,
@@ -307,5 +296,4 @@ module.exports = {
   unavailableOTEmployeesQuerySchema,
   otRequestIdParamSchema,
   otApprovalDecisionSchema,
-  otRequesterConfirmationSchema,
 }

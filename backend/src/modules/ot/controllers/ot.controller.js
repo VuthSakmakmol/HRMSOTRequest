@@ -12,7 +12,6 @@ const {
   unavailableOTEmployeesQuerySchema,
   otRequestIdParamSchema,
   otApprovalDecisionSchema,
-  otRequesterConfirmationSchema,
 } = require('../validators/ot.validation')
 
 function parse(schema, data) {
@@ -207,21 +206,6 @@ async function decideOTRequest(req, res, next) {
   }
 }
 
-async function requesterConfirmOTRequest(req, res, next) {
-  try {
-    const params = parse(otRequestIdParamSchema, req.params || {})
-    const payload = parse(otRequesterConfirmationSchema, req.body || {})
-    const data = await otService.requesterConfirm(params.id, payload, req.user)
-
-    res.json({
-      ok: true,
-      data,
-    })
-  } catch (error) {
-    next(error)
-  }
-}
-
 async function getShiftOTOptionsByShift(req, res, next) {
   try {
     const shiftId = parseObjectIdParam(req.params.shiftId, 'shiftId')
@@ -249,5 +233,4 @@ module.exports = {
   exportOTApprovalInboxExcel,
   listMyAcknowledgementInbox,
   decideOTRequest,
-  requesterConfirmOTRequest,
 }

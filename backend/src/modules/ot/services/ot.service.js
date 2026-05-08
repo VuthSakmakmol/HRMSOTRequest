@@ -2700,77 +2700,49 @@ async function decide(id, payload, authUser) {
   const remark = s(payload.remark)
 
   if (action === 'APPROVE') {
-    const currentApprovedPool =
-      Array.isArray(doc.approvedEmployees) && doc.approvedEmployees.length
-        ? doc.approvedEmployees
-        : doc.requestedEmployees
+    const requestedEmployees = Array.isArray(doc.requestedEmployees)
+      ? doc.requestedEmployees
+      : []
 
-    const approvedEmployeeIds = normalizeIdArray(payload.approvedEmployeeIds)
-
-    if (!approvedEmployeeIds.length) {
-      const err = new Error('Please select at least 1 approved employee')
+    if (!requestedEmployees.length) {
+      const err = new Error('This OT request has no employee to approve')
       err.status = 400
       throw err
     }
-
-    const poolIdSet = new Set(getCollectionIds(currentApprovedPool))
-    const invalidEmployeeId = approvedEmployeeIds.find(
-      (employeeId) => !poolIdSet.has(employeeId),
-    )
-
-    if (invalidEmployeeId) {
-      const err = new Error(
-        'Approved employees must be selected from the current OT employee list',
-      )
-      err.status = 400
-      throw err
-    }
-
-    const nextApprovedEmployees = filterEmployeeSnapshotsByIds(
-      currentApprovedPool,
-      approvedEmployeeIds,
-    )
-    const isChanged = !areSameEmployeeSelections(currentApprovedPool, approvedEmployeeIds)
 
     currentStep.status = 'APPROVED'
     currentStep.actedAt = new Date()
     currentStep.actedBy = authUser?.accountId || authUser?._id || null
     currentStep.remark = remark
 
-    if (isChanged) {
-      const actorIdentity = await resolveActorIdentity(authUser, {
-        employeeId: currentStep.approverEmployeeId || null,
-        employeeNo: currentStep.approverCode,
-        employeeName: currentStep.approverName,
-      })
+    // New rule: approver cannot deduct/remove employees before approval.
+    // Approval always keeps all requested employees.
+    doc.approvedEmployees = requestedEmployees
+    doc.approvedEmployeeCount = requestedEmployees.length
 
-      doc.proposedApprovedEmployees = nextApprovedEmployees
-      doc.proposedApprovedEmployeeCount = nextApprovedEmployees.length
+    doc.proposedApprovedEmployees = []
+    doc.proposedApprovedEmployeeCount = 0
 
-      doc.lastAdjustmentByEmployeeId = actorIdentity.employeeId || null
-      doc.lastAdjustmentByEmployeeNo = s(actorIdentity.employeeNo)
-      doc.lastAdjustmentByEmployeeName = s(actorIdentity.employeeName)
-      doc.lastAdjustmentByAccountId = authUser?.accountId || authUser?._id || null
-      doc.lastAdjustmentAt = new Date()
-      doc.lastAdjustmentRemark = remark
-      doc.lastAdjustmentStepNo = Number(currentStep.stepNo || 0) || null
+    doc.requesterConfirmationStatus = 'NOT_REQUIRED'
+    doc.requesterConfirmedAt = null
+    doc.requesterConfirmationRemark = ''
 
-      doc.requesterConfirmationStatus = 'PENDING'
-      doc.requesterConfirmedAt = null
-      doc.requesterConfirmationRemark = ''
+    doc.lastAdjustmentByEmployeeId = null
+    doc.lastAdjustmentByEmployeeNo = ''
+    doc.lastAdjustmentByEmployeeName = ''
+    doc.lastAdjustmentByAccountId = null
+    doc.lastAdjustmentAt = null
+    doc.lastAdjustmentRemark = ''
+    doc.lastAdjustmentStepNo = null
 
-      doc.currentApproverEmployeeId = null
-      doc.status = 'PENDING_REQUESTER_CONFIRMATION'
-    } else {
-      doc.proposedApprovedEmployees = []
-      doc.proposedApprovedEmployeeCount = 0
-      doc.requesterConfirmationStatus = 'NOT_REQUIRED'
-      doc.requesterConfirmedAt = null
-      doc.requesterConfirmationRemark = ''
-
-      moveToNextApproverOrApprove(doc, stepIndex)
-    }
+    moveToNextApproverOrApprove(doc, stepIndex)
   } else if (action === 'REJECT') {
+    if (!remark) {
+      const err = new Error('Please enter rejection reason')
+      err.status = 400
+      throw err
+    }
+
     currentStep.status = 'REJECTED'
     currentStep.actedAt = new Date()
     currentStep.actedBy = authUser?.accountId || authUser?._id || null
@@ -2778,6 +2750,7 @@ async function decide(id, payload, authUser) {
 
     doc.proposedApprovedEmployees = []
     doc.proposedApprovedEmployeeCount = 0
+
     doc.requesterConfirmationStatus = 'NOT_REQUIRED'
     doc.requesterConfirmedAt = null
     doc.requesterConfirmationRemark = ''
@@ -3014,7 +2987,6 @@ module.exports = {
   exportApprovalInboxExcel,
   getById,
   decide,
-  requesterConfirm,
   getAllowedApproverChain,
   getShiftOTOptionsByShift,
   listUnavailableEmployeesForDate,

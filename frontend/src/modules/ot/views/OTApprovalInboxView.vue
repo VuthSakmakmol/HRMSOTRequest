@@ -55,7 +55,6 @@ const decisionDialog = reactive({
   action: 'APPROVE',
   remark: '',
   row: null,
-  selectedApprovedEmployeeIds: [],
 })
 
 const bulkDialog = reactive({
@@ -90,19 +89,6 @@ const hasAnyData = computed(() => rows.value.some(Boolean))
 const useVirtualScroll = computed(() => totalInbox.value > PAGE_SIZE)
 
 const decisionEmployees = computed(() => getTargetEmployees(decisionDialog.row))
-const selectedApprovedCount = computed(() => decisionDialog.selectedApprovedEmployeeIds.length)
-
-const removedCount = computed(() =>
-  Math.max(0, decisionEmployees.value.length - decisionDialog.selectedApprovedEmployeeIds.length),
-)
-
-const allowedDecisionEmployees = computed(() =>
-  decisionEmployees.value.filter((employee) => isEmployeeSelected(employee)),
-)
-
-const removedDecisionEmployees = computed(() =>
-  decisionEmployees.value.filter((employee) => !isEmployeeSelected(employee)),
-)
 
 const actionableLoadedRows = computed(() =>
   rows.value.filter((row) => canSelectForBulk(row)),
@@ -431,21 +417,12 @@ function canSelectForBulk(row) {
   return getTargetEmployees(row).some((employee) => employeeIdOf(employee))
 }
 
-function openView(row) {
-  const id = rowIdOf(row)
-
-  if (!id) return
-
-  router.push(`/ot/requests/${id}`)
-}
-
 function resetDecisionDialog() {
   decisionDialog.visible = false
   decisionDialog.loading = false
   decisionDialog.action = 'APPROVE'
   decisionDialog.remark = ''
   decisionDialog.row = null
-  decisionDialog.selectedApprovedEmployeeIds = []
 }
 
 function employeeIdOf(employee) {
@@ -556,6 +533,30 @@ function employeeLineOf(employee, row = null) {
   return fallback
 }
 
+function lineSummaryOfRow(row) {
+  const employees = getTargetEmployees(row)
+  const uniqueLines = Array.from(
+    new Set(
+      employees
+        .map((employee) => employeeLineOf(employee, row))
+        .map((line) => String(line || '').trim())
+        .filter(Boolean),
+    ),
+  )
+
+  if (uniqueLines.length === 1) return uniqueLines[0]
+  if (uniqueLines.length > 1) return uniqueLines.join(', ')
+
+  return firstText(
+    row?.lineLabel,
+    row?.productionLineLabel,
+    row?.lineCode,
+    row?.productionLineCode,
+    row?.lineName,
+    row?.productionLineName,
+  ) || '-'
+}
+
 function employeeOtTimeOf(employee, row) {
   const employeeStart = String(
     employee?.requestStartTime ||
@@ -583,69 +584,17 @@ function employeeOtTimeOf(employee, row) {
 function openDecision(row, action) {
   if (!canDecide(row)) return
 
-  const employees = getTargetEmployees(row)
-  const ids = employees.map(employeeIdOf).filter(Boolean)
-
   decisionDialog.visible = true
   decisionDialog.loading = false
   decisionDialog.action = action
   decisionDialog.remark = ''
   decisionDialog.row = row
-  decisionDialog.selectedApprovedEmployeeIds = action === 'APPROVE' ? ids : []
 }
 
 function closeDecision() {
   if (decisionDialog.loading) return
 
   resetDecisionDialog()
-}
-
-function isEmployeeSelected(employee) {
-  const id = employeeIdOf(employee)
-
-  return decisionDialog.selectedApprovedEmployeeIds.includes(id)
-}
-
-function moveEmployeeToAllowed(employee) {
-  if (decisionDialog.action !== 'APPROVE') return
-
-  const id = employeeIdOf(employee)
-  if (!id) return
-
-  if (decisionDialog.selectedApprovedEmployeeIds.includes(id)) return
-
-  decisionDialog.selectedApprovedEmployeeIds = [
-    ...decisionDialog.selectedApprovedEmployeeIds,
-    id,
-  ]
-}
-
-function moveEmployeeToRemoved(employee) {
-  if (decisionDialog.action !== 'APPROVE') return
-
-  const id = employeeIdOf(employee)
-  if (!id) return
-
-  if (!decisionDialog.selectedApprovedEmployeeIds.includes(id)) return
-
-  if (decisionDialog.selectedApprovedEmployeeIds.length === 1) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Validation',
-      detail: 'Please keep at least 1 approved employee.',
-      life: 2500,
-    })
-    return
-  }
-
-  decisionDialog.selectedApprovedEmployeeIds =
-    decisionDialog.selectedApprovedEmployeeIds.filter((item) => item !== id)
-}
-
-function selectAllEmployees() {
-  decisionDialog.selectedApprovedEmployeeIds = decisionEmployees.value
-    .map(employeeIdOf)
-    .filter(Boolean)
 }
 
 function isRequestSelected(row) {
@@ -923,25 +872,11 @@ async function submitDecision() {
     return
   }
 
-  if (decisionDialog.action === 'APPROVE' && !decisionDialog.selectedApprovedEmployeeIds.length) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Validation',
-      detail: 'Please keep at least 1 approved employee.',
-      life: 2500,
-    })
-    return
-  }
-
   try {
     decisionDialog.loading = true
 
     await decideOTRequest(id, {
       action: decisionDialog.action,
-      approvedEmployeeIds:
-        decisionDialog.action === 'APPROVE'
-          ? decisionDialog.selectedApprovedEmployeeIds
-          : [],
       remark: decisionDialog.remark,
     })
 
@@ -983,11 +918,8 @@ async function submitBulkApproval() {
 
     for (const row of bulkDialog.rows) {
       const id = rowIdOf(row)
-      const approvedEmployeeIds = getTargetEmployees(row)
-        .map(employeeIdOf)
-        .filter(Boolean)
 
-      if (!id || !approvedEmployeeIds.length) {
+      if (!id) {
         failedCount += 1
         continue
       }
@@ -995,7 +927,6 @@ async function submitBulkApproval() {
       try {
         await decideOTRequest(id, {
           action: 'APPROVE',
-          approvedEmployeeIds,
           remark: bulkDialog.remark,
         })
 
@@ -1278,17 +1209,6 @@ onBeforeUnmount(() => {
           </template>
         </Column>
 
-        <Column header="Current Approved">
-          <template #body="{ data }">
-            <Tag
-              v-if="data"
-              :value="`${getEmployeeCount(data)} staff`"
-              severity="info"
-              class="ot-status-tag ot-count-approved"
-            />
-          </template>
-        </Column>
-
         <Column field="otDate" header="OT Date">
           <template #body="{ data }">
             <span v-if="data">{{ formatDateDMY(data.otDate) }}</span>
@@ -1322,16 +1242,6 @@ onBeforeUnmount(() => {
         <Column header="Actions">
           <template #body="{ data }">
             <div v-if="data" class="action-row">
-              <Button
-                label="View"
-                icon="pi pi-eye"
-                size="small"
-                severity="secondary"
-                outlined
-                class="action-btn"
-                @click="openView(data)"
-              />
-
               <Button
                 v-if="canDecide(data)"
                 label="Approve"
@@ -1445,7 +1355,7 @@ onBeforeUnmount(() => {
             </div>
 
             <div class="ot-decision-title">
-              {{ decisionDialog.action === 'APPROVE' ? 'Approve / Adjust OT Request' : 'Reject OT Request' }}
+              {{ decisionDialog.action === 'APPROVE' ? 'Confirm Approval' : 'Reject OT Request' }}
             </div>
           </div>
 
@@ -1458,20 +1368,6 @@ onBeforeUnmount(() => {
               severity="info"
               class="ot-status-tag"
             />
-
-            <Tag
-              v-if="decisionDialog.action === 'APPROVE'"
-              :value="`${selectedApprovedCount} allowed`"
-              severity="success"
-              class="ot-status-tag ot-status-approved"
-            />
-
-            <Tag
-              v-if="decisionDialog.action === 'APPROVE' && removedCount > 0"
-              :value="`${removedCount} removed`"
-              severity="warning"
-              class="ot-status-tag ot-status-pending"
-            />
           </div>
         </div>
       </template>
@@ -1479,227 +1375,44 @@ onBeforeUnmount(() => {
       <div class="ot-decision-body">
         <div
           v-if="decisionDialog.row"
-          class="ot-decision-summary"
+          class="ot-confirm-box"
         >
-          <div class="ot-summary-main">
-            <div class="ot-summary-request-no">
-              {{ decisionDialog.row.requestNo || '-' }}
-            </div>
-
-            <div class="ot-summary-owner">
-              {{ formatRequester(decisionDialog.row).name }}
-              <span>{{ formatRequester(decisionDialog.row).employeeNo }}</span>
-            </div>
+          <div class="ot-confirm-icon">
+            <i :class="decisionDialog.action === 'APPROVE' ? 'pi pi-check-circle' : 'pi pi-times-circle'" />
           </div>
 
-          <div class="ot-summary-grid">
-            <div class="ot-summary-item">
-              <span>OT Date</span>
-              <strong>{{ formatDateDMY(decisionDialog.row.otDate) }}</strong>
+          <div class="min-w-0">
+            <div class="ot-confirm-title">
+              {{ decisionDialog.action === 'APPROVE' ? 'Are you sure you want to approve?' : 'Are you sure you want to reject?' }}
             </div>
 
-            <div class="ot-summary-item">
-              <span>Time</span>
-              <strong>{{ formatTimeRange(decisionDialog.row) }}</strong>
+            <div class="ot-confirm-help">
+              {{ decisionDialog.action === 'APPROVE'
+                ? 'This will approve all employees inside this OT request.'
+                : 'This will reject the whole OT request.' }}
             </div>
-
-            <div class="ot-summary-item">
-              <span>Mode</span>
-              <strong>{{ requestModeLabel(decisionDialog.row) }}</strong>
-            </div>
-
-            <div class="ot-summary-item">
-              <span>OT Option</span>
-              <strong>{{ formatOtOptionLabel(decisionDialog.row) }}</strong>
-            </div>
-
-            <div class="ot-summary-item">
-              <span>Timing</span>
-              <strong>{{ timingModeLabel(getTimingMode(decisionDialog.row)) }}</strong>
-            </div>
-
-            <div class="ot-summary-item">
-              <span>Requested</span>
-              <strong>{{ formatRequestedMinutes(decisionDialog.row) }}</strong>
-            </div>
-          </div>
-
-          <div class="ot-summary-tags">
-            <Tag
-              :value="`Requested ${Number(decisionDialog.row?.requestedEmployeeCount || 0)} staff`"
-              severity="secondary"
-              class="ot-status-tag ot-count-requested"
-            />
-
-            <Tag
-              :value="`Current approved ${decisionEmployees.length} staff`"
-              severity="info"
-              class="ot-status-tag ot-count-approved"
-            />
-
-            <Tag
-              :value="`${formatHours(decisionDialog.row)} hours`"
-              severity="secondary"
-              class="ot-status-tag"
-            />
           </div>
         </div>
 
-        <template v-if="decisionDialog.action === 'APPROVE'">
-          <div class="ot-adjust-toolbar">
-            <div>
-              <div class="ot-adjust-title">
-                Adjust final approved employees
-              </div>
-
-              <div class="ot-adjust-help">
-                Move employees between allowed and removed before submitting approval.
-              </div>
-            </div>
-
-            <Button
-              label="Allow All"
-              icon="pi pi-check-square"
-              size="small"
-              severity="secondary"
-              outlined
-              :disabled="decisionDialog.loading || !removedDecisionEmployees.length"
-              @click="selectAllEmployees"
-            />
+        <div
+          v-if="decisionDialog.row"
+          class="ot-confirm-info-grid"
+        >
+          <div class="ot-confirm-info-item">
+            <span>OT Date</span>
+            <strong>{{ formatDateDMY(decisionDialog.row.otDate) }}</strong>
           </div>
 
-          <div class="ot-adjust-split">
-            <section class="ot-adjust-panel is-allowed">
-              <div class="ot-adjust-panel-header">
-                <div>
-                  <div class="ot-panel-title">
-                    <i class="pi pi-check-circle" />
-                    <span>Allowed staff</span>
-                  </div>
-
-                  <p>These employees will continue for OT approval.</p>
-                </div>
-
-                <Tag
-                  :value="`${allowedDecisionEmployees.length}`"
-                  severity="success"
-                  class="ot-status-tag ot-status-approved"
-                />
-              </div>
-
-              <div
-                v-if="allowedDecisionEmployees.length"
-                class="ot-adjust-card-grid"
-              >
-                <button
-                  v-for="employee in allowedDecisionEmployees"
-                  :key="employeeIdOf(employee)"
-                  type="button"
-                  class="ot-adjust-card is-allowed"
-                  :disabled="decisionDialog.loading"
-                  @click="moveEmployeeToRemoved(employee)"
-                >
-                  <span class="ot-adjust-card-icon">
-                    <i class="pi pi-check" />
-                  </span>
-
-                  <span class="ot-adjust-card-main">
-                    <strong>{{ employeeNameOf(employee) }}</strong>
-                    <em>{{ employeeCodeOf(employee) }}</em>
-                  </span>
-
-                  <span class="ot-adjust-card-meta">
-                    {{ employeePositionOf(employee) }}
-                  </span>
-
-                  <span class="ot-adjust-card-meta">
-                    {{ employeeDepartmentOf(employee) }}
-                  </span>
-
-                  <span
-                    v-if="employeeLineOf(employee)"
-                    class="ot-adjust-card-meta"
-                  >
-                    {{ employeeLineOf(employee) }}
-                  </span>
-
-                  <span class="ot-adjust-card-action">
-                    Click to remove
-                  </span>
-                </button>
-              </div>
-
-              <div v-else class="ot-adjust-empty">
-                No allowed employees.
-              </div>
-            </section>
-
-            <section class="ot-adjust-panel is-removed">
-              <div class="ot-adjust-panel-header">
-                <div>
-                  <div class="ot-panel-title">
-                    <i class="pi pi-ban" />
-                    <span>Not allowed / removed</span>
-                  </div>
-
-                  <p>These employees will be removed from approved OT staff.</p>
-                </div>
-
-                <Tag
-                  :value="`${removedDecisionEmployees.length}`"
-                  severity="warning"
-                  class="ot-status-tag ot-status-pending"
-                />
-              </div>
-
-              <div
-                v-if="removedDecisionEmployees.length"
-                class="ot-adjust-card-grid"
-              >
-                <button
-                  v-for="employee in removedDecisionEmployees"
-                  :key="employeeIdOf(employee)"
-                  type="button"
-                  class="ot-adjust-card is-removed"
-                  :disabled="decisionDialog.loading"
-                  @click="moveEmployeeToAllowed(employee)"
-                >
-                  <span class="ot-adjust-card-icon">
-                    <i class="pi pi-times" />
-                  </span>
-
-                  <span class="ot-adjust-card-main">
-                    <strong>{{ employeeNameOf(employee) }}</strong>
-                    <em>{{ employeeCodeOf(employee) }}</em>
-                  </span>
-
-                  <span class="ot-adjust-card-meta">
-                    {{ employeePositionOf(employee) }}
-                  </span>
-
-                  <span class="ot-adjust-card-meta">
-                    {{ employeeDepartmentOf(employee) }}
-                  </span>
-
-                  <span
-                    v-if="employeeLineOf(employee)"
-                    class="ot-adjust-card-meta"
-                  >
-                    {{ employeeLineOf(employee) }}
-                  </span>
-
-                  <span class="ot-adjust-card-action">
-                    Click to allow
-                  </span>
-                </button>
-              </div>
-
-              <div v-else class="ot-adjust-empty">
-                No removed employees.
-              </div>
-            </section>
+          <div class="ot-confirm-info-item">
+            <span>OT Time</span>
+            <strong>{{ formatTimeRange(decisionDialog.row) }}</strong>
           </div>
-        </template>
+
+          <div class="ot-confirm-info-item">
+            <span>Line</span>
+            <strong>{{ lineSummaryOfRow(decisionDialog.row) }}</strong>
+          </div>
+        </div>
 
         <div class="ot-remark-box">
           <label class="ot-remark-label">
@@ -1717,7 +1430,7 @@ onBeforeUnmount(() => {
             class="w-full"
             :placeholder="
               decisionDialog.action === 'APPROVE'
-                ? 'Optional remark. If you changed the staff list, explain why.'
+                ? 'Optional approval remark'
                 : 'Please enter rejection reason'
             "
           />
@@ -1733,7 +1446,7 @@ onBeforeUnmount(() => {
           />
 
           <Button
-            :label="decisionDialog.action === 'APPROVE' ? 'Submit Approval' : 'Reject'"
+            :label="decisionDialog.action === 'APPROVE' ? 'Yes, Approve' : 'Reject'"
             :icon="decisionDialog.action === 'APPROVE' ? 'pi pi-check' : 'pi pi-times'"
             :severity="decisionDialog.action === 'APPROVE' ? undefined : 'danger'"
             :loading="decisionDialog.loading"
@@ -1781,27 +1494,8 @@ onBeforeUnmount(() => {
 
       <div class="ot-bulk-body">
         <div class="ot-bulk-warning">
-          This will approve all current employees inside each selected request.
-          Use the single request approval button if you need to remove employees first.
-        </div>
-
-        <div class="ot-bulk-list">
-          <div
-            v-for="row in bulkDialog.rows"
-            :key="rowIdOf(row)"
-            class="ot-bulk-item"
-          >
-            <div class="min-w-0">
-              <strong>{{ row.requestNo || '-' }}</strong>
-              <span>{{ formatRequester(row).name }} · {{ formatDateDMY(row.otDate) }}</span>
-            </div>
-
-            <Tag
-              :value="`${getEmployeeCount(row)} staff`"
-              severity="info"
-              class="ot-status-tag ot-count-approved"
-            />
-          </div>
+          Are you sure you want to approve the selected OT requests?
+          This will approve all employees inside each selected request.
         </div>
 
         <div class="ot-remark-box">
@@ -2505,6 +2199,82 @@ onBeforeUnmount(() => {
   color: var(--ot-text-muted);
 }
 
+
+.ot-confirm-box {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.75rem;
+  border: 1px solid color-mix(in srgb, #22c55e 36%, var(--ot-border));
+  border-radius: 1rem;
+  background:
+    linear-gradient(135deg, rgba(34, 197, 94, 0.1), transparent),
+    var(--ot-surface);
+  padding: 0.85rem;
+}
+
+.ot-confirm-icon {
+  display: inline-flex;
+  width: 2.25rem;
+  height: 2.25rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(34, 197, 94, 0.14);
+  color: #16a34a;
+  font-size: 1rem;
+}
+
+.ot-confirm-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--ot-text);
+}
+
+.ot-confirm-help {
+  margin-top: 0.12rem;
+  font-size: 0.76rem;
+  font-weight: 500;
+  color: var(--ot-text-muted);
+}
+
+.ot-confirm-info-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.ot-confirm-info-item {
+  min-width: 0;
+  border: 1px solid var(--ot-border);
+  border-radius: 0.85rem;
+  background: var(--ot-surface);
+  padding: 0.7rem 0.75rem;
+}
+
+.ot-confirm-info-item span {
+  display: block;
+  margin-bottom: 0.2rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--ot-text-muted);
+}
+
+.ot-confirm-info-item strong {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ot-text);
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+:global(.dark) .ot-confirm-icon {
+  background: rgba(34, 197, 94, 0.2);
+  color: #86efac;
+}
+
 .ot-remark-box {
   border: 1px solid var(--ot-border);
   border-radius: 1rem;
@@ -2841,15 +2611,8 @@ onBeforeUnmount(() => {
 
 @media (max-width: 520px) {
   .ot-summary-grid,
-  .ot-adjust-card-grid,
-  .ot-mobile-info-grid {
+  .ot-confirm-info-grid {
     grid-template-columns: 1fr;
-  }
-
-  .ot-expanded-box {
-    width: calc(100vw - 1rem);
-    max-width: calc(100vw - 1rem);
-    padding: 0.55rem;
   }
 }
 </style>
