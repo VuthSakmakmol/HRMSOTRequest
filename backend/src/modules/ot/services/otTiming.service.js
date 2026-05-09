@@ -174,10 +174,54 @@ function calculateTimeWindowMinutes(startTime, endTime, breakMinutes = 0) {
   return {
     rawMinutes,
     breakMinutes: safeBreakMinutes,
-    requestedMinutes: totalMinutes,
+
+    // Requested = OT option/request window duration
+    requestedMinutes: rawMinutes,
+
+    // Total paid = requested - break
+    totalRequestPaidMinutes: totalMinutes,
     totalMinutes,
     totalHours: Number((totalMinutes / 60).toFixed(2)),
   }
+}
+
+function buildTimeWindow(startTime, endTime) {
+  const start = toMinutes(startTime)
+  let end = toMinutes(endTime)
+
+  if (end <= start) {
+    end += 1440
+  }
+
+  return { start, end }
+}
+
+function overlapMinutes(a, b) {
+  return Math.max(0, Math.min(a.end, b.end) - Math.max(a.start, b.start))
+}
+
+function calculateShiftBreakOverlapMinutes(startTime, endTime, shift = {}) {
+  const breakStartTime = s(shift.breakStartTime)
+  const breakEndTime = s(shift.breakEndTime)
+
+  if (!breakStartTime || !breakEndTime) return 0
+
+  const otWindow = buildTimeWindow(startTime, endTime)
+  const breakWindow = buildTimeWindow(breakStartTime, breakEndTime)
+
+  const candidates = [
+    breakWindow,
+    {
+      start: breakWindow.start + 1440,
+      end: breakWindow.end + 1440,
+    },
+    {
+      start: breakWindow.start - 1440,
+      end: breakWindow.end - 1440,
+    },
+  ]
+
+  return Math.max(...candidates.map((candidate) => overlapMinutes(otWindow, candidate)))
 }
 
 function normalizeIdArray(values = []) {
@@ -386,9 +430,9 @@ function buildPolicySnapshot(calculationPolicy) {
 }
 
 function buildOptionBasedTiming({ sharedShift, shiftOtOption, calculationPolicy }) {
-  const requestedMinutes = Number(shiftOtOption?.requestedMinutes || 0)
+  const optionRequestedMinutes = Number(shiftOtOption?.requestedMinutes || 0)
 
-  if (!Number.isInteger(requestedMinutes) || requestedMinutes <= 0) {
+  if (!Number.isInteger(optionRequestedMinutes) || optionRequestedMinutes <= 0) {
     throw createHttpError(
       'Selected OT option requestedMinutes must be greater than zero',
       400,
@@ -426,10 +470,20 @@ function buildOptionBasedTiming({ sharedShift, shiftOtOption, calculationPolicy 
     }
 
     requestStartTime = addMinutesToHHmm(shiftEndTime, startAfterShiftEndMinutes)
-    requestEndTime = addMinutesToHHmm(requestStartTime, requestedMinutes)
+    requestEndTime = addMinutesToHHmm(requestStartTime, optionRequestedMinutes)
   }
 
-  const calculated = calculateTimeWindowMinutes(requestStartTime, requestEndTime, 0)
+  const breakMinutes = calculateShiftBreakOverlapMinutes(
+    requestStartTime,
+    requestEndTime,
+    sharedShift,
+  )
+
+  const calculated = calculateTimeWindowMinutes(
+    requestStartTime,
+    requestEndTime,
+    breakMinutes,
+  )
 
   return {
     otTimingSource: 'SHIFT_OPTION',
@@ -437,7 +491,7 @@ function buildOptionBasedTiming({ sharedShift, shiftOtOption, calculationPolicy 
     startTime: requestStartTime,
     endTime: requestEndTime,
     breakMinutes: calculated.breakMinutes,
-    totalMinutes: calculated.totalMinutes,
+    totalMinutes: calculated.totalRequestPaidMinutes,
     totalHours: calculated.totalHours,
 
     shiftId: sharedShift?._id || null,
@@ -459,6 +513,7 @@ function buildOptionBasedTiming({ sharedShift, shiftOtOption, calculationPolicy 
       timingMode === 'FIXED_TIME' ? requestEndTime : '',
 
     requestedMinutes: calculated.requestedMinutes,
+    totalRequestPaidMinutes: calculated.totalRequestPaidMinutes,
     requestStartTime,
     requestEndTime,
 
@@ -519,6 +574,7 @@ function buildCustomFixedTiming({
     shiftOtOptionFixedEndTime: customEndTime,
 
     requestedMinutes: calculated.requestedMinutes,
+    totalRequestPaidMinutes: calculated.totalRequestPaidMinutes,
     requestStartTime: customStartTime,
     requestEndTime: customEndTime,
 
@@ -651,6 +707,18 @@ async function getShiftOTOptionsByShift(shiftId, query = {}) {
         requestEndTime = addMinutesToHHmm(requestStartTime, requestedMinutes)
       }
 
+      const breakMinutes = calculateShiftBreakOverlapMinutes(
+        requestStartTime,
+        requestEndTime,
+        shift,
+      )
+
+      const calculated = calculateTimeWindowMinutes(
+        requestStartTime,
+        requestEndTime,
+        breakMinutes,
+      )
+
       const policy = item.calculationPolicyId || null
 
       return {
@@ -673,8 +741,13 @@ async function getShiftOTOptionsByShift(shiftId, query = {}) {
         requestStartTime,
         requestEndTime,
 
-        requestedMinutes,
-        requestedHours: Number((requestedMinutes / 60).toFixed(2)),
+        requestedMinutes: calculated.requestedMinutes,
+        requestedHours: Number((calculated.requestedMinutes / 60).toFixed(2)),
+
+        breakMinutes: calculated.breakMinutes,
+
+        totalRequestPaidMinutes: calculated.totalRequestPaidMinutes,
+        totalRequestPaidHours: calculated.totalHours,
 
         sequence: Number(item.sequence || 0),
         isActive: item.isActive !== false,

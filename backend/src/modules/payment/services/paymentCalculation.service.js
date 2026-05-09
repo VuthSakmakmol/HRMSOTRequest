@@ -165,6 +165,67 @@ function getApprovedEmployees(request = {}) {
   return Array.isArray(request.approvedEmployees) ? request.approvedEmployees : []
 }
 
+function getApprovedPaidCapMinutes(approved = {}, request = {}) {
+  const directPaid = toNumber(
+    approved.totalRequestPaidMinutes ?? approved.totalPaidMinutes,
+    0,
+  )
+
+  if (directPaid > 0) return directPaid
+
+  const employeeTotal = toNumber(approved.totalMinutes, 0)
+  if (employeeTotal > 0) return employeeTotal
+
+  const requestPaid = toNumber(
+    request.totalRequestPaidMinutes ?? request.totalPaidMinutes,
+    0,
+  )
+
+  if (requestPaid > 0) return requestPaid
+
+  const requestTotal = toNumber(request.totalMinutes, 0)
+  if (requestTotal > 0) return requestTotal
+
+  const employeeRequested = toNumber(approved.requestedMinutes, 0)
+  const requestRequested = toNumber(request.requestedMinutes, 0)
+  const requestedMinutes = employeeRequested || requestRequested
+
+  const employeeBreak = toNumber(approved.breakMinutes, 0)
+  const requestBreak = toNumber(request.breakMinutes, 0)
+  const breakMinutes = employeeBreak || requestBreak
+
+  if (requestedMinutes > 0 && breakMinutes > 0 && breakMinutes < requestedMinutes) {
+    return requestedMinutes - breakMinutes
+  }
+
+  return requestedMinutes
+}
+
+function getApprovedBreakMinutes(approved = {}, request = {}) {
+  const employeeBreak = toNumber(approved.breakMinutes, 0)
+  if (employeeBreak > 0) return employeeBreak
+
+  return toNumber(request.breakMinutes, 0)
+}
+
+function getApprovedRequestedMinutes(approved = {}, request = {}) {
+  const employeeRequested = toNumber(approved.requestedMinutes, 0)
+  if (employeeRequested > 0) return employeeRequested
+
+  return toNumber(request.requestedMinutes || request.totalMinutes, 0)
+}
+
+function getCappedPayableMinutes(verificationRow = {}, approved = {}, request = {}) {
+  const verificationPayableMinutes = toNumber(verificationRow.roundedOtMinutes, 0)
+  const approvedPaidCapMinutes = getApprovedPaidCapMinutes(approved, request)
+
+  if (approvedPaidCapMinutes > 0) {
+    return Math.min(verificationPayableMinutes, approvedPaidCapMinutes)
+  }
+
+  return verificationPayableMinutes
+}
+
 function getFormulaMultiplier(formula = {}, dayType = '') {
   const normalizedDayType = upper(dayType)
 
@@ -549,7 +610,16 @@ async function calculatePaymentExport({
         continue
       }
 
-      const payableMinutes = toNumber(verificationRow.roundedOtMinutes, 0)
+      const approvedRequestedMinutes = getApprovedRequestedMinutes(approved, request)
+      const approvedBreakMinutes = getApprovedBreakMinutes(approved, request)
+      const approvedPaidCapMinutes = getApprovedPaidCapMinutes(approved, request)
+
+      const verificationRoundedMinutes = toNumber(verificationRow.roundedOtMinutes, 0)
+      const payableMinutes = getCappedPayableMinutes(
+        verificationRow,
+        approved,
+        request,
+      )
       const payableHours = payableMinutes / 60
 
       const salaryInfo = salaryMap.get(masterEmployeeNo)
@@ -566,6 +636,16 @@ async function calculatePaymentExport({
           reason: 'Salary not found in uploaded Excel by Employee ID',
         })
         continue
+      }
+
+      if (approvedPaidCapMinutes > 0 && verificationRoundedMinutes > approvedPaidCapMinutes) {
+        addWarning(warningRows, {
+          requestNo,
+          otDate,
+          employeeNo: masterEmployeeNo,
+          employeeName,
+          reason: `Payment capped by total request paid minutes: verification ${verificationRoundedMinutes} min, request paid ${approvedPaidCapMinutes} min`,
+        })
       }
 
       if (!sameNameLoose(salaryInfo.name, employeeName)) {
@@ -620,10 +700,24 @@ async function calculatePaymentExport({
         hoursPerDay,
         hourlyRate: round(hourlyRate, 6),
 
-        requestedMinutes: toNumber(verificationRow.requestedMinutes, 0),
+        shiftOtOptionId: request.shiftOtOptionId ? String(request.shiftOtOptionId) : null,
+        shiftOtOptionLabel: s(request.shiftOtOptionLabel),
+        requestStartTime: s(request.requestStartTime || request.startTime),
+        requestEndTime: s(request.requestEndTime || request.endTime),
+
+        requestedMinutes: approvedRequestedMinutes,
+        breakMinutes: approvedBreakMinutes,
+        totalRequestPaidMinutes: approvedPaidCapMinutes,
+        requestPaidMinutes: approvedPaidCapMinutes,
+
+        verificationRequestedMinutes: toNumber(verificationRow.requestedMinutes, 0),
         actualOtMinutes: toNumber(verificationRow.actualOtMinutes, 0),
         eligibleOtMinutes: toNumber(verificationRow.eligibleOtMinutes, 0),
+        verificationRoundedOtMinutes: verificationRoundedMinutes,
         roundedOtMinutes: payableMinutes,
+        payableMinutes,
+        cappedByRequestPaidMinutes:
+          approvedPaidCapMinutes > 0 && verificationRoundedMinutes > approvedPaidCapMinutes,
 
         payableHours: round(payableHours, 4),
         multiplier,

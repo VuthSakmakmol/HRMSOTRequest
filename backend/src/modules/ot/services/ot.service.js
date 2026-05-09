@@ -855,6 +855,8 @@ async function resolveEmployeesSnapshotsWithContext(employeeIds = []) {
             name: s(shift.name),
             type: s(shift.type),
             startTime: s(shift.startTime),
+            breakStartTime: s(shift.breakStartTime),
+            breakEndTime: s(shift.breakEndTime),
             endTime: s(shift.endTime),
             crossMidnight: shift.crossMidnight === true,
             isActive: shift.isActive !== false,
@@ -1195,6 +1197,29 @@ async function resolveApprovalFlow(requesterEmployeeId) {
   }
 }
 
+
+
+function buildOtOptionOutput(doc = {}) {
+  const requestedMinutes = Number(doc.requestedMinutes || 0)
+  const breakMinutes = Number(doc.breakMinutes || 0)
+  const totalRequestPaidMinutes = Number(doc.totalMinutes || 0)
+
+  return {
+    id: doc.shiftOtOptionId ? String(doc.shiftOtOptionId) : null,
+    label: s(doc.shiftOtOptionLabel),
+    timingMode: s(doc.shiftOtOptionTimingMode),
+    timingSource: upper(doc.otTimingSource || 'SHIFT_OPTION'),
+    requestedMinutes,
+    breakMinutes,
+    totalRequestPaidMinutes,
+    totalRequestPaidHours: Number((totalRequestPaidMinutes / 60).toFixed(2)),
+    requestStartTime: s(doc.requestStartTime || doc.startTime),
+    requestEndTime: s(doc.requestEndTime || doc.endTime),
+    fixedStartTime: s(doc.shiftOtOptionFixedStartTime),
+    fixedEndTime: s(doc.shiftOtOptionFixedEndTime),
+    startAfterShiftEndMinutes: Number(doc.shiftOtOptionStartAfterShiftEndMinutes || 0),
+  }
+}
 
 function mapEmployeeOutput(item) {
   const lineCode = s(item?.lineCode)
@@ -1690,6 +1715,8 @@ function mapListItem(doc, authUser) {
     requestStartTime: s(doc.requestStartTime || doc.startTime),
     requestEndTime: s(doc.requestEndTime || doc.endTime),
 
+    otOption: buildOtOptionOutput(doc),
+
     otCalculationPolicyId: doc.otCalculationPolicyId
       ? String(doc.otCalculationPolicyId)
       : null,
@@ -1810,6 +1837,8 @@ function mapDetail(doc, authUser) {
     requestedMinutes: Number(doc.requestedMinutes || 0),
     requestStartTime: s(doc.requestStartTime || doc.startTime),
     requestEndTime: s(doc.requestEndTime || doc.endTime),
+
+    otOption: buildOtOptionOutput(doc),
 
     otCalculationPolicyId: doc.otCalculationPolicyId
       ? String(doc.otCalculationPolicyId)

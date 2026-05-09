@@ -271,7 +271,9 @@ function mapVerificationRequestSearchItem(doc) {
     requestEndTime: s(doc.requestEndTime || doc.endTime),
 
     requestedMinutes: Number(doc.requestedMinutes || doc.totalMinutes || 0),
+    breakMinutes: Number(doc.breakMinutes || 0),
     totalMinutes: Number(doc.totalMinutes || 0),
+    totalRequestPaidMinutes: Number(doc.totalMinutes || 0),
     totalHours: Number(doc.totalHours || 0),
 
     otCalculationPolicyId: doc.otCalculationPolicyId ? String(doc.otCalculationPolicyId) : null,
@@ -1132,6 +1134,17 @@ function buildVerificationOTRequestPayload(otRequest, approvedEmployees = [], op
   )
 
   const requestedMinutes = Number(otRequest?.requestedMinutes || otRequest?.totalMinutes || 0)
+  const breakMinutes = Number(otRequest?.breakMinutes || 0)
+
+  const totalRequestPaidMinutes = Number(
+    otRequest?.totalRequestPaidMinutes ||
+      otRequest?.totalPaidMinutes ||
+      otRequest?.totalMinutes ||
+      (requestedMinutes > 0 && breakMinutes > 0 && breakMinutes < requestedMinutes
+        ? requestedMinutes - breakMinutes
+        : requestedMinutes) ||
+      0,
+  )
 
   const timingMode = upper(
     otRequest?.shiftOtOptionTimingMode ||
@@ -1210,8 +1223,14 @@ function buildVerificationOTRequestPayload(otRequest, approvedEmployees = [], op
     shiftOtOptionFixedEndTime: fixedEndTime,
 
     requestedMinutes,
-    totalMinutes: Number(otRequest.totalMinutes || 0),
-    totalHours: Number(otRequest.totalHours || 0),
+    breakMinutes,
+    totalMinutes: totalRequestPaidMinutes,
+    totalRequestPaidMinutes,
+    requestPaidMinutes: totalRequestPaidMinutes,
+    totalHours: Number(
+      otRequest.totalHours ||
+        (totalRequestPaidMinutes > 0 ? totalRequestPaidMinutes / 60 : 0),
+    ),
 
     requestStartTime,
     requestEndTime,
@@ -1281,6 +1300,8 @@ async function verifyOTRequest(otRequestId) {
     requestStartTime: otRequest?.requestStartTime,
     requestEndTime: otRequest?.requestEndTime,
     requestedMinutes: otRequest?.requestedMinutes,
+    breakMinutes: otRequest?.breakMinutes,
+    totalMinutes: otRequest?.totalMinutes,
 
     otCalculationPolicyId: String(otRequest?.otCalculationPolicyId || ''),
     policySnapshot: otRequest?.otCalculationPolicySnapshot,
@@ -1458,6 +1479,8 @@ async function verifyOTRequest(otRequestId) {
     requestStartTime: verificationOtRequest?.requestStartTime,
     requestEndTime: verificationOtRequest?.requestEndTime,
     requestedMinutes: verificationOtRequest?.requestedMinutes,
+    breakMinutes: verificationOtRequest?.breakMinutes,
+    totalRequestPaidMinutes: verificationOtRequest?.totalRequestPaidMinutes,
 
     policySnapshot: verificationOtRequest?.otCalculationPolicySnapshot,
   })

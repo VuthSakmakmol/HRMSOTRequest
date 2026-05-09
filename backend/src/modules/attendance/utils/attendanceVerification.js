@@ -37,6 +37,27 @@ function safeNonNegativeInt(value, fallback = 0) {
   return num < 0 ? fallback : num
 }
 
+function resolvePaidRequestMinutes(otRequest = {}, requestedMinutes = 0) {
+  const directPaidMinutes = safeNonNegativeInt(
+    otRequest?.totalRequestPaidMinutes ?? otRequest?.totalPaidMinutes,
+    0,
+  )
+
+  if (directPaidMinutes > 0) return directPaidMinutes
+
+  const totalMinutes = safeNonNegativeInt(otRequest?.totalMinutes, 0)
+  if (totalMinutes > 0) return totalMinutes
+
+  const breakMinutes = safeNonNegativeInt(otRequest?.breakMinutes, 0)
+  const requestMinutes = safeNonNegativeInt(requestedMinutes, 0)
+
+  if (requestMinutes > 0 && breakMinutes > 0 && breakMinutes < requestMinutes) {
+    return requestMinutes - breakMinutes
+  }
+
+  return requestMinutes
+}
+
 function roundMinutesByPolicy(minutes, unitMinutes, roundMethod) {
   const rawMinutes = safeNonNegativeInt(minutes, 0)
   const unit = safeNonNegativeInt(unitMinutes, 0)
@@ -504,6 +525,12 @@ function normalizeOtRequestContext(otRequest = {}) {
     0,
   )
 
+  const breakMinutes = safeNonNegativeInt(otRequest?.breakMinutes, 0)
+  const totalRequestPaidMinutes = resolvePaidRequestMinutes(
+    otRequest,
+    requestedMinutes,
+  )
+
   const shiftStartMinutesRaw = toMinutes(shiftStartTime)
   const shiftEndMinutesRaw = toMinutes(shiftEndTime)
 
@@ -594,6 +621,10 @@ function normalizeOtRequestContext(otRequest = {}) {
     shiftOtOptionFixedEndTime: s(otRequest?.shiftOtOptionFixedEndTime),
 
     requestedMinutes,
+    breakMinutes,
+    totalRequestPaidMinutes,
+    approvedPaidMinutes: totalRequestPaidMinutes,
+    payableCapMinutes: totalRequestPaidMinutes,
     requestStartTime:
       requestStartTime || (requestStartMinutes != null ? minutesToHHmm(requestStartMinutes) : ''),
     requestEndTime:
@@ -601,8 +632,11 @@ function normalizeOtRequestContext(otRequest = {}) {
     requestStartMinutes,
     requestEndMinutes,
 
-    totalMinutes: safeNonNegativeInt(otRequest?.totalMinutes, requestedMinutes),
-    totalHours: safeNumber(otRequest?.totalHours, 0),
+    totalMinutes: totalRequestPaidMinutes,
+    totalHours: safeNumber(
+      otRequest?.totalHours,
+      totalRequestPaidMinutes > 0 ? totalRequestPaidMinutes / 60 : 0,
+    ),
 
     otCalculationPolicyId: otRequest?.otCalculationPolicyId
       ? String(otRequest.otCalculationPolicyId)
@@ -651,15 +685,21 @@ function buildMismatchResponse(base, reason, overrides = {}) {
 
 function buildApprovedOtWithoutExactOutResponse(base, normalizedOtRequest, attendanceStatus) {
   const requestedMinutes = Number(normalizedOtRequest.requestedMinutes || 0)
+  const paidRequestMinutes = Number(
+    normalizedOtRequest.totalRequestPaidMinutes ||
+      normalizedOtRequest.totalMinutes ||
+      requestedMinutes ||
+      0,
+  )
   const timingMode = upper(normalizedOtRequest.shiftOtOptionTimingMode)
 
   const isFixedTime = timingMode === 'FIXED_TIME'
 
   return {
     ...base,
-    actualOtMinutes: requestedMinutes,
-    eligibleOtMinutes: requestedMinutes,
-    roundedOtMinutes: requestedMinutes,
+    actualOtMinutes: paidRequestMinutes,
+    eligibleOtMinutes: paidRequestMinutes,
+    roundedOtMinutes: paidRequestMinutes,
     rawOtDecision: isFixedTime
       ? 'FIXED_OT_APPROVED_WITHOUT_EXACT_CLOCK_OUT'
       : 'APPROVED_WITHOUT_EXACT_CLOCK_OUT',
@@ -679,10 +719,22 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
   const attendanceStatus = upper(attendanceRecord?.status)
   const policy = normalizedOtRequest.otCalculationPolicySnapshot || {}
 
+  const paidRequestMinutes = Number(
+    normalizedOtRequest.totalRequestPaidMinutes ||
+      normalizedOtRequest.totalMinutes ||
+      normalizedOtRequest.requestedMinutes ||
+      0,
+  )
+
   const base = {
     requestedMinutes: normalizedOtRequest.requestedMinutes,
     requestedOtMinutes: normalizedOtRequest.requestedMinutes,
-    approvedMinutes: normalizedOtRequest.requestedMinutes,
+    breakMinutes: normalizedOtRequest.breakMinutes,
+    totalRequestPaidMinutes: paidRequestMinutes,
+    requestPaidMinutes: paidRequestMinutes,
+    approvedMinutes: paidRequestMinutes,
+    approvedPaidMinutes: paidRequestMinutes,
+    payableCapMinutes: paidRequestMinutes,
 
     expectedOtStartTime: s(normalizedOtRequest.requestStartTime),
     expectedOtEndTime: s(normalizedOtRequest.requestEndTime),
@@ -716,12 +768,14 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
     allowNoExactOut: policy.allowApprovedOtWithoutExactClockOut,
     attendanceStatus,
     requestedMinutes: normalizedOtRequest.requestedMinutes,
+    breakMinutes: normalizedOtRequest.breakMinutes,
+    totalRequestPaidMinutes: paidRequestMinutes,
     expectedStart: normalizedOtRequest.requestStartTime,
     expectedEnd: normalizedOtRequest.requestEndTime,
   })
 
-  if (normalizedOtRequest.requestedMinutes <= 0) {
-    return buildMismatchResponse(base, 'No OT minutes found on approved OT request', {
+  if (paidRequestMinutes <= 0) {
+    return buildMismatchResponse(base, 'No paid OT minutes found on approved OT request', {
       rawOtDecision: 'NO_OT_REQUEST',
     })
   }
@@ -863,11 +917,11 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
       policy.roundMethod,
     )
 
-    if (policy.capByRequestedMinutes && normalizedOtRequest.requestedMinutes > 0) {
-      roundedOtMinutes = Math.min(roundedOtMinutes, normalizedOtRequest.requestedMinutes)
+    if (policy.capByRequestedMinutes && paidRequestMinutes > 0) {
+      roundedOtMinutes = Math.min(roundedOtMinutes, paidRequestMinutes)
     }
 
-    if (roundedOtMinutes === normalizedOtRequest.requestedMinutes) {
+    if (roundedOtMinutes === paidRequestMinutes) {
       return {
         ...base,
         actualOtMinutes: actualOtMinutesWithinRequest,
@@ -879,7 +933,7 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
       }
     }
 
-    if (roundedOtMinutes < normalizedOtRequest.requestedMinutes) {
+    if (roundedOtMinutes < paidRequestMinutes) {
       return buildMismatchResponse(base, 'Sunday/Holiday actual OT is shorter than approved OT request', {
         rawOtDecision: 'SHORT',
         actualOtMinutes: actualOtMinutesWithinRequest,
@@ -969,7 +1023,7 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
     roundedOtMinutes = Math.min(roundedOtMinutes, normalizedOtRequest.requestedMinutes)
   }
 
-  if (roundedOtMinutes === normalizedOtRequest.requestedMinutes) {
+  if (roundedOtMinutes === paidRequestMinutes) {
     return {
       ...base,
       actualOtMinutes: actualOtMinutesWithinRequest,
@@ -981,7 +1035,7 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
     }
   }
 
-  if (roundedOtMinutes < normalizedOtRequest.requestedMinutes) {
+  if (roundedOtMinutes < paidRequestMinutes) {
     return buildMismatchResponse(base, 'Actual eligible OT is shorter than approved OT request', {
       rawOtDecision: 'SHORT',
       actualOtMinutes: actualOtMinutesWithinRequest,
@@ -1045,7 +1099,12 @@ function buildVerificationItem(requested, attendanceRecord, otRequest) {
 
     requestedMinutes: metrics.requestedMinutes,
     requestedOtMinutes: metrics.requestedOtMinutes,
+    breakMinutes: metrics.breakMinutes,
+    totalRequestPaidMinutes: metrics.totalRequestPaidMinutes,
+    requestPaidMinutes: metrics.requestPaidMinutes,
     approvedMinutes: metrics.approvedMinutes,
+    approvedPaidMinutes: metrics.approvedPaidMinutes,
+    payableCapMinutes: metrics.payableCapMinutes,
 
     expectedOtStartTime: metrics.expectedOtStartTime,
     expectedOtEndTime: metrics.expectedOtEndTime,
@@ -1169,6 +1228,9 @@ function verifyAttendanceAgainstOT({
 
   return {
     requestedMinutes: normalizedOtRequest.requestedMinutes,
+    breakMinutes: normalizedOtRequest.breakMinutes,
+    totalRequestPaidMinutes: normalizedOtRequest.totalRequestPaidMinutes,
+    requestPaidMinutes: normalizedOtRequest.totalRequestPaidMinutes,
     expectedOtStartTime: normalizedOtRequest.requestStartTime,
     expectedOtEndTime: normalizedOtRequest.requestEndTime,
     shiftOtOptionTimingMode: normalizedOtRequest.shiftOtOptionTimingMode,

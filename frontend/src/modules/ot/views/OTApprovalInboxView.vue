@@ -3,7 +3,6 @@
 // frontend/src/modules/ot/views/OTApprovalInboxView.vue
 
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
@@ -25,7 +24,6 @@ import {
   getOTApprovalInbox,
 } from '@/modules/ot/ot.api'
 
-const router = useRouter()
 const toast = useToast()
 
 const PAGE_SIZE = 10
@@ -87,8 +85,6 @@ const summaryText = computed(() => `${loadedCount.value} of ${totalInbox.value}`
 
 const hasAnyData = computed(() => rows.value.some(Boolean))
 const useVirtualScroll = computed(() => totalInbox.value > PAGE_SIZE)
-
-const decisionEmployees = computed(() => getTargetEmployees(decisionDialog.row))
 
 const actionableLoadedRows = computed(() =>
   rows.value.filter((row) => canSelectForBulk(row)),
@@ -1287,6 +1283,39 @@ onBeforeUnmount(() => {
           </template>
         </Column>
 
+        <Column header="OT Option">
+          <template #body="{ data }">
+            <div v-if="data" class="ot-option-cell">
+              <div class="font-medium text-[color:var(--ot-text)]">
+                {{ formatOtOptionLabel(data) }}
+              </div>
+
+              <div class="text-xs text-[color:var(--ot-text-muted)]">
+                Request: {{ formatMinutesLabel(data.requestedMinutes) }}
+              </div>
+            </div>
+          </template>
+        </Column>
+
+        <Column header="Break Time">
+          <template #body="{ data }">
+            <span v-if="data" class="font-medium">
+              {{ formatMinutesLabel(data.breakMinutes) }}
+            </span>
+          </template>
+        </Column>
+
+        <Column header="Total Request Paid">
+          <template #body="{ data }">
+            <Tag
+              v-if="data"
+              :value="formatMinutesLabel(data.totalMinutes)"
+              severity="success"
+              class="ot-status-tag ot-paid-tag"
+            />
+          </template>
+        </Column>
+
         <Column header="Timing">
           <template #body="{ data }">
             <Tag
@@ -1355,7 +1384,7 @@ onBeforeUnmount(() => {
                   </div>
 
                   <div class="ot-expanded-subtitle">
-                    Default request time: {{ formatTimeRange(data) }}
+                    Time: {{ formatTimeRange(data) }} · Option: {{ formatOtOptionLabel(data) }} · Break: {{ formatMinutesLabel(data.breakMinutes) }} · Paid: {{ formatMinutesLabel(data.totalMinutes) }}
                   </div>
                 </div>
 
@@ -1374,7 +1403,7 @@ onBeforeUnmount(() => {
                   <div>Position</div>
                   <div>OT Time</div>
                   <div>Break</div>
-                  <div>Total</div>
+                  <div>Total Paid</div>
                   <div>Mode</div>
                   <div>Line</div>
                 </div>
@@ -1508,6 +1537,21 @@ onBeforeUnmount(() => {
           <div class="ot-confirm-info-item">
             <span>OT Time</span>
             <strong>{{ formatTimeRange(decisionDialog.row) }}</strong>
+          </div>
+
+          <div class="ot-confirm-info-item">
+            <span>OT Option</span>
+            <strong>{{ formatOtOptionLabel(decisionDialog.row) }}</strong>
+          </div>
+
+          <div class="ot-confirm-info-item">
+            <span>Break Time</span>
+            <strong>{{ formatMinutesLabel(decisionDialog.row.breakMinutes) }}</strong>
+          </div>
+
+          <div class="ot-confirm-info-item">
+            <span>Total Request Paid</span>
+            <strong>{{ formatMinutesLabel(decisionDialog.row.totalMinutes) }}</strong>
           </div>
 
           <div class="ot-confirm-info-item">
@@ -1938,7 +1982,8 @@ onBeforeUnmount(() => {
   height: 1rem !important;
 }
 
-.requester-cell {
+.requester-cell,
+.ot-option-cell {
   min-width: max-content;
 }
 
@@ -2387,7 +2432,7 @@ onBeforeUnmount(() => {
 
 .ot-confirm-info-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 0.55rem;
 }
 
@@ -2551,6 +2596,13 @@ onBeforeUnmount(() => {
   border-color: #ef4444 !important;
 }
 
+/* Paid total color */
+:deep(.p-tag.ot-paid-tag) {
+  background: #dcfce7 !important;
+  color: #166534 !important;
+  border-color: #22c55e !important;
+}
+
 /* Count colors */
 :deep(.p-tag.ot-count-requested) {
   background: #f1f5f9 !important;
@@ -2565,6 +2617,12 @@ onBeforeUnmount(() => {
 }
 
 /* Dark mode */
+:global(.dark) :deep(.p-tag.ot-paid-tag) {
+  background: rgba(34, 197, 94, 0.18) !important;
+  color: #86efac !important;
+  border-color: rgba(34, 197, 94, 0.45) !important;
+}
+
 :global(.dark) :deep(.p-tag.ot-status-pending),
 :global(.dark) :deep(.p-tag.ot-status-pending-requester-confirmation),
 :global(.dark) :deep(.p-tag.ot-approval-waiting),
@@ -2637,7 +2695,8 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 1200px) {
-  .ot-summary-grid {
+  .ot-summary-grid,
+  .ot-confirm-info-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }

@@ -1016,6 +1016,8 @@ onBeforeUnmount(() => {
 
             <Column field="otDate" header="Date" />
             <Column field="requestNo" header="Request No" />
+            <Column field="shiftOtOptionLabel" header="OT Option" />
+            <Column field="requestTime" header="OT Time" />
 
             <Column header="Payment Day Type">
               <template #body="{ data }">
@@ -1051,9 +1053,21 @@ onBeforeUnmount(() => {
             <Column field="employeeName" header="Name" />
             <Column field="monthlySalary" header="Salary" />
 
-            <Column header="Requested">
+            <Column header="OT Option Time">
               <template #body="{ data }">
                 {{ formatMinutesLabel(data.requestedMinutes) }}
+              </template>
+            </Column>
+
+            <Column header="Break Time">
+              <template #body="{ data }">
+                {{ formatMinutesLabel(data.breakMinutes) }}
+              </template>
+            </Column>
+
+            <Column header="Total Request Paid">
+              <template #body="{ data }">
+                {{ formatMinutesLabel(data.totalRequestPaidMinutes) }}
               </template>
             </Column>
 
@@ -1072,6 +1086,16 @@ onBeforeUnmount(() => {
             <Column header="Payable">
               <template #body="{ data }">
                 {{ formatMinutesLabel(data.roundedOtMinutes) }}
+              </template>
+            </Column>
+
+            <Column header="Backend Cap">
+              <template #body="{ data }">
+                <Tag
+                  :value="data.cappedByRequestPaidMinutes ? 'Capped by request paid' : 'Backend calculated'"
+                  :severity="data.cappedByRequestPaidMinutes ? 'warning' : 'success'"
+                  class="payment-tag"
+                />
               </template>
             </Column>
 
