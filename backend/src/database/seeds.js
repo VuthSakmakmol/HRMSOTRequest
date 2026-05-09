@@ -364,6 +364,32 @@ const PERMISSIONS = [
     module: 'OT',
     description: 'Allow updating shift OT options',
   },
+  // backend/src/modules/access/seeds/permission.seed.js
+
+  {
+    code: 'PAYMENT_FORMULA_VIEW',
+    name: 'View Payment Formula',
+    module: 'PAYMENT',
+    description: 'Can view payment formulas',
+  },
+  {
+    code: 'PAYMENT_FORMULA_CREATE',
+    name: 'Create Payment Formula',
+    module: 'PAYMENT',
+    description: 'Can create payment formulas',
+  },
+  {
+    code: 'PAYMENT_FORMULA_UPDATE',
+    name: 'Update Payment Formula',
+    module: 'PAYMENT',
+    description: 'Can update payment formulas',
+  },
+  {
+    code: 'PAYMENT_PROCESS',
+    name: 'Process Payment',
+    module: 'PAYMENT',
+    description: 'Can upload salary Excel and generate payment file',
+  },
 ]
 
 async function seedPermissions() {

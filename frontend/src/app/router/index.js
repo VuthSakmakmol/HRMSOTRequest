@@ -30,6 +30,9 @@ import OTRequestEditView from '@/modules/ot/views/OTRequestEditView.vue'
 import OTCalculationPolicyListView from '@/modules/ot/views/OTCalculationPolicyListView.vue'
 import ShiftOTOptionListView from '@/modules/ot/views/ShiftOTOptionListView.vue'
 
+import PaymentFormulaView from '@/modules/payment/views/PaymentFormulaView.vue'
+import PaymentProcessView from '@/modules/payment/views/PaymentProcessView.vue'
+
 import AttendanceImportView from '@/modules/attendance/views/AttendanceImportView.vue'
 import AttendanceRecordsView from '@/modules/attendance/views/AttendanceRecordsView.vue'
 import OTAttendanceVerificationView from '@/modules/attendance/views/OTAttendanceVerificationView.vue'
@@ -372,6 +375,31 @@ const routes = [
           requiresAuth: true,
           title: 'OT Attendance Verification',
           requiredAnyPermissions: ['ATTENDANCE_VERIFY'],
+        },
+      },
+
+      // =========================
+      // Payment
+      // =========================
+
+      {
+        path: 'payment/formulas',
+        name: 'payment-formulas',
+        component: PaymentFormulaView,
+        meta: {
+          requiresAuth: true,
+          title: 'Payment Formulas',
+          requiredAnyPermissions: ['PAYMENT_FORMULA_VIEW'],
+        },
+      },
+      {
+        path: 'payment/process',
+        name: 'payment-process',
+        component: PaymentProcessView,
+        meta: {
+          requiresAuth: true,
+          title: 'Payment Process',
+          requiredAnyPermissions: ['PAYMENT_PROCESS'],
         },
       },
 

@@ -1118,10 +1118,18 @@ function buildVerificationOTRequestPayload(otRequest, approvedEmployees = [], op
     ? otRequest.requestedEmployees
     : []
 
-  const effectiveApprovedEmployees = Array.isArray(approvedEmployees) ? approvedEmployees : []
+  const effectiveApprovedEmployees = Array.isArray(approvedEmployees)
+    ? approvedEmployees
+    : []
 
   const currentPolicy = options.currentPolicy || null
   const currentShiftOtOption = options.currentShiftOtOption || null
+
+  // ✅ Internal calendar source of truth for payment/verification
+  const storedDayType = upper(otRequest.dayType)
+  const internalCalendarDayType = upper(
+    options.internalCalendarDayType || options.dayType || storedDayType,
+  )
 
   const requestedMinutes = Number(otRequest?.requestedMinutes || otRequest?.totalMinutes || 0)
 
@@ -1169,7 +1177,18 @@ function buildVerificationOTRequestPayload(otRequest, approvedEmployees = [], op
     requesterName: s(otRequest.requesterName),
 
     otDate: s(otRequest.otDate),
-    dayType: upper(otRequest.dayType),
+
+    // ✅ Used by attendance verification and payment
+    dayType: internalCalendarDayType,
+
+    // ✅ Audit only
+    storedDayType,
+    internalCalendarDayType,
+    dayTypeMismatch:
+      Boolean(storedDayType) &&
+      Boolean(internalCalendarDayType) &&
+      storedDayType !== internalCalendarDayType,
+
     status: upper(otRequest.status),
 
     shiftId: otRequest.shiftId ? String(otRequest.shiftId) : null,
@@ -1185,7 +1204,6 @@ function buildVerificationOTRequestPayload(otRequest, approvedEmployees = [], op
       otRequest.shiftOtOptionLabel || currentShiftOtOption?.label,
     ),
 
-    // ✅ REQUIRED for Fixed OT / After Shift verification display and logic
     shiftOtOptionTimingMode: timingMode,
     shiftOtOptionStartAfterShiftEndMinutes,
     shiftOtOptionFixedStartTime: fixedStartTime,
@@ -1407,12 +1425,19 @@ async function verifyOTRequest(otRequestId) {
     attendanceRecordCount: attendanceRecords.length,
   })
 
+  const internalHolidayDates = await resolveHolidayDateStrings([s(otRequest.otDate)])
+
+  const internalCalendarDayType = getDayType(s(otRequest.otDate), {
+    holidays: internalHolidayDates,
+  })
+
   const verificationOtRequest = buildVerificationOTRequestPayload(
     otRequest,
     effectiveApprovedEmployees,
     {
       currentPolicy,
       currentShiftOtOption,
+      internalCalendarDayType,
     },
   )
 

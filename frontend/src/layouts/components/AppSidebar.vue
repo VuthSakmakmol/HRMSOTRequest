@@ -276,6 +276,27 @@ const navGroups = computed(() => {
         },
       ],
     },
+    {
+      key: 'payment',
+      label: 'Payment',
+      icon: 'pi pi-wallet',
+      items: [
+        {
+          key: 'payment-process',
+          label: 'Payment Process',
+          icon: 'pi pi-file-excel',
+          to: '/payment/process',
+          permissions: ['PAYMENT_PROCESS'],
+        },
+        {
+          key: 'payment-formulas',
+          label: 'Payment Formulas',
+          icon: 'pi pi-calculator',
+          to: '/payment/formulas',
+          permissions: ['PAYMENT_FORMULA_VIEW'],
+        },
+      ],
+    },
   ]
 
   return groups
