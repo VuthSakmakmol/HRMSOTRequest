@@ -6,13 +6,6 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 
-import Button from 'primevue/button'
-import Dialog from 'primevue/dialog'
-import InputNumber from 'primevue/inputnumber'
-import InputText from 'primevue/inputtext'
-import Message from 'primevue/message'
-import Tag from 'primevue/tag'
-
 import OTDetailView from '@/modules/ot/components/OTDetailView.vue'
 import OTEmployeeMultiPicker from '@/modules/ot/components/OTEmployeeMultiPicker.vue'
 import OTSubmitBar from '@/modules/ot/components/OTSubmitBar.vue'
@@ -38,17 +31,6 @@ const unavailableEmployees = ref([])
 const selectedOptionDayType = ref('')
 const lastLoadedShiftKey = ref('')
 
-const employeeTimeOverrides = reactive({})
-
-const adjustDialogVisible = ref(false)
-const adjustEmployee = ref(null)
-
-const adjustForm = reactive({
-  startTime: '',
-  endTime: '',
-  breakMinutes: 0,
-})
-
 let unavailableRequestSeq = 0
 
 const form = reactive({
@@ -66,6 +48,8 @@ const form = reactive({
 
   reason: '',
 })
+
+const selectedDateYMD = computed(() => formatYMD(form.otDate))
 
 const selectedEmployeeIds = computed(() =>
   selectedEmployees.value
@@ -93,10 +77,8 @@ const unavailableEmployeeMap = computed(() => {
   return map
 })
 
-const selectedOverrideCount = computed(() => Object.keys(employeeTimeOverrides).length)
-
 const canAutoSelectEmployees = computed(() => {
-  return Boolean(formatYMD(form.otDate)) && !loadingUnavailableEmployees.value
+  return Boolean(selectedDateYMD.value) && !loadingUnavailableEmployees.value
 })
 
 const requestPreview = computed(() => {
@@ -110,6 +92,7 @@ const requestPreview = computed(() => {
       .toUpperCase(),
     requestStartTime: String(selectedOTOption.value.requestStartTime || '').trim(),
     requestEndTime: String(selectedOTOption.value.requestEndTime || '').trim(),
+    breakMinutes: 0,
     requestedMinutes,
     requestedHours: Number(
       selectedOTOption.value.requestedHours ||
@@ -143,36 +126,21 @@ const defaultTiming = computed(() => {
     source: 'SHIFT_OPTION',
     startTime: String(requestPreview.value?.requestStartTime || '').trim(),
     endTime: String(requestPreview.value?.requestEndTime || '').trim(),
-    breakMinutes: 0,
+    breakMinutes: Number(requestPreview.value?.breakMinutes || 0),
     requestedMinutes: Number(requestPreview.value?.requestedMinutes || 0),
     totalMinutes: Number(requestPreview.value?.requestedMinutes || 0),
     totalHours: Number(requestPreview.value?.requestedHours || 0),
   }
 })
 
-const selectedEmployeeRowsForTiming = computed(() => {
-  return selectedEmployees.value.map((employee, index) => {
-    const employeeId = getEmployeeId(employee)
-    const override = employeeTimeOverrides[employeeId] || null
-    const timing = override || defaultTiming.value
-
-    return {
-      no: index + 1,
-      employee,
-      employeeId,
-      employeeNo: String(employee?.employeeNo || employee?.employeeCode || '').trim(),
-      displayName: String(employee?.displayName || employee?.employeeName || employee?.name || '').trim(),
-      positionName: String(employee?.positionName || employee?.position?.name || '').trim(),
-      lineLabel: buildLineLabel(employee),
-      isCustom: Boolean(override),
-      startTime: timing.startTime || '',
-      endTime: timing.endTime || '',
-      breakMinutes: Number(timing.breakMinutes || 0),
-      totalMinutes: Number(timing.totalMinutes || timing.requestedMinutes || 0),
-      totalHours: Number(timing.totalHours || 0),
-    }
-  })
-})
+const pickerRequestPreview = computed(() => ({
+  timingMode: defaultTiming.value.source,
+  requestStartTime: defaultTiming.value.startTime,
+  requestEndTime: defaultTiming.value.endTime,
+  breakMinutes: defaultTiming.value.breakMinutes,
+  requestedMinutes: defaultTiming.value.requestedMinutes,
+  requestedHours: defaultTiming.value.totalHours,
+}))
 
 function getEmployeeId(employee) {
   return String(employee?._id || employee?.id || employee?.employeeId || '').trim()
@@ -400,6 +368,8 @@ function timeToMinutes(value) {
 }
 
 function calculateRawTimeWindowMinutes(startTime, endTime) {
+  if (!isHHmm(startTime) || !isHHmm(endTime)) return 0
+
   const start = timeToMinutes(startTime)
   const end = timeToMinutes(endTime)
 
@@ -434,36 +404,11 @@ function formatMinutesLabel(value) {
   return `${mm}m`
 }
 
-function buildLineLabel(employee = {}) {
-  return (
-    String(employee?.lineLabel || '').trim() ||
-    [employee?.lineCode, employee?.lineName].filter(Boolean).join(' · ') ||
-    'No line'
-  )
-}
-
 function clearShiftOptions() {
   shiftOptions.value = []
   form.shiftOtOptionId = ''
   selectedOptionDayType.value = ''
   lastLoadedShiftKey.value = ''
-  clearAllEmployeeTimeOverrides()
-}
-
-function clearAllEmployeeTimeOverrides() {
-  for (const key of Object.keys(employeeTimeOverrides)) {
-    delete employeeTimeOverrides[key]
-  }
-}
-
-function cleanupEmployeeTimeOverrides() {
-  const selectedIdSet = new Set(selectedEmployeeIds.value)
-
-  for (const key of Object.keys(employeeTimeOverrides)) {
-    if (!selectedIdSet.has(key)) {
-      delete employeeTimeOverrides[key]
-    }
-  }
 }
 
 function removeUnavailableSelectedEmployees() {
@@ -474,8 +419,6 @@ function removeUnavailableSelectedEmployees() {
     const employeeId = getEmployeeId(item)
     return !blockedMap[employeeId]
   })
-
-  cleanupEmployeeTimeOverrides()
 
   const removedCount = beforeCount - selectedEmployees.value.length
 
@@ -511,7 +454,7 @@ async function loadRequesterEmployee() {
 }
 
 async function loadUnavailableEmployeesForDate() {
-  const otDate = formatYMD(form.otDate)
+  const otDate = selectedDateYMD.value
   const requestSeq = ++unavailableRequestSeq
 
   unavailableEmployees.value = []
@@ -550,7 +493,7 @@ async function loadUnavailableEmployeesForDate() {
 
 async function loadShiftOptionsForSharedShift() {
   const state = selectedShiftState.value
-  const otDate = formatYMD(form.otDate)
+  const otDate = selectedDateYMD.value
 
   if (!otDate) {
     clearShiftOptions()
@@ -568,7 +511,6 @@ async function loadShiftOptionsForSharedShift() {
 
   loadingShiftOptions.value = true
   form.shiftOtOptionId = ''
-  clearAllEmployeeTimeOverrides()
 
   try {
     const res = await getShiftOTOptionsByShift(state.shift.shiftId, {
@@ -612,111 +554,109 @@ async function loadShiftOptionsForSharedShift() {
   }
 }
 
-function openAdjustEmployee(employee) {
-  const employeeId = getEmployeeId(employee)
-  if (!employeeId) return
+function getEmployeeTiming(employee = {}) {
+  const startTime = String(
+    employee?.requestStartTime ||
+      employee?.startTime ||
+      defaultTiming.value.startTime ||
+      '',
+  ).trim()
 
-  const override = employeeTimeOverrides[employeeId]
-  const fallback = defaultTiming.value
+  const endTime = String(
+    employee?.requestEndTime ||
+      employee?.endTime ||
+      defaultTiming.value.endTime ||
+      '',
+  ).trim()
 
-  if (!fallback.startTime || !fallback.endTime) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Default OT time required',
-      detail: 'Please select OT option or enter custom default time first.',
-      life: 3000,
-    })
-    return
-  }
+  const breakMinutes = Number(
+    employee?.breakMinutes ??
+      defaultTiming.value.breakMinutes ??
+      0,
+  )
 
-  adjustEmployee.value = employee
+  const requestedMinutes =
+    Number(employee?.requestedMinutes || 0) ||
+    calculateTimeWindowMinutes(startTime, endTime, breakMinutes) ||
+    Number(defaultTiming.value.requestedMinutes || 0)
 
-  adjustForm.startTime = override?.startTime || fallback.startTime || ''
-  adjustForm.endTime = override?.endTime || fallback.endTime || ''
-  adjustForm.breakMinutes = Number(override?.breakMinutes ?? fallback.breakMinutes ?? 0)
-
-  adjustDialogVisible.value = true
-}
-
-function saveAdjustEmployeeTime() {
-  const employee = adjustEmployee.value
-  const employeeId = getEmployeeId(employee)
-
-  if (!employeeId) return
-
-  const startTime = String(adjustForm.startTime || '').trim()
-  const endTime = String(adjustForm.endTime || '').trim()
-  const breakMinutes = Number(adjustForm.breakMinutes || 0)
-
-  if (!isHHmm(startTime)) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Invalid start time',
-      detail: 'Start time must be HH:mm, for example 18:00.',
-      life: 2500,
-    })
-    return
-  }
-
-  if (!isHHmm(endTime)) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Invalid end time',
-      detail: 'End time must be HH:mm, for example 21:00.',
-      life: 2500,
-    })
-    return
-  }
-
-  if (startTime === endTime) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Invalid OT time',
-      detail: 'Start time and end time cannot be the same.',
-      life: 2500,
-    })
-    return
-  }
-
-  const rawMinutes = calculateRawTimeWindowMinutes(startTime, endTime)
-
-  if (breakMinutes >= rawMinutes) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Invalid break',
-      detail: 'Break minutes cannot be greater than or equal to OT duration.',
-      life: 2500,
-    })
-    return
-  }
-
-  const totalMinutes = calculateTimeWindowMinutes(startTime, endTime, breakMinutes)
-
-  employeeTimeOverrides[employeeId] = {
-    employeeId,
+  return {
     startTime,
     endTime,
     breakMinutes,
-    requestedMinutes: totalMinutes,
-    totalMinutes,
-    totalHours: Number((totalMinutes / 60).toFixed(2)),
+    requestedMinutes,
   }
-
-  adjustDialogVisible.value = false
-  adjustEmployee.value = null
 }
 
-function resetEmployeeTime(employee) {
-  const employeeId = getEmployeeId(employee)
-  if (!employeeId) return
+function buildEmployeePayloadRows() {
+  return selectedEmployees.value
+    .map((employee) => {
+      const employeeId = getEmployeeId(employee)
+      if (!employeeId) return null
 
-  delete employeeTimeOverrides[employeeId]
+      const timing = getEmployeeTiming(employee)
+
+      return {
+        employeeId,
+        requestStartTime: timing.startTime,
+        requestEndTime: timing.endTime,
+        breakMinutes: timing.breakMinutes,
+        requestedMinutes: timing.requestedMinutes,
+        otTimeMode: String(employee?.otTimeMode || 'DEFAULT').trim().toUpperCase(),
+      }
+    })
+    .filter(Boolean)
+}
+
+function buildEmployeeTimeOverridesPayload() {
+  return buildEmployeePayloadRows()
+    .filter((item) => item.otTimeMode === 'CUSTOM')
+    .map((item) => ({
+      employeeId: item.employeeId,
+      startTime: item.requestStartTime,
+      endTime: item.requestEndTime,
+      breakMinutes: item.breakMinutes,
+    }))
 }
 
 function buildPayload() {
+  const employees = buildEmployeePayloadRows()
+
+  const rootStartTime = String(
+    form.customStartTime ||
+      defaultTiming.value.startTime ||
+      requestPreview.value?.requestStartTime ||
+      '',
+  ).trim()
+
+  const rootEndTime = String(
+    form.customEndTime ||
+      defaultTiming.value.endTime ||
+      requestPreview.value?.requestEndTime ||
+      '',
+  ).trim()
+
+  const rootBreakMinutes = Number(
+    form.customBreakMinutes ??
+      defaultTiming.value.breakMinutes ??
+      requestPreview.value?.breakMinutes ??
+      0,
+  )
+
+  const rootRequestedMinutes =
+    Number(defaultTiming.value.requestedMinutes || 0) ||
+    calculateTimeWindowMinutes(rootStartTime, rootEndTime, rootBreakMinutes)
+
   return {
     employeeIds: selectedEmployeeIds.value,
-    otDate: formatYMD(form.otDate),
+
+    // New clean structure from MultiPicker.
+    employees,
+
+    // Old backend-compatible override structure.
+    employeeTimeOverrides: buildEmployeeTimeOverridesPayload(),
+
+    otDate: selectedDateYMD.value,
 
     otTimingSource: String(form.otTimingSource || 'SHIFT_OPTION')
       .trim()
@@ -724,19 +664,55 @@ function buildPayload() {
 
     shiftOtOptionId: String(form.shiftOtOptionId || '').trim(),
 
-    customStartTime: String(form.customStartTime || '').trim(),
-    customEndTime: String(form.customEndTime || '').trim(),
-    customBreakMinutes: Number(form.customBreakMinutes || 0),
+    // Backend-compatible root timing fields.
+    // Even SHIFT_OPTION sends these because backend currently requires customStartTime.
+    customStartTime: rootStartTime,
+    customEndTime: rootEndTime,
+    customBreakMinutes: rootBreakMinutes,
 
-    employeeTimeOverrides: Object.values(employeeTimeOverrides).map((item) => ({
-      employeeId: String(item.employeeId || '').trim(),
-      startTime: String(item.startTime || '').trim(),
-      endTime: String(item.endTime || '').trim(),
-      breakMinutes: Number(item.breakMinutes || 0),
-    })),
+    startTime: rootStartTime,
+    endTime: rootEndTime,
+    requestStartTime: rootStartTime,
+    requestEndTime: rootEndTime,
+    breakMinutes: rootBreakMinutes,
+    requestedMinutes: rootRequestedMinutes,
+    totalMinutes: rootRequestedMinutes,
+    totalHours: Number((rootRequestedMinutes / 60).toFixed(2)),
 
     reason: String(form.reason || '').trim(),
   }
+}
+
+function validateEmployeeTimingRows(employeeRows = []) {
+  for (const row of employeeRows) {
+    const label = row.employeeId
+
+    if (!row.requestStartTime) return `Missing OT start time for employee ${label}.`
+    if (!row.requestEndTime) return `Missing OT end time for employee ${label}.`
+
+    if (!isHHmm(row.requestStartTime)) {
+      return `Invalid OT start time for employee ${label}.`
+    }
+
+    if (!isHHmm(row.requestEndTime)) {
+      return `Invalid OT end time for employee ${label}.`
+    }
+
+    if (row.requestStartTime === row.requestEndTime) {
+      return `OT start time and end time cannot be the same for employee ${label}.`
+    }
+
+    const rawMinutes = calculateRawTimeWindowMinutes(
+      row.requestStartTime,
+      row.requestEndTime,
+    )
+
+    if (Number(row.breakMinutes || 0) >= rawMinutes) {
+      return `Break minutes cannot be greater than or equal to OT duration for employee ${label}.`
+    }
+  }
+
+  return ''
 }
 
 function validateBeforeSubmit(payload) {
@@ -790,6 +766,9 @@ function validateBeforeSubmit(payload) {
   if (!defaultTiming.value.startTime || !defaultTiming.value.endTime) {
     return 'Please select valid OT timing before submitting.'
   }
+
+  const employeeTimingError = validateEmployeeTimingRows(payload.employees)
+  if (employeeTimingError) return employeeTimingError
 
   return ''
 }
@@ -854,8 +833,6 @@ function removeEmployeesFromSelectionByIds(employeeIds = []) {
     return !idSet.has(employeeId)
   })
 
-  cleanupEmployeeTimeOverrides()
-
   return beforeCount - selectedEmployees.value.length
 }
 
@@ -892,6 +869,42 @@ function buildMissingClockInToastMessage(missing = []) {
   const moreText = missing.length > 5 ? ` and ${missing.length - 5} more` : ''
 
   return `Today OT requires attendance time-in. Removed from selection: ${preview}${moreText}.`
+}
+
+function buildApiErrorMessage(error) {
+  const data = error?.response?.data
+
+  if (!data) {
+    return error?.message || 'Unknown error.'
+  }
+
+  const details =
+    data?.details ||
+    data?.errors ||
+    data?.data?.details ||
+    data?.data?.errors
+
+  if (Array.isArray(details) && details.length) {
+    return details
+      .map((item) => {
+        if (typeof item === 'string') return item
+
+        const path = Array.isArray(item?.path)
+          ? item.path.join('.')
+          : item?.path || item?.field || ''
+
+        const message = item?.message || item?.msg || 'Invalid value'
+
+        return path ? `${path}: ${message}` : message
+      })
+      .join('\n')
+  }
+
+  if (typeof details === 'object' && details) {
+    return JSON.stringify(details, null, 2)
+  }
+
+  return data?.message || error?.message || 'Unable to create OT request.'
 }
 
 async function submit() {
@@ -964,14 +977,13 @@ async function submit() {
       return
     }
 
+    console.error('Create OT failed:', error?.response?.data || error)
+
     toast.add({
       severity: 'error',
       summary: 'Create failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Unable to create OT request.',
-      life: 4000,
+      detail: buildApiErrorMessage(error),
+      life: 8000,
     })
   } finally {
     submitting.value = false
@@ -985,7 +997,7 @@ function goBack() {
 watch(
   () =>
     selectedShiftState.value.mode === 'ready'
-      ? `${selectedShiftState.value.shift?.shiftId || ''}|${formatYMD(form.otDate)}`
+      ? `${selectedShiftState.value.shift?.shiftId || ''}|${selectedDateYMD.value}`
       : '',
   async () => {
     await loadShiftOptionsForSharedShift()
@@ -994,26 +1006,11 @@ watch(
 )
 
 watch(
-  () => formatYMD(form.otDate),
+  () => selectedDateYMD.value,
   async () => {
     selectedEmployees.value = []
     clearShiftOptions()
-    clearAllEmployeeTimeOverrides()
     await loadUnavailableEmployeesForDate()
-  },
-)
-
-watch(
-  () => selectedEmployeeIds.value.join('|'),
-  () => {
-    cleanupEmployeeTimeOverrides()
-  },
-)
-
-watch(
-  () => form.shiftOtOptionId,
-  () => {
-    clearAllEmployeeTimeOverrides()
   },
 )
 
@@ -1030,8 +1027,6 @@ watch(
       form.customEndTime = ''
       form.customBreakMinutes = 0
     }
-
-    clearAllEmployeeTimeOverrides()
   },
 )
 
@@ -1054,137 +1049,15 @@ onMounted(async () => {
 
     <OTEmployeeMultiPicker
       v-model="selectedEmployees"
-      auto-select-all
-      :ot-date="formatYMD(form.otDate)"
+      :ot-date="selectedDateYMD"
       :selected-shift-id="sharedShiftIdForPicker"
       :selected-shift-label="sharedShiftLabelForPicker"
+      :auto-select-all="true"
       :auto-select-ready="canAutoSelectEmployees"
       :blocked-employee-map="unavailableEmployeeMap"
       :blocked-loading="loadingUnavailableEmployees"
+      :request-preview="pickerRequestPreview"
     />
-
-    <section
-      v-if="selectedEmployees.length"
-      class="ot-time-adjust-card"
-    >
-      <div class="ot-time-adjust-head">
-        <div class="min-w-0">
-          <h2>Employee OT time</h2>
-          <p>
-            Default:
-            <strong>
-              {{ defaultTiming.startTime || '-' }} - {{ defaultTiming.endTime || '-' }}
-            </strong>
-            · {{ formatMinutesLabel(defaultTiming.totalMinutes) }}
-            <span v-if="selectedOptionDayType">
-              · {{ selectedOptionDayType }}
-            </span>
-          </p>
-        </div>
-
-        <div class="ot-time-tags">
-          <Tag
-            :value="`${selectedEmployees.length} employees`"
-            severity="info"
-          />
-
-          <Tag
-            v-if="selectedOverrideCount"
-            :value="`${selectedOverrideCount} adjusted`"
-            severity="warn"
-          />
-
-          <Tag
-            v-else
-            value="All default"
-            severity="success"
-          />
-        </div>
-      </div>
-
-      <Message
-        severity="info"
-        :closable="false"
-        class="ot-adjust-note"
-      >
-        Use Adjust only for employees who work different OT time from the default.
-      </Message>
-
-      <div class="ot-time-table-wrap">
-        <table class="ot-time-table">
-          <thead>
-            <tr>
-              <th>No</th>
-              <th>Employee</th>
-              <th>Position</th>
-              <th>Line</th>
-              <th>OT Time</th>
-              <th>Total</th>
-              <th>Mode</th>
-              <th class="text-right">Action</th>
-            </tr>
-          </thead>
-
-          <tbody>
-            <tr
-              v-for="row in selectedEmployeeRowsForTiming"
-              :key="row.employeeId"
-            >
-              <td>{{ row.no }}</td>
-
-              <td>
-                <div class="ot-employee-cell">
-                  <strong>{{ row.employeeNo || 'No ID' }}</strong>
-                  <span>{{ row.displayName || 'Unknown' }}</span>
-                </div>
-              </td>
-
-              <td>{{ row.positionName || '-' }}</td>
-
-              <td>{{ row.lineLabel }}</td>
-
-              <td>
-                <strong>{{ row.startTime || '-' }} - {{ row.endTime || '-' }}</strong>
-                <small v-if="row.breakMinutes">
-                  Break {{ row.breakMinutes }}m
-                </small>
-              </td>
-
-              <td>{{ formatMinutesLabel(row.totalMinutes) }}</td>
-
-              <td>
-                <Tag
-                  :value="row.isCustom ? 'Custom' : 'Default'"
-                  :severity="row.isCustom ? 'warn' : 'success'"
-                />
-              </td>
-
-              <td>
-                <div class="ot-row-actions">
-                  <Button
-                    label="Adjust"
-                    icon="pi pi-pencil"
-                    size="small"
-                    outlined
-                    @click="openAdjustEmployee(row.employee)"
-                  />
-
-                  <Button
-                    v-if="row.isCustom"
-                    label="Reset"
-                    icon="pi pi-refresh"
-                    size="small"
-                    severity="secondary"
-                    text
-                    @click="resetEmployeeTime(row.employee)"
-                  />
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
 
     <div class="ot-create-bottom-grid">
       <div />
@@ -1196,95 +1069,6 @@ onMounted(async () => {
         @back="goBack"
       />
     </div>
-
-    <Dialog
-      v-model:visible="adjustDialogVisible"
-      modal
-      header="Adjust employee OT time"
-      class="ot-adjust-dialog"
-      :style="{ width: 'min(96vw, 520px)' }"
-    >
-      <div class="ot-adjust-body">
-        <div
-          v-if="adjustEmployee"
-          class="ot-adjust-employee"
-        >
-          <strong>
-            {{ adjustEmployee.employeeNo || adjustEmployee.employeeCode || 'No ID' }}
-          </strong>
-
-          <span>
-            {{ adjustEmployee.displayName || adjustEmployee.employeeName || adjustEmployee.name }}
-          </span>
-        </div>
-
-        <div class="ot-adjust-grid">
-          <div class="ot-field">
-            <label>Start Time</label>
-
-            <InputText
-              v-model.trim="adjustForm.startTime"
-              placeholder="18:00"
-              class="w-full"
-            />
-          </div>
-
-          <div class="ot-field">
-            <label>End Time</label>
-
-            <InputText
-              v-model.trim="adjustForm.endTime"
-              placeholder="21:00"
-              class="w-full"
-            />
-          </div>
-
-          <div class="ot-field">
-            <label>Break Minutes</label>
-
-            <InputNumber
-              v-model="adjustForm.breakMinutes"
-              class="w-full"
-              inputClass="w-full"
-              :min="0"
-              :max="1440"
-              :step="5"
-              showButtons
-            />
-          </div>
-        </div>
-
-        <div class="ot-adjust-preview">
-          <span>Total OT</span>
-          <strong>
-            {{
-              formatMinutesLabel(
-                calculateTimeWindowMinutes(
-                  adjustForm.startTime,
-                  adjustForm.endTime,
-                  adjustForm.breakMinutes,
-                ),
-              )
-            }}
-          </strong>
-        </div>
-      </div>
-
-      <template #footer>
-        <Button
-          label="Cancel"
-          severity="secondary"
-          outlined
-          @click="adjustDialogVisible = false"
-        />
-
-        <Button
-          label="Save"
-          icon="pi pi-check"
-          @click="saveAdjustEmployeeTime"
-        />
-      </template>
-    </Dialog>
   </div>
 </template>
 
@@ -1299,218 +1083,6 @@ onMounted(async () => {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 1rem;
-}
-
-.ot-time-adjust-card {
-  overflow: hidden;
-  border: 1px solid var(--ot-border);
-  border-radius: 1.25rem;
-  background: var(--ot-surface);
-}
-
-.ot-time-adjust-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  border-bottom: 1px solid var(--ot-border);
-  padding: 1rem;
-}
-
-.ot-time-adjust-head h2 {
-  margin: 0;
-  font-size: 1.02rem;
-  font-weight: 600;
-  color: var(--ot-text);
-}
-
-.ot-time-adjust-head p {
-  margin: 0.22rem 0 0;
-  font-size: 0.78rem;
-  color: var(--ot-text-muted);
-}
-
-.ot-time-adjust-head p strong {
-  color: var(--ot-text);
-  font-weight: 600;
-}
-
-.ot-time-tags {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 0.4rem;
-}
-
-.ot-adjust-note {
-  margin: 0.75rem 1rem 0;
-}
-
-.ot-time-table-wrap {
-  overflow-x: auto;
-  padding: 0.85rem 1rem 1rem;
-}
-
-.ot-time-table {
-  width: 100%;
-  min-width: 860px;
-  border-collapse: separate;
-  border-spacing: 0;
-  overflow: hidden;
-  border: 1px solid var(--ot-border);
-  border-radius: 1rem;
-  background: var(--ot-bg);
-}
-
-.ot-time-table th,
-.ot-time-table td {
-  border-bottom: 1px solid var(--ot-border);
-  padding: 0.62rem 0.72rem;
-  text-align: left;
-  vertical-align: middle;
-  font-size: 0.82rem;
-  color: var(--ot-text);
-  white-space: nowrap;
-}
-
-.ot-time-table th {
-  background:
-    linear-gradient(135deg, rgba(59, 130, 246, 0.08), transparent),
-    var(--ot-surface);
-  font-size: 0.72rem;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--ot-text-muted);
-}
-
-.ot-time-table tr:last-child td {
-  border-bottom: 0;
-}
-
-.ot-time-table td small {
-  display: block;
-  margin-top: 0.12rem;
-  font-size: 0.7rem;
-  color: var(--ot-text-muted);
-}
-
-.ot-employee-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 0.08rem;
-}
-
-.ot-employee-cell strong {
-  font-size: 0.78rem;
-  font-weight: 600;
-  color: var(--ot-text);
-}
-
-.ot-employee-cell span {
-  font-size: 0.78rem;
-  color: var(--ot-text-muted);
-}
-
-.ot-row-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.35rem;
-}
-
-.text-right {
-  text-align: right !important;
-}
-
-.ot-adjust-body {
-  display: flex;
-  flex-direction: column;
-  gap: 0.85rem;
-}
-
-.ot-adjust-employee {
-  border: 1px solid var(--ot-border);
-  border-radius: 1rem;
-  background: var(--ot-bg);
-  padding: 0.75rem;
-}
-
-.ot-adjust-employee strong {
-  display: block;
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: var(--ot-text);
-}
-
-.ot-adjust-employee span {
-  display: block;
-  margin-top: 0.12rem;
-  font-size: 0.8rem;
-  color: var(--ot-text-muted);
-}
-
-.ot-adjust-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0.65rem;
-}
-
-.ot-field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.ot-field label {
-  font-size: 0.78rem;
-  font-weight: 600;
-  color: var(--ot-text);
-}
-
-.ot-adjust-preview {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  border: 1px solid var(--ot-border);
-  border-radius: 1rem;
-  background: var(--ot-bg);
-  padding: 0.75rem;
-}
-
-.ot-adjust-preview span {
-  font-size: 0.76rem;
-  color: var(--ot-text-muted);
-}
-
-.ot-adjust-preview strong {
-  font-size: 0.92rem;
-  font-weight: 600;
-  color: var(--ot-text);
-}
-
-:deep(.p-button.p-button-sm) {
-  padding: 0.34rem 0.58rem !important;
-  font-size: 0.78rem !important;
-}
-
-:deep(.p-tag) {
-  font-weight: 500 !important;
-}
-
-:deep(.ot-adjust-dialog .p-dialog-content) {
-  background: var(--ot-surface) !important;
-}
-
-:deep(.p-inputtext),
-:deep(.p-inputnumber-input) {
-  font-size: 0.86rem;
-}
-
-@media (min-width: 768px) {
-  .ot-adjust-grid {
-    grid-template-columns: 1fr 1fr 160px;
-  }
 }
 
 @media (min-width: 1024px) {

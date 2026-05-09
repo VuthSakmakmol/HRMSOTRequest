@@ -7,7 +7,6 @@ import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
 import Card from 'primevue/card'
-import DatePicker from 'primevue/datepicker'
 import InputNumber from 'primevue/inputnumber'
 import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
@@ -67,6 +66,9 @@ const toast = useToast()
 
 const loadingCalendar = ref(false)
 const monthHolidayRows = ref([])
+const currentMonth = ref(getMonthStart(props.form.otDate || new Date()))
+
+const weekLabels = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
 
 const timingSourceOptions = [
   {
@@ -91,13 +93,7 @@ const selectedShift = computed(() => {
   return props.selectedShiftState?.shift || null
 })
 
-const selectedShiftLabel = computed(() => {
-  const shift = selectedShift.value
 
-  if (!shift) return 'No shared shift yet'
-
-  return [shift.code, shift.name].filter(Boolean).join(' · ') || 'Selected shift'
-})
 
 const selectedTimingSource = computed(() => {
   return String(props.form.otTimingSource || 'SHIFT_OPTION').trim().toUpperCase()
@@ -105,15 +101,31 @@ const selectedTimingSource = computed(() => {
 
 const isCustomFixedTime = computed(() => selectedTimingSource.value === 'CUSTOM_FIXED')
 
+const monthTitle = computed(() => {
+  return currentMonth.value.toLocaleDateString('en-US', {
+    month: 'long',
+    year: 'numeric',
+  })
+})
+
 const holidayMap = computed(() => {
   const map = new Map()
 
   for (const item of monthHolidayRows.value) {
     const key = normalizeDateKey(item?.date)
-    if (key) map.set(key, item)
+
+    if (key) {
+      map.set(key, item)
+    }
   }
 
   return map
+})
+
+const sortedMonthHolidays = computed(() => {
+  return [...monthHolidayRows.value].sort((a, b) => {
+    return String(normalizeDateKey(a?.date)).localeCompare(String(normalizeDateKey(b?.date)))
+  })
 })
 
 const selectedHoliday = computed(() => {
@@ -125,9 +137,13 @@ const selectedDayType = computed(() => {
   if (!props.form.otDate) return '—'
 
   const key = selectedDateYMD.value
-  if (key && holidayMap.value.has(key)) return 'HOLIDAY'
 
-  const date = new Date(props.form.otDate)
+  if (key && holidayMap.value.has(key)) {
+    return 'HOLIDAY'
+  }
+
+  const date = props.form.otDate instanceof Date ? props.form.otDate : new Date(props.form.otDate)
+
   if (Number.isNaN(date.getTime())) return '—'
 
   if (date.getDay() === 0) return 'SUNDAY'
@@ -141,6 +157,36 @@ const selectedDaySeverity = computed(() => {
   if (selectedDayType.value === 'WORKING_DAY') return 'success'
 
   return 'secondary'
+})
+
+const calendarDays = computed(() => {
+  const year = currentMonth.value.getFullYear()
+  const month = currentMonth.value.getMonth()
+
+  const firstDayIndex = new Date(year, month, 1).getDay()
+  const daysInMonth = new Date(year, month + 1, 0).getDate()
+  const daysInPrevMonth = new Date(year, month, 0).getDate()
+
+  const cells = []
+
+  for (let i = 0; i < firstDayIndex; i += 1) {
+    const day = daysInPrevMonth - firstDayIndex + i + 1
+    const date = new Date(year, month - 1, day)
+    cells.push(buildCalendarCell(date, false))
+  }
+
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const date = new Date(year, month, day)
+    cells.push(buildCalendarCell(date, true))
+  }
+
+  while (cells.length < 42) {
+    const nextDay = cells.length - (firstDayIndex + daysInMonth) + 1
+    const date = new Date(year, month + 1, nextDay)
+    cells.push(buildCalendarCell(date, false))
+  }
+
+  return cells
 })
 
 const localRequestPreview = computed(() => {
@@ -200,6 +246,17 @@ function pad2(value) {
   return String(value).padStart(2, '0')
 }
 
+function getMonthStart(value) {
+  const date = value instanceof Date ? value : new Date(value)
+
+  if (Number.isNaN(date.getTime())) {
+    const now = new Date()
+    return new Date(now.getFullYear(), now.getMonth(), 1)
+  }
+
+  return new Date(date.getFullYear(), date.getMonth(), 1)
+}
+
 function formatYMD(value) {
   if (!value) return ''
 
@@ -231,6 +288,31 @@ function formatPrettyDate(value) {
     day: 'numeric',
     year: 'numeric',
   })
+}
+
+function isSameDate(a, b) {
+  return formatYMD(a) === formatYMD(b)
+}
+
+function isToday(date) {
+  return isSameDate(date, new Date())
+}
+
+function isHolidayDate(date) {
+  return holidayMap.value.has(formatYMD(date))
+}
+
+function buildCalendarCell(date, inCurrentMonth) {
+  return {
+    key: formatYMD(date),
+    date,
+    day: date.getDate(),
+    inCurrentMonth,
+    isToday: isToday(date),
+    isSelected: isSameDate(date, props.form.otDate),
+    isHoliday: isHolidayDate(date),
+    isSunday: date.getDay() === 0,
+  }
 }
 
 function isHHmm(value) {
@@ -296,8 +378,40 @@ function normalizeHolidayItems(payload) {
   return []
 }
 
+function selectDate(cell) {
+  props.form.otDate = new Date(cell.date)
+
+  if (!cell.inCurrentMonth) {
+    currentMonth.value = new Date(cell.date.getFullYear(), cell.date.getMonth(), 1)
+    fetchMonthHolidays()
+  }
+}
+
+function previousMonth() {
+  currentMonth.value = new Date(
+    currentMonth.value.getFullYear(),
+    currentMonth.value.getMonth() - 1,
+    1,
+  )
+
+  fetchMonthHolidays()
+}
+
+function nextMonth() {
+  currentMonth.value = new Date(
+    currentMonth.value.getFullYear(),
+    currentMonth.value.getMonth() + 1,
+    1,
+  )
+
+  fetchMonthHolidays()
+}
+
 function setToday() {
-  props.form.otDate = new Date()
+  const now = new Date()
+  props.form.otDate = now
+  currentMonth.value = new Date(now.getFullYear(), now.getMonth(), 1)
+  fetchMonthHolidays()
 }
 
 function ensureTimingDefaults() {
@@ -311,7 +425,7 @@ function ensureTimingDefaults() {
 }
 
 async function fetchMonthHolidays() {
-  const source = props.form.otDate ? new Date(props.form.otDate) : new Date()
+  const source = currentMonth.value || getMonthStart(props.form.otDate || new Date())
 
   if (Number.isNaN(source.getTime())) return
 
@@ -352,8 +466,18 @@ async function fetchMonthHolidays() {
 
 watch(
   () => selectedDateYMD.value,
-  () => {
-    fetchMonthHolidays()
+  (value) => {
+    if (!value) return
+
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return
+
+    const nextMonthStart = new Date(date.getFullYear(), date.getMonth(), 1)
+
+    if (formatYMD(nextMonthStart) !== formatYMD(currentMonth.value)) {
+      currentMonth.value = nextMonthStart
+      fetchMonthHolidays()
+    }
   },
 )
 
@@ -372,6 +496,12 @@ watch(
 
 onMounted(() => {
   ensureTimingDefaults()
+
+  if (!props.form.otDate) {
+    props.form.otDate = new Date()
+  }
+
+  currentMonth.value = getMonthStart(props.form.otDate)
   fetchMonthHolidays()
 })
 </script>
@@ -380,8 +510,6 @@ onMounted(() => {
   <Card class="ot-setup-card">
     <template #content>
       <div class="ot-setup-head">
-        <div class="min-w-0">
-        </div>
 
         <div class="ot-setup-tags">
           <Tag
@@ -399,7 +527,7 @@ onMounted(() => {
       </div>
 
       <div class="ot-setup-grid">
-        <!-- LEFT: DATE FIRST -->
+        <!-- LEFT: SAME HOLIDAY CALENDAR SOURCE -->
         <section class="ot-date-panel">
           <div class="ot-section-head">
             <div>
@@ -420,11 +548,58 @@ onMounted(() => {
           </div>
 
           <div class="ot-calendar-box">
-            <DatePicker
-              v-model="props.form.otDate"
-              inline
-              class="ot-inline-calendar"
-            />
+            <div class="ot-calendar-header">
+              <button
+                type="button"
+                class="calendar-nav-btn"
+                @click="previousMonth"
+              >
+                <i class="pi pi-chevron-left text-sm" />
+              </button>
+
+              <div class="ot-calendar-title">
+                {{ monthTitle }}
+              </div>
+
+              <button
+                type="button"
+                class="calendar-nav-btn"
+                @click="nextMonth"
+              >
+                <i class="pi pi-chevron-right text-sm" />
+              </button>
+            </div>
+
+            <div class="ot-calendar-grid">
+              <div
+                v-for="label in weekLabels"
+                :key="label"
+                class="ot-week-label"
+              >
+                {{ label }}
+              </div>
+
+              <button
+                v-for="cell in calendarDays"
+                :key="cell.key"
+                type="button"
+                class="calendar-cell"
+                :class="{
+                  'is-outside': !cell.inCurrentMonth,
+                  'is-selected': cell.isSelected,
+                  'is-today': cell.isToday,
+                  'is-holiday': cell.isHoliday,
+                  'is-sunday': cell.isSunday,
+                }"
+                @click="selectDate(cell)"
+              >
+                <span class="calendar-number">{{ cell.day }}</span>
+                <span
+                  v-if="cell.isHoliday"
+                  class="calendar-dot"
+                />
+              </button>
+            </div>
           </div>
 
           <div class="ot-date-info-grid">
@@ -454,36 +629,53 @@ onMounted(() => {
               Checking internal calendar...
             </div>
           </div>
+
+          <div class="ot-month-holidays">
+            <div class="ot-month-holidays-head">
+              <span>This month holidays</span>
+              <Tag
+                :value="`${sortedMonthHolidays.length}`"
+                severity="info"
+                class="ot-pill-tag"
+              />
+            </div>
+
+            <div
+              v-if="loadingCalendar"
+              class="ot-calendar-note"
+            >
+              Loading holidays...
+            </div>
+
+            <div
+              v-else-if="sortedMonthHolidays.length"
+              class="ot-holiday-list"
+            >
+              <button
+                v-for="item in sortedMonthHolidays"
+                :key="item.id || item._id || item.date"
+                type="button"
+                class="ot-holiday-row"
+                @click="props.form.otDate = new Date(normalizeDateKey(item.date))"
+              >
+                <span>{{ item.name }}</span>
+                <small>{{ normalizeDateKey(item.date) }}</small>
+              </button>
+            </div>
+
+            <div
+              v-else
+              class="ot-calendar-note"
+            >
+              No active holiday in this month.
+            </div>
+          </div>
         </section>
 
         <!-- RIGHT: OT OPTION + CUSTOM TIME + REASON -->
         <section class="ot-detail-panel">
-          <div class="ot-shift-summary">
-            <div class="min-w-0">
-              <span>Shared Shift</span>
-              <strong>{{ selectedShiftLabel }}</strong>
-            </div>
+          
 
-            <Tag
-              v-if="selectedShiftState?.mode === 'ready'"
-              value="Ready"
-              severity="success"
-            />
-
-            <Tag
-              v-else
-              value="Waiting"
-              severity="warning"
-            />
-          </div>
-
-          <Message
-            v-if="selectedShiftState?.message"
-            severity="warn"
-            :closable="false"
-          >
-            {{ selectedShiftState.message }}
-          </Message>
 
           <div class="ot-field">
             <label class="ot-field-label">
@@ -499,9 +691,6 @@ onMounted(() => {
               placeholder="Select timing type"
             />
 
-            <p class="ot-field-hint">
-              Use preset for normal OT. Use custom fixed time when production needs flexible hours.
-            </p>
           </div>
 
           <div class="ot-field">
@@ -519,10 +708,6 @@ onMounted(() => {
               :loading="loadingShiftOptions"
               :disabled="selectedShiftState?.mode !== 'ready' || loadingShiftOptions || !shiftOptions.length"
             />
-
-            <p class="ot-field-hint">
-              For custom fixed time, this option is still used as the policy/template source.
-            </p>
           </div>
 
           <div
@@ -549,6 +734,7 @@ onMounted(() => {
 
                 <InputText
                   v-model.trim="props.form.customStartTime"
+                  type="time"
                   placeholder="18:00"
                   class="w-full"
                 />
@@ -561,6 +747,7 @@ onMounted(() => {
 
                 <InputText
                   v-model.trim="props.form.customEndTime"
+                  type="time"
                   placeholder="20:00"
                   class="w-full"
                 />
@@ -617,45 +804,6 @@ onMounted(() => {
             </div>
           </div>
 
-          <div
-            v-if="selectedPolicy"
-            class="ot-policy-box"
-          >
-            <div class="ot-policy-head">
-              <span>Calculation Policy</span>
-
-              <Tag
-                :value="selectedPolicy.code || 'Policy'"
-                severity="secondary"
-              />
-            </div>
-
-            <div class="ot-policy-grid">
-              <div class="ot-policy-item">
-                <span>Name</span>
-                <strong>{{ selectedPolicy.name || '-' }}</strong>
-              </div>
-
-              <div class="ot-policy-item">
-                <span>Round</span>
-                <strong>
-                  {{ selectedPolicy.roundMethod || '-' }}
-                  / {{ selectedPolicy.roundUnitMinutes || 0 }}m
-                </strong>
-              </div>
-
-              <div class="ot-policy-item">
-                <span>Minimum</span>
-                <strong>{{ formatMinutesLabel(selectedPolicy.minEligibleMinutes) }}</strong>
-              </div>
-
-              <div class="ot-policy-item">
-                <span>Cap</span>
-                <strong>{{ selectedPolicy.capByRequestedMinutes ? 'By requested time' : 'No cap' }}</strong>
-              </div>
-            </div>
-          </div>
-
           <div class="ot-field">
             <label class="ot-field-label">
               5. Reason <span class="ot-optional-text">Optional</span>
@@ -692,25 +840,10 @@ onMounted(() => {
   margin-bottom: 0.85rem;
 }
 
-.ot-setup-eyebrow {
-  font-size: 0.7rem;
-  font-weight: 500;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--ot-text-muted);
-}
-
 .ot-setup-title {
-  margin-top: 0.15rem;
   font-size: 1.05rem;
   font-weight: 600;
   color: var(--ot-text);
-}
-
-.ot-setup-subtitle {
-  margin-top: 0.2rem;
-  font-size: 0.78rem;
-  color: var(--ot-text-muted);
 }
 
 .ot-setup-tags {
@@ -787,7 +920,123 @@ onMounted(() => {
   border: 1px solid var(--ot-border);
   border-radius: 1rem;
   background: var(--ot-bg);
-  padding: 0.45rem;
+  padding: 0.9rem;
+}
+
+.ot-calendar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+}
+
+.ot-calendar-title {
+  text-align: center;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--ot-text);
+}
+
+.ot-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.35rem;
+}
+
+.ot-week-label {
+  padding-bottom: 0.25rem;
+  text-align: center;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--ot-text-muted);
+}
+
+.calendar-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  border-radius: 999px;
+  border: 1px solid var(--ot-border);
+  background: var(--ot-surface);
+  color: var(--ot-text);
+  transition: 0.2s ease;
+}
+
+.calendar-nav-btn:hover {
+  background: var(--ot-hover, rgba(148, 163, 184, 0.08));
+}
+
+.calendar-cell {
+  position: relative;
+  height: 2.45rem;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ot-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: 0.2s ease;
+}
+
+.calendar-cell:hover {
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.calendar-cell.is-outside {
+  color: var(--ot-text-muted);
+  opacity: 0.42;
+}
+
+.calendar-cell.is-today {
+  box-shadow: inset 0 0 0 1px var(--ot-border);
+}
+
+.calendar-cell.is-sunday {
+  color: #dc2626;
+  font-weight: 600;
+}
+
+.calendar-cell.is-holiday {
+  background: rgba(220, 38, 38, 0.12);
+  color: #dc2626;
+  font-weight: 700;
+}
+
+.calendar-cell.is-sunday.is-holiday {
+  background: rgba(220, 38, 38, 0.16);
+  color: #b91c1c;
+}
+
+.calendar-cell.is-selected {
+  background: var(--p-primary-500);
+  color: white;
+  font-weight: 700;
+}
+
+.calendar-cell.is-selected.is-holiday,
+.calendar-cell.is-selected.is-sunday,
+.calendar-cell.is-selected.is-sunday.is-holiday {
+  background: var(--p-primary-500);
+  color: white;
+}
+
+.calendar-number {
+  font-size: 0.86rem;
+  line-height: 1;
+}
+
+.calendar-dot {
+  position: absolute;
+  right: 0.48rem;
+  bottom: 0.38rem;
+  width: 0.3rem;
+  height: 0.3rem;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.9;
 }
 
 .ot-date-info-grid {
@@ -801,7 +1050,8 @@ onMounted(() => {
 .ot-shift-summary,
 .ot-option-preview,
 .ot-policy-box,
-.ot-custom-time-box {
+.ot-custom-time-box,
+.ot-month-holidays {
   border: 1px solid var(--ot-border);
   border-radius: 1rem;
   background: var(--ot-bg);
@@ -853,11 +1103,61 @@ onMounted(() => {
   color: var(--ot-text-muted);
 }
 
-.ot-shift-summary {
+.ot-month-holidays {
+  margin-top: 0.75rem;
+}
+
+.ot-month-holidays-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
+  margin-bottom: 0.55rem;
+}
+
+.ot-month-holidays-head span {
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--ot-text);
+}
+
+.ot-holiday-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.ot-holiday-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border: 1px solid var(--ot-border);
+  border-radius: 0.8rem;
+  background: var(--ot-surface);
+  padding: 0.55rem 0.65rem;
+  text-align: left;
+  transition: 0.2s ease;
+}
+
+.ot-holiday-row:hover {
+  background: var(--ot-hover, rgba(148, 163, 184, 0.08));
+}
+
+.ot-holiday-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ot-text);
+}
+
+.ot-holiday-row small {
+  flex: 0 0 auto;
+  font-size: 0.72rem;
+  color: var(--ot-text-muted);
 }
 
 .ot-option-preview {
@@ -961,21 +1261,6 @@ onMounted(() => {
 :deep(.p-textarea),
 :deep(.p-inputnumber-input) {
   font-size: 0.86rem;
-}
-
-:deep(.ot-inline-calendar) {
-  width: 100%;
-}
-
-:deep(.ot-inline-calendar .p-datepicker) {
-  width: 100%;
-  border: 0 !important;
-  background: transparent !important;
-  box-shadow: none !important;
-}
-
-:deep(.ot-inline-calendar table) {
-  width: 100%;
 }
 
 @media (min-width: 768px) {

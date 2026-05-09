@@ -17,13 +17,25 @@ const {
 function parse(schema, data) {
   const result = schema.safeParse(data)
 
-  if (!result.success) {
-    const err = new Error(result.error.issues[0]?.message || 'Validation error')
-    err.status = 400
-    throw err
+  if (result.success) {
+    return result.data
   }
 
-  return result.data
+  const firstIssue = result.error.issues?.[0]
+
+  const message = firstIssue?.path?.length
+    ? `${firstIssue.path.join('.')}: ${firstIssue.message}`
+    : firstIssue?.message || 'Validation failed'
+
+  const error = new Error(message)
+  error.status = 400
+  error.details = result.error.issues.map((issue) => ({
+    path: issue.path,
+    message: issue.message,
+    code: issue.code,
+  }))
+
+  throw error
 }
 
 function parseObjectIdParam(value, label = 'id') {

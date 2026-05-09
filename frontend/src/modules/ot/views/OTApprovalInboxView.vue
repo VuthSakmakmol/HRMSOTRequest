@@ -212,6 +212,20 @@ function timingModeLabel(value) {
   return 'Timing N/A'
 }
 
+function timingSourceLabel(row) {
+  const source = upper(row?.otTimingSource || row?.timingSource || 'SHIFT_OPTION')
+
+  if (source === 'CUSTOM_FIXED') return 'Custom Fixed'
+  return 'Preset'
+}
+
+function timingSourceSeverity(row) {
+  const source = upper(row?.otTimingSource || row?.timingSource || 'SHIFT_OPTION')
+
+  if (source === 'CUSTOM_FIXED') return 'info'
+  return 'secondary'
+}
+
 function formatDateYMD(value) {
   if (!value) return undefined
 
@@ -356,6 +370,20 @@ function formatRequestedMinutes(row) {
   return '-'
 }
 
+function formatMinutesLabel(value) {
+  const minutes = Number(value || 0)
+
+  if (!minutes) return '0 min'
+
+  const hours = Math.floor(minutes / 60)
+  const mins = minutes % 60
+
+  if (hours && mins) return `${hours}h ${mins}m`
+  if (hours) return `${hours}h`
+
+  return `${mins}m`
+}
+
 function formatHours(row) {
   const totalHours = Number(row?.totalHours || 0)
 
@@ -397,9 +425,7 @@ function getTargetEmployees(row) {
 }
 
 function getEmployeeCount(row) {
-  const explicitCount = Number(
-    row?.employeeCount || row?.approvedEmployeeCount || row?.totalEmployees || 0,
-  )
+  const explicitCount = Number(row?.employeeCount || row?.approvedEmployeeCount || row?.totalEmployees || 0)
 
   if (explicitCount > 0) return explicitCount
 
@@ -579,6 +605,46 @@ function employeeOtTimeOf(employee, row) {
   }
 
   return formatTimeRange(row)
+}
+
+function employeeBreakMinutesOf(employee, row) {
+  const value = Number(
+    employee?.breakMinutes ??
+      employee?.otBreakMinutes ??
+      employee?.approvedBreakMinutes ??
+      row?.breakMinutes ??
+      0,
+  )
+
+  return Number.isFinite(value) && value >= 0 ? value : 0
+}
+
+function employeeTotalMinutesOf(employee, row) {
+  const value = Number(
+    employee?.totalMinutes ??
+      employee?.requestedMinutes ??
+      employee?.otMinutes ??
+      employee?.approvedMinutes ??
+      row?.totalMinutes ??
+      row?.requestedMinutes ??
+      0,
+  )
+
+  return Number.isFinite(value) && value >= 0 ? value : 0
+}
+
+function employeeTimeModeOf(employee) {
+  const mode = upper(employee?.otTimeMode || employee?.timeMode || 'DEFAULT')
+
+  return mode === 'CUSTOM' ? 'CUSTOM' : 'DEFAULT'
+}
+
+function employeeTimeModeLabel(employee) {
+  return employeeTimeModeOf(employee) === 'CUSTOM' ? 'Custom' : 'Default'
+}
+
+function employeeTimeModeSeverity(employee) {
+  return employeeTimeModeOf(employee) === 'CUSTOM' ? 'warn' : 'success'
 }
 
 function openDecision(row, action) {
@@ -1221,6 +1287,17 @@ onBeforeUnmount(() => {
           </template>
         </Column>
 
+        <Column header="Timing">
+          <template #body="{ data }">
+            <Tag
+              v-if="data"
+              :value="timingSourceLabel(data)"
+              :severity="timingSourceSeverity(data)"
+              class="ot-status-tag"
+            />
+          </template>
+        </Column>
+
         <Column field="dayType" header="Day Type">
           <template #body="{ data }">
             <Tag
@@ -1271,6 +1348,24 @@ onBeforeUnmount(() => {
               v-if="getTargetEmployees(data).length"
               class="ot-expanded-content"
             >
+              <div class="ot-expanded-header">
+                <div>
+                  <div class="ot-expanded-title">
+                    Employee OT time detail
+                  </div>
+
+                  <div class="ot-expanded-subtitle">
+                    Default request time: {{ formatTimeRange(data) }}
+                  </div>
+                </div>
+
+                <Tag
+                  :value="timingSourceLabel(data)"
+                  :severity="timingSourceSeverity(data)"
+                  class="ot-status-tag"
+                />
+              </div>
+
               <div class="ot-expanded-responsive-table">
                 <div class="ot-expanded-grid-row is-head">
                   <div>No</div>
@@ -1278,6 +1373,9 @@ onBeforeUnmount(() => {
                   <div>Name</div>
                   <div>Position</div>
                   <div>OT Time</div>
+                  <div>Break</div>
+                  <div>Total</div>
+                  <div>Mode</div>
                   <div>Line</div>
                 </div>
 
@@ -1304,6 +1402,22 @@ onBeforeUnmount(() => {
 
                   <div class="cell-center cell-mono cell-wrap">
                     {{ employeeOtTimeOf(employee, data) }}
+                  </div>
+
+                  <div class="cell-center cell-mono">
+                    {{ employeeBreakMinutesOf(employee, data) }}m
+                  </div>
+
+                  <div class="cell-center cell-mono">
+                    {{ formatMinutesLabel(employeeTotalMinutesOf(employee, data)) }}
+                  </div>
+
+                  <div class="cell-center">
+                    <Tag
+                      :value="employeeTimeModeLabel(employee)"
+                      :severity="employeeTimeModeSeverity(employee)"
+                      class="ot-status-tag"
+                    />
                   </div>
 
                   <div class="cell-center cell-wrap">
@@ -1559,9 +1673,9 @@ onBeforeUnmount(() => {
 .ot-expanded-box {
   position: sticky;
   left: 0;
-  width: min(100%, 980px);
-  max-width: calc(100vw - 2rem);
-  overflow: hidden;
+  width: min(100%, 1120px);
+  max-width: none;
+  overflow: visible;
   border-top: 1px solid var(--ot-border);
   border-bottom: 1px solid var(--ot-border);
   background:
@@ -1593,8 +1707,8 @@ onBeforeUnmount(() => {
 
 .ot-expanded-content {
   width: 100%;
-  max-width: 100%;
-  overflow: hidden;
+  max-width: none;
+  overflow: visible;
 }
 
 .ot-expanded-responsive-table {
@@ -1613,8 +1727,11 @@ onBeforeUnmount(() => {
     minmax(4.8rem, 0.55fr)
     minmax(8rem, 1.1fr)
     minmax(7rem, 0.85fr)
-    minmax(6.4rem, 0.65fr)
-    minmax(4.8rem, 0.55fr);
+    minmax(6.8rem, 0.7fr)
+    minmax(4.2rem, 0.42fr)
+    minmax(4.8rem, 0.48fr)
+    minmax(4.8rem, 0.46fr)
+    minmax(7rem, 0.8fr);
   align-items: stretch;
 }
 
@@ -1677,7 +1794,7 @@ onBeforeUnmount(() => {
 
 @media (max-width: 1200px) {
   .ot-expanded-box {
-    width: min(100%, 900px);
+    width: min(100%, 1060px);
   }
 
   .ot-expanded-grid-row {
@@ -1686,8 +1803,11 @@ onBeforeUnmount(() => {
       minmax(4.5rem, 0.52fr)
       minmax(7rem, 1fr)
       minmax(6.5rem, 0.75fr)
-      minmax(6rem, 0.62fr)
-      minmax(4.5rem, 0.5fr);
+      minmax(6.4rem, 0.62fr)
+      minmax(4rem, 0.4fr)
+      minmax(4.6rem, 0.46fr)
+      minmax(4.6rem, 0.44fr)
+      minmax(6.8rem, 0.76fr);
   }
 
   .ot-expanded-grid-row > div {
@@ -1703,57 +1823,97 @@ onBeforeUnmount(() => {
   }
 
   .ot-expanded-box {
-    width: calc(100vw - 1.5rem);
-    max-width: calc(100vw - 1.5rem);
-    padding: 0.55rem;
+    width: max-content;
+    min-width: 980px;
+    max-width: none;
+    padding: 0.6rem;
+  }
+
+  .ot-expanded-content {
+    width: max-content;
+    min-width: 980px;
+    max-width: none;
+    overflow: visible;
+  }
+
+  .ot-expanded-responsive-table {
+    width: max-content;
+    min-width: 980px;
+    max-width: none;
+    overflow: visible;
   }
 
   .ot-expanded-grid-row {
     grid-template-columns:
-      1.7rem
-      minmax(3.4rem, 0.7fr)
-      minmax(4.6rem, 1.2fr)
-      minmax(4.2rem, 1fr)
-      minmax(4.6rem, 0.9fr)
-      minmax(3.1rem, 0.65fr);
+      2.4rem
+      5.8rem
+      8.8rem
+      8.2rem
+      7.4rem
+      4.4rem
+      5.2rem
+      5.2rem
+      10rem;
   }
 
   .ot-expanded-grid-row > div {
-    padding: 0.34rem 0.28rem;
-    font-size: 0.58rem;
-    line-height: 1.2;
+    padding: 0.42rem 0.5rem;
+    font-size: 0.68rem;
+    line-height: 1.25;
   }
 
   .ot-expanded-grid-row.is-head > div {
-    font-size: 0.56rem;
+    font-size: 0.64rem;
+  }
+
+  .cell-wrap {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 }
 
 @media (max-width: 420px) {
   .ot-expanded-box {
-    width: calc(100vw - 1rem);
-    max-width: calc(100vw - 1rem);
-    padding: 0.45rem;
+    width: max-content;
+    min-width: 980px;
+    max-width: none;
+    padding: 0.55rem;
+  }
+
+  .ot-expanded-content {
+    width: max-content;
+    min-width: 980px;
+    max-width: none;
+  }
+
+  .ot-expanded-responsive-table {
+    width: max-content;
+    min-width: 980px;
+    max-width: none;
   }
 
   .ot-expanded-grid-row {
     grid-template-columns:
-      1.45rem
-      minmax(3rem, 0.68fr)
-      minmax(4.1rem, 1.15fr)
-      minmax(3.7rem, 0.95fr)
-      minmax(4.1rem, 0.9fr)
-      minmax(2.8rem, 0.6fr);
+      2.3rem
+      5.6rem
+      8.5rem
+      8rem
+      7.2rem
+      4.3rem
+      5.1rem
+      5.1rem
+      10rem;
   }
 
   .ot-expanded-grid-row > div {
-    padding: 0.3rem 0.22rem;
-    font-size: 0.52rem;
-    line-height: 1.18;
+    padding: 0.4rem 0.46rem;
+    font-size: 0.66rem;
+    line-height: 1.25;
   }
 
   .ot-expanded-grid-row.is-head > div {
-    font-size: 0.5rem;
+    font-size: 0.62rem;
   }
 }
 
@@ -2187,7 +2347,6 @@ onBeforeUnmount(() => {
   color: var(--ot-text-muted);
 }
 
-
 .ot-confirm-box {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -2480,120 +2639,6 @@ onBeforeUnmount(() => {
 @media (max-width: 1200px) {
   .ot-summary-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .ot-expanded-box {
-    width: min(100%, 900px);
-  }
-
-  .ot-expanded-grid-row {
-    grid-template-columns:
-      2.5rem
-      minmax(4.5rem, 0.52fr)
-      minmax(7rem, 1fr)
-      minmax(6.5rem, 0.75fr)
-      minmax(6rem, 0.62fr)
-      minmax(4.5rem, 0.5fr);
-  }
-
-  .ot-expanded-grid-row > div {
-    padding: 0.42rem 0.46rem;
-    font-size: 0.68rem;
-  }
-}
-
-@media (max-width: 768px) {
-  .ot-expanded-header {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .ot-expanded-box {
-    width: max-content;
-    min-width: 760px;
-    max-width: none;
-    padding: 0.6rem;
-  }
-
-  .ot-expanded-content {
-    width: max-content;
-    min-width: 760px;
-    max-width: none;
-    overflow: visible;
-  }
-
-  .ot-expanded-responsive-table {
-    width: max-content;
-    min-width: 760px;
-    max-width: none;
-    overflow: visible;
-  }
-
-  .ot-expanded-grid-row {
-    grid-template-columns:
-      2.4rem
-      5.8rem
-      8.8rem
-      8.2rem
-      7.4rem
-      10rem;
-  }
-
-  .ot-expanded-grid-row > div {
-    padding: 0.42rem 0.5rem;
-    font-size: 0.68rem;
-    line-height: 1.25;
-  }
-
-  .ot-expanded-grid-row.is-head > div {
-    font-size: 0.64rem;
-  }
-
-  .cell-wrap {
-    white-space: normal;
-    overflow-wrap: anywhere;
-    word-break: break-word;
-  }
-}
-
-@media (max-width: 420px) {
-  .ot-expanded-box {
-    width: max-content;
-    min-width: 760px;
-    max-width: none;
-    padding: 0.55rem;
-  }
-
-  .ot-expanded-content {
-    width: max-content;
-    min-width: 760px;
-    max-width: none;
-  }
-
-  .ot-expanded-responsive-table {
-    width: max-content;
-    min-width: 760px;
-    max-width: none;
-  }
-
-  .ot-expanded-grid-row {
-    grid-template-columns:
-      2.3rem
-      5.6rem
-      8.5rem
-      8rem
-      7.2rem
-      10rem;
-  }
-
-  .ot-expanded-grid-row > div {
-    padding: 0.4rem 0.46rem;
-    font-size: 0.66rem;
-    line-height: 1.25;
-  }
-
-  .ot-expanded-grid-row.is-head > div {
-    font-size: 0.62rem;
   }
 }
 

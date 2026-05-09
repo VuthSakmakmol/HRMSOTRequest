@@ -102,17 +102,14 @@ const formDayTypeOptions = [
   {
     label: 'Working Day',
     value: 'WORKING_DAY',
-    description: 'Normal working day OT options.',
   },
   {
     label: 'Sunday',
     value: 'SUNDAY',
-    description: 'Sunday OT options only.',
   },
   {
     label: 'Holiday',
     value: 'HOLIDAY',
-    description: 'Internal calendar holiday OT options only.',
   },
 ]
 
@@ -1412,14 +1409,9 @@ onBeforeUnmount(() => {
 
                 <span>
                   <strong>{{ item.label }}</strong>
-                  <small>{{ item.description }}</small>
                 </span>
               </label>
             </div>
-
-            <p class="text-xs text-[color:var(--ot-text-muted)]">
-              OT create page will only show this option when selected date matches these day types.
-            </p>
           </div>
 
           <div class="space-y-2">
@@ -1451,9 +1443,6 @@ onBeforeUnmount(() => {
                 :min="0"
                 :useGrouping="false"
               />
-              <p class="text-xs text-[color:var(--ot-text-muted)]">
-                Example: shift end 16:00 + 120 min = OT starts 18:00.
-              </p>
             </div>
 
             <div class="space-y-2">
@@ -1620,41 +1609,6 @@ onBeforeUnmount(() => {
 
           <div class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] p-4">
             <div class="mb-3 text-sm font-semibold text-[color:var(--ot-text)]">
-              Recommended Setup
-            </div>
-
-            <div class="space-y-3 text-sm text-[color:var(--ot-text-muted)]">
-              <div class="rounded-xl border border-[color:var(--ot-border)] px-3 py-2">
-                <div class="font-semibold text-[color:var(--ot-text)]">
-                  Working Day: After Shift OT
-                </div>
-                <div class="mt-1">
-                  Applicable Day Type = Working Day. Example: 18:00 - 20:00.
-                </div>
-              </div>
-
-              <div class="rounded-xl border border-[color:var(--ot-border)] px-3 py-2">
-                <div class="font-semibold text-[color:var(--ot-text)]">
-                  Sunday: Fixed Time
-                </div>
-                <div class="mt-1">
-                  Applicable Day Type = Sunday. Example: 08:00 - 17:00.
-                </div>
-              </div>
-
-              <div class="rounded-xl border border-[color:var(--ot-border)] px-3 py-2">
-                <div class="font-semibold text-[color:var(--ot-text)]">
-                  Holiday: Fixed Time
-                </div>
-                <div class="mt-1">
-                  Applicable Day Type = Holiday. Holiday is checked from your internal calendar.
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] p-4">
-            <div class="mb-3 text-sm font-semibold text-[color:var(--ot-text)]">
               Flags
             </div>
 
@@ -1729,7 +1683,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: flex-start;
   gap: 0.65rem;
-  min-height: 5.4rem;
+  min-height: 3.4rem;
   border: 1px solid var(--ot-border);
   background: var(--ot-surface);
   border-radius: 0.9rem;

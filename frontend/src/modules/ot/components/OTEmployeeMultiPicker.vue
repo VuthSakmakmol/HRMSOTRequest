@@ -2,13 +2,14 @@
 <script setup>
 // frontend/src/modules/ot/components/OTEmployeeMultiPicker.vue
 
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
-import Dialog from 'primevue/dialog'
+import Checkbox from 'primevue/checkbox'
 import IconField from 'primevue/iconfield'
 import InputIcon from 'primevue/inputicon'
+import InputNumber from 'primevue/inputnumber'
 import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
 import ProgressSpinner from 'primevue/progressspinner'
@@ -59,23 +60,29 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+
+  requestPreview: {
+    type: Object,
+    default: null,
+  },
 })
 
 const emit = defineEmits(['update:modelValue'])
 
 const toast = useToast()
 
-const PAGE_SIZE = 30
+const PAGE_SIZE = 10
+const GROUP_VISIBLE_STEP = 10
 const BULK_PAGE_SIZE = 100
 const MAX_BULK_PAGES = 100
-
-const dialogVisible = ref(false)
-const scrollRef = ref(null)
+const SEARCH_DEBOUNCE_MS = 260
+const SCROLL_LOAD_OFFSET = 140
 
 const loadingAccess = ref(false)
 const loadingLines = ref(false)
 const loading = ref(false)
 const loadingMore = ref(false)
+const backgroundFetchingAll = ref(false)
 const selectingManaged = ref(false)
 
 const search = ref('')
@@ -84,17 +91,19 @@ const employeeScope = ref('MANAGED')
 const canSelectOtherEmployees = ref(false)
 
 const employees = ref([])
+const total = ref(0)
+const loadedPages = ref(new Set())
+
 const remoteLineOptions = ref([])
+const expandedLineRows = ref({})
+const lineVisibleCountMap = reactive({})
 
 const managedEmployeeIds = ref(new Set())
 const managedIdsLoaded = ref(false)
 
-const page = ref(1)
-const total = ref(0)
-const hasMore = ref(false)
-
 let searchTimer = null
 let requestSeq = 0
+let backgroundLoadToken = 0
 let autoSelectKey = ''
 
 const selectedRows = computed(() => (Array.isArray(props.modelValue) ? props.modelValue : []))
@@ -105,12 +114,16 @@ const selectedIds = computed(() => {
 
 const selectedCount = computed(() => selectedRows.value.length)
 
-const outsideSelectedCount = computed(() => {
-  return selectedRows.value.filter((item) => item?.isOutsideManaged === true).length
+const selectedWithLineCount = computed(() => {
+  return selectedRows.value.filter((item) => hasLine(item)).length
 })
 
-const managedSelectedCount = computed(() => {
-  return Math.max(0, selectedCount.value - outsideSelectedCount.value)
+const selectedNoLineCount = computed(() => {
+  return selectedRows.value.filter((item) => !hasLine(item)).length
+})
+
+const outsideSelectedCount = computed(() => {
+  return selectedRows.value.filter((item) => item?.isOutsideManaged === true).length
 })
 
 const blockedStamp = computed(() => {
@@ -118,17 +131,59 @@ const blockedStamp = computed(() => {
   return Object.keys(map).sort().join('|')
 })
 
+const loadedCount = computed(() => employees.value.length)
+
 const loadedCountLabel = computed(() => {
-  const loaded = employees.value.length
+  const loaded = loadedCount.value
   const all = total.value || loaded
   return `${loaded}/${all}`
 })
 
-const canUsePicker = computed(() => {
-  return Boolean(props.otDate && props.autoSelectReady)
+const hasMoreEmployees = computed(() => {
+  return loadedCount.value < Number(total.value || 0)
 })
 
-const selectedPreview = computed(() => selectedRows.value.slice(0, 12))
+const nextPageToLoad = computed(() => {
+  return loadedPages.value.size + 1
+})
+
+const defaultTime = computed(() => {
+  const preview = props.requestPreview || {}
+
+  const requestStartTime = String(
+    preview.requestStartTime ||
+      preview.startTime ||
+      '',
+  ).trim()
+
+  const requestEndTime = String(
+    preview.requestEndTime ||
+      preview.endTime ||
+      '',
+  ).trim()
+
+  const breakMinutes = Number(preview.breakMinutes || 0)
+
+  const requestedMinutes =
+    Number(preview.requestedMinutes || 0) ||
+    calculateTimeWindowMinutes(requestStartTime, requestEndTime, breakMinutes)
+
+  return {
+    requestStartTime,
+    requestEndTime,
+    breakMinutes,
+    requestedMinutes,
+  }
+})
+
+const defaultTimeKey = computed(() => {
+  return [
+    defaultTime.value.requestStartTime,
+    defaultTime.value.requestEndTime,
+    defaultTime.value.breakMinutes,
+    defaultTime.value.requestedMinutes,
+  ].join('|')
+})
 
 const employeeScopeOptions = computed(() => {
   const options = [
@@ -184,17 +239,9 @@ const displayedEmployees = computed(() => {
     .sort(compareEmployeeRows)
 })
 
-const managedDisplayedEmployees = computed(() =>
-  displayedEmployees.value.filter((employee) => !employee?.isOutsideManaged),
-)
+const lineGroups = computed(() => buildLineGroups(displayedEmployees.value))
 
-const outsideDisplayedEmployees = computed(() =>
-  displayedEmployees.value.filter((employee) => employee?.isOutsideManaged),
-)
-
-const managedLineGroups = computed(() => buildLineGroups(managedDisplayedEmployees.value, 'managed'))
-const outsideLineGroups = computed(() => buildLineGroups(outsideDisplayedEmployees.value, 'outside'))
-const allLineGroups = computed(() => buildLineGroups(displayedEmployees.value, 'all'))
+const hasAnyRows = computed(() => lineGroups.value.length > 0)
 
 function toTrimmedString(value) {
   return String(value ?? '').trim()
@@ -221,6 +268,52 @@ function normalizeBoolean(...values) {
   }
 
   return false
+}
+
+function isHHmm(value) {
+  return /^([01]\d|2[0-3]):([0-5]\d)$/.test(String(value || '').trim())
+}
+
+function timeToMinutes(value) {
+  if (!isHHmm(value)) return 0
+
+  const [hh, mm] = String(value).split(':').map(Number)
+  return hh * 60 + mm
+}
+
+function calculateRawWindowMinutes(startTime, endTime) {
+  if (!isHHmm(startTime) || !isHHmm(endTime)) return 0
+
+  const start = timeToMinutes(startTime)
+  const end = timeToMinutes(endTime)
+
+  let minutes = end - start
+
+  if (minutes <= 0) {
+    minutes += 1440
+  }
+
+  return minutes
+}
+
+function calculateTimeWindowMinutes(startTime, endTime, breakMinutes = 0) {
+  const rawMinutes = calculateRawWindowMinutes(startTime, endTime)
+  const safeBreak = Number(breakMinutes || 0)
+
+  return Math.max(0, rawMinutes - safeBreak)
+}
+
+function formatMinutesLabel(value) {
+  const minutes = Number(value || 0)
+
+  if (!minutes) return '0 min'
+
+  const hh = Math.floor(minutes / 60)
+  const mm = minutes % 60
+
+  if (hh && mm) return `${hh}h ${mm}m`
+  if (hh) return `${hh}h`
+  return `${mm}m`
 }
 
 function getEmployeeId(employee) {
@@ -328,6 +421,24 @@ function extractShiftFields(source = {}) {
   }
 }
 
+function hasLine(employee) {
+  return Boolean(
+    toTrimmedString(employee?.lineId) ||
+      toTrimmedString(employee?.lineCode) ||
+      toTrimmedString(employee?.lineName),
+  )
+}
+
+function getLineGroupKey(employee) {
+  if (!hasLine(employee)) return 'NO_LINE'
+
+  return (
+    toTrimmedString(employee?.lineId) ||
+    toTrimmedString(employee?.lineCode) ||
+    toTrimmedString(employee?.lineName)
+  )
+}
+
 function isOutsideManagedEmployee(employeeId, explicitValue = undefined) {
   if (explicitValue === true || explicitValue === false) return explicitValue
 
@@ -384,6 +495,32 @@ function normalizeEmployeeRecord(source = {}, options = {}) {
   }
 }
 
+function normalizeSelectedEmployeeRecord(source = {}) {
+  const base = normalizeEmployeeRecord(source, {
+    isOutsideManaged: source?.isOutsideManaged === true,
+  })
+
+  if (!base) return null
+
+  const startTime = toTrimmedString(source?.requestStartTime || defaultTime.value.requestStartTime)
+  const endTime = toTrimmedString(source?.requestEndTime || defaultTime.value.requestEndTime)
+  const breakMinutes = Number(source?.breakMinutes ?? defaultTime.value.breakMinutes ?? 0)
+
+  const requestedMinutes =
+    Number(source?.requestedMinutes || 0) ||
+    calculateTimeWindowMinutes(startTime, endTime, breakMinutes) ||
+    Number(defaultTime.value.requestedMinutes || 0)
+
+  return {
+    ...base,
+    requestStartTime: startTime,
+    requestEndTime: endTime,
+    breakMinutes,
+    requestedMinutes,
+    otTimeMode: toUpperCode(source?.otTimeMode || 'DEFAULT'),
+  }
+}
+
 function normalizeEmployeeLookupResponse(res, options = {}) {
   const root = res?.data?.data || res?.data || {}
 
@@ -413,26 +550,15 @@ function normalizeEmployeeLookupResponse(res, options = {}) {
 
   const totalRows = Number(
     pagination?.total ??
+      pagination?.totalRecords ??
       root?.total ??
       res?.data?.total ??
       normalizedRows.length,
   )
 
-  const totalPages = Number(
-    pagination?.totalPages ?? Math.max(1, Math.ceil(totalRows / PAGE_SIZE)),
-  )
-
-  const responseHasMore =
-    typeof root?.hasMore === 'boolean'
-      ? root.hasMore
-      : typeof pagination?.hasMore === 'boolean'
-        ? pagination.hasMore
-        : Number(pagination?.page || page.value) < totalPages
-
   return {
     rows: normalizedRows,
     total: totalRows,
-    hasMore: responseHasMore,
   }
 }
 
@@ -475,16 +601,19 @@ function compareEmployeeRows(a, b) {
   )
 }
 
-function buildEmployeeDisplay(employee = {}) {
-  return [employee?.employeeNo || 'No ID', employee?.displayName || 'Unknown']
-    .filter(Boolean)
-    .join(' - ')
+function compareLineGroups(a, b) {
+  if (a.id === 'NO_LINE') return 1
+  if (b.id === 'NO_LINE') return -1
+
+  return a.label.localeCompare(b.label)
 }
 
 function buildLineLabel(employee = {}) {
+  if (!hasLine(employee)) return 'No Line'
+
   return (
     [employee?.lineCode, employee?.lineName].filter(Boolean).join(' · ') ||
-    'No line'
+    'Unnamed line'
   )
 }
 
@@ -493,6 +622,80 @@ function buildShiftLabel(employee = {}) {
     [employee?.shiftCode, employee?.shiftName].filter(Boolean).join(' · ') ||
     'No shift'
   )
+}
+
+function buildApiErrorMessage(error) {
+  const data = error?.response?.data
+
+  if (!data) return error?.message || 'Unknown error.'
+
+  const details =
+    data?.details ||
+    data?.errors ||
+    data?.data?.details ||
+    data?.data?.errors
+
+  if (Array.isArray(details) && details.length) {
+    return details
+      .map((item) => {
+        if (typeof item === 'string') return item
+
+        const path = Array.isArray(item?.path)
+          ? item.path.join('.')
+          : item?.path || item?.field || ''
+
+        const message = item?.message || item?.msg || 'Invalid value'
+
+        return path ? `${path}: ${message}` : message
+      })
+      .join('\n')
+  }
+
+  if (typeof details === 'object' && details) {
+    return JSON.stringify(details, null, 2)
+  }
+
+  return data?.message || error?.message || 'Unable to create OT request.'
+}
+
+function getSelectedEmployee(employee) {
+  const id = getEmployeeId(employee)
+  if (!id) return null
+
+  return selectedRows.value.find((item) => getEmployeeId(item) === id) || null
+}
+
+function getEditableEmployee(employee) {
+  return getSelectedEmployee(employee) || normalizeSelectedEmployeeRecord(employee) || employee
+}
+
+function getEmployeeStartTime(employee) {
+  return toTrimmedString(getEditableEmployee(employee)?.requestStartTime || '')
+}
+
+function getEmployeeEndTime(employee) {
+  return toTrimmedString(getEditableEmployee(employee)?.requestEndTime || '')
+}
+
+function getEmployeeBreakMinutes(employee) {
+  return Number(getEditableEmployee(employee)?.breakMinutes || 0)
+}
+
+function getEmployeeRequestedMinutes(employee) {
+  const editable = getEditableEmployee(employee)
+
+  const current = Number(editable?.requestedMinutes || 0)
+  if (current > 0) return current
+
+  return calculateTimeWindowMinutes(
+    editable?.requestStartTime,
+    editable?.requestEndTime,
+    editable?.breakMinutes,
+  )
+}
+
+function getEmployeeTimeMode(employee) {
+  return toUpperCode(getEditableEmployee(employee)?.otTimeMode || 'DEFAULT')
 }
 
 function getBlockedRecord(employee) {
@@ -571,9 +774,7 @@ function mergeUniqueRows(rows = []) {
   const map = new Map()
 
   for (const item of rows) {
-    const normalized = normalizeEmployeeRecord(item, {
-      isOutsideManaged: item?.isOutsideManaged === true,
-    })
+    const normalized = normalizeSelectedEmployeeRecord(item)
 
     if (!normalized) continue
     map.set(normalized._id, normalized)
@@ -614,8 +815,8 @@ function clearSelected() {
   emitSelected([])
 }
 
-function toggleEmployee(employee) {
-  if (isSelected(employee)) {
+function toggleEmployee(employee, checked) {
+  if (!checked) {
     removeRows([employee])
     return
   }
@@ -635,22 +836,106 @@ function toggleEmployee(employee) {
   selectRows([employee])
 }
 
-function buildLineGroups(rows = [], prefix = 'main') {
+function updateSelectedEmployeeTime(employee, patch = {}) {
+  const id = getEmployeeId(employee)
+  if (!id) return
+
+  const exists = isSelected(employee)
+
+  if (!exists && isEmployeeDisabled(employee)) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Cannot edit employee',
+      detail: getEmployeeBlockInfo(employee).reason,
+      life: 3000,
+    })
+    return
+  }
+
+  const baseRows = exists
+    ? selectedRows.value
+    : [...selectedRows.value, normalizeSelectedEmployeeRecord(employee)]
+
+  const nextRows = baseRows.map((item) => {
+    if (getEmployeeId(item) !== id) return item
+
+    const next = {
+      ...item,
+      ...patch,
+      otTimeMode: 'CUSTOM',
+    }
+
+    next.breakMinutes = Number(next.breakMinutes || 0)
+    next.requestedMinutes = calculateTimeWindowMinutes(
+      next.requestStartTime,
+      next.requestEndTime,
+      next.breakMinutes,
+    )
+
+    return next
+  })
+
+  emitSelected(nextRows)
+}
+
+function resetEmployeeTime(employee) {
+  const id = getEmployeeId(employee)
+  if (!id) return
+
+  const nextRows = selectedRows.value.map((item) => {
+    if (getEmployeeId(item) !== id) return item
+
+    return {
+      ...item,
+      requestStartTime: defaultTime.value.requestStartTime,
+      requestEndTime: defaultTime.value.requestEndTime,
+      breakMinutes: defaultTime.value.breakMinutes,
+      requestedMinutes: defaultTime.value.requestedMinutes,
+      otTimeMode: 'DEFAULT',
+    }
+  })
+
+  emitSelected(nextRows)
+}
+
+function updateDefaultSelectedEmployeeTimes() {
+  if (!selectedRows.value.length) return
+
+  const nextRows = selectedRows.value.map((item) => {
+    const mode = toUpperCode(item?.otTimeMode || 'DEFAULT')
+
+    if (mode === 'CUSTOM') return item
+
+    return {
+      ...item,
+      requestStartTime: defaultTime.value.requestStartTime,
+      requestEndTime: defaultTime.value.requestEndTime,
+      breakMinutes: defaultTime.value.breakMinutes,
+      requestedMinutes: defaultTime.value.requestedMinutes,
+      otTimeMode: 'DEFAULT',
+    }
+  })
+
+  emitSelected(nextRows)
+}
+
+function buildLineGroups(rows = []) {
   const map = new Map()
 
   for (const employee of rows) {
-    const lineId = toTrimmedString(employee?.lineId)
-    const lineKey = lineId || 'NO_LINE'
+    const lineKey = getLineGroupKey(employee)
 
     if (!map.has(lineKey)) {
       map.set(lineKey, {
-        key: `${prefix}:${lineKey}`,
-        lineId,
+        id: lineKey,
+        lineId: toTrimmedString(employee?.lineId),
         label: buildLineLabel(employee),
+        isNoLine: lineKey === 'NO_LINE',
         rows: [],
         count: 0,
         selectedCount: 0,
         disabledCount: 0,
+        outsideCount: 0,
       })
     }
 
@@ -661,6 +946,7 @@ function buildLineGroups(rows = [], prefix = 'main') {
 
     if (isSelected(employee)) group.selectedCount += 1
     if (isEmployeeDisabled(employee) && !isSelected(employee)) group.disabledCount += 1
+    if (employee?.isOutsideManaged) group.outsideCount += 1
   }
 
   return Array.from(map.values())
@@ -669,15 +955,79 @@ function buildLineGroups(rows = [], prefix = 'main') {
       rows: group.rows.sort(compareEmployeeRows),
       selectableCount: group.rows.filter((row) => !isEmployeeDisabled(row)).length,
     }))
-    .sort((a, b) => a.label.localeCompare(b.label))
+    .sort(compareLineGroups)
 }
 
-function selectLineGroup(group) {
-  selectRows(group.rows || [])
+function isLineExpanded(group) {
+  return expandedLineRows.value[group.id] === true
 }
 
-function clearLineGroup(group) {
-  removeRows(group.rows || [])
+function toggleLineExpanded(group) {
+  expandedLineRows.value = {
+    ...expandedLineRows.value,
+    [group.id]: !isLineExpanded(group),
+  }
+}
+
+function syncLineState() {
+  const nextExpanded = {
+    ...expandedLineRows.value,
+  }
+
+  for (const group of lineGroups.value) {
+    if (nextExpanded[group.id] === undefined) {
+      nextExpanded[group.id] = false
+    }
+
+    if (!lineVisibleCountMap[group.id]) {
+      lineVisibleCountMap[group.id] = GROUP_VISIBLE_STEP
+    }
+  }
+
+  expandedLineRows.value = nextExpanded
+}
+
+function getVisibleRowsForGroup(group) {
+  const limit = Number(lineVisibleCountMap[group.id] || GROUP_VISIBLE_STEP)
+  return group.rows.slice(0, limit)
+}
+
+function groupHasMoreLocalRows(group) {
+  const limit = Number(lineVisibleCountMap[group.id] || GROUP_VISIBLE_STEP)
+  return group.rows.length > limit
+}
+
+function onLineEmployeeScroll(event, group) {
+  const target = event?.target
+  if (!target) return
+
+  const nearBottom =
+    target.scrollTop + target.clientHeight >= target.scrollHeight - SCROLL_LOAD_OFFSET
+
+  if (!nearBottom) return
+
+  if (groupHasMoreLocalRows(group)) {
+    lineVisibleCountMap[group.id] =
+      Number(lineVisibleCountMap[group.id] || GROUP_VISIBLE_STEP) + GROUP_VISIBLE_STEP
+  }
+}
+
+function isLineGroupSelected(group) {
+  const rows = getSelectableRows(group?.rows || [])
+  if (!rows.length) return false
+
+  return rows.every((employee) => selectedIds.value.has(getEmployeeId(employee)))
+}
+
+function toggleLineGroup(group, checked) {
+  const rows = group?.rows || []
+
+  if (checked) {
+    selectRows(rows)
+    return
+  }
+
+  removeRows(rows)
 }
 
 function buildEmployeeParams(targetPage, targetScope = employeeScope.value) {
@@ -790,7 +1140,8 @@ async function loadManagedIds() {
       if (id) ids.add(id)
     }
 
-    keepLoading = payload.hasMore === true && payload.rows.length > 0
+    const loaded = currentPage * BULK_PAGE_SIZE
+    keepLoading = loaded < payload.total && payload.rows.length > 0
     currentPage += 1
 
     if (currentPage > MAX_BULK_PAGES) keepLoading = false
@@ -800,39 +1151,58 @@ async function loadManagedIds() {
   managedIdsLoaded.value = true
 }
 
-async function ensureScrollableFill() {
-  await nextTick()
+function resetEmployeeListState() {
+  backgroundLoadToken += 1
+  backgroundFetchingAll.value = false
 
-  const el = scrollRef.value
-  if (!el || loading.value || loadingMore.value || !hasMore.value) return
+  employees.value = []
+  total.value = 0
+  loadedPages.value = new Set()
+  expandedLineRows.value = {}
 
-  const needsMore = el.scrollHeight <= el.clientHeight + 90
-
-  if (needsMore) {
-    await loadEmployees()
+  for (const key of Object.keys(lineVisibleCountMap)) {
+    delete lineVisibleCountMap[key]
   }
 }
 
-async function loadEmployees(options = {}) {
-  const { reset = false } = options
+function mergeLoadedEmployees(existingRows = [], newRows = []) {
+  const map = new Map()
 
+  for (const row of existingRows) {
+    const id = getEmployeeId(row)
+    if (id) map.set(id, row)
+  }
+
+  for (const row of newRows) {
+    const id = getEmployeeId(row)
+    if (id) map.set(id, row)
+  }
+
+  return Array.from(map.values()).sort((a, b) => {
+    const lineA = hasLine(a) ? buildLineLabel(a) : '~~~~NO_LINE'
+    const lineB = hasLine(b) ? buildLineLabel(b) : '~~~~NO_LINE'
+
+    const lineCompare = lineA.localeCompare(lineB)
+    if (lineCompare !== 0) return lineCompare
+
+    return compareEmployeeRows(a, b)
+  })
+}
+
+async function fetchEmployeePage(targetPage = 1, { replace = false, silent = false } = {}) {
   if (!props.otDate) {
-    employees.value = []
-    total.value = 0
-    page.value = 1
-    hasMore.value = false
+    resetEmployeeListState()
     return
   }
 
-  if (loading.value || loadingMore.value) return
-  if (!reset && !hasMore.value) return
+  if (!replace && loadedPages.value.has(targetPage)) return
+  if (!replace && !hasMoreEmployees.value && loadedPages.value.size > 0) return
 
-  const targetPage = reset ? 1 : page.value
   const currentSeq = ++requestSeq
 
-  if (targetPage === 1) {
+  if (replace) {
     loading.value = true
-  } else {
+  } else if (!silent) {
     loadingMore.value = true
   }
 
@@ -843,35 +1213,27 @@ async function loadEmployees(options = {}) {
 
     const res = await getEmployeeLookupOptions(buildEmployeeParams(targetPage))
 
-    if (currentSeq !== requestSeq) return
-
     const payload = normalizeEmployeeLookupResponse(res, {
       markOutsideManaged: employeeScope.value === 'ALL',
     })
 
+    if (currentSeq !== requestSeq) return
+
     total.value = payload.total
-    hasMore.value = payload.hasMore
 
-    if (reset) {
+    if (replace) {
       employees.value = payload.rows
-      page.value = 2
-
-      await nextTick()
-
-      if (scrollRef.value) {
-        scrollRef.value.scrollTop = 0
-      }
+      loadedPages.value = new Set([targetPage])
+      expandedLineRows.value = {}
     } else {
-      employees.value = mergeUniqueRows([...employees.value, ...payload.rows])
-      page.value = targetPage + 1
+      employees.value = mergeLoadedEmployees(employees.value, payload.rows)
+      loadedPages.value.add(targetPage)
     }
 
-    await ensureScrollableFill()
+    syncLineState()
   } catch (error) {
-    if (reset) {
-      employees.value = []
-      total.value = 0
-      hasMore.value = false
+    if (replace) {
+      resetEmployeeListState()
     }
 
     toast.add({
@@ -884,18 +1246,73 @@ async function loadEmployees(options = {}) {
       life: 3000,
     })
   } finally {
-    if (targetPage === 1) {
+    if (currentSeq === requestSeq) {
       loading.value = false
-    } else {
       loadingMore.value = false
     }
   }
 }
 
+async function fetchAllRemainingEmployeePages() {
+  if (!props.otDate) return
+  if (backgroundFetchingAll.value) return
+  if (!hasMoreEmployees.value) return
+
+  const token = ++backgroundLoadToken
+
+  backgroundFetchingAll.value = true
+
+  try {
+    let page = nextPageToLoad.value
+
+    while (
+      token === backgroundLoadToken &&
+      props.otDate &&
+      hasMoreEmployees.value &&
+      page <= MAX_BULK_PAGES
+    ) {
+      await fetchEmployeePage(page, {
+        replace: false,
+        silent: true,
+      })
+
+      page = nextPageToLoad.value
+    }
+  } finally {
+    if (token === backgroundLoadToken) {
+      backgroundFetchingAll.value = false
+    }
+  }
+}
+
 async function resetAndLoadEmployees() {
-  page.value = 1
-  hasMore.value = true
-  await loadEmployees({ reset: true })
+  resetEmployeeListState()
+
+  await fetchEmployeePage(1, {
+    replace: true,
+  })
+
+  fetchAllRemainingEmployeePages()
+}
+
+async function onLazyScroll(event) {
+  const target = event?.target
+  if (!target) return
+
+  if (loading.value || loadingMore.value || backgroundFetchingAll.value) return
+  if (!hasMoreEmployees.value) return
+
+  const nearBottom =
+    target.scrollTop + target.clientHeight >= target.scrollHeight - SCROLL_LOAD_OFFSET
+
+  if (!nearBottom) return
+
+  await fetchEmployeePage(nextPageToLoad.value, {
+    replace: false,
+    silent: false,
+  })
+
+  fetchAllRemainingEmployeePages()
 }
 
 async function autoSelectManagedEmployees() {
@@ -926,13 +1343,16 @@ async function autoSelectManagedEmployees() {
 
       rows.push(...payload.rows)
 
-      keepLoading = payload.hasMore === true && payload.rows.length > 0
+      const loaded = currentPage * BULK_PAGE_SIZE
+      keepLoading = loaded < payload.total && payload.rows.length > 0
       currentPage += 1
 
       if (currentPage > MAX_BULK_PAGES) keepLoading = false
     }
 
-    const selectableRows = rows.filter((row) => !getEmployeeBlockInfo(row).blocked)
+    const selectableRows = rows.filter((row) => {
+      return hasLine(row) && !getEmployeeBlockInfo(row).blocked
+    })
 
     emitSelected(selectableRows)
   } catch (error) {
@@ -963,39 +1383,34 @@ function removeInvalidSelectedRows() {
   }
 }
 
-function handleScroll(event) {
-  const el = event?.target
-  if (!el || loading.value || loadingMore.value || !hasMore.value) return
-
-  const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 160
-
-  if (nearBottom) {
-    loadEmployees()
-  }
-}
-
-function openPicker() {
-  dialogVisible.value = true
-
-  nextTick(() => {
-    ensureScrollableFill()
-  })
-}
-
-watch(search, () => {
+function onSearchInput() {
   window.clearTimeout(searchTimer)
 
   searchTimer = window.setTimeout(() => {
     resetAndLoadEmployees()
-  }, 260)
-})
+  }, SEARCH_DEBOUNCE_MS)
+}
 
-watch(selectedLineId, () => {
+function onFilterChange() {
   resetAndLoadEmployees()
-})
+}
+
+function clearFilters() {
+  search.value = ''
+  selectedLineId.value = ''
+  resetAndLoadEmployees()
+}
 
 watch(employeeScope, async () => {
   await resetAndLoadEmployees()
+})
+
+watch(lineGroups, () => {
+  syncLineState()
+})
+
+watch(defaultTimeKey, () => {
+  updateDefaultSelectedEmployeeTimes()
 })
 
 watch(
@@ -1003,10 +1418,7 @@ watch(
   async () => {
     search.value = ''
     selectedLineId.value = ''
-    employees.value = []
-    total.value = 0
-    page.value = 1
-    hasMore.value = false
+    resetEmployeeListState()
     autoSelectKey = ''
 
     if (!props.otDate) return
@@ -1043,38 +1455,105 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="ot-employee-picker">
-    <div class="ot-picker-summary">
-      <div class="min-w-0">
+    <div class="ot-compact-header">
+      <div class="ot-title-block">
         <h2 class="ot-picker-title">
           2. Choose employees <span class="ot-required-star">*</span>
         </h2>
       </div>
 
-      <div class="ot-picker-actions">
-        <div class="ot-count-box">
+      <IconField class="ot-search-field">
+        <InputIcon class="pi pi-search" />
+
+        <InputText
+          v-model.trim="search"
+          class="w-full"
+          size="small"
+          placeholder="Search ID, name, line, position, or shift..."
+          @input="onSearchInput"
+        />
+      </IconField>
+
+      <Select
+        v-model="employeeScope"
+        :options="employeeScopeOptions"
+        optionLabel="label"
+        optionValue="value"
+        class="ot-scope-filter"
+        size="small"
+        placeholder="Employee scope"
+        :disabled="loadingAccess || !canSelectOtherEmployees"
+      />
+
+      <Select
+        v-model="selectedLineId"
+        :options="lineOptions"
+        optionLabel="label"
+        optionValue="value"
+        class="ot-line-filter"
+        size="small"
+        placeholder="All lines"
+        :loading="loadingLines"
+        @change="onFilterChange"
+      />
+
+      <div class="ot-inline-tags">
+        <Tag
+          :value="props.selectedShiftLabel || 'Shift required'"
+          :severity="props.selectedShiftLabel ? 'success' : 'warning'"
+          class="ot-status-tag"
+        />
+
+        <Tag
+          :value="backgroundFetchingAll ? `${loadedCountLabel} loading all...` : `${loadedCountLabel} loaded`"
+          :severity="backgroundFetchingAll ? 'warning' : 'info'"
+          class="ot-status-tag"
+        />
+      </div>
+
+      <div class="ot-mini-summary">
+        <div class="ot-mini-chip">
           <span>Selected</span>
           <strong>{{ selectedCount }}</strong>
         </div>
 
-        <div class="ot-count-box">
-          <span>My Team</span>
-          <strong>{{ managedSelectedCount }}</strong>
+        <div class="ot-mini-chip">
+          <span>With Line</span>
+          <strong>{{ selectedWithLineCount }}</strong>
+        </div>
+
+        <div class="ot-mini-chip is-warn">
+          <span>No Line</span>
+          <strong>{{ selectedNoLineCount }}</strong>
         </div>
 
         <div
           v-if="outsideSelectedCount"
-          class="ot-count-box is-warn"
+          class="ot-mini-chip is-warn"
         >
           <span>Other</span>
           <strong>{{ outsideSelectedCount }}</strong>
         </div>
+      </div>
+
+      <div class="ot-header-actions">
+        <Button
+          label="Clear Filter"
+          icon="pi pi-refresh"
+          size="small"
+          severity="secondary"
+          outlined
+          @click="clearFilters"
+        />
 
         <Button
-          label="Open Picker"
-          icon="pi pi-window-maximize"
+          v-if="selectedCount"
+          label="Clear Selection"
+          icon="pi pi-times"
           size="small"
-          :disabled="!props.otDate"
-          @click="openPicker"
+          severity="danger"
+          outlined
+          @click="clearSelected"
         />
       </div>
     </div>
@@ -1083,7 +1562,7 @@ onBeforeUnmount(() => {
       v-if="!props.otDate"
       severity="info"
       :closable="false"
-      class="m-3"
+      class="mx-3 mb-3"
     >
       Choose OT date first.
     </Message>
@@ -1092,475 +1571,288 @@ onBeforeUnmount(() => {
       v-else-if="props.blockedLoading"
       severity="info"
       :closable="false"
-      class="m-3"
+      class="mx-3 mb-3"
     >
       Checking employees already used in OT on this date...
     </Message>
 
     <div
-      v-if="selectedPreview.length"
-      class="ot-selected-preview"
+      v-if="props.otDate"
+      class="ot-table-shell"
     >
       <div
-        v-for="employee in selectedPreview"
-        :key="getEmployeeId(employee)"
-        class="ot-selected-chip"
-        :class="{ 'is-outside-managed': employee.isOutsideManaged }"
+        v-if="loading || loadingAccess || selectingManaged"
+        class="ot-loading-state"
       >
-        <span>{{ employee.employeeNo || 'No ID' }}</span>
-        <small>{{ employee.displayName }}</small>
+        <ProgressSpinner
+          style="width: 34px; height: 34px"
+          strokeWidth="4"
+        />
+
+        <span>
+          {{ selectingManaged ? 'Auto-selecting employees with line...' : 'Loading employees...' }}
+        </span>
       </div>
 
-      <Tag
-        v-if="selectedCount > selectedPreview.length"
-        :value="`+${selectedCount - selectedPreview.length} more`"
-        severity="info"
-      />
+      <div
+        v-else-if="!hasAnyRows"
+        class="ot-empty-state"
+      >
+        <i class="pi pi-users" />
 
-      <Tag
-        v-if="props.selectedShiftLabel"
-        :value="props.selectedShiftLabel"
-        severity="success"
-      />
+        <strong>No employees found</strong>
 
-      <Tag
-        v-if="outsideSelectedCount"
-        :value="`${outsideSelectedCount} outside team`"
-        severity="warn"
-      />
+        <span>Try another keyword, line filter, or employee scope.</span>
+      </div>
 
-      <Tag
-        v-if="selectingManaged || props.blockedLoading"
-        value="Updating..."
-        severity="info"
-      />
-    </div>
+      <div
+        v-else
+        class="ot-lazy-scroll-shell"
+        @scroll.passive="onLazyScroll"
+      >
+        <section
+          v-for="group in lineGroups"
+          :key="group.id"
+          class="ot-line-group"
+          :class="{ 'is-no-line': group.isNoLine }"
+        >
+          <div class="ot-line-sticky-head">
+            <button
+              type="button"
+              class="ot-line-toggle"
+              @click="toggleLineExpanded(group)"
+            >
+              <i
+                class="pi"
+                :class="isLineExpanded(group) ? 'pi-chevron-down' : 'pi-chevron-right'"
+              />
 
-    <Message
-      v-else-if="props.otDate && props.autoSelectReady && !selectingManaged && !props.blockedLoading"
-      severity="warn"
-      :closable="false"
-      class="m-3"
-    >
-      No employee selected.
-    </Message>
+              <span>{{ group.label }}</span>
+            </button>
 
-    <Dialog
-      v-model:visible="dialogVisible"
-      modal
-      maximizable
-      class="ot-fullscreen-dialog"
-      :style="{ width: '100vw', height: '100vh', maxHeight: '100vh' }"
-    >
-      <template #header>
-        <div class="ot-dialog-header">
-          <div class="min-w-0">
-            <div class="ot-picker-eyebrow">
-              OT Employee Picker
-            </div>
+            <div class="ot-line-head-right">
+              <Tag
+                :value="`${group.count} staff`"
+                severity="secondary"
+                class="ot-status-tag"
+              />
 
-            <div class="ot-dialog-title">
-              Select employees by line
+              <Tag
+                :value="`${group.selectedCount}/${group.count} selected`"
+                :severity="group.selectedCount ? 'success' : 'secondary'"
+                class="ot-status-tag"
+              />
+
+              <Tag
+                v-if="group.disabledCount"
+                :value="`${group.disabledCount} unavailable`"
+                severity="danger"
+                class="ot-status-tag"
+              />
+
+              <Tag
+                v-if="group.isNoLine"
+                value="Manual only"
+                severity="warning"
+                class="ot-status-tag"
+              />
+
+              <Checkbox
+                binary
+                :modelValue="isLineGroupSelected(group)"
+                :disabled="!group.selectableCount"
+                @update:modelValue="(checked) => toggleLineGroup(group, checked)"
+              />
             </div>
           </div>
 
-          <div class="ot-dialog-tags">
-            <Tag
-              :value="`${selectedCount} selected`"
-              severity="contrast"
-            />
+          <div
+            v-if="isLineExpanded(group)"
+            class="ot-line-body"
+          >
+            <div
+              class="ot-line-employee-scroll"
+              @scroll.passive="(event) => onLineEmployeeScroll(event, group)"
+            >
+              <table class="ot-employee-table">
+                <thead>
+                  <tr>
+                    <th>No</th>
+                    <th></th>
+                    <th>ID</th>
+                    <th>Name</th>
+                    <th>Position</th>
+                    <th>Start</th>
+                    <th>End</th>
+                    <th>Break</th>
+                    <th>Total</th>
+                    <th>Mode</th>
+                    <th>Shift</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
 
-            <Tag
-              v-if="props.selectedShiftLabel"
-              :value="props.selectedShiftLabel"
-              severity="success"
-            />
+                <tbody>
+                  <tr
+                    v-for="(employee, index) in getVisibleRowsForGroup(group)"
+                    :key="getEmployeeId(employee)"
+                  >
+                    <td class="cell-center">
+                      {{ index + 1 }}
+                    </td>
 
-            <Tag
-              :value="`${loadedCountLabel} loaded`"
-              severity="info"
-            />
+                    <td class="cell-center">
+                      <Checkbox
+                        binary
+                        :modelValue="isSelected(employee)"
+                        :disabled="isEmployeeDisabled(employee) && !isSelected(employee)"
+                        @update:modelValue="(checked) => toggleEmployee(employee, checked)"
+                      />
+                    </td>
 
-            <Tag
-              v-if="outsideSelectedCount"
-              :value="`${outsideSelectedCount} outside team`"
-              severity="warn"
-            />
+                    <td>
+                      <span class="cell-mono">
+                        {{ employee.employeeNo || 'No ID' }}
+                      </span>
+                    </td>
+
+                    <td>
+                      <span class="cell-strong">
+                        {{ employee.displayName || '-' }}
+                      </span>
+                    </td>
+
+                    <td>
+                      {{ employee.positionName || '-' }}
+                    </td>
+
+                    <td>
+                      <InputText
+                        :modelValue="getEmployeeStartTime(employee)"
+                        type="time"
+                        class="ot-time-input"
+                        :disabled="isEmployeeDisabled(employee) && !isSelected(employee)"
+                        @update:modelValue="(value) => updateSelectedEmployeeTime(employee, { requestStartTime: value })"
+                      />
+                    </td>
+
+                    <td>
+                      <InputText
+                        :modelValue="getEmployeeEndTime(employee)"
+                        type="time"
+                        class="ot-time-input"
+                        :disabled="isEmployeeDisabled(employee) && !isSelected(employee)"
+                        @update:modelValue="(value) => updateSelectedEmployeeTime(employee, { requestEndTime: value })"
+                      />
+                    </td>
+
+                    <td>
+                      <InputNumber
+                        :modelValue="getEmployeeBreakMinutes(employee)"
+                        class="ot-break-input"
+                        inputClass="ot-break-input-field"
+                        :min="0"
+                        :max="1440"
+                        :step="5"
+                        :disabled="isEmployeeDisabled(employee) && !isSelected(employee)"
+                        @update:modelValue="(value) => updateSelectedEmployeeTime(employee, { breakMinutes: value })"
+                      />
+                    </td>
+
+                    <td>
+                      <span class="cell-mono">
+                        {{ formatMinutesLabel(getEmployeeRequestedMinutes(employee)) }}
+                      </span>
+                    </td>
+
+                    <td>
+                      <div class="mode-cell">
+                        <Tag
+                          :value="getEmployeeTimeMode(employee) === 'CUSTOM' ? 'Custom' : 'Default'"
+                          :severity="getEmployeeTimeMode(employee) === 'CUSTOM' ? 'warn' : 'success'"
+                          class="ot-status-tag"
+                        />
+
+                        <Button
+                          v-if="isSelected(employee) && getEmployeeTimeMode(employee) === 'CUSTOM'"
+                          icon="pi pi-undo"
+                          text
+                          rounded
+                          size="small"
+                          severity="secondary"
+                          title="Reset to default time"
+                          @click="resetEmployeeTime(employee)"
+                        />
+                      </div>
+                    </td>
+
+                    <td>
+                      {{ buildShiftLabel(employee) }}
+                    </td>
+
+                    <td>
+                      <Tag
+                        v-if="isEmployeeDisabled(employee) && !isSelected(employee)"
+                        :value="getEmployeeBlockInfo(employee).reason"
+                        severity="danger"
+                        class="ot-status-tag"
+                      />
+
+                      <Tag
+                        v-else-if="isSelected(employee)"
+                        value="Selected"
+                        severity="success"
+                        class="ot-status-tag"
+                      />
+
+                      <Tag
+                        v-else-if="group.isNoLine"
+                        value="Manual Select"
+                        severity="warning"
+                        class="ot-status-tag"
+                      />
+
+                      <Tag
+                        v-else
+                        value="Available"
+                        severity="secondary"
+                        class="ot-status-tag"
+                      />
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <div
+                v-if="groupHasMoreLocalRows(group)"
+                class="ot-line-scroll-hint"
+              >
+                Scroll inside this line to show more employees...
+              </div>
+            </div>
           </div>
-        </div>
-      </template>
+        </section>
 
-      <div class="ot-dialog-body">
-        <div class="ot-dialog-toolbar">
-          <IconField class="ot-search-field">
-            <InputIcon class="pi pi-search" />
-
-            <InputText
-              v-model.trim="search"
-              class="w-full"
-              placeholder="Search ID, name, line, or shift..."
-            />
-          </IconField>
-
-          <Select
-            v-model="employeeScope"
-            :options="employeeScopeOptions"
-            optionLabel="label"
-            optionValue="value"
-            class="ot-scope-filter"
-            placeholder="Employee scope"
-            :disabled="loadingAccess || !canSelectOtherEmployees"
+        <div
+          v-if="loadingMore"
+          class="ot-more-loading"
+        >
+          <ProgressSpinner
+            style="width: 22px; height: 22px"
+            strokeWidth="4"
           />
 
-          <Select
-            v-model="selectedLineId"
-            :options="lineOptions"
-            optionLabel="label"
-            optionValue="value"
-            class="ot-line-filter"
-            placeholder="All lines"
-            :loading="loadingLines"
-          />
-
-          <Button
-            label="Auto Select My Employees"
-            icon="pi pi-check-square"
-            severity="success"
-            size="small"
-            :loading="selectingManaged || props.blockedLoading"
-            :disabled="!canUsePicker || selectingManaged || props.blockedLoading"
-            @click="autoSelectManagedEmployees"
-          />
-
-          <Button
-            label="Clear"
-            icon="pi pi-times"
-            severity="danger"
-            outlined
-            size="small"
-            :disabled="!selectedCount"
-            @click="clearSelected"
-          />
+          <span>Loading more employees...</span>
         </div>
 
         <div
-          ref="scrollRef"
-          class="ot-employee-scroll"
-          @scroll="handleScroll"
+          v-else-if="!hasMoreEmployees && loadedCount"
+          class="ot-end-line"
         >
-          <div
-            v-if="loading || loadingAccess || selectingManaged"
-            class="ot-loading-state"
-          >
-            <ProgressSpinner style="width: 42px; height: 42px" strokeWidth="4" />
-
-            <span>
-              {{ selectingManaged ? 'Auto-selecting your employees...' : 'Loading employees...' }}
-            </span>
-          </div>
-
-          <div
-            v-else-if="!displayedEmployees.length"
-            class="ot-empty-state"
-          >
-            <i class="pi pi-users" />
-            <strong>No employees found</strong>
-            <span>Try another keyword or line filter.</span>
-          </div>
-
-          <div
-            v-else-if="employeeScope === 'ALL'"
-            class="ot-split-panels"
-          >
-            <section class="ot-split-panel is-managed">
-              <div class="ot-panel-header">
-                <div>
-                  <div class="ot-panel-title">
-                    <i class="pi pi-users" />
-                    <span>My employees</span>
-                  </div>
-
-                  <p>Auto-selected by default.</p>
-                </div>
-
-                <Tag
-                  :value="`${managedDisplayedEmployees.length}`"
-                  severity="success"
-                />
-              </div>
-
-              <div
-                v-if="!managedLineGroups.length"
-                class="ot-panel-empty"
-              >
-                No employee found in your team.
-              </div>
-
-              <div
-                v-else
-                class="ot-line-stack"
-              >
-                <section
-                  v-for="group in managedLineGroups"
-                  :key="group.key"
-                  class="ot-line-group"
-                >
-                  <div class="ot-line-header">
-                    <div class="min-w-0">
-                      <div class="ot-line-title">
-                        {{ group.label }}
-                      </div>
-
-                      <div class="ot-line-subtitle">
-                        {{ group.selectedCount }}/{{ group.count }} selected
-                      </div>
-                    </div>
-
-                    <div class="ot-line-actions">
-                      <Button
-                        v-if="group.selectedCount"
-                        label="Clear line"
-                        size="small"
-                        severity="danger"
-                        text
-                        @click="clearLineGroup(group)"
-                      />
-
-                      <Button
-                        v-else
-                        label="Select line"
-                        size="small"
-                        severity="success"
-                        text
-                        :disabled="!group.selectableCount"
-                        @click="selectLineGroup(group)"
-                      />
-                    </div>
-                  </div>
-
-                  <div class="ot-employee-list">
-                    <button
-                      v-for="employee in group.rows"
-                      :key="employee._id"
-                      type="button"
-                      class="ot-employee-row"
-                      :class="{
-                        'is-selected': selectedIds.has(employee._id),
-                        'is-disabled': isEmployeeDisabled(employee),
-                        'is-outside-managed': employee.isOutsideManaged,
-                      }"
-                      :title="getEmployeeBlockInfo(employee).reason || buildEmployeeDisplay(employee)"
-                      :disabled="isEmployeeDisabled(employee)"
-                      @click="toggleEmployee(employee)"
-                    >
-                      <span class="ot-check-circle">
-                        <i
-                          v-if="selectedIds.has(employee._id)"
-                          class="pi pi-check"
-                        />
-                      </span>
-
-                      <span class="ot-employee-identity">
-                        <strong>{{ employee.employeeNo || 'No ID' }}</strong>
-                        <small>{{ employee.displayName }}</small>
-                        <em>{{ buildShiftLabel(employee) }}</em>
-                      </span>
-                    </button>
-                  </div>
-                </section>
-              </div>
-            </section>
-
-            <section class="ot-split-panel is-outside">
-              <div class="ot-panel-header">
-                <div>
-                  <div class="ot-panel-title">
-                    <i class="pi pi-exclamation-triangle" />
-                    <span>Other employees</span>
-                  </div>
-
-                  <p>Outside your team. Select only if needed.</p>
-                </div>
-
-                <Tag
-                  :value="`${outsideDisplayedEmployees.length}`"
-                  severity="warn"
-                />
-              </div>
-
-              <div
-                v-if="!outsideLineGroups.length"
-                class="ot-panel-empty"
-              >
-                No outside employee found.
-              </div>
-
-              <div
-                v-else
-                class="ot-line-stack"
-              >
-                <section
-                  v-for="group in outsideLineGroups"
-                  :key="group.key"
-                  class="ot-line-group"
-                >
-                  <div class="ot-line-header">
-                    <div class="min-w-0">
-                      <div class="ot-line-title">
-                        {{ group.label }}
-                      </div>
-
-                      <div class="ot-line-subtitle">
-                        {{ group.selectedCount }}/{{ group.count }} selected
-                      </div>
-                    </div>
-
-                    <div class="ot-line-actions">
-                      <Button
-                        v-if="group.selectedCount"
-                        label="Clear line"
-                        size="small"
-                        severity="danger"
-                        text
-                        @click="clearLineGroup(group)"
-                      />
-
-                      <Button
-                        v-else
-                        label="Select line"
-                        size="small"
-                        severity="warning"
-                        text
-                        :disabled="!group.selectableCount"
-                        @click="selectLineGroup(group)"
-                      />
-                    </div>
-                  </div>
-
-                  <div class="ot-employee-list">
-                    <button
-                      v-for="employee in group.rows"
-                      :key="employee._id"
-                      type="button"
-                      class="ot-employee-row is-outside-managed"
-                      :class="{
-                        'is-selected': selectedIds.has(employee._id),
-                        'is-disabled': isEmployeeDisabled(employee),
-                      }"
-                      :title="getEmployeeBlockInfo(employee).reason || buildEmployeeDisplay(employee)"
-                      :disabled="isEmployeeDisabled(employee)"
-                      @click="toggleEmployee(employee)"
-                    >
-                      <span class="ot-check-circle">
-                        <i
-                          v-if="selectedIds.has(employee._id)"
-                          class="pi pi-check"
-                        />
-                      </span>
-
-                      <span class="ot-employee-identity">
-                        <strong>{{ employee.employeeNo || 'No ID' }}</strong>
-                        <small>{{ employee.displayName }}</small>
-                        <em>{{ buildShiftLabel(employee) }}</em>
-                      </span>
-                    </button>
-                  </div>
-                </section>
-              </div>
-            </section>
-          </div>
-
-          <div
-            v-else
-            class="ot-line-stack"
-          >
-            <section
-              v-for="group in allLineGroups"
-              :key="group.key"
-              class="ot-line-group"
-            >
-              <div class="ot-line-header">
-                <div class="min-w-0">
-                  <div class="ot-line-title">
-                    {{ group.label }}
-                  </div>
-
-                  <div class="ot-line-subtitle">
-                    {{ group.selectedCount }}/{{ group.count }} selected
-                  </div>
-                </div>
-
-                <div class="ot-line-actions">
-                  <Button
-                    v-if="group.selectedCount"
-                    label="Clear line"
-                    size="small"
-                    severity="danger"
-                    text
-                    @click="clearLineGroup(group)"
-                  />
-
-                  <Button
-                    v-else
-                    label="Select line"
-                    size="small"
-                    severity="success"
-                    text
-                    :disabled="!group.selectableCount"
-                    @click="selectLineGroup(group)"
-                  />
-                </div>
-              </div>
-
-              <div class="ot-employee-list">
-                <button
-                  v-for="employee in group.rows"
-                  :key="employee._id"
-                  type="button"
-                  class="ot-employee-row"
-                  :class="{
-                    'is-selected': selectedIds.has(employee._id),
-                    'is-disabled': isEmployeeDisabled(employee),
-                    'is-outside-managed': employee.isOutsideManaged,
-                  }"
-                  :title="getEmployeeBlockInfo(employee).reason || buildEmployeeDisplay(employee)"
-                  :disabled="isEmployeeDisabled(employee)"
-                  @click="toggleEmployee(employee)"
-                >
-                  <span class="ot-check-circle">
-                    <i
-                      v-if="selectedIds.has(employee._id)"
-                      class="pi pi-check"
-                    />
-                  </span>
-
-                  <span class="ot-employee-identity">
-                    <strong>{{ employee.employeeNo || 'No ID' }}</strong>
-                    <small>{{ employee.displayName }}</small>
-                    <em>{{ buildShiftLabel(employee) }}</em>
-                  </span>
-                </button>
-              </div>
-            </section>
-          </div>
-
-          <div
-            v-if="loadingMore"
-            class="ot-more-loading"
-          >
-            <ProgressSpinner style="width: 24px; height: 24px" strokeWidth="4" />
-            <span>Loading more...</span>
-          </div>
-
-          <div
-            v-else-if="!hasMore && displayedEmployees.length"
-            class="ot-all-loaded"
-          >
-            All loaded
-          </div>
+          All matched employees loaded.
         </div>
       </div>
-    </Dialog>
+    </div>
   </section>
 </template>
 
@@ -1572,33 +1864,25 @@ onBeforeUnmount(() => {
   background: var(--ot-surface);
 }
 
-.ot-picker-summary {
+.ot-compact-header {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1rem;
+  align-items: center;
+  gap: 0.65rem;
+  border-bottom: 1px solid var(--ot-border);
+  background: var(--ot-bg);
+  padding: 0.75rem;
 }
 
-.ot-picker-eyebrow {
-  font-size: 0.7rem;
-  font-weight: 500;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--ot-text-muted);
+.ot-title-block {
+  flex: 0 0 auto;
+  min-width: 170px;
 }
 
 .ot-picker-title {
-  margin-top: 0.18rem;
-  font-size: 1.05rem;
+  white-space: nowrap;
+  font-size: 1.02rem;
   font-weight: 600;
   color: var(--ot-text);
-}
-
-.ot-picker-subtitle {
-  margin-top: 0.22rem;
-  font-size: 0.78rem;
-  color: var(--ot-text-muted);
 }
 
 .ot-required-star {
@@ -1606,156 +1890,93 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
-.ot-picker-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.45rem;
+.ot-search-field {
+  flex: 1 1 320px;
+  min-width: 240px;
 }
 
-.ot-count-box {
-  min-width: 76px;
+.ot-scope-filter {
+  flex: 0 0 150px;
+  width: 150px;
+}
+
+.ot-line-filter {
+  flex: 0 0 170px;
+  width: 170px;
+}
+
+.ot-inline-tags {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.ot-mini-summary {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: auto;
+}
+
+.ot-mini-chip {
+  min-width: 68px;
   border: 1px solid var(--ot-border);
-  border-radius: 0.9rem;
-  background: var(--ot-bg);
-  padding: 0.45rem 0.65rem;
+  border-radius: 0.8rem;
+  background: var(--ot-surface);
+  padding: 0.35rem 0.55rem;
   text-align: center;
 }
 
-.ot-count-box.is-warn {
+.ot-mini-chip.is-warn {
   border-color: color-mix(in srgb, #f59e0b 45%, var(--ot-border));
   background: color-mix(in srgb, #f59e0b 10%, var(--ot-bg));
 }
 
-.ot-count-box span {
+.ot-mini-chip span {
   display: block;
-  font-size: 0.62rem;
-  font-weight: 500;
+  font-size: 0.56rem;
+  font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--ot-text-muted);
 }
 
-.ot-count-box strong {
+.ot-mini-chip strong {
   display: block;
-  margin-top: 0.08rem;
-  font-size: 0.96rem;
-  font-weight: 600;
+  margin-top: 0.06rem;
+  font-size: 0.84rem;
+  font-weight: 700;
   color: var(--ot-text);
 }
 
-.ot-selected-preview {
+.ot-header-actions {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.42rem;
-  border-top: 1px solid var(--ot-border);
-  padding: 0.75rem 1rem 1rem;
-}
-
-.ot-selected-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.42rem;
-  max-width: 250px;
-  border: 1px solid color-mix(in srgb, #22c55e 42%, var(--ot-border));
-  border-radius: 999px;
-  background: color-mix(in srgb, #22c55e 12%, var(--ot-surface));
-  padding: 0.32rem 0.62rem;
-}
-
-.ot-selected-chip.is-outside-managed {
-  border-color: color-mix(in srgb, #f59e0b 55%, var(--ot-border));
-  background: color-mix(in srgb, #f59e0b 14%, var(--ot-surface));
-}
-
-.ot-selected-chip span {
   flex: 0 0 auto;
-  font-size: 0.74rem;
-  font-weight: 600;
-  color: var(--ot-text);
-}
-
-.ot-selected-chip small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.74rem;
-  font-weight: 500;
-  color: var(--ot-text-muted);
-}
-
-.ot-dialog-header {
-  display: flex;
-  width: 100%;
   align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.ot-dialog-title {
-  margin-top: 0.15rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--ot-text);
-}
-
-.ot-dialog-tags {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
   gap: 0.4rem;
 }
 
-.ot-dialog-body {
-  display: flex;
-  height: calc(100vh - 7.25rem);
-  min-height: 0;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.ot-dialog-toolbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0.6rem;
-  border: 1px solid var(--ot-border);
-  border-radius: 1rem;
+.ot-table-shell {
+  min-height: 280px;
   background: var(--ot-surface);
-  padding: 0.75rem;
-}
-
-.ot-search-field,
-.ot-scope-filter,
-.ot-line-filter {
-  width: 100%;
-}
-
-.ot-employee-scroll {
-  min-height: 0;
-  flex: 1;
-  overflow: auto;
-  border: 1px solid var(--ot-border);
-  border-radius: 1rem;
-  background: var(--ot-bg);
-  padding: 0.75rem;
 }
 
 .ot-loading-state,
 .ot-empty-state {
   display: flex;
-  min-height: 300px;
+  min-height: 280px;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 0.75rem;
+  gap: 0.65rem;
   color: var(--ot-text-muted);
   text-align: center;
 }
 
 .ot-empty-state i {
-  font-size: 2rem;
+  font-size: 1.8rem;
 }
 
 .ot-empty-state strong {
@@ -1763,284 +1984,261 @@ onBeforeUnmount(() => {
   color: var(--ot-text);
 }
 
-.ot-split-panels {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0.75rem;
-  align-items: flex-start;
+.ot-lazy-scroll-shell {
+  max-height: 560px;
+  overflow: auto;
+  background: var(--ot-bg);
 }
 
-.ot-split-panel {
-  min-width: 0;
-  overflow: hidden;
-  border: 1px solid var(--ot-border);
-  border-radius: 1rem;
+.ot-line-group {
+  border-bottom: 1px solid var(--ot-border);
   background: var(--ot-surface);
-  padding: 0.75rem;
 }
 
-.ot-split-panel.is-managed {
-  border-color: color-mix(in srgb, #22c55e 28%, var(--ot-border));
-}
-
-.ot-split-panel.is-outside {
-  border-color: color-mix(in srgb, #f59e0b 45%, var(--ot-border));
+.ot-line-group.is-no-line {
   background:
     linear-gradient(135deg, rgba(245, 158, 11, 0.08), transparent),
     var(--ot-surface);
 }
 
-.ot-panel-header {
+.ot-line-sticky-head {
+  position: sticky;
+  top: 0;
+  z-index: 15;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  margin-bottom: 0.75rem;
+  min-height: 3.1rem;
   border-bottom: 1px solid var(--ot-border);
-  padding-bottom: 0.65rem;
+  background: color-mix(in srgb, var(--ot-surface) 96%, transparent);
+  padding: 0.48rem 0.75rem;
+  backdrop-filter: blur(10px);
 }
 
-.ot-panel-title {
-  display: flex;
+.ot-line-toggle {
+  display: inline-flex;
+  min-width: 0;
   align-items: center;
   gap: 0.45rem;
-  font-size: 0.92rem;
-  font-weight: 600;
   color: var(--ot-text);
+  font-size: 0.86rem;
+  font-weight: 600;
+  text-align: left;
 }
 
-.ot-panel-title i {
-  font-size: 0.82rem;
-  color: var(--ot-text-muted);
-}
-
-.ot-panel-header p {
-  margin-top: 0.18rem;
+.ot-line-toggle i {
+  flex: 0 0 auto;
   font-size: 0.72rem;
-  font-weight: 500;
   color: var(--ot-text-muted);
 }
 
-.ot-panel-empty {
-  display: flex;
-  min-height: 180px;
-  align-items: center;
-  justify-content: center;
-  border: 1px dashed var(--ot-border);
-  border-radius: 0.85rem;
-  padding: 1rem;
-  text-align: center;
-  font-size: 0.82rem;
-  font-weight: 500;
-  color: var(--ot-text-muted);
-}
-
-.ot-line-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 0.7rem;
-}
-
-.ot-line-group {
+.ot-line-toggle span {
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ot-line-head-right {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.ot-line-body {
+  padding: 0.65rem;
+  background: var(--ot-bg);
+}
+
+.ot-line-employee-scroll {
+  max-height: 432px;
+  overflow: auto;
   border: 1px solid var(--ot-border);
-  border-radius: 0.95rem;
+  border-radius: 0.85rem;
   background: var(--ot-surface);
 }
 
-.ot-line-header {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
+.ot-employee-table {
+  width: max-content;
+  min-width: 100%;
+  table-layout: auto;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.ot-employee-table th {
+  position: sticky;
+  top: 0;
+  z-index: 8;
   border-bottom: 1px solid var(--ot-border);
   background:
-    linear-gradient(135deg, rgba(59, 130, 246, 0.08), transparent),
+    linear-gradient(135deg, rgba(59, 130, 246, 0.06), transparent),
     var(--ot-surface);
-  padding: 0.68rem 0.78rem;
-}
-
-.ot-line-title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--ot-text);
-}
-
-.ot-line-subtitle {
-  margin-top: 0.12rem;
-  font-size: 0.7rem;
-  font-weight: 500;
+  padding: 0.5rem 0.65rem;
   color: var(--ot-text-muted);
-}
-
-.ot-line-actions {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 0.35rem;
-}
-
-.ot-employee-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-  gap: 0.42rem;
-  padding: 0.6rem;
-}
-
-.ot-employee-row {
-  position: relative;
-  display: flex;
-  min-height: 56px;
-  cursor: pointer;
-  align-items: center;
-  gap: 0.5rem;
-  border: 1px solid var(--ot-border);
-  border-radius: 0.8rem;
-  background: var(--ot-surface);
-  padding: 0.5rem 0.6rem;
+  font-size: 0.7rem;
+  font-weight: 600;
   text-align: left;
-  transition:
-    border-color 0.16s ease,
-    background 0.16s ease,
-    transform 0.16s ease;
-}
-
-.ot-employee-row:hover {
-  transform: translateY(-1px);
-  border-color: color-mix(in srgb, #3b82f6 34%, var(--ot-border));
-}
-
-.ot-employee-row.is-selected {
-  border-color: color-mix(in srgb, #22c55e 62%, var(--ot-border));
-  background:
-    linear-gradient(135deg, rgba(34, 197, 94, 0.12), rgba(59, 130, 246, 0.04)),
-    var(--ot-surface);
-}
-
-.ot-employee-row.is-outside-managed {
-  border-color: color-mix(in srgb, #f59e0b 52%, var(--ot-border));
-}
-
-.ot-employee-row.is-disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-  transform: none;
-}
-
-.ot-check-circle {
-  display: inline-flex;
-  width: 1.28rem;
-  height: 1.28rem;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--ot-border);
-  border-radius: 999px;
-  background: var(--ot-bg);
-  color: #16a34a;
-  font-size: 0.66rem;
-}
-
-.ot-employee-row.is-selected .ot-check-circle {
-  border-color: color-mix(in srgb, #22c55e 62%, var(--ot-border));
-  background: rgba(34, 197, 94, 0.1);
-}
-
-.ot-employee-identity {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 0.08rem;
-}
-
-.ot-employee-identity strong,
-.ot-employee-identity small,
-.ot-employee-identity em {
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.ot-employee-identity strong {
-  font-size: 0.76rem;
-  font-weight: 600;
+.ot-employee-table td {
+  height: 42px;
+  border-bottom: 1px solid var(--ot-border);
+  padding: 0.38rem 0.65rem;
   color: var(--ot-text);
+  font-size: 0.78rem;
+  vertical-align: middle;
+  white-space: nowrap;
 }
 
-.ot-employee-identity small {
+.ot-employee-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.ot-employee-table tbody tr:hover td {
+  background: color-mix(in srgb, var(--ot-bg) 70%, transparent);
+}
+
+.cell-center {
+  text-align: center;
+}
+
+.cell-mono {
+  font-variant-numeric: tabular-nums;
   font-size: 0.78rem;
   font-weight: 500;
-  color: var(--ot-text-muted);
 }
 
-.ot-employee-identity em {
-  font-size: 0.68rem;
-  font-style: normal;
-  font-weight: 500;
-  color: color-mix(in srgb, var(--ot-text-muted) 84%, #3b82f6);
+.cell-strong {
+  font-weight: 600;
+  color: var(--ot-text);
 }
 
-.ot-more-loading {
+.mode-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  white-space: nowrap;
+}
+
+.ot-time-input {
+  width: 6.8rem;
+}
+
+.ot-break-input {
+  width: 5rem;
+}
+
+:deep(.ot-break-input-field) {
+  width: 5rem !important;
+  text-align: center;
+}
+
+.ot-line-scroll-hint,
+.ot-more-loading,
+.ot-end-line {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.65rem;
-  padding: 1rem;
-  font-size: 0.82rem;
+  gap: 0.45rem;
+  padding: 0.58rem;
+  border-top: 1px solid var(--ot-border);
   color: var(--ot-text-muted);
-}
-
-.ot-all-loaded {
-  padding: 1rem;
-  text-align: center;
-  font-size: 0.8rem;
+  font-size: 0.72rem;
   font-weight: 500;
-  color: var(--ot-text-muted);
 }
 
-:deep(.ot-fullscreen-dialog .p-dialog-header) {
-  border-bottom: 1px solid var(--ot-border);
+.ot-more-loading,
+.ot-end-line {
+  background: var(--ot-surface);
 }
 
-:deep(.ot-fullscreen-dialog .p-dialog-content) {
-  height: 100%;
-  padding: 0.75rem !important;
-  background: var(--ot-bg) !important;
+:deep(.p-checkbox) {
+  width: 1rem !important;
+  height: 1rem !important;
 }
 
-:deep(.ot-search-field .p-inputtext) {
-  min-height: 2.45rem !important;
+:deep(.p-checkbox-box) {
+  width: 1rem !important;
+  height: 1rem !important;
+}
+
+:deep(.p-tag.ot-status-tag) {
+  min-height: 1.32rem !important;
+  padding: 0.12rem 0.46rem !important;
+  border: 1px solid transparent !important;
+  border-radius: 999px !important;
+  font-size: 0.68rem !important;
+  font-weight: 500 !important;
+  line-height: 1 !important;
+  white-space: nowrap !important;
 }
 
 :deep(.p-button.p-button-sm) {
-  padding: 0.34rem 0.58rem !important;
-  font-size: 0.78rem !important;
+  min-height: 1.85rem !important;
+  padding: 0.3rem 0.52rem !important;
+  border-radius: 0.55rem !important;
+  font-size: 0.74rem !important;
 }
 
-:deep(.p-tag) {
-  font-weight: 500 !important;
+:deep(.p-inputtext),
+:deep(.p-select),
+:deep(.p-inputnumber-input) {
+  font-size: 0.82rem !important;
 }
 
-@media (min-width: 768px) {
-  .ot-dialog-toolbar {
-    grid-template-columns:
-      minmax(240px, 1fr)
-      170px
-      190px
-      auto
-      auto;
-    align-items: center;
+@media (max-width: 1280px) {
+  .ot-compact-header {
+    flex-wrap: wrap;
+  }
+
+  .ot-mini-summary {
+    margin-left: 0;
   }
 }
 
-@media (min-width: 1280px) {
-  .ot-split-panels {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+@media (max-width: 768px) {
+  .ot-compact-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .ot-title-block,
+  .ot-search-field,
+  .ot-scope-filter,
+  .ot-line-filter,
+  .ot-mini-summary,
+  .ot-header-actions,
+  .ot-inline-tags {
+    width: 100%;
+    flex: 1 1 auto;
+  }
+
+  .ot-mini-summary,
+  .ot-header-actions,
+  .ot-inline-tags {
+    flex-wrap: wrap;
+  }
+
+  .ot-line-sticky-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .ot-line-head-right {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .ot-line-employee-scroll {
+    max-height: 432px;
+  }
+
+  .ot-employee-table {
+    min-width: 980px;
   }
 }
 </style>
