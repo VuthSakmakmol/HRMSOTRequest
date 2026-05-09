@@ -13,6 +13,7 @@ const Department = require('../../org/models/Department')
 const Position = require('../../org/models/Position')
 
 const employeeScopeService = require('../../org/services/employeeScope.service')
+const otTimingService = require('./otTiming.service')
 
 const { getDayType } = require('../utils/dayClassifier')
 const Holiday = require('../../calendar/models/Holiday')
@@ -1203,9 +1204,11 @@ function mapEmployeeOutput(item) {
     employeeId: item?.employeeId ? String(item.employeeId) : null,
     employeeCode: s(item?.employeeCode),
     employeeName: s(item?.employeeName),
+
     departmentId: item?.departmentId ? String(item.departmentId) : null,
     departmentCode: s(item?.departmentCode),
     departmentName: s(item?.departmentName),
+
     positionId: item?.positionId ? String(item.positionId) : null,
     positionCode: s(item?.positionCode),
     positionName: s(item?.positionName),
@@ -1219,6 +1222,14 @@ function mapEmployeeOutput(item) {
       lineCode,
       lineName,
     ),
+
+    otTimeMode: upper(item?.otTimeMode || 'DEFAULT'),
+    startTime: s(item?.startTime),
+    endTime: s(item?.endTime),
+    breakMinutes: Number(item?.breakMinutes || 0),
+    requestedMinutes: Number(item?.requestedMinutes || 0),
+    totalMinutes: Number(item?.totalMinutes || item?.requestedMinutes || 0),
+    totalHours: Number(item?.totalHours || 0),
   }
 }
 
@@ -1664,6 +1675,8 @@ function mapListItem(doc, authUser) {
     shiftEndTime: s(doc.shiftEndTime),
     shiftCrossMidnight: doc.shiftCrossMidnight === true,
 
+    otTimingSource: upper(doc.otTimingSource || 'SHIFT_OPTION'),
+
     shiftOtOptionId: doc.shiftOtOptionId ? String(doc.shiftOtOptionId) : null,
     shiftOtOptionLabel: s(doc.shiftOtOptionLabel),
     shiftOtOptionTimingMode: s(doc.shiftOtOptionTimingMode),
@@ -1782,6 +1795,8 @@ function mapDetail(doc, authUser) {
     shiftStartTime: s(doc.shiftStartTime),
     shiftEndTime: s(doc.shiftEndTime),
     shiftCrossMidnight: doc.shiftCrossMidnight === true,
+
+    otTimingSource: upper(doc.otTimingSource || 'SHIFT_OPTION'),
 
     shiftOtOptionId: doc.shiftOtOptionId ? String(doc.shiftOtOptionId) : null,
     shiftOtOptionLabel: s(doc.shiftOtOptionLabel),
@@ -2205,18 +2220,31 @@ async function create(payload, authUser, options = {}) {
   })
 
   const employeeContexts = await resolveEmployeesSnapshotsWithContext(uniqueEmployeeIds)
-  const requestedEmployees = employeeContexts.map((item) => item.snapshot)
-
-  const timingContext = await buildOTTimingContext(payload, employeeContexts)
 
   const holidayDates =
     Array.isArray(options.holidays) && options.holidays.length
       ? options.holidays
-      : await resolveHolidayDateStrings([payload.otDate])
+      : await otTimingService.resolveHolidayDateStrings([payload.otDate])
 
   const dayType = getDayType(payload.otDate, {
     holidays: holidayDates,
   })
+
+  const timingContext = await otTimingService.buildOTTimingContext(
+    payload,
+    employeeContexts,
+    {
+      ...options,
+      holidays: holidayDates,
+      dayType,
+    },
+  )
+
+  const requestedEmployees = otTimingService.buildTimedEmployeeSnapshots(
+    employeeContexts,
+    timingContext,
+    payload,
+  )
 
   const approvalFlow = await resolveApprovalFlow(requesterEmployeeId)
 
@@ -2259,6 +2287,8 @@ async function create(payload, authUser, options = {}) {
     shiftStartTime: timingContext.shiftStartTime,
     shiftEndTime: timingContext.shiftEndTime,
     shiftCrossMidnight: timingContext.shiftCrossMidnight,
+
+    otTimingSource: timingContext.otTimingSource,
 
     shiftOtOptionId: timingContext.shiftOtOptionId,
     shiftOtOptionLabel: timingContext.shiftOtOptionLabel,
@@ -2336,18 +2366,31 @@ async function update(id, payload, authUser, options = {}) {
   })
 
   const employeeContexts = await resolveEmployeesSnapshotsWithContext(uniqueEmployeeIds)
-  const requestedEmployees = employeeContexts.map((item) => item.snapshot)
-
-  const timingContext = await buildOTTimingContext(payload, employeeContexts)
 
   const holidayDates =
     Array.isArray(options.holidays) && options.holidays.length
       ? options.holidays
-      : await resolveHolidayDateStrings([payload.otDate])
+      : await otTimingService.resolveHolidayDateStrings([payload.otDate])
 
   const dayType = getDayType(payload.otDate, {
     holidays: holidayDates,
   })
+
+  const timingContext = await otTimingService.buildOTTimingContext(
+    payload,
+    employeeContexts,
+    {
+      ...options,
+      holidays: holidayDates,
+      dayType,
+    },
+  )
+
+  const requestedEmployees = otTimingService.buildTimedEmployeeSnapshots(
+    employeeContexts,
+    timingContext,
+    payload,
+  )
 
   const approvalFlow = await resolveApprovalFlow(requesterEmployeeId)
 
@@ -2387,6 +2430,8 @@ async function update(id, payload, authUser, options = {}) {
   doc.shiftStartTime = timingContext.shiftStartTime
   doc.shiftEndTime = timingContext.shiftEndTime
   doc.shiftCrossMidnight = timingContext.shiftCrossMidnight
+
+  doc.otTimingSource = timingContext.otTimingSource
 
   doc.shiftOtOptionId = timingContext.shiftOtOptionId
   doc.shiftOtOptionLabel = timingContext.shiftOtOptionLabel
@@ -2856,126 +2901,8 @@ async function getAllowedApproverChain(employeeId) {
   }))
 }
 
-async function getShiftOTOptionsByShift(shiftId) {
-  if (!mongoose.isValidObjectId(shiftId)) {
-    const err = new Error('Invalid shift id')
-    err.status = 400
-    throw err
-  }
-
-  const shift = await Shift.findById(shiftId).lean()
-
-  if (!shift) {
-    const err = new Error('Shift not found')
-    err.status = 404
-    throw err
-  }
-
-  const options = await ShiftOTOption.find({
-    shiftId,
-    isActive: true,
-  })
-    .populate({
-      path: 'calculationPolicyId',
-      select: {
-        _id: 1,
-        code: 1,
-        name: 1,
-        minEligibleMinutes: 1,
-        roundUnitMinutes: 1,
-        roundMethod: 1,
-        graceAfterShiftEndMinutes: 1,
-        allowApprovedOtWithoutExactClockOut: 1,
-        allowPreShiftOT: 1,
-        allowPostShiftOT: 1,
-        capByRequestedMinutes: 1,
-        treatForgetScanInAsPending: 1,
-        treatForgetScanOutAsPending: 1,
-        isActive: 1,
-      },
-    })
-    .sort({ sequence: 1, requestedMinutes: 1, createdAt: 1 })
-    .lean()
-
-  return {
-    shift: {
-      id: String(shift._id),
-      code: s(shift.code),
-      name: s(shift.name),
-      type: s(shift.type),
-      startTime: s(shift.startTime),
-      breakStartTime: s(shift.breakStartTime),
-      breakEndTime: s(shift.breakEndTime),
-      endTime: s(shift.endTime),
-      crossMidnight: shift.crossMidnight === true,
-      isActive: shift.isActive !== false,
-    },
-
-    items: options.map((item) => {
-      const requestedMinutes = Number(item.requestedMinutes || 0)
-      const timingMode = upper(item.timingMode || 'AFTER_SHIFT_END')
-      const startAfterShiftEndMinutes = Number(item.startAfterShiftEndMinutes || 0)
-
-      let requestStartTime = ''
-      let requestEndTime = ''
-
-      if (timingMode === 'FIXED_TIME') {
-        requestStartTime = s(item.fixedStartTime)
-        requestEndTime = s(item.fixedEndTime)
-      } else {
-        requestStartTime = addMinutesToHHmm(s(shift.endTime), startAfterShiftEndMinutes)
-        requestEndTime = addMinutesToHHmm(requestStartTime, requestedMinutes)
-      }
-
-      const policy = item.calculationPolicyId || null
-
-      return {
-        id: String(item._id),
-        _id: String(item._id),
-
-        shiftId: item.shiftId ? String(item.shiftId) : null,
-
-        label: s(item.label),
-        optionLabel: `${s(item.label)} (${requestedMinutes} min)`,
-
-        timingMode,
-        startAfterShiftEndMinutes,
-        fixedStartTime: s(item.fixedStartTime),
-        fixedEndTime: s(item.fixedEndTime),
-
-        requestStartTime,
-        requestEndTime,
-
-        requestedMinutes,
-        requestedHours: Number((requestedMinutes / 60).toFixed(2)),
-
-        sequence: Number(item.sequence || 0),
-        isActive: item.isActive !== false,
-
-        calculationPolicy: policy
-          ? {
-              id: String(policy._id),
-              code: s(policy.code),
-              name: s(policy.name),
-              minEligibleMinutes: Number(policy.minEligibleMinutes || 0),
-              roundUnitMinutes: Number(policy.roundUnitMinutes || 0),
-              roundMethod: s(policy.roundMethod),
-              graceAfterShiftEndMinutes: Number(policy.graceAfterShiftEndMinutes || 0),
-              allowApprovedOtWithoutExactClockOut:
-                policy.allowApprovedOtWithoutExactClockOut === true,
-              allowPreShiftOT: policy.allowPreShiftOT === true,
-              allowPostShiftOT: policy.allowPostShiftOT !== false,
-              capByRequestedMinutes: policy.capByRequestedMinutes !== false,
-              treatForgetScanInAsPending:
-                policy.treatForgetScanInAsPending !== false,
-              treatForgetScanOutAsPending:
-                policy.treatForgetScanOutAsPending !== false,
-              isActive: policy.isActive !== false,
-            }
-          : null,
-      }
-    }),
-  }
+async function getShiftOTOptionsByShift(shiftId, query = {}) {
+  return otTimingService.getShiftOTOptionsByShift(shiftId, query)
 }
 
 module.exports = {

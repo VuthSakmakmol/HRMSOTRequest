@@ -11,6 +11,7 @@ const {
 } = require('../validators/shiftOtOption.validation')
 
 const DAY_MINUTES = 24 * 60
+const SHIFT_OT_OPTION_DAY_TYPES = ['WORKING_DAY', 'SUNDAY', 'HOLIDAY']
 
 function s(value) {
   return String(value ?? '').trim()
@@ -23,6 +24,20 @@ function normalizeObjectIdInput(value) {
 
 function upper(value) {
   return s(value).toUpperCase()
+}
+
+function normalizeApplicableDayTypes(value) {
+  const source = Array.isArray(value) ? value : ['WORKING_DAY']
+
+  const normalized = Array.from(
+    new Set(
+      source
+        .map((item) => upper(item))
+        .filter((item) => SHIFT_OT_OPTION_DAY_TYPES.includes(item)),
+    ),
+  )
+
+  return normalized.length ? normalized : ['WORKING_DAY']
 }
 
 function createHttpError(message, status = 400) {
@@ -150,6 +165,10 @@ function buildListQuery(query = {}) {
     filter.timingMode = upper(query.timingMode)
   }
 
+  if (query.dayType) {
+    filter.applicableDayTypes = upper(query.dayType)
+  }
+
   if (query.isActive !== undefined && query.isActive !== '') {
     filter.isActive = Boolean(query.isActive)
   }
@@ -253,6 +272,7 @@ function normalizeShiftOTOption(doc) {
 
   const requestedMinutes = Number(doc.requestedMinutes || 0)
   const timingMode = upper(doc.timingMode || 'AFTER_SHIFT_END')
+  const applicableDayTypes = normalizeApplicableDayTypes(doc.applicableDayTypes)
   const normalizedShift = normalizeShiftSnapshot(shift)
 
   return {
@@ -270,6 +290,9 @@ function normalizeShiftOTOption(doc) {
     label: s(doc.label),
 
     timingMode,
+    applicableDayTypes,
+    dayTypeLabel: applicableDayTypes.join(', '),
+
     startAfterShiftEndMinutes: Number(doc.startAfterShiftEndMinutes || 0),
     fixedStartTime: s(doc.fixedStartTime),
     fixedEndTime: s(doc.fixedEndTime),
@@ -310,9 +333,12 @@ function normalizeLookupItem(doc) {
     _id: item._id,
 
     label: item.label,
-    optionLabel: `${item.label} (${item.requestedMinutes} min)`,
+    optionLabel: `${item.label} (${item.dayTypeLabel} · ${item.requestedMinutes} min)`,
 
     timingMode: item.timingMode,
+    applicableDayTypes: item.applicableDayTypes,
+    dayTypeLabel: item.dayTypeLabel,
+
     startAfterShiftEndMinutes: item.startAfterShiftEndMinutes,
     fixedStartTime: item.fixedStartTime,
     fixedEndTime: item.fixedEndTime,
@@ -408,10 +434,18 @@ async function ensureUniqueActiveLabel({ shiftId, label, excludeId = null }) {
   }
 }
 
-async function ensureUniqueActiveSequence({ shiftId, sequence, excludeId = null }) {
+async function ensureUniqueActiveSequence({
+  shiftId,
+  sequence,
+  applicableDayTypes = ['WORKING_DAY'],
+  excludeId = null,
+}) {
+  const dayTypes = normalizeApplicableDayTypes(applicableDayTypes)
+
   const filter = {
     shiftId,
     sequence: Number(sequence || 0),
+    applicableDayTypes: { $in: dayTypes },
     isActive: true,
   }
 
@@ -422,7 +456,10 @@ async function ensureUniqueActiveSequence({ shiftId, sequence, excludeId = null 
   const existing = await ShiftOTOption.findOne(filter).lean()
 
   if (existing) {
-    throw createHttpError('Active OT option sequence already exists for this shift', 409)
+    throw createHttpError(
+      `Active OT option sequence already exists for this shift and day type (${dayTypes.join(', ')})`,
+      409,
+    )
   }
 }
 
@@ -486,12 +523,15 @@ async function lookup(query = {}) {
     meta: {
       limit: parsed.limit,
       count: items.length,
+      dayType: parsed.dayType || '',
     },
   }
 }
 
 async function create(payload, authUser) {
   const data = parseSchema(createShiftOTOptionSchema, payload)
+
+  data.applicableDayTypes = normalizeApplicableDayTypes(data.applicableDayTypes)
 
   const shift = await assertShiftExists(data.shiftId)
   await assertPolicyExists(data.calculationPolicyId)
@@ -507,6 +547,7 @@ async function create(payload, authUser) {
     await ensureUniqueActiveSequence({
       shiftId: data.shiftId,
       sequence: data.sequence,
+      applicableDayTypes: data.applicableDayTypes,
     })
   }
 
@@ -542,6 +583,10 @@ async function update(id, payload, authUser) {
       ? data.timingMode
       : doc.timingMode,
 
+    applicableDayTypes: Object.prototype.hasOwnProperty.call(data, 'applicableDayTypes')
+      ? data.applicableDayTypes
+      : doc.applicableDayTypes,
+
     startAfterShiftEndMinutes: Object.prototype.hasOwnProperty.call(
       data,
       'startAfterShiftEndMinutes',
@@ -570,6 +615,8 @@ async function update(id, payload, authUser) {
       : doc.isActive,
   }
 
+  nextData.applicableDayTypes = normalizeApplicableDayTypes(nextData.applicableDayTypes)
+
   const shift = await assertShiftExists(nextShiftId)
   await assertPolicyExists(nextPolicyId)
 
@@ -585,6 +632,7 @@ async function update(id, payload, authUser) {
     await ensureUniqueActiveSequence({
       shiftId: nextData.shiftId,
       sequence: nextData.sequence,
+      applicableDayTypes: nextData.applicableDayTypes,
       excludeId: optionId,
     })
   }
@@ -594,6 +642,7 @@ async function update(id, payload, authUser) {
     calculationPolicyId: nextData.calculationPolicyId,
     label: nextData.label,
     timingMode: nextData.timingMode,
+    applicableDayTypes: nextData.applicableDayTypes,
     startAfterShiftEndMinutes: nextData.startAfterShiftEndMinutes,
     fixedStartTime: nextData.fixedStartTime,
     fixedEndTime: nextData.fixedEndTime,

@@ -28,8 +28,20 @@ export function getAllowedOTApproverChain(employeeId) {
   return api.get(`/ot/requests/allowed-approvers/${employeeId}`)
 }
 
-export function getShiftOTOptionsByShift(shiftId) {
-  return api.get(`/ot/shift-options/by-shift/${shiftId}`)
+/**
+ * Load OT options for selected shift.
+ *
+ * Important:
+ * Send otDate so backend can calculate day type using internal holiday calendar:
+ * - WORKING_DAY
+ * - SUNDAY
+ * - HOLIDAY
+ *
+ * Example:
+ * getShiftOTOptionsByShift(shiftId, { otDate: '2026-05-09' })
+ */
+export function getShiftOTOptionsByShift(shiftId, params = {}) {
+  return api.get(`/ot/shift-options/by-shift/${shiftId}`, { params })
 }
 
 export function getShiftLookupOptions(params = {}) {

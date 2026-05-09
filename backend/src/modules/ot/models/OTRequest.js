@@ -18,6 +18,10 @@ const OT_DAY_TYPE = ['WORKING_DAY', 'SUNDAY', 'HOLIDAY']
 
 const OT_APPROVAL_STEP_TYPE = ['APPROVER', 'ACKNOWLEDGE']
 
+const OT_TIMING_SOURCE = ['SHIFT_OPTION', 'CUSTOM_FIXED']
+
+const OT_EMPLOYEE_TIME_MODE = ['DEFAULT', 'CUSTOM']
+
 const OT_APPROVAL_STEP_STATUS = [
   'WAITING',
   'PENDING',
@@ -38,21 +42,54 @@ function normalizeEmployeeCollection(items = []) {
   const result = []
 
   for (const item of Array.isArray(items) ? items : []) {
-    const employeeId = String(item?.employeeId || '')
+    const employeeId = s(item?.employeeId)
     if (!employeeId) continue
     if (seen.has(employeeId)) continue
     seen.add(employeeId)
 
+    const otTimeMode = s(item?.otTimeMode || 'DEFAULT').toUpperCase()
+    const breakMinutes = Number(item?.breakMinutes || 0)
+    const requestedMinutes = Number(item?.requestedMinutes || 0)
+    const totalMinutes = Number(item?.totalMinutes || requestedMinutes || 0)
+
     result.push({
       employeeId: item.employeeId,
+
       employeeCode: s(item.employeeCode),
       employeeName: s(item.employeeName),
+
       departmentId: item.departmentId || null,
       departmentCode: s(item.departmentCode),
       departmentName: s(item.departmentName),
+
       positionId: item.positionId || null,
       positionCode: s(item.positionCode),
       positionName: s(item.positionName),
+
+      lineId: item.lineId || null,
+      lineCode: s(item.lineCode),
+      lineName: s(item.lineName),
+      lineLabel: s(item.lineLabel),
+
+      otTimeMode: OT_EMPLOYEE_TIME_MODE.includes(otTimeMode)
+        ? otTimeMode
+        : 'DEFAULT',
+
+      startTime: s(item.startTime),
+      endTime: s(item.endTime),
+
+      breakMinutes:
+        Number.isFinite(breakMinutes) && breakMinutes >= 0 ? breakMinutes : 0,
+
+      requestedMinutes:
+        Number.isFinite(requestedMinutes) && requestedMinutes >= 0
+          ? requestedMinutes
+          : 0,
+
+      totalMinutes:
+        Number.isFinite(totalMinutes) && totalMinutes >= 0 ? totalMinutes : 0,
+
+      totalHours: Number((Number(totalMinutes || 0) / 60).toFixed(2)),
     })
   }
 
@@ -113,6 +150,78 @@ const OTRequestEmployeeSchema = new mongoose.Schema(
       type: String,
       trim: true,
       default: '',
+    },
+
+    lineId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'ProductionLine',
+      default: null,
+    },
+
+    lineCode: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
+    lineName: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
+    lineLabel: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
+    /**
+     * DEFAULT = use request-level OT time.
+     * CUSTOM = this employee has different OT time from the default request time.
+     */
+    otTimeMode: {
+      type: String,
+      enum: OT_EMPLOYEE_TIME_MODE,
+      default: 'DEFAULT',
+      trim: true,
+      uppercase: true,
+    },
+
+    startTime: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
+    endTime: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
+    breakMinutes: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
+    requestedMinutes: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
+    totalMinutes: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
+    totalHours: {
+      type: Number,
+      min: 0,
+      default: 0,
     },
   },
   {
@@ -361,6 +470,10 @@ const OTRequestSchema = new mongoose.Schema(
       index: true,
     },
 
+    /**
+     * Request-level default OT time.
+     * Employee-level override can be stored inside requestedEmployees / approvedEmployees.
+     */
     startTime: {
       type: String,
       required: true,
@@ -432,6 +545,20 @@ const OTRequestSchema = new mongoose.Schema(
     shiftCrossMidnight: {
       type: Boolean,
       default: null,
+    },
+
+    /**
+     * SHIFT_OPTION = timing from admin preset option.
+     * CUSTOM_FIXED = requester entered custom default time, but option is still used for policy/template.
+     */
+    otTimingSource: {
+      type: String,
+      enum: OT_TIMING_SOURCE,
+      required: true,
+      default: 'SHIFT_OPTION',
+      trim: true,
+      uppercase: true,
+      index: true,
     },
 
     shiftOtOptionId: {
@@ -652,6 +779,12 @@ OTRequestSchema.pre('validate', function normalizeFields(next) {
   this.shiftType = s(this.shiftType).toUpperCase()
   this.shiftStartTime = s(this.shiftStartTime)
   this.shiftEndTime = s(this.shiftEndTime)
+
+  this.otTimingSource = s(this.otTimingSource || 'SHIFT_OPTION').toUpperCase()
+  if (!OT_TIMING_SOURCE.includes(this.otTimingSource)) {
+    this.otTimingSource = 'SHIFT_OPTION'
+  }
+
   this.shiftOtOptionLabel = s(this.shiftOtOptionLabel)
   this.requestStartTime = s(this.requestStartTime)
   this.requestEndTime = s(this.requestEndTime)
@@ -696,8 +829,14 @@ OTRequestSchema.pre('validate', function normalizeFields(next) {
   }
 
   if (this.otCalculationPolicySnapshot) {
-    this.otCalculationPolicySnapshot.code = s(this.otCalculationPolicySnapshot.code).toUpperCase()
-    this.otCalculationPolicySnapshot.name = s(this.otCalculationPolicySnapshot.name)
+    this.otCalculationPolicySnapshot.code = s(
+      this.otCalculationPolicySnapshot.code,
+    ).toUpperCase()
+
+    this.otCalculationPolicySnapshot.name = s(
+      this.otCalculationPolicySnapshot.name,
+    )
+
     this.otCalculationPolicySnapshot.roundMethod = s(
       this.otCalculationPolicySnapshot.roundMethod,
     ).toUpperCase()
@@ -705,9 +844,11 @@ OTRequestSchema.pre('validate', function normalizeFields(next) {
     this.otCalculationPolicySnapshot.minEligibleMinutes = Number(
       this.otCalculationPolicySnapshot.minEligibleMinutes || 0,
     )
+
     this.otCalculationPolicySnapshot.roundUnitMinutes = Number(
       this.otCalculationPolicySnapshot.roundUnitMinutes || 0,
     )
+
     this.otCalculationPolicySnapshot.graceAfterShiftEndMinutes = Number(
       this.otCalculationPolicySnapshot.graceAfterShiftEndMinutes || 0,
     )
@@ -728,10 +869,10 @@ OTRequestSchema.index({ currentApproverEmployeeId: 1, status: 1, otDate: -1 })
 OTRequestSchema.index({ finalApproverEmployeeId: 1, status: 1, otDate: -1 })
 OTRequestSchema.index({ shiftId: 1, otDate: -1 })
 OTRequestSchema.index({ shiftOtOptionId: 1, otDate: -1 })
+OTRequestSchema.index({ otTimingSource: 1, otDate: -1 })
 
 /**
  * Faster newest-first list pages.
- * Useful for OTRequestListView and Approval Inbox when sorting by createdAt.
  */
 OTRequestSchema.index({ createdAt: -1, _id: -1 })
 OTRequestSchema.index({ otDate: -1, createdAt: -1, _id: -1 })
@@ -743,15 +884,21 @@ OTRequestSchema.index({ dayType: 1, createdAt: -1, _id: -1 })
  */
 OTRequestSchema.index({ otDate: 1, status: 1, 'requestedEmployees.employeeId': 1 })
 OTRequestSchema.index({ otDate: 1, status: 1, 'approvedEmployees.employeeId': 1 })
-OTRequestSchema.index({ otDate: 1, status: 1, 'proposedApprovedEmployees.employeeId': 1 })
+OTRequestSchema.index({
+  otDate: 1,
+  status: 1,
+  'proposedApprovedEmployees.employeeId': 1,
+})
 
 OTRequestSchema.index({ 'requestedEmployees.employeeId': 1, otDate: -1 })
 OTRequestSchema.index({ 'requestedEmployees.departmentId': 1, otDate: -1 })
 OTRequestSchema.index({ 'requestedEmployees.positionId': 1, otDate: -1 })
+OTRequestSchema.index({ 'requestedEmployees.lineId': 1, otDate: -1 })
 
 OTRequestSchema.index({ 'approvedEmployees.employeeId': 1, otDate: -1 })
 OTRequestSchema.index({ 'approvedEmployees.departmentId': 1, otDate: -1 })
 OTRequestSchema.index({ 'approvedEmployees.positionId': 1, otDate: -1 })
+OTRequestSchema.index({ 'approvedEmployees.lineId': 1, otDate: -1 })
 
 OTRequestSchema.index({ 'proposedApprovedEmployees.employeeId': 1, otDate: -1 })
 

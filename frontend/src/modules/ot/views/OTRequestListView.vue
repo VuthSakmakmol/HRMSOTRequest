@@ -50,6 +50,7 @@ const filters = reactive({
 const canCreateRequest = computed(() => auth.hasAnyPermission(['OT_REQUEST_CREATE']))
 const canUpdateRequest = computed(() => auth.hasAnyPermission(['OT_REQUEST_UPDATE']))
 const canVerifyAttendance = computed(() => auth.hasAnyPermission(['ATTENDANCE_VERIFY']))
+
 const firstLoading = computed(() => {
   return backgroundLoading.value && !bootstrapped.value && !hasAnyData.value
 })
@@ -94,10 +95,6 @@ function normalizeRow(row) {
     ...row,
     id: String(row?.id || row?._id || '').trim(),
   }
-}
-
-function rowIdOf(row) {
-  return String(row?.id || row?._id || '').trim()
 }
 
 function pad2(value) {
@@ -167,6 +164,19 @@ function formatDateTimeDMY(value) {
   return `${dd}/${mm}/${yyyy}, ${hh}:${min}`
 }
 
+function formatMinutesLabel(value) {
+  const minutes = Number(value || 0)
+
+  if (!minutes) return '0 min'
+
+  const hh = Math.floor(minutes / 60)
+  const mm = minutes % 60
+
+  if (hh && mm) return `${hh}h ${mm}m`
+  if (hh) return `${hh}h`
+  return `${mm}m`
+}
+
 function buildQuery(page) {
   return {
     page,
@@ -222,6 +232,20 @@ function dayTypeSeverity(value) {
   return 'secondary'
 }
 
+function timingSourceLabel(value) {
+  const normalized = upper(value)
+
+  if (normalized === 'CUSTOM_FIXED') return 'Custom'
+  return 'Preset'
+}
+
+function timingSourceSeverity(value) {
+  const normalized = upper(value)
+
+  if (normalized === 'CUSTOM_FIXED') return 'info'
+  return 'secondary'
+}
+
 function formatTimeRange(row) {
   const start = String(row?.requestStartTime || row?.startTime || '').trim()
   const end = String(row?.requestEndTime || row?.endTime || '').trim()
@@ -268,7 +292,6 @@ function approvalDisplay(row) {
   const type = upper(display.type)
   const status = upper(row?.status)
 
-  // Old requester-confirmation workflow is removed from UI.
   if (type === 'REQUESTER_CONFIRMATION' || status === 'PENDING_REQUESTER_CONFIRMATION') {
     return {
       ...display,
@@ -459,6 +482,46 @@ function employeeOtTimeOf(employee, row) {
   }
 
   return formatTimeRange(row)
+}
+
+function employeeBreakMinutesOf(employee, row) {
+  const value = Number(
+    employee?.breakMinutes ??
+      employee?.otBreakMinutes ??
+      employee?.approvedBreakMinutes ??
+      row?.breakMinutes ??
+      0,
+  )
+
+  return Number.isFinite(value) && value >= 0 ? value : 0
+}
+
+function employeeTotalMinutesOf(employee, row) {
+  const value = Number(
+    employee?.totalMinutes ??
+      employee?.requestedMinutes ??
+      employee?.otMinutes ??
+      employee?.approvedMinutes ??
+      row?.totalMinutes ??
+      row?.requestedMinutes ??
+      0,
+  )
+
+  return Number.isFinite(value) && value >= 0 ? value : 0
+}
+
+function employeeTimeModeOf(employee) {
+  const mode = upper(employee?.otTimeMode || employee?.timeMode || 'DEFAULT')
+
+  return mode === 'CUSTOM' ? 'CUSTOM' : 'DEFAULT'
+}
+
+function employeeTimeModeLabel(employee) {
+  return employeeTimeModeOf(employee) === 'CUSTOM' ? 'Custom' : 'Default'
+}
+
+function employeeTimeModeSeverity(employee) {
+  return employeeTimeModeOf(employee) === 'CUSTOM' ? 'warn' : 'success'
 }
 
 async function fetchPage(page, { replace = false, silent = false } = {}) {
@@ -790,36 +853,35 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </div>
-      
 
       <AppTableLoading
-          v-if="firstLoading"
-          title="Loading OT requests"
-          message="Fetching OT request records..."
-          :rows="8"
-          :columns="9"
-        />
+        v-if="firstLoading"
+        title="Loading OT requests"
+        message="Fetching OT request records..."
+        :rows="8"
+        :columns="10"
+      />
 
-        <DataTable
-          v-else
-          v-model:expandedRows="expandedRows"
-          :value="rows"
-          dataKey="id"
-          lazy
-          scrollable
-          scrollHeight="500px"
-          tableStyle="width: max-content; min-width: 100%; table-layout: auto;"
-          class="ot-request-table"
-          :virtualScrollerOptions="useVirtualScroll ? {
-            lazy: true,
-            onLazyLoad: onVirtualLazyLoad,
-            itemSize: 64,
-            delay: 0,
-            showLoader: false,
-            loading: false,
-            numToleratedItems: 12,
-          } : null"
-        >
+      <DataTable
+        v-else
+        v-model:expandedRows="expandedRows"
+        :value="rows"
+        dataKey="id"
+        lazy
+        scrollable
+        scrollHeight="500px"
+        tableStyle="width: max-content; min-width: 100%; table-layout: auto;"
+        class="ot-request-table"
+        :virtualScrollerOptions="useVirtualScroll ? {
+          lazy: true,
+          onLazyLoad: onVirtualLazyLoad,
+          itemSize: 64,
+          delay: 0,
+          showLoader: false,
+          loading: false,
+          numToleratedItems: 12,
+        } : null"
+      >
         <template #empty>
           <div
             v-if="bootstrapped"
@@ -907,6 +969,17 @@ onBeforeUnmount(() => {
           </template>
         </Column>
 
+        <Column header="Timing">
+          <template #body="{ data }">
+            <Tag
+              v-if="data"
+              :value="timingSourceLabel(data.otTimingSource)"
+              :severity="timingSourceSeverity(data.otTimingSource)"
+              class="ot-status-tag"
+            />
+          </template>
+        </Column>
+
         <Column
           field="dayType"
           header="Day Type"
@@ -966,6 +1039,24 @@ onBeforeUnmount(() => {
               v-if="getTargetEmployees(data).length"
               class="ot-expanded-content"
             >
+              <div class="ot-expanded-header">
+                <div>
+                  <div class="ot-expanded-title">
+                    Employee OT time detail
+                  </div>
+
+                  <div class="ot-expanded-subtitle">
+                    Default request time: {{ formatTimeRange(data) }}
+                  </div>
+                </div>
+
+                <Tag
+                  :value="timingSourceLabel(data.otTimingSource)"
+                  :severity="timingSourceSeverity(data.otTimingSource)"
+                  class="ot-status-tag"
+                />
+              </div>
+
               <div class="ot-expanded-responsive-table">
                 <div class="ot-expanded-grid-row is-head">
                   <div>No</div>
@@ -973,6 +1064,9 @@ onBeforeUnmount(() => {
                   <div>Name</div>
                   <div>Position</div>
                   <div>OT Time</div>
+                  <div>Break</div>
+                  <div>Total</div>
+                  <div>Mode</div>
                   <div>Line</div>
                 </div>
 
@@ -1001,6 +1095,22 @@ onBeforeUnmount(() => {
                     {{ employeeOtTimeOf(employee, data) }}
                   </div>
 
+                  <div class="cell-center cell-mono">
+                    {{ employeeBreakMinutesOf(employee, data) }}m
+                  </div>
+
+                  <div class="cell-center cell-mono">
+                    {{ formatMinutesLabel(employeeTotalMinutesOf(employee, data)) }}
+                  </div>
+
+                  <div class="cell-center">
+                    <Tag
+                      :value="employeeTimeModeLabel(employee)"
+                      :severity="employeeTimeModeSeverity(employee)"
+                      class="ot-status-tag"
+                    />
+                  </div>
+
                   <div class="cell-center cell-wrap">
                     {{ employeeLineOf(employee, data) || '-' }}
                   </div>
@@ -1008,7 +1118,10 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
-            <div v-else class="ot-expanded-empty">
+            <div
+              v-else
+              class="ot-expanded-empty"
+            >
               No employee data found for this request.
             </div>
           </div>
@@ -1120,7 +1233,7 @@ onBeforeUnmount(() => {
 .ot-expanded-box {
   position: sticky;
   left: 0;
-  width: min(100%, 980px);
+  width: min(100%, 1120px);
   max-width: none;
   overflow: visible;
   border-top: 1px solid var(--ot-border);
@@ -1174,8 +1287,11 @@ onBeforeUnmount(() => {
     minmax(4.8rem, 0.55fr)
     minmax(8rem, 1.1fr)
     minmax(7rem, 0.85fr)
-    minmax(6.4rem, 0.65fr)
-    minmax(4.8rem, 0.55fr);
+    minmax(6.8rem, 0.7fr)
+    minmax(4.2rem, 0.42fr)
+    minmax(4.8rem, 0.48fr)
+    minmax(4.8rem, 0.46fr)
+    minmax(7rem, 0.8fr);
   align-items: stretch;
 }
 
@@ -1346,7 +1462,7 @@ onBeforeUnmount(() => {
 
 @media (max-width: 1200px) {
   .ot-expanded-box {
-    width: min(100%, 900px);
+    width: min(100%, 1060px);
   }
 
   .ot-expanded-grid-row {
@@ -1355,8 +1471,11 @@ onBeforeUnmount(() => {
       minmax(4.5rem, 0.52fr)
       minmax(7rem, 1fr)
       minmax(6.5rem, 0.75fr)
-      minmax(6rem, 0.62fr)
-      minmax(4.5rem, 0.5fr);
+      minmax(6.4rem, 0.62fr)
+      minmax(4rem, 0.4fr)
+      minmax(4.6rem, 0.46fr)
+      minmax(4.6rem, 0.44fr)
+      minmax(6.8rem, 0.76fr);
   }
 
   .ot-expanded-grid-row > div {
@@ -1373,21 +1492,21 @@ onBeforeUnmount(() => {
 
   .ot-expanded-box {
     width: max-content;
-    min-width: 760px;
+    min-width: 980px;
     max-width: none;
     padding: 0.6rem;
   }
 
   .ot-expanded-content {
     width: max-content;
-    min-width: 760px;
+    min-width: 980px;
     max-width: none;
     overflow: visible;
   }
 
   .ot-expanded-responsive-table {
     width: max-content;
-    min-width: 760px;
+    min-width: 980px;
     max-width: none;
     overflow: visible;
   }
@@ -1399,6 +1518,9 @@ onBeforeUnmount(() => {
       8.8rem
       8.2rem
       7.4rem
+      4.4rem
+      5.2rem
+      5.2rem
       10rem;
   }
 
@@ -1422,20 +1544,20 @@ onBeforeUnmount(() => {
 @media (max-width: 420px) {
   .ot-expanded-box {
     width: max-content;
-    min-width: 760px;
+    min-width: 980px;
     max-width: none;
     padding: 0.55rem;
   }
 
   .ot-expanded-content {
     width: max-content;
-    min-width: 760px;
+    min-width: 980px;
     max-width: none;
   }
 
   .ot-expanded-responsive-table {
     width: max-content;
-    min-width: 760px;
+    min-width: 980px;
     max-width: none;
   }
 
@@ -1446,6 +1568,9 @@ onBeforeUnmount(() => {
       8.5rem
       8rem
       7.2rem
+      4.3rem
+      5.1rem
+      5.1rem
       10rem;
   }
 

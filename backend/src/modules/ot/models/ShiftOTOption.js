@@ -6,7 +6,23 @@ function s(value) {
 }
 
 const SHIFT_OT_OPTION_TIMING_MODES = ['AFTER_SHIFT_END', 'FIXED_TIME']
+const SHIFT_OT_OPTION_DAY_TYPES = ['WORKING_DAY', 'SUNDAY', 'HOLIDAY']
+
 const HHMM_REGEX = /^([01]\d|2[0-3]):([0-5]\d)$/
+
+function normalizeApplicableDayTypes(value) {
+  const source = Array.isArray(value) ? value : ['WORKING_DAY']
+
+  const normalized = Array.from(
+    new Set(
+      source
+        .map((item) => s(item).toUpperCase())
+        .filter((item) => SHIFT_OT_OPTION_DAY_TYPES.includes(item)),
+    ),
+  )
+
+  return normalized.length ? normalized : ['WORKING_DAY']
+}
 
 const ShiftOTOptionSchema = new mongoose.Schema(
   {
@@ -34,8 +50,14 @@ const ShiftOTOptionSchema = new mongoose.Schema(
       index: true,
     },
 
-    // For AFTER_SHIFT_END mode:
-    // Shift ends 16:00 + 120 minutes = OT starts 18:00.
+    applicableDayTypes: {
+      type: [String],
+      enum: SHIFT_OT_OPTION_DAY_TYPES,
+      required: true,
+      default: ['WORKING_DAY'],
+      index: true,
+    },
+
     startAfterShiftEndMinutes: {
       type: Number,
       required: true,
@@ -43,8 +65,6 @@ const ShiftOTOptionSchema = new mongoose.Schema(
       default: 0,
     },
 
-    // For FIXED_TIME mode:
-    // Useful for Sunday/Holiday OT, for example 08:00 - 17:00.
     fixedStartTime: {
       type: String,
       default: '',
@@ -106,6 +126,8 @@ const ShiftOTOptionSchema = new mongoose.Schema(
 ShiftOTOptionSchema.pre('validate', function preValidate(next) {
   this.label = s(this.label)
   this.timingMode = s(this.timingMode || 'AFTER_SHIFT_END').toUpperCase()
+  this.applicableDayTypes = normalizeApplicableDayTypes(this.applicableDayTypes)
+
   this.fixedStartTime = s(this.fixedStartTime)
   this.fixedEndTime = s(this.fixedEndTime)
 
@@ -115,6 +137,18 @@ ShiftOTOptionSchema.pre('validate', function preValidate(next) {
 
   if (!SHIFT_OT_OPTION_TIMING_MODES.includes(this.timingMode)) {
     return next(new Error('timingMode must be AFTER_SHIFT_END or FIXED_TIME'))
+  }
+
+  if (!this.applicableDayTypes.length) {
+    return next(new Error('applicableDayTypes must contain at least one day type'))
+  }
+
+  for (const dayType of this.applicableDayTypes) {
+    if (!SHIFT_OT_OPTION_DAY_TYPES.includes(dayType)) {
+      return next(
+        new Error('applicableDayTypes must contain only WORKING_DAY, SUNDAY, or HOLIDAY'),
+      )
+    }
   }
 
   if (!Number.isInteger(this.requestedMinutes) || this.requestedMinutes < 1) {
@@ -162,16 +196,25 @@ ShiftOTOptionSchema.index(
 )
 
 ShiftOTOptionSchema.index(
-  { shiftId: 1, sequence: 1 },
+  { shiftId: 1, applicableDayTypes: 1, sequence: 1 },
   { unique: true, partialFilterExpression: { isActive: true } },
 )
+
+ShiftOTOptionSchema.index({
+  shiftId: 1,
+  applicableDayTypes: 1,
+  isActive: 1,
+  sequence: 1,
+})
 
 ShiftOTOptionSchema.index({ shiftId: 1, isActive: 1, sequence: 1 })
 ShiftOTOptionSchema.index({ calculationPolicyId: 1, isActive: 1 })
 ShiftOTOptionSchema.index({ timingMode: 1, isActive: 1 })
+ShiftOTOptionSchema.index({ applicableDayTypes: 1, isActive: 1 })
 ShiftOTOptionSchema.index({ createdAt: -1 })
 
 const ShiftOTOption = mongoose.model('ShiftOTOption', ShiftOTOptionSchema)
 
 module.exports = ShiftOTOption
 module.exports.SHIFT_OT_OPTION_TIMING_MODES = SHIFT_OT_OPTION_TIMING_MODES
+module.exports.SHIFT_OT_OPTION_DAY_TYPES = SHIFT_OT_OPTION_DAY_TYPES

@@ -209,7 +209,11 @@ async function decideOTRequest(req, res, next) {
 async function getShiftOTOptionsByShift(req, res, next) {
   try {
     const shiftId = parseObjectIdParam(req.params.shiftId, 'shiftId')
-    const data = await otService.getShiftOTOptionsByShift(shiftId)
+
+    const data = await otService.getShiftOTOptionsByShift(
+      shiftId,
+      req.query || {},
+    )
 
     res.json({
       ok: true,

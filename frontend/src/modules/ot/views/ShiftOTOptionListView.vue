@@ -54,6 +54,7 @@ const filters = reactive({
   shiftId: '',
   calculationPolicyId: '',
   timingMode: '',
+  dayType: '',
   isActive: '',
   sortField: 'sequence',
   sortOrder: 1,
@@ -63,6 +64,7 @@ const form = reactive({
   shiftId: '',
   label: '',
   timingMode: 'AFTER_SHIFT_END',
+  applicableDayTypes: ['WORKING_DAY'],
   startAfterShiftEndMinutes: 0,
   fixedStartTime: '',
   fixedEndTime: '',
@@ -87,6 +89,31 @@ const timingModeOptions = [
 const formTimingModeOptions = [
   { label: 'After Shift End', value: 'AFTER_SHIFT_END' },
   { label: 'Fixed Time', value: 'FIXED_TIME' },
+]
+
+const dayTypeOptions = [
+  { label: 'All Day Types', value: '' },
+  { label: 'Working Day', value: 'WORKING_DAY' },
+  { label: 'Sunday', value: 'SUNDAY' },
+  { label: 'Holiday', value: 'HOLIDAY' },
+]
+
+const formDayTypeOptions = [
+  {
+    label: 'Working Day',
+    value: 'WORKING_DAY',
+    description: 'Normal working day OT options.',
+  },
+  {
+    label: 'Sunday',
+    value: 'SUNDAY',
+    description: 'Sunday OT options only.',
+  },
+  {
+    label: 'Holiday',
+    value: 'HOLIDAY',
+    description: 'Internal calendar holiday OT options only.',
+  },
 ]
 
 const filterShiftOptions = computed(() => [
@@ -178,6 +205,8 @@ const isSaveDisabled = computed(() => {
     !String(form.shiftId || '').trim() ||
     !String(form.label || '').trim() ||
     !String(form.timingMode || '').trim() ||
+    !Array.isArray(form.applicableDayTypes) ||
+    !form.applicableDayTypes.length ||
     !String(form.calculationPolicyId || '').trim() ||
     Number(form.requestedMinutes || 0) < 1 ||
     Number(form.sequence || 0) < 1
@@ -233,6 +262,21 @@ function normalizeLookupItems(res) {
       }
     })
     .filter(Boolean)
+}
+
+function normalizeApplicableDayTypes(value) {
+  const source = Array.isArray(value) ? value : ['WORKING_DAY']
+  const valid = ['WORKING_DAY', 'SUNDAY', 'HOLIDAY']
+
+  const normalized = Array.from(
+    new Set(
+      source
+        .map((item) => String(item || '').trim().toUpperCase())
+        .filter((item) => valid.includes(item)),
+    ),
+  )
+
+  return normalized.length ? normalized : ['WORKING_DAY']
 }
 
 function pad2(value) {
@@ -431,6 +475,7 @@ function buildQuery(page) {
     shiftId: filters.shiftId,
     calculationPolicyId: filters.calculationPolicyId,
     timingMode: filters.timingMode,
+    dayType: filters.dayType,
     isActive: filters.isActive,
     sortField: filters.sortField,
     sortOrder: filters.sortOrder,
@@ -589,6 +634,10 @@ function onTimingModeFilterChange() {
   reloadFirstPage({ keepVisible: true })
 }
 
+function onDayTypeFilterChange() {
+  reloadFirstPage({ keepVisible: true })
+}
+
 function onStatusChange() {
   reloadFirstPage({ keepVisible: true })
 }
@@ -598,6 +647,7 @@ function clearFilters() {
   filters.shiftId = ''
   filters.calculationPolicyId = ''
   filters.timingMode = ''
+  filters.dayType = ''
   filters.isActive = ''
   filters.sortField = 'sequence'
   filters.sortOrder = 1
@@ -644,6 +694,7 @@ function resetForm() {
   form.shiftId = ''
   form.label = ''
   form.timingMode = 'AFTER_SHIFT_END'
+  form.applicableDayTypes = ['WORKING_DAY']
   form.startAfterShiftEndMinutes = 0
   form.fixedStartTime = ''
   form.fixedEndTime = ''
@@ -669,6 +720,7 @@ function openEditDialog(row) {
   form.shiftId = String(row?.shiftId || row?.shift?.id || row?.shift?._id || '').trim()
   form.label = String(row?.label || '').trim()
   form.timingMode = String(row?.timingMode || 'AFTER_SHIFT_END').trim().toUpperCase()
+  form.applicableDayTypes = normalizeApplicableDayTypes(row?.applicableDayTypes)
   form.startAfterShiftEndMinutes = Number(row?.startAfterShiftEndMinutes || 0)
   form.fixedStartTime = String(row?.fixedStartTime || '').trim()
   form.fixedEndTime = String(row?.fixedEndTime || '').trim()
@@ -693,6 +745,10 @@ function validateForm() {
   if (!String(form.shiftId || '').trim()) return 'Shift is required.'
   if (!String(form.label || '').trim()) return 'Label is required.'
   if (!String(form.timingMode || '').trim()) return 'Timing mode is required.'
+
+  if (!Array.isArray(form.applicableDayTypes) || !form.applicableDayTypes.length) {
+    return 'Please select at least one applicable day type.'
+  }
 
   if (form.timingMode === 'AFTER_SHIFT_END') {
     if (Number(form.startAfterShiftEndMinutes || 0) < 0) {
@@ -736,6 +792,7 @@ function buildPayload() {
     shiftId: String(form.shiftId || '').trim(),
     label: String(form.label || '').trim(),
     timingMode,
+    applicableDayTypes: normalizeApplicableDayTypes(form.applicableDayTypes),
     startAfterShiftEndMinutes:
       timingMode === 'AFTER_SHIFT_END'
         ? Number(form.startAfterShiftEndMinutes || 0)
@@ -833,6 +890,29 @@ function timingModeSeverity(value) {
 
   if (normalized === 'FIXED_TIME') return 'warning'
   return 'info'
+}
+
+function dayTypeSeverity(value) {
+  const normalized = String(value || '').toUpperCase()
+
+  if (normalized === 'HOLIDAY') return 'danger'
+  if (normalized === 'SUNDAY') return 'warning'
+  return 'success'
+}
+
+function dayTypeLabel(value) {
+  const normalized = String(value || '').toUpperCase()
+
+  if (normalized === 'WORKING_DAY') return 'Working Day'
+  if (normalized === 'SUNDAY') return 'Sunday'
+  if (normalized === 'HOLIDAY') return 'Holiday'
+
+  return normalized || '-'
+}
+
+function dayTypesLabel(value) {
+  const values = normalizeApplicableDayTypes(value)
+  return values.map(dayTypeLabel).join(', ')
 }
 
 function formatDateTime(value) {
@@ -1002,7 +1082,6 @@ onBeforeUnmount(() => {
   <div class="flex flex-col gap-4">
     <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
       <div class="flex flex-wrap items-center gap-2">
-
         <Button
           v-if="canCreateShiftOTOption"
           label="New Shift OT Option"
@@ -1026,7 +1105,7 @@ onBeforeUnmount(() => {
     >
       <div class="border-b border-[color:var(--ot-border)] px-3 py-3">
         <div class="flex flex-col gap-2 xl:flex-row xl:items-center">
-          <IconField class="w-full xl:w-[270px] xl:shrink-0">
+          <IconField class="w-full xl:w-[240px] xl:shrink-0">
             <InputIcon class="pi pi-search" />
             <InputText
               v-model="filters.search"
@@ -1037,7 +1116,7 @@ onBeforeUnmount(() => {
             />
           </IconField>
 
-          <div class="w-full xl:w-[180px] xl:shrink-0">
+          <div class="w-full xl:w-[170px] xl:shrink-0">
             <Select
               v-model="filters.shiftId"
               :options="filterShiftOptions"
@@ -1051,7 +1130,7 @@ onBeforeUnmount(() => {
             />
           </div>
 
-          <div class="w-full xl:w-[200px] xl:shrink-0">
+          <div class="w-full xl:w-[190px] xl:shrink-0">
             <Select
               v-model="filters.calculationPolicyId"
               :options="filterPolicyOptions"
@@ -1065,7 +1144,7 @@ onBeforeUnmount(() => {
             />
           </div>
 
-          <div class="w-full xl:w-[185px] xl:shrink-0">
+          <div class="w-full xl:w-[170px] xl:shrink-0">
             <Select
               v-model="filters.timingMode"
               :options="timingModeOptions"
@@ -1078,7 +1157,20 @@ onBeforeUnmount(() => {
             />
           </div>
 
-          <div class="w-full xl:w-[145px] xl:shrink-0">
+          <div class="w-full xl:w-[150px] xl:shrink-0">
+            <Select
+              v-model="filters.dayType"
+              :options="dayTypeOptions"
+              optionLabel="label"
+              optionValue="value"
+              placeholder="Day Type"
+              class="w-full"
+              size="small"
+              @change="onDayTypeFilterChange"
+            />
+          </div>
+
+          <div class="w-full xl:w-[135px] xl:shrink-0">
             <Select
               v-model="filters.isActive"
               :options="statusOptions"
@@ -1116,7 +1208,7 @@ onBeforeUnmount(() => {
         scrollHeight="500px"
         :sortField="filters.sortField"
         :sortOrder="filters.sortOrder"
-        tableStyle="min-width: 118rem"
+        tableStyle="min-width: 126rem"
         class="shift-ot-option-table"
         :virtualScrollerOptions="useVirtualScroll ? {
           lazy: true,
@@ -1156,6 +1248,20 @@ onBeforeUnmount(() => {
             <span v-if="data" class="font-medium text-[color:var(--ot-text)]">
               {{ data.label || '-' }}
             </span>
+          </template>
+        </Column>
+
+        <Column header="Day Type" style="min-width: 13rem">
+          <template #body="{ data }">
+            <div v-if="data" class="flex flex-wrap gap-1">
+              <Tag
+                v-for="type in normalizeApplicableDayTypes(data.applicableDayTypes)"
+                :key="type"
+                :value="dayTypeLabel(type)"
+                :severity="dayTypeSeverity(type)"
+                class="shift-ot-tag"
+              />
+            </div>
           </template>
         </Column>
 
@@ -1286,6 +1392,34 @@ onBeforeUnmount(() => {
               class="w-full"
               placeholder="Evening OT 18:00 - 20:00"
             />
+          </div>
+
+          <div class="space-y-2">
+            <label class="text-sm font-medium text-[color:var(--ot-text)]">
+              Applicable Day Types
+            </label>
+
+            <div class="grid grid-cols-1 gap-2 md:grid-cols-3">
+              <label
+                v-for="item in formDayTypeOptions"
+                :key="item.value"
+                class="shift-ot-day-type-card"
+              >
+                <Checkbox
+                  v-model="form.applicableDayTypes"
+                  :value="item.value"
+                />
+
+                <span>
+                  <strong>{{ item.label }}</strong>
+                  <small>{{ item.description }}</small>
+                </span>
+              </label>
+            </div>
+
+            <p class="text-xs text-[color:var(--ot-text-muted)]">
+              OT create page will only show this option when selected date matches these day types.
+            </p>
           </div>
 
           <div class="space-y-2">
@@ -1422,6 +1556,11 @@ onBeforeUnmount(() => {
               </div>
 
               <div>
+                <span class="font-medium text-[color:var(--ot-text)]">Applicable Day Types:</span>
+                {{ dayTypesLabel(form.applicableDayTypes) }}
+              </div>
+
+              <div>
                 <span class="font-medium text-[color:var(--ot-text)]">Shift Time:</span>
                 {{ selectedShiftOption?.startTime || '-' }} - {{ selectedShiftOption?.endTime || '-' }}
               </div>
@@ -1487,19 +1626,28 @@ onBeforeUnmount(() => {
             <div class="space-y-3 text-sm text-[color:var(--ot-text-muted)]">
               <div class="rounded-xl border border-[color:var(--ot-border)] px-3 py-2">
                 <div class="font-semibold text-[color:var(--ot-text)]">
-                  Working Day: 18:00 - 20:00
+                  Working Day: After Shift OT
                 </div>
                 <div class="mt-1">
-                  Timing Mode = After Shift End, Start Offset = 120, Requested = 120.
+                  Applicable Day Type = Working Day. Example: 18:00 - 20:00.
                 </div>
               </div>
 
               <div class="rounded-xl border border-[color:var(--ot-border)] px-3 py-2">
                 <div class="font-semibold text-[color:var(--ot-text)]">
-                  Sunday/Holiday: Fixed Time
+                  Sunday: Fixed Time
                 </div>
                 <div class="mt-1">
-                  Paid OT = fixed duration minus only the break time that overlaps the OT window.
+                  Applicable Day Type = Sunday. Example: 08:00 - 17:00.
+                </div>
+              </div>
+
+              <div class="rounded-xl border border-[color:var(--ot-border)] px-3 py-2">
+                <div class="font-semibold text-[color:var(--ot-text)]">
+                  Holiday: Fixed Time
+                </div>
+                <div class="mt-1">
+                  Applicable Day Type = Holiday. Holiday is checked from your internal calendar.
                 </div>
               </div>
             </div>
@@ -1575,5 +1723,33 @@ onBeforeUnmount(() => {
   padding: 0.75rem 0.9rem;
   color: var(--ot-text);
   font-size: 0.92rem;
+}
+
+.shift-ot-day-type-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  min-height: 5.4rem;
+  border: 1px solid var(--ot-border);
+  background: var(--ot-surface);
+  border-radius: 0.9rem;
+  padding: 0.75rem 0.85rem;
+  color: var(--ot-text);
+  cursor: pointer;
+}
+
+.shift-ot-day-type-card strong {
+  display: block;
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--ot-text);
+}
+
+.shift-ot-day-type-card small {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: var(--ot-text-muted);
 }
 </style>

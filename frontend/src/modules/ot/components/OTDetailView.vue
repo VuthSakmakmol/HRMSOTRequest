@@ -8,6 +8,8 @@ import { useToast } from 'primevue/usetoast'
 import Button from 'primevue/button'
 import Card from 'primevue/card'
 import DatePicker from 'primevue/datepicker'
+import InputNumber from 'primevue/inputnumber'
+import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
 import Select from 'primevue/select'
 import Tag from 'primevue/tag'
@@ -66,6 +68,17 @@ const toast = useToast()
 const loadingCalendar = ref(false)
 const monthHolidayRows = ref([])
 
+const timingSourceOptions = [
+  {
+    label: 'Preset option',
+    value: 'SHIFT_OPTION',
+  },
+  {
+    label: 'Custom fixed time',
+    value: 'CUSTOM_FIXED',
+  },
+]
+
 const selectedOption = computed(() => {
   return props.selectedOTOption || props.selectedOtOption || null
 })
@@ -85,6 +98,12 @@ const selectedShiftLabel = computed(() => {
 
   return [shift.code, shift.name].filter(Boolean).join(' · ') || 'Selected shift'
 })
+
+const selectedTimingSource = computed(() => {
+  return String(props.form.otTimingSource || 'SHIFT_OPTION').trim().toUpperCase()
+})
+
+const isCustomFixedTime = computed(() => selectedTimingSource.value === 'CUSTOM_FIXED')
 
 const holidayMap = computed(() => {
   const map = new Map()
@@ -124,6 +143,59 @@ const selectedDaySeverity = computed(() => {
   return 'secondary'
 })
 
+const localRequestPreview = computed(() => {
+  if (isCustomFixedTime.value) {
+    const startTime = String(props.form.customStartTime || '').trim()
+    const endTime = String(props.form.customEndTime || '').trim()
+    const breakMinutes = Number(props.form.customBreakMinutes || 0)
+
+    if (!startTime || !endTime) return null
+
+    const totalMinutes = calculateTimeWindowMinutes(startTime, endTime, breakMinutes)
+
+    return {
+      timingMode: 'CUSTOM_FIXED',
+      requestStartTime: startTime,
+      requestEndTime: endTime,
+      breakMinutes,
+      requestedMinutes: totalMinutes,
+      requestedHours: Number((totalMinutes / 60).toFixed(2)),
+    }
+  }
+
+  return props.requestPreview || null
+})
+
+const customTimeError = computed(() => {
+  if (!isCustomFixedTime.value) return ''
+
+  const startTime = String(props.form.customStartTime || '').trim()
+  const endTime = String(props.form.customEndTime || '').trim()
+  const breakMinutes = Number(props.form.customBreakMinutes || 0)
+
+  if (!startTime || !endTime) return ''
+
+  if (!isHHmm(startTime) || !isHHmm(endTime)) {
+    return 'Custom start and end time must be HH:mm.'
+  }
+
+  if (startTime === endTime) {
+    return 'Custom start time and end time cannot be the same.'
+  }
+
+  const rawMinutes = calculateRawWindowMinutes(startTime, endTime)
+
+  if (breakMinutes >= rawMinutes) {
+    return 'Break minutes cannot be greater than or equal to OT duration.'
+  }
+
+  return ''
+})
+
+const selectedPolicy = computed(() => {
+  return selectedOption.value?.calculationPolicy || null
+})
+
 function pad2(value) {
   return String(value).padStart(2, '0')
 }
@@ -161,6 +233,37 @@ function formatPrettyDate(value) {
   })
 }
 
+function isHHmm(value) {
+  return /^([01]\d|2[0-3]):([0-5]\d)$/.test(String(value || '').trim())
+}
+
+function timeToMinutes(value) {
+  if (!isHHmm(value)) return 0
+
+  const [hh, mm] = String(value).split(':').map(Number)
+  return hh * 60 + mm
+}
+
+function calculateRawWindowMinutes(startTime, endTime) {
+  const start = timeToMinutes(startTime)
+  const end = timeToMinutes(endTime)
+
+  let minutes = end - start
+
+  if (minutes <= 0) {
+    minutes += 1440
+  }
+
+  return minutes
+}
+
+function calculateTimeWindowMinutes(startTime, endTime, breakMinutes = 0) {
+  const rawMinutes = calculateRawWindowMinutes(startTime, endTime)
+  const safeBreak = Number(breakMinutes || 0)
+
+  return Math.max(0, rawMinutes - safeBreak)
+}
+
 function formatMinutesLabel(value) {
   const minutes = Number(value || 0)
 
@@ -177,6 +280,7 @@ function formatMinutesLabel(value) {
 function timingModeLabel(value) {
   const normalized = String(value || '').trim().toUpperCase()
 
+  if (normalized === 'CUSTOM_FIXED') return 'Custom Fixed Time'
   if (normalized === 'FIXED_TIME') return 'Fixed Time'
 
   return 'After Shift End'
@@ -194,6 +298,16 @@ function normalizeHolidayItems(payload) {
 
 function setToday() {
   props.form.otDate = new Date()
+}
+
+function ensureTimingDefaults() {
+  if (!props.form.otTimingSource) {
+    props.form.otTimingSource = 'SHIFT_OPTION'
+  }
+
+  if (props.form.customBreakMinutes === undefined || props.form.customBreakMinutes === null) {
+    props.form.customBreakMinutes = 0
+  }
 }
 
 async function fetchMonthHolidays() {
@@ -243,7 +357,21 @@ watch(
   },
 )
 
+watch(
+  () => props.form.otTimingSource,
+  () => {
+    ensureTimingDefaults()
+
+    if (!isCustomFixedTime.value) {
+      props.form.customStartTime = ''
+      props.form.customEndTime = ''
+      props.form.customBreakMinutes = 0
+    }
+  },
+)
+
 onMounted(() => {
+  ensureTimingDefaults()
   fetchMonthHolidays()
 })
 </script>
@@ -328,11 +456,57 @@ onMounted(() => {
           </div>
         </section>
 
-        <!-- RIGHT: OT OPTION + REASON -->
+        <!-- RIGHT: OT OPTION + CUSTOM TIME + REASON -->
         <section class="ot-detail-panel">
+          <div class="ot-shift-summary">
+            <div class="min-w-0">
+              <span>Shared Shift</span>
+              <strong>{{ selectedShiftLabel }}</strong>
+            </div>
+
+            <Tag
+              v-if="selectedShiftState?.mode === 'ready'"
+              value="Ready"
+              severity="success"
+            />
+
+            <Tag
+              v-else
+              value="Waiting"
+              severity="warning"
+            />
+          </div>
+
+          <Message
+            v-if="selectedShiftState?.message"
+            severity="warn"
+            :closable="false"
+          >
+            {{ selectedShiftState.message }}
+          </Message>
+
           <div class="ot-field">
             <label class="ot-field-label">
-              3. OT Option <span class="ot-required-star">*</span>
+              3. Timing Type <span class="ot-required-star">*</span>
+            </label>
+
+            <Select
+              v-model="props.form.otTimingSource"
+              :options="timingSourceOptions"
+              optionLabel="label"
+              optionValue="value"
+              class="w-full"
+              placeholder="Select timing type"
+            />
+
+            <p class="ot-field-hint">
+              Use preset for normal OT. Use custom fixed time when production needs flexible hours.
+            </p>
+          </div>
+
+          <div class="ot-field">
+            <label class="ot-field-label">
+              4. OT Option / Policy <span class="ot-required-star">*</span>
             </label>
 
             <Select
@@ -346,19 +520,153 @@ onMounted(() => {
               :disabled="selectedShiftState?.mode !== 'ready' || loadingShiftOptions || !shiftOptions.length"
             />
 
-            
+            <p class="ot-field-hint">
+              For custom fixed time, this option is still used as the policy/template source.
+            </p>
+          </div>
+
+          <div
+            v-if="isCustomFixedTime"
+            class="ot-custom-time-box"
+          >
+            <div class="ot-custom-time-head">
+              <div>
+                <strong>Custom default OT time</strong>
+                <span>All selected employees use this time unless adjusted later.</span>
+              </div>
+
+              <Tag
+                value="Flexible"
+                severity="info"
+              />
+            </div>
+
+            <div class="ot-custom-time-grid">
+              <div class="ot-field">
+                <label class="ot-field-label">
+                  Start Time <span class="ot-required-star">*</span>
+                </label>
+
+                <InputText
+                  v-model.trim="props.form.customStartTime"
+                  placeholder="18:00"
+                  class="w-full"
+                />
+              </div>
+
+              <div class="ot-field">
+                <label class="ot-field-label">
+                  End Time <span class="ot-required-star">*</span>
+                </label>
+
+                <InputText
+                  v-model.trim="props.form.customEndTime"
+                  placeholder="20:00"
+                  class="w-full"
+                />
+              </div>
+
+              <div class="ot-field">
+                <label class="ot-field-label">
+                  Break Minutes
+                </label>
+
+                <InputNumber
+                  v-model="props.form.customBreakMinutes"
+                  class="w-full"
+                  inputClass="w-full"
+                  :min="0"
+                  :max="1440"
+                  :step="5"
+                  showButtons
+                />
+              </div>
+            </div>
+
+            <Message
+              v-if="customTimeError"
+              severity="warn"
+              :closable="false"
+            >
+              {{ customTimeError }}
+            </Message>
+          </div>
+
+          <div
+            v-if="localRequestPreview"
+            class="ot-option-preview"
+          >
+            <div class="ot-preview-box">
+              <span>Timing</span>
+              <strong>{{ timingModeLabel(localRequestPreview.timingMode) }}</strong>
+            </div>
+
+            <div class="ot-preview-box">
+              <span>Start</span>
+              <strong>{{ localRequestPreview.requestStartTime || '-' }}</strong>
+            </div>
+
+            <div class="ot-preview-box">
+              <span>End</span>
+              <strong>{{ localRequestPreview.requestEndTime || '-' }}</strong>
+            </div>
+
+            <div class="ot-preview-box">
+              <span>Total</span>
+              <strong>{{ formatMinutesLabel(localRequestPreview.requestedMinutes) }}</strong>
+            </div>
+          </div>
+
+          <div
+            v-if="selectedPolicy"
+            class="ot-policy-box"
+          >
+            <div class="ot-policy-head">
+              <span>Calculation Policy</span>
+
+              <Tag
+                :value="selectedPolicy.code || 'Policy'"
+                severity="secondary"
+              />
+            </div>
+
+            <div class="ot-policy-grid">
+              <div class="ot-policy-item">
+                <span>Name</span>
+                <strong>{{ selectedPolicy.name || '-' }}</strong>
+              </div>
+
+              <div class="ot-policy-item">
+                <span>Round</span>
+                <strong>
+                  {{ selectedPolicy.roundMethod || '-' }}
+                  / {{ selectedPolicy.roundUnitMinutes || 0 }}m
+                </strong>
+              </div>
+
+              <div class="ot-policy-item">
+                <span>Minimum</span>
+                <strong>{{ formatMinutesLabel(selectedPolicy.minEligibleMinutes) }}</strong>
+              </div>
+
+              <div class="ot-policy-item">
+                <span>Cap</span>
+                <strong>{{ selectedPolicy.capByRequestedMinutes ? 'By requested time' : 'No cap' }}</strong>
+              </div>
+            </div>
           </div>
 
           <div class="ot-field">
             <label class="ot-field-label">
-              4. Reason <span class="ot-optional-text">Optional</span>
+              5. Reason <span class="ot-optional-text">Optional</span>
             </label>
 
             <Textarea
               v-model.trim="props.form.reason"
-              rows="6"
+              rows="5"
               autoResize
               class="w-full"
+              placeholder="Example: urgent production order, shipment deadline..."
             />
           </div>
         </section>
@@ -458,6 +766,7 @@ onMounted(() => {
 .ot-field-hint {
   margin-top: 0.16rem;
   font-size: 0.75rem;
+  line-height: 1.4;
   color: var(--ot-text-muted);
 }
 
@@ -491,7 +800,8 @@ onMounted(() => {
 .ot-info-card,
 .ot-shift-summary,
 .ot-option-preview,
-.ot-policy-box {
+.ot-policy-box,
+.ot-custom-time-box {
   border: 1px solid var(--ot-border);
   border-radius: 1rem;
   background: var(--ot-bg);
@@ -563,6 +873,43 @@ onMounted(() => {
   padding: 0.65rem;
 }
 
+.ot-custom-time-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  background:
+    linear-gradient(135deg, rgba(59, 130, 246, 0.08), transparent),
+    var(--ot-bg);
+}
+
+.ot-custom-time-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.ot-custom-time-head strong {
+  display: block;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ot-text);
+}
+
+.ot-custom-time-head span {
+  display: block;
+  margin-top: 0.18rem;
+  font-size: 0.74rem;
+  line-height: 1.4;
+  color: var(--ot-text-muted);
+}
+
+.ot-custom-time-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.65rem;
+}
+
 .ot-policy-box {
   margin-top: 0.1rem;
 }
@@ -611,7 +958,8 @@ onMounted(() => {
 
 :deep(.p-inputtext),
 :deep(.p-select),
-:deep(.p-textarea) {
+:deep(.p-textarea),
+:deep(.p-inputnumber-input) {
   font-size: 0.86rem;
 }
 
@@ -633,6 +981,10 @@ onMounted(() => {
 @media (min-width: 768px) {
   .ot-date-info-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ot-custom-time-grid {
+    grid-template-columns: 1fr 1fr 180px;
   }
 
   .ot-policy-grid {
