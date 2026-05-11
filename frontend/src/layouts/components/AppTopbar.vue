@@ -10,6 +10,7 @@ import Menu from 'primevue/menu'
 
 import { useAuthStore } from '@/modules/auth/auth.store'
 import { useThemeStore } from '@/app/store/theme.store'
+import AppLanguageSwitcher from '@/shared/components/AppLanguageSwitcher.vue'
 
 defineProps({
   desktopCollapsed: {
@@ -145,6 +146,7 @@ function toggleProfileMenu(event) {
           popup
           class="app-profile-menu w-56"
         />
+        <AppLanguageSwitcher />
       </div>
     </div>
   </header>

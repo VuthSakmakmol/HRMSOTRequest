@@ -28,38 +28,18 @@ const auth = useAuthStore()
 
 const openGroups = ref({})
 
-const permissionCodes = computed(() => {
-  const raw = auth.user?.effectivePermissionCodes
-  return Array.isArray(raw)
-    ? raw.map((v) => String(v || '').trim().toUpperCase()).filter(Boolean)
-    : []
-})
-
-const roleCodes = computed(() => {
-  const raw = auth.user?.roleCodes
-  return Array.isArray(raw)
-    ? raw.map((v) => String(v || '').trim().toUpperCase()).filter(Boolean)
-    : []
-})
-
-const isRootAdmin = computed(() => {
-  if (auth.user?.isRootAdmin) return true
-  return roleCodes.value.includes('ROOT_ADMIN')
-})
-
-function hasAccess(required = []) {
-  if (!required?.length) return true
-  if (isRootAdmin.value) return true
-
-  const normalized = required
-    .map((v) => String(v || '').trim().toUpperCase())
-    .filter(Boolean)
-
-  return normalized.some((code) => permissionCodes.value.includes(code))
+function hasAccess(requiredPermissions = []) {
+  if (!requiredPermissions?.length) return true
+  return auth.hasAnyPermission(requiredPermissions)
 }
 
 function isActivePath(to) {
   if (!to) return false
+
+  if (to === '/dashboard') {
+    return route.path === '/' || route.path === '/dashboard'
+  }
+
   return route.path === to || route.path.startsWith(`${to}/`)
 }
 
@@ -68,8 +48,13 @@ function closeMobile() {
 }
 
 async function go(to, closeAfter = false) {
-  if (!to) return
+  if (!to || route.path === to) {
+    if (closeAfter) closeMobile()
+    return
+  }
+
   await router.push(to)
+
   if (closeAfter) closeMobile()
 }
 
@@ -90,7 +75,7 @@ const navGroups = computed(() => {
           key: 'dashboard',
           label: 'Dashboard',
           icon: 'pi pi-chart-bar',
-          to: '/',
+          to: '/dashboard',
         },
       ],
     },
@@ -111,35 +96,35 @@ const navGroups = computed(() => {
           label: 'Roles',
           icon: 'pi pi-id-card',
           to: '/org/roles',
-          permissions: ['ROLE_VIEW'],
+          permissions: ['ROLE_VIEW', 'ROLE_CREATE', 'ROLE_UPDATE'],
         },
         {
           key: 'departments',
           label: 'Departments',
           icon: 'pi pi-building',
           to: '/org/departments',
-          permissions: ['DEPARTMENT_VIEW'],
+          permissions: ['DEPARTMENT_VIEW', 'DEPARTMENT_CREATE', 'DEPARTMENT_UPDATE'],
         },
         {
           key: 'positions',
           label: 'Positions',
           icon: 'pi pi-briefcase',
           to: '/org/positions',
-          permissions: ['POSITION_VIEW'],
+          permissions: ['POSITION_VIEW', 'POSITION_CREATE', 'POSITION_UPDATE'],
         },
         {
           key: 'lines',
           label: 'Lines',
           icon: 'pi pi-sitemap',
           to: '/org/lines',
-          permissions: ['LINE_VIEW'],
+          permissions: ['LINE_VIEW', 'LINE_CREATE', 'LINE_UPDATE'],
         },
         {
           key: 'employees',
           label: 'Employees',
           icon: 'pi pi-users',
           to: '/org/employees',
-          permissions: ['EMPLOYEE_VIEW'],
+          permissions: ['EMPLOYEE_VIEW', 'EMPLOYEE_CREATE', 'EMPLOYEE_UPDATE'],
         },
         {
           key: 'org-chart',
@@ -188,7 +173,12 @@ const navGroups = computed(() => {
           label: 'Accounts',
           icon: 'pi pi-user-edit',
           to: '/auth/accounts',
-          permissions: ['ACCOUNT_VIEW'],
+          permissions: [
+            'ACCOUNT_VIEW',
+            'ACCOUNT_CREATE',
+            'ACCOUNT_UPDATE',
+            'ACCOUNT_RESET_PASSWORD',
+          ],
         },
       ],
     },
@@ -202,7 +192,7 @@ const navGroups = computed(() => {
           label: 'Attendance Import',
           icon: 'pi pi-upload',
           to: '/attendance/imports',
-          permissions: ['ATTENDANCE_VIEW'],
+          permissions: ['ATTENDANCE_VIEW', 'ATTENDANCE_IMPORT'],
         },
         {
           key: 'attendance-records',
@@ -239,13 +229,6 @@ const navGroups = computed(() => {
           ],
         },
         {
-          key: 'ot-acknowledgements',
-          label: 'Acknowledge Inbox',
-          icon: 'pi pi-info-circle',
-          to: '/ot/acknowledgements',
-          permissions: ['OT_REQUEST_ACKNOWLEDGE'],
-        },
-        {
           key: 'ot-approvals',
           label: 'Approval Inbox',
           icon: 'pi pi-inbox',
@@ -253,15 +236,18 @@ const navGroups = computed(() => {
           permissions: ['OT_REQUEST_APPROVE'],
         },
         {
+          key: 'ot-acknowledgements',
+          label: 'Acknowledge Inbox',
+          icon: 'pi pi-info-circle',
+          to: '/ot/acknowledgements',
+          permissions: ['OT_REQUEST_ACKNOWLEDGE'],
+        },
+        {
           key: 'ot-policies',
           label: 'OT Policies',
           icon: 'pi pi-sliders-h',
           to: '/ot/policies',
-          permissions: [
-            'OT_POLICY_VIEW',
-            'OT_POLICY_CREATE',
-            'OT_POLICY_UPDATE',
-          ],
+          permissions: ['OT_POLICY_VIEW', 'OT_POLICY_CREATE', 'OT_POLICY_UPDATE'],
         },
         {
           key: 'shift-ot-options',
@@ -307,13 +293,6 @@ const navGroups = computed(() => {
     .filter((group) => group.items.length > 0)
 })
 
-const currentUserName = computed(() => auth.user?.displayName || 'System User')
-const currentUserLogin = computed(() => auth.user?.loginId || '-')
-const currentRoleLabel = computed(() => {
-  if (isRootAdmin.value) return 'ROOT_ADMIN'
-  return roleCodes.value[0] || 'USER'
-})
-
 const desktopSidebarClass = computed(() =>
   props.desktopCollapsed ? 'w-[88px]' : 'w-[272px]',
 )
@@ -322,6 +301,7 @@ function isGroupExpanded(groupKey, groupItems = []) {
   if (typeof openGroups.value[groupKey] === 'boolean') {
     return openGroups.value[groupKey]
   }
+
   return groupItems.some((item) => isActivePath(item.to))
 }
 
@@ -333,7 +313,10 @@ function toggleGroup(groupKey, groupItems = []) {
 }
 
 function sidebarItemClass(to, collapsed = false) {
-  const base = isActivePath(to) ? 'ot-nav-item ot-nav-item-active' : 'ot-nav-item'
+  const base = isActivePath(to)
+    ? 'ot-nav-item ot-nav-item-active'
+    : 'ot-nav-item'
+
   return collapsed ? `${base} ot-nav-item-collapsed` : base
 }
 </script>
@@ -360,8 +343,14 @@ function sidebarItemClass(to, collapsed = false) {
     <div class="min-h-0 flex-1 px-2 py-3">
       <ScrollPanel style="width: 100%; height: 100%">
         <div class="space-y-1.5">
-          <template v-for="group in navGroups" :key="group.key">
-            <div v-if="desktopCollapsed" class="space-y-1">
+          <template
+            v-for="group in navGroups"
+            :key="group.key"
+          >
+            <div
+              v-if="desktopCollapsed"
+              class="space-y-1"
+            >
               <button
                 v-for="item in group.items"
                 :key="item.key"
@@ -370,20 +359,30 @@ function sidebarItemClass(to, collapsed = false) {
                 :title="item.label"
                 @click="go(item.to)"
               >
-                <i :class="item.icon" class="text-sm" />
+                <i
+                  :class="item.icon"
+                  class="text-sm"
+                />
               </button>
             </div>
 
-            <div v-else class="rounded-xl">
+            <div
+              v-else
+              class="rounded-xl"
+            >
               <button
                 type="button"
                 class="ot-group-button"
                 @click="toggleGroup(group.key, group.items)"
               >
                 <div class="flex min-w-0 items-center gap-2">
-                  <i :class="group.icon" class="text-sm" />
+                  <i
+                    :class="group.icon"
+                    class="text-sm"
+                  />
                   <span class="truncate">{{ group.label }}</span>
                 </div>
+
                 <i
                   class="pi text-xs transition-transform duration-150"
                   :class="isGroupExpanded(group.key, group.items) ? 'pi-chevron-down' : 'pi-chevron-right'"
@@ -401,7 +400,10 @@ function sidebarItemClass(to, collapsed = false) {
                   :class="sidebarItemClass(item.to)"
                   @click="go(item.to)"
                 >
-                  <i :class="item.icon" class="text-sm" />
+                  <i
+                    :class="item.icon"
+                    class="text-sm"
+                  />
                   <span class="truncate">{{ item.label }}</span>
                 </button>
               </div>
@@ -422,6 +424,7 @@ function sidebarItemClass(to, collapsed = false) {
         class="w-full !justify-start"
         @click="logout"
       />
+
       <Button
         v-else
         icon="pi pi-sign-out"
@@ -430,6 +433,7 @@ function sidebarItemClass(to, collapsed = false) {
         severity="secondary"
         size="small"
         class="w-full"
+        aria-label="Logout"
         @click="logout"
       />
     </div>
@@ -460,11 +464,13 @@ function sidebarItemClass(to, collapsed = false) {
     </template>
 
     <div class="flex h-full min-h-0 flex-col">
-
       <div class="min-h-0 flex-1 py-3">
         <ScrollPanel style="width: 100%; height: 100%">
           <div class="space-y-1.5">
-            <template v-for="group in navGroups" :key="`mobile-${group.key}`">
+            <template
+              v-for="group in navGroups"
+              :key="`mobile-${group.key}`"
+            >
               <div class="rounded-xl">
                 <button
                   type="button"
@@ -472,9 +478,13 @@ function sidebarItemClass(to, collapsed = false) {
                   @click="toggleGroup(`mobile-${group.key}`, group.items)"
                 >
                   <div class="flex min-w-0 items-center gap-2">
-                    <i :class="group.icon" class="text-sm" />
+                    <i
+                      :class="group.icon"
+                      class="text-sm"
+                    />
                     <span class="truncate">{{ group.label }}</span>
                   </div>
+
                   <i
                     class="pi text-xs transition-transform duration-150"
                     :class="isGroupExpanded(`mobile-${group.key}`, group.items) ? 'pi-chevron-down' : 'pi-chevron-right'"
@@ -492,7 +502,10 @@ function sidebarItemClass(to, collapsed = false) {
                     :class="sidebarItemClass(item.to)"
                     @click="go(item.to, true)"
                   >
-                    <i :class="item.icon" class="text-sm" />
+                    <i
+                      :class="item.icon"
+                      class="text-sm"
+                    />
                     <span class="truncate">{{ item.label }}</span>
                   </button>
                 </div>
@@ -518,19 +531,6 @@ function sidebarItemClass(to, collapsed = false) {
 </template>
 
 <style scoped>
-.ot-role-chip {
-  display: inline-flex;
-  align-items: center;
-  border-radius: 999px;
-  padding: 0.22rem 0.6rem;
-  font-size: 0.72rem;
-  font-weight: 600;
-  line-height: 1;
-  background: rgba(129, 166, 198, 0.14);
-  color: var(--ot-text);
-  border: 1px solid rgba(129, 166, 198, 0.2);
-}
-
 .ot-group-button {
   width: 100%;
   display: flex;
@@ -606,40 +606,3 @@ function sidebarItemClass(to, collapsed = false) {
   background: var(--ot-surface) !important;
 }
 </style>
-
-<!-- 
-Passport exp cannot => visa
-Passport 2 year, at least 1 year before renew. 
-if less than 1 year cannot continue Visa (under table)
-
-first coming to wok - 6 month
-renew - 1 year
-
-
-Srey lanka : 
-- T visa 
-Pay 30$
-must have bank statement 6 months
-2000$
-ticket come/back
-booking hotel
-if come to meeting (must have invite letter date to date)
-Passport and Photo 
-
-- E visa
-ticket 1 way (no need go back)
-work permit, invitation letter, MOC, patent, Hotel booking, passport
-10 days before join date (prevent, no count sunday or holiday)
-
-continue Visa
-T - visa
-1 month , + 1 
-
-if come to work 
-E - visa 
-6 month = 158$
-1 year = 288$
-
-
-
--->

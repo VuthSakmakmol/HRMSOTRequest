@@ -1,3 +1,4 @@
+/* frontend/src/shared/styles.css */
 @import "tailwindcss";
 
 /* =========================================================
@@ -32,12 +33,21 @@
   --ot-text-soft: #5f6b7a;
   --ot-text-muted: #7b8794;
 
-  /* Status / accent */
+  /* Semantic */
   --ot-primary: var(--ot-blue);
   --ot-primary-soft: #dbe8f1;
   --ot-secondary: var(--ot-sky);
   --ot-warm: var(--ot-beige);
   --ot-neutral: var(--ot-stone);
+
+  --ot-success: #16a34a;
+  --ot-success-soft: #dcfce7;
+  --ot-warning: #d97706;
+  --ot-warning-soft: #fef3c7;
+  --ot-danger: #dc2626;
+  --ot-danger-soft: #fee2e2;
+  --ot-info: #2563eb;
+  --ot-info-soft: #dbeafe;
 
   /* Effects */
   --ot-shadow-sm: 0 2px 10px rgba(15, 23, 42, 0.05);
@@ -54,13 +64,11 @@
 .dark {
   color-scheme: dark;
 
-  /* Keep same brand palette */
   --ot-blue: #81A6C6;
   --ot-sky: #AACDDC;
   --ot-beige: #F3E3D0;
   --ot-stone: #D2C4B4;
 
-  /* Dark theme surfaces */
   --ot-bg: #0f1722;
   --ot-bg-soft: #15202d;
   --ot-surface: #162130;
@@ -68,19 +76,25 @@
   --ot-surface-3: #223246;
   --ot-border: rgba(170, 205, 220, 0.18);
 
-  /* Text */
   --ot-text: #edf3f8;
   --ot-text-soft: #c4d1dc;
   --ot-text-muted: #9fb0bf;
 
-  /* Accent */
   --ot-primary: #8db2d1;
   --ot-primary-soft: rgba(129, 166, 198, 0.18);
   --ot-secondary: #aacddc;
   --ot-warm: #f3e3d0;
   --ot-neutral: #d2c4b4;
 
-  /* Effects */
+  --ot-success: #4ade80;
+  --ot-success-soft: rgba(34, 197, 94, 0.16);
+  --ot-warning: #fbbf24;
+  --ot-warning-soft: rgba(245, 158, 11, 0.16);
+  --ot-danger: #f87171;
+  --ot-danger-soft: rgba(239, 68, 68, 0.16);
+  --ot-info: #60a5fa;
+  --ot-info-soft: rgba(59, 130, 246, 0.16);
+
   --ot-shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.22);
   --ot-shadow-md: 0 12px 30px rgba(0, 0, 0, 0.28);
   --ot-shadow-lg: 0 22px 50px rgba(0, 0, 0, 0.35);
@@ -117,7 +131,7 @@ body {
     sans-serif;
   background:
     radial-gradient(circle at top left, rgba(170, 205, 220, 0.24), transparent 32%),
-    radial-gradient(circle at top right, rgba(243, 227, 208, 0.30), transparent 28%),
+    radial-gradient(circle at top right, rgba(243, 227, 208, 0.3), transparent 28%),
     linear-gradient(180deg, var(--ot-bg-soft) 0%, var(--ot-bg) 100%);
   color: var(--ot-text);
 }
@@ -131,6 +145,14 @@ input,
 select,
 textarea {
   font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
 }
 
 a {
@@ -175,19 +197,129 @@ svg {
 }
 
 /* =========================================================
-   Reusable Layout Helpers
+   Page Standard
+   Use these in all modules.
    ========================================================= */
 
 .ot-page {
-  @apply min-h-screen;
+  min-height: 100%;
 }
 
+.ot-page-shell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.ot-page-header {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.9rem;
+  border: 1px solid var(--ot-border);
+  border-radius: 24px;
+  padding: 1rem;
+  background:
+    radial-gradient(circle at top left, rgba(170, 205, 220, 0.42), transparent 32%),
+    radial-gradient(circle at bottom right, rgba(243, 227, 208, 0.4), transparent 28%),
+    linear-gradient(135deg, rgba(129, 166, 198, 0.18), rgba(255, 255, 255, 0.58));
+  box-shadow: var(--ot-shadow-sm);
+}
+
+.dark .ot-page-header {
+  background:
+    radial-gradient(circle at top left, rgba(170, 205, 220, 0.16), transparent 32%),
+    radial-gradient(circle at bottom right, rgba(243, 227, 208, 0.11), transparent 28%),
+    linear-gradient(135deg, rgba(22, 33, 48, 0.96), rgba(27, 40, 56, 0.9));
+}
+
+@media (min-width: 768px) {
+  .ot-page-header {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1.15rem 1.25rem;
+  }
+}
+
+.ot-page-header-main {
+  min-width: 0;
+}
+
+.ot-page-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.45rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ot-text-muted);
+}
+
+.ot-page-title {
+  margin: 0;
+  font-size: clamp(1.25rem, 1.8vw, 1.8rem);
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+  color: var(--ot-text);
+}
+
+.ot-page-subtitle {
+  margin-top: 0.35rem;
+  max-width: 52rem;
+  font-size: 0.88rem;
+  line-height: 1.55;
+  color: var(--ot-text-soft);
+}
+
+.ot-page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+@media (max-width: 640px) {
+  .ot-page-actions {
+    width: 100%;
+  }
+
+  .ot-page-actions > * {
+    flex: 1 1 auto;
+  }
+}
+
+/* =========================================================
+   Layout / Card Helpers
+   ========================================================= */
+
 .ot-container {
-  @apply mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8;
+  width: 100%;
+  max-width: 80rem;
+  margin-inline: auto;
+  padding-inline: 1rem;
+}
+
+@media (min-width: 640px) {
+  .ot-container {
+    padding-inline: 1.5rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .ot-container {
+    padding-inline: 2rem;
+  }
 }
 
 .ot-section {
-  @apply space-y-4 sm:space-y-5;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
 }
 
 .ot-grid-auto {
@@ -196,7 +328,8 @@ svg {
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
 }
 
-.ot-card {
+.ot-card,
+.ot-surface-card {
   background: linear-gradient(180deg, var(--ot-surface) 0%, var(--ot-surface-2) 100%);
   border: 1px solid var(--ot-border);
   border-radius: var(--ot-radius-lg);
@@ -212,7 +345,7 @@ svg {
 }
 
 .dark .ot-card-soft {
-  background: linear-gradient(180deg, rgba(22, 33, 48, 0.90) 0%, rgba(27, 40, 56, 0.82) 100%);
+  background: linear-gradient(180deg, rgba(22, 33, 48, 0.9) 0%, rgba(27, 40, 56, 0.82) 100%);
 }
 
 .ot-panel {
@@ -231,7 +364,7 @@ svg {
   background:
     radial-gradient(circle at top left, rgba(170, 205, 220, 0.48), transparent 28%),
     radial-gradient(circle at bottom right, rgba(243, 227, 208, 0.48), transparent 24%),
-    linear-gradient(135deg, rgba(129, 166, 198, 0.20), rgba(170, 205, 220, 0.12), rgba(243, 227, 208, 0.24));
+    linear-gradient(135deg, rgba(129, 166, 198, 0.2), rgba(170, 205, 220, 0.12), rgba(243, 227, 208, 0.24));
   box-shadow: var(--ot-shadow-md);
 }
 
@@ -284,21 +417,353 @@ svg {
 }
 
 /* =========================================================
-   Small utility classes
+   Filter Standard
    ========================================================= */
 
-.ot-glass {
-  background: rgba(255, 255, 255, 0.62);
-  backdrop-filter: blur(10px);
+.ot-filter-card,
+.ot-filter-bar {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.75rem;
+  align-items: end;
   border: 1px solid var(--ot-border);
+  border-radius: var(--ot-radius-lg);
+  background: color-mix(in srgb, var(--ot-surface) 92%, transparent);
+  padding: 0.85rem;
+  box-shadow: var(--ot-shadow-sm);
 }
 
-.dark .ot-glass {
-  background: rgba(22, 33, 48, 0.78);
+.dark .ot-filter-card,
+.dark .ot-filter-bar {
+  background: color-mix(in srgb, var(--ot-surface) 88%, #020617 12%);
 }
 
-.ot-ring {
-  box-shadow: 0 0 0 3px rgba(129, 166, 198, 0.14);
+@media (min-width: 640px) {
+  .ot-filter-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .ot-filter-bar {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1280px) {
+  .ot-filter-bar.ot-filter-bar-5 {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .ot-filter-bar.ot-filter-bar-6 {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+}
+
+.ot-filter-grid {
+  display: grid;
+  gap: 0.875rem;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 768px) {
+  .ot-filter-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1200px) {
+  .ot-filter-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.ot-field {
+  min-width: 0;
+}
+
+.ot-field-label {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--ot-text-soft);
+}
+
+.ot-field-help {
+  margin-top: 0.3rem;
+  font-size: 0.73rem;
+  line-height: 1.4;
+  color: var(--ot-text-muted);
+}
+
+.ot-filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+@media (max-width: 640px) {
+  .ot-filter-actions > * {
+    flex: 1 1 auto;
+  }
+}
+
+/* =========================================================
+   Table Standard
+   ========================================================= */
+
+.ot-table-card {
+  overflow: hidden;
+  border: 1px solid var(--ot-border);
+  border-radius: var(--ot-radius-lg);
+  background: var(--ot-surface);
+  box-shadow: var(--ot-shadow-sm);
+}
+
+.ot-table-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  border-bottom: 1px solid var(--ot-border);
+  background: color-mix(in srgb, var(--ot-surface) 94%, transparent);
+  padding: 0.85rem;
+}
+
+@media (min-width: 768px) {
+  .ot-table-toolbar {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+}
+
+.ot-table-title {
+  margin: 0;
+  font-size: 0.96rem;
+  font-weight: 800;
+  color: var(--ot-text);
+}
+
+.ot-table-subtitle {
+  margin-top: 0.2rem;
+  font-size: 0.78rem;
+  color: var(--ot-text-muted);
+}
+
+.ot-table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.ot-table-wrapper {
+  width: 100%;
+  min-width: 0;
+  overflow: auto;
+}
+
+.ot-table-scroll {
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.ot-data-table {
+  width: 100%;
+}
+
+.ot-data-table.p-datatable {
+  border: 0 !important;
+  border-radius: 0 !important;
+}
+
+.ot-data-table .p-datatable-table {
+  min-width: 100%;
+  width: max-content;
+}
+
+.ot-data-table .p-datatable-thead > tr > th {
+  padding: 0.65rem 0.75rem !important;
+  font-size: 0.75rem !important;
+  line-height: 1.2;
+}
+
+.ot-data-table .p-datatable-tbody > tr > td {
+  padding: 0.6rem 0.75rem !important;
+  font-size: 0.82rem !important;
+  vertical-align: middle;
+}
+
+.ot-data-table-compact .p-datatable-thead > tr > th {
+  padding: 0.52rem 0.65rem !important;
+}
+
+.ot-data-table-compact .p-datatable-tbody > tr > td {
+  padding: 0.5rem 0.65rem !important;
+}
+
+.ot-cell-nowrap {
+  white-space: nowrap;
+}
+
+.ot-cell-center {
+  text-align: center;
+  vertical-align: middle;
+}
+
+.ot-cell-right {
+  text-align: right;
+  vertical-align: middle;
+}
+
+.ot-cell-main {
+  min-width: 10rem;
+  max-width: 18rem;
+}
+
+.ot-cell-title {
+  font-size: 0.84rem;
+  font-weight: 700;
+  color: var(--ot-text);
+}
+
+.ot-cell-subtitle {
+  margin-top: 0.15rem;
+  font-size: 0.74rem;
+  color: var(--ot-text-muted);
+}
+
+.ot-loaded-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  white-space: nowrap;
+  border-radius: 999px;
+  border: 1px solid var(--ot-border);
+  background: var(--ot-surface-2);
+  padding: 0.35rem 0.65rem;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--ot-text-soft);
+}
+
+.ot-row-actions {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+
+/* =========================================================
+   Mobile Card Standard
+   ========================================================= */
+
+.ot-mobile-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.ot-mobile-card {
+  border: 1px solid var(--ot-border);
+  border-radius: var(--ot-radius-lg);
+  background: var(--ot-surface);
+  padding: 0.9rem;
+  box-shadow: var(--ot-shadow-sm);
+}
+
+.ot-mobile-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.ot-mobile-card-title {
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: var(--ot-text);
+}
+
+.ot-mobile-card-subtitle {
+  margin-top: 0.2rem;
+  font-size: 0.78rem;
+  color: var(--ot-text-muted);
+}
+
+.ot-mobile-card-grid {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.75rem;
+}
+
+@media (min-width: 520px) {
+  .ot-mobile-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.ot-mobile-card-field {
+  min-width: 0;
+  border-radius: 12px;
+  background: var(--ot-surface-2);
+  padding: 0.55rem 0.65rem;
+}
+
+.ot-mobile-card-label {
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ot-text-muted);
+}
+
+.ot-mobile-card-value {
+  margin-top: 0.22rem;
+  font-size: 0.82rem;
+  font-weight: 650;
+  color: var(--ot-text);
+}
+
+/* =========================================================
+   Actions / Buttons / Badges
+   ========================================================= */
+
+.ot-actions-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+@media (min-width: 640px) {
+  .ot-actions-row {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+  }
+}
+
+.ot-action-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.ot-icon-button.p-button {
+  width: 2rem !important;
+  height: 2rem !important;
+  padding: 0 !important;
+}
+
+.ot-compact-button.p-button {
+  padding: 0.42rem 0.7rem !important;
+  font-size: 0.78rem !important;
 }
 
 .ot-badge {
@@ -308,7 +773,7 @@ svg {
   border-radius: 999px;
   padding: 0.35rem 0.7rem;
   font-size: 0.78rem;
-  font-weight: 600;
+  font-weight: 700;
   line-height: 1;
   border: 1px solid var(--ot-border);
   background: var(--ot-surface-2);
@@ -326,7 +791,7 @@ svg {
 }
 
 .ot-badge-sky {
-  background: rgba(170, 205, 220, 0.20);
+  background: rgba(170, 205, 220, 0.2);
   color: #577f91;
   border-color: rgba(170, 205, 220, 0.25);
 }
@@ -355,9 +820,210 @@ svg {
   color: #f0e8de;
 }
 
+.ot-status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  white-space: nowrap;
+  border-radius: 999px;
+  border: 1px solid var(--ot-border);
+  padding: 0.28rem 0.58rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.ot-status-success {
+  border-color: color-mix(in srgb, var(--ot-success) 35%, transparent);
+  background: var(--ot-success-soft);
+  color: var(--ot-success);
+}
+
+.ot-status-warning {
+  border-color: color-mix(in srgb, var(--ot-warning) 35%, transparent);
+  background: var(--ot-warning-soft);
+  color: var(--ot-warning);
+}
+
+.ot-status-danger {
+  border-color: color-mix(in srgb, var(--ot-danger) 35%, transparent);
+  background: var(--ot-danger-soft);
+  color: var(--ot-danger);
+}
+
+.ot-status-info {
+  border-color: color-mix(in srgb, var(--ot-info) 35%, transparent);
+  background: var(--ot-info-soft);
+  color: var(--ot-info);
+}
+
+.ot-status-muted {
+  border-color: var(--ot-border);
+  background: var(--ot-surface-2);
+  color: var(--ot-text-muted);
+}
+
+/* =========================================================
+   Empty / Error / Loading States
+   ========================================================= */
+
+.ot-empty-state {
+  display: flex;
+  min-height: 15rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+  padding: 2rem 1rem;
+  text-align: center;
+  color: var(--ot-text-muted);
+}
+
+.ot-empty-icon {
+  display: flex;
+  width: 3rem;
+  height: 3rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--ot-surface-2);
+  color: var(--ot-text-muted);
+}
+
+.ot-empty-title {
+  font-size: 0.98rem;
+  font-weight: 800;
+  color: var(--ot-text);
+}
+
+.ot-empty-text {
+  max-width: 32rem;
+  font-size: 0.83rem;
+  line-height: 1.55;
+  color: var(--ot-text-muted);
+}
+
+.ot-inline-error {
+  border: 1px solid color-mix(in srgb, var(--ot-danger) 35%, transparent);
+  border-radius: var(--ot-radius-md);
+  background: var(--ot-danger-soft);
+  padding: 0.75rem 0.85rem;
+  font-size: 0.82rem;
+  font-weight: 650;
+  color: var(--ot-danger);
+}
+
+.ot-inline-info {
+  border: 1px solid color-mix(in srgb, var(--ot-info) 35%, transparent);
+  border-radius: var(--ot-radius-md);
+  background: var(--ot-info-soft);
+  padding: 0.75rem 0.85rem;
+  font-size: 0.82rem;
+  font-weight: 650;
+  color: var(--ot-info);
+}
+
+/* =========================================================
+   Dialog / Form Standard
+   ========================================================= */
+
+.ot-dialog-form {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.ot-form-grid {
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 768px) {
+  .ot-form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.ot-form-grid-3 {
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 900px) {
+  .ot-form-grid-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.ot-form-footer {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 0.6rem;
+  border-top: 1px solid var(--ot-border);
+  padding-top: 0.9rem;
+}
+
+@media (min-width: 640px) {
+  .ot-form-footer {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-end;
+  }
+}
+
+/* =========================================================
+   Small utility classes
+   ========================================================= */
+
+.ot-glass {
+  background: rgba(255, 255, 255, 0.62);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--ot-border);
+}
+
+.dark .ot-glass {
+  background: rgba(22, 33, 48, 0.78);
+}
+
+.ot-ring {
+  box-shadow: 0 0 0 3px rgba(129, 166, 198, 0.14);
+}
+
+.ot-mobile-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+@media (min-width: 1024px) {
+  .ot-mobile-stack {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+}
+
+.ot-truncate-2 {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.ot-nowrap {
+  white-space: nowrap;
+}
+
+.ot-break {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 /* =========================================================
    PrimeVue polishing
-   Keep PrimeVue look, only refine with project palette
+   Keep PrimeVue look, only refine with project palette.
    ========================================================= */
 
 .p-component {
@@ -419,7 +1085,7 @@ svg {
 
 .p-button {
   border-radius: 14px !important;
-  font-weight: 600 !important;
+  font-weight: 700 !important;
 }
 
 .p-button:not(.p-button-text):not(.p-button-link) {
@@ -451,7 +1117,7 @@ svg {
   background: linear-gradient(180deg, var(--ot-surface-2), var(--ot-surface-3)) !important;
   color: var(--ot-text-soft) !important;
   border-color: var(--ot-border) !important;
-  font-weight: 700 !important;
+  font-weight: 800 !important;
   white-space: nowrap;
 }
 
@@ -460,7 +1126,7 @@ svg {
 }
 
 .p-datatable .p-datatable-tbody > tr:hover {
-  background: rgba(170, 205, 220, 0.10) !important;
+  background: rgba(170, 205, 220, 0.1) !important;
 }
 
 .p-paginator {
@@ -491,7 +1157,7 @@ svg {
 
 .p-tag {
   border-radius: 999px !important;
-  font-weight: 600 !important;
+  font-weight: 700 !important;
 }
 
 .p-panelmenu .p-panelmenu-panel {
@@ -505,42 +1171,6 @@ svg {
 
 .p-menuitem-link {
   border-radius: 12px !important;
-}
-
-/* =========================================================
-   Responsive helpers for pages
-   ========================================================= */
-
-.ot-filter-grid {
-  display: grid;
-  gap: 0.875rem;
-  grid-template-columns: 1fr;
-}
-
-@media (min-width: 768px) {
-  .ot-filter-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (min-width: 1200px) {
-  .ot-filter-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-}
-
-.ot-actions-row {
-  @apply flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between;
-}
-
-.ot-mobile-stack {
-  @apply flex flex-col gap-3;
-}
-
-@media (min-width: 1024px) {
-  .ot-mobile-stack {
-    @apply flex-row items-center justify-between;
-  }
 }
 
 /* =========================================================

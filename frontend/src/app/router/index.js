@@ -1,6 +1,4 @@
 // frontend/src/app/router/index.js
-// frontend/src/app/router/index.js
-
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/modules/auth/auth.store'
 
@@ -39,49 +37,72 @@ import OTAttendanceVerificationView from '@/modules/attendance/views/OTAttendanc
 
 import ForbiddenView from '@/modules/errors/views/ForbiddenView.vue'
 
-let bootstrapped = false
-
-function s(v) {
-  return String(v ?? '').trim()
+function s(value) {
+  return String(value ?? '').trim()
 }
 
-function up(v) {
-  return s(v).toUpperCase()
+function up(value) {
+  return s(value).toUpperCase()
 }
 
 function uniqueStrings(values = []) {
-  return [...new Set((Array.isArray(values) ? values : []).map(up).filter(Boolean))]
+  return [
+    ...new Set(
+      (Array.isArray(values) ? values : [])
+        .map(up)
+        .filter(Boolean),
+    ),
+  ]
 }
 
-async function ensureAuthBootstrapped() {
-  const auth = useAuthStore()
+function safeRedirectPath(value, fallback = '/dashboard') {
+  const path = s(value)
 
-  if (bootstrapped) return
-  bootstrapped = true
+  if (!path) return fallback
+  if (!path.startsWith('/')) return fallback
+  if (path.startsWith('//')) return fallback
+  if (path.startsWith('/login')) return fallback
 
-  if (!auth.token) {
-    auth.bootstrapped = true
-    return
-  }
+  return path
+}
 
-  try {
-    await auth.bootstrap()
-  } catch (_) {
-    // auth store handles invalid token cleanup
-  }
+function collectRequiredPermissions(to, key) {
+  return uniqueStrings(
+    to.matched.flatMap((record) => record.meta?.[key] || []),
+  )
+}
+
+function routeRequiresAuth(to) {
+  return to.matched.some((record) => record.meta?.requiresAuth)
+}
+
+function routeIsPublic(to) {
+  return to.matched.some((record) => record.meta?.public)
 }
 
 function hasRoutePermission(auth, to) {
   if (auth.isRootAdmin) return true
 
-  const requiredAll = uniqueStrings(to.meta?.requiredPermissions || [])
-  const requiredAny = uniqueStrings(to.meta?.requiredAnyPermissions || [])
+  const requiredAll = collectRequiredPermissions(to, 'requiredPermissions')
+  const requiredAny = collectRequiredPermissions(to, 'requiredAnyPermissions')
 
   if (!requiredAll.length && !requiredAny.length) return true
   if (requiredAll.length && !auth.hasAllPermissions(requiredAll)) return false
   if (requiredAny.length && !auth.hasAnyPermission(requiredAny)) return false
 
   return true
+}
+
+async function ensureAuthBootstrapped() {
+  const auth = useAuthStore()
+
+  if (auth.bootstrapped) return
+
+  try {
+    await auth.bootstrap()
+  } catch {
+    auth.clearAuth()
+  }
 }
 
 const routes = [
@@ -381,7 +402,6 @@ const routes = [
       // =========================
       // Payment
       // =========================
-
       {
         path: 'payment/formulas',
         name: 'payment-formulas',
@@ -417,6 +437,10 @@ const routes = [
       },
     ],
   },
+  {
+    path: '/:pathMatch(.*)*',
+    redirect: '/dashboard',
+  },
 ]
 
 const router = createRouter({
@@ -432,15 +456,21 @@ router.beforeEach(async (to) => {
 
   await ensureAuthBootstrapped()
 
-  if (to.meta?.public && auth.token && to.path === '/login') {
-    return '/'
+  if (routeIsPublic(to) && auth.token && to.path === '/login') {
+    return safeRedirectPath(to.query?.redirect)
   }
 
-  if (to.meta?.requiresAuth && !auth.token) {
-    return '/login'
+  if (routeRequiresAuth(to) && !auth.token) {
+    return {
+      path: '/login',
+      query: {
+        redirect: to.fullPath,
+      },
+    }
   }
 
-  if (to.meta?.requiresAuth && auth.token && !hasRoutePermission(auth, to)) {
+  if (routeRequiresAuth(to) && auth.token && !hasRoutePermission(auth, to)) {
+    if (to.name === 'forbidden') return true
     return '/403'
   }
 

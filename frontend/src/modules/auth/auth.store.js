@@ -1,12 +1,21 @@
 // frontend/src/modules/auth/auth.store.js
-
 import { defineStore } from 'pinia'
 import { loginApi, getMeApi } from './auth.api'
+import {
+  getAccessToken,
+  setAccessToken,
+  clearAuthSession,
+} from '@/shared/services/api'
 
-const TOKEN_KEY = 'ot_access_token'
 const USER_KEY = 'ot_auth_user'
 
+function isBrowser() {
+  return typeof window !== 'undefined'
+}
+
 function readJson(key, fallback = null) {
+  if (!isBrowser()) return fallback
+
   try {
     const raw = localStorage.getItem(key)
     return raw ? JSON.parse(raw) : fallback
@@ -15,16 +24,32 @@ function readJson(key, fallback = null) {
   }
 }
 
-function s(v) {
-  return String(v ?? '').trim()
+function writeJson(key, value) {
+  if (!isBrowser()) return
+
+  if (value) {
+    localStorage.setItem(key, JSON.stringify(value))
+  } else {
+    localStorage.removeItem(key)
+  }
 }
 
-function up(v) {
-  return s(v).toUpperCase()
+function s(value) {
+  return String(value ?? '').trim()
+}
+
+function up(value) {
+  return s(value).toUpperCase()
 }
 
 function uniqueStrings(values = []) {
-  return [...new Set((Array.isArray(values) ? values : []).map(up).filter(Boolean))]
+  return [
+    ...new Set(
+      (Array.isArray(values) ? values : [])
+        .map(up)
+        .filter(Boolean),
+    ),
+  ]
 }
 
 function normalizeRoles(input) {
@@ -49,29 +74,43 @@ function normalizeRoles(input) {
     .filter((role) => role.code)
 }
 
+function getRoleCodes(user, roles) {
+  return uniqueStrings(
+    user?.roleCodes ||
+      roles.map((role) => role.code) ||
+      [],
+  )
+}
+
 function normalizeUser(user) {
   if (!user) return null
+
+  const roles = normalizeRoles(user.roles || user.roleCodes || [])
+  const roleCodes = getRoleCodes(user, roles)
+  const effectivePermissionCodes = uniqueStrings(user.effectivePermissionCodes || [])
+  const directPermissionCodes = uniqueStrings(user.directPermissionCodes || [])
+  const isRootAdmin = !!user.isRootAdmin || roleCodes.includes('ROOT_ADMIN')
 
   return {
     id: s(user.id || user._id || user.accountId),
     accountId: s(user.accountId || user.id || user._id),
     loginId: s(user.loginId).toLowerCase(),
-    displayName: s(user.displayName),
+    displayName: s(user.displayName || user.name || user.loginId),
     employeeId: user.employeeId ? s(user.employeeId) : null,
-    roleIds: Array.isArray(user.roleIds) ? user.roleIds.map((v) => s(v)).filter(Boolean) : [],
-    roles: normalizeRoles(user.roles || user.roleCodes || []),
-    roleCodes: uniqueStrings(
-      user.roleCodes ||
-        (Array.isArray(user.roles)
-          ? user.roles.map((r) => (typeof r === 'string' ? r : r?.code))
-          : []),
-    ),
-    directPermissionCodes: uniqueStrings(user.directPermissionCodes || []),
-    effectivePermissionCodes: uniqueStrings(user.effectivePermissionCodes || []),
+
+    roleIds: Array.isArray(user.roleIds)
+      ? user.roleIds.map((value) => s(value)).filter(Boolean)
+      : [],
+
+    roles,
+    roleCodes,
+    directPermissionCodes,
+    effectivePermissionCodes,
+
     passwordVersion: Number(user.passwordVersion || 1),
     mustChangePassword: !!user.mustChangePassword,
-    isRootAdmin: !!user.isRootAdmin,
-    isActive: !!user.isActive,
+    isRootAdmin,
+    isActive: user.isActive !== false,
   }
 }
 
@@ -102,21 +141,53 @@ function extractLoginPayload(responseData) {
   }
 }
 
+function extractMePayload(responseData) {
+  const payload = responseData?.data || responseData || {}
+
+  return (
+    payload.user ||
+    payload.account ||
+    payload.profile ||
+    payload
+  )
+}
+
 export const useAuthStore = defineStore('auth', {
   state: () => ({
-    token: localStorage.getItem(TOKEN_KEY) || '',
+    token: getAccessToken(),
     user: normalizeUser(readJson(USER_KEY, null)),
     bootstrapped: false,
     loading: false,
+    bootstrapLoading: false,
   }),
 
   getters: {
     isAuthenticated: (state) => !!state.token,
     displayName: (state) => state.user?.displayName || '',
-    permissionCodes: (state) => uniqueStrings(state.user?.effectivePermissionCodes || []),
+    loginId: (state) => state.user?.loginId || '',
+    employeeId: (state) => state.user?.employeeId || null,
+
     roleCodes: (state) => uniqueStrings(state.user?.roleCodes || []),
+    permissionCodes: (state) => uniqueStrings(state.user?.effectivePermissionCodes || []),
+
     isRootAdmin: (state) => !!state.user?.isRootAdmin,
     mustChangePassword: (state) => !!state.user?.mustChangePassword,
+
+    hasRole: (state) => {
+      const roleCodes = uniqueStrings(state.user?.roleCodes || [])
+
+      return (roleCode) => {
+        return roleCodes.includes(up(roleCode))
+      }
+    },
+
+    hasAnyRole: (state) => {
+      const roleCodes = uniqueStrings(state.user?.roleCodes || [])
+
+      return (requiredRoles = []) => {
+        return uniqueStrings(requiredRoles).some((roleCode) => roleCodes.includes(roleCode))
+      }
+    },
 
     hasPermission: (state) => {
       const isRootAdmin = !!state.user?.isRootAdmin
@@ -134,7 +205,11 @@ export const useAuthStore = defineStore('auth', {
 
       return (permissionCodes = []) => {
         if (isRootAdmin) return true
-        return uniqueStrings(permissionCodes).some((code) => effective.includes(code))
+
+        const required = uniqueStrings(permissionCodes)
+        if (!required.length) return true
+
+        return required.some((code) => effective.includes(code))
       }
     },
 
@@ -144,7 +219,11 @@ export const useAuthStore = defineStore('auth', {
 
       return (permissionCodes = []) => {
         if (isRootAdmin) return true
-        return uniqueStrings(permissionCodes).every((code) => effective.includes(code))
+
+        const required = uniqueStrings(permissionCodes)
+        if (!required.length) return true
+
+        return required.every((code) => effective.includes(code))
       }
     },
   },
@@ -152,46 +231,55 @@ export const useAuthStore = defineStore('auth', {
   actions: {
     setToken(token) {
       this.token = s(token)
-
-      if (this.token) {
-        localStorage.setItem(TOKEN_KEY, this.token)
-      } else {
-        localStorage.removeItem(TOKEN_KEY)
-      }
+      setAccessToken(this.token)
     },
 
     setUser(user) {
       this.user = normalizeUser(user)
-
-      if (this.user) {
-        localStorage.setItem(USER_KEY, JSON.stringify(this.user))
-      } else {
-        localStorage.removeItem(USER_KEY)
-      }
+      writeJson(USER_KEY, this.user)
     },
 
     clearAuth() {
       this.token = ''
       this.user = null
       this.bootstrapped = true
-      localStorage.removeItem(TOKEN_KEY)
-      localStorage.removeItem(USER_KEY)
+      this.loading = false
+      this.bootstrapLoading = false
+      clearAuthSession()
     },
 
-    async bootstrap() {
+    async bootstrap(force = false) {
+      if (this.bootstrapped && !force) return
+
       if (!this.token) {
         this.bootstrapped = true
         return
       }
 
+      this.bootstrapLoading = true
+
       try {
         const { data } = await getMeApi()
-        this.setUser(data?.data || data?.user || null)
+        const user = extractMePayload(data)
+
+        this.setUser(user)
       } catch {
         this.clearAuth()
       } finally {
         this.bootstrapped = true
+        this.bootstrapLoading = false
       }
+    },
+
+    async refreshMe() {
+      if (!this.token) return null
+
+      const { data } = await getMeApi()
+      const user = extractMePayload(data)
+
+      this.setUser(user)
+
+      return this.user
     },
 
     async login(payload) {
@@ -202,18 +290,22 @@ export const useAuthStore = defineStore('auth', {
         const loginPayload = extractLoginPayload(data)
 
         if (!loginPayload.token) {
-          throw new Error('Login succeeded but access token was not returned by backend')
+          throw new Error('Login succeeded but access token was not returned by backend.')
         }
 
         if (!loginPayload.user) {
-          throw new Error('Login succeeded but user profile was not returned by backend')
+          throw new Error('Login succeeded but user profile was not returned by backend.')
         }
 
         this.setToken(loginPayload.token)
         this.setUser(loginPayload.user)
         this.bootstrapped = true
 
-        return data
+        return {
+          raw: data,
+          user: this.user,
+          token: this.token,
+        }
       } finally {
         this.loading = false
       }

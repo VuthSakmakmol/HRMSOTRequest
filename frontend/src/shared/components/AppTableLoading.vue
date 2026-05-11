@@ -1,8 +1,34 @@
 <!-- frontend/src/shared/components/AppTableLoading.vue -->
+<script setup>
+defineProps({
+  title: {
+    type: String,
+    default: 'Loading data',
+  },
+  message: {
+    type: String,
+    default: 'Fetching records from the server.',
+  },
+  rows: {
+    type: Number,
+    default: 7,
+  },
+  columns: {
+    type: Number,
+    default: 8,
+  },
+})
+
+function cellWidth(index) {
+  const widths = ['90px', '150px', '120px', '80px', '110px', '95px', '130px', '75px']
+  return widths[(index - 1) % widths.length]
+}
+</script>
+
 <template>
   <div class="app-table-loading">
     <div class="app-table-loading__top">
-      <div>
+      <div class="min-w-0">
         <div class="app-table-loading__title">
           {{ title }}
         </div>
@@ -31,32 +57,6 @@
   </div>
 </template>
 
-<script setup>
-defineProps({
-  title: {
-    type: String,
-    default: 'Loading data',
-  },
-  message: {
-    type: String,
-    default: 'Please wait while the system is fetching records.',
-  },
-  rows: {
-    type: Number,
-    default: 7,
-  },
-  columns: {
-    type: Number,
-    default: 8,
-  },
-})
-
-function cellWidth(index) {
-  const widths = ['90px', '150px', '120px', '80px', '110px', '95px', '130px', '75px']
-  return widths[(index - 1) % widths.length]
-}
-</script>
-
 <style scoped>
 .app-table-loading {
   padding: 1rem;
@@ -73,7 +73,7 @@ function cellWidth(index) {
 
 .app-table-loading__title {
   font-size: 0.9rem;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--ot-text, #111827);
 }
 
@@ -86,9 +86,10 @@ function cellWidth(index) {
 .app-table-loading__spinner {
   width: 1.55rem;
   height: 1.55rem;
+  flex: 0 0 auto;
   border-radius: 999px;
   border: 2px solid color-mix(in srgb, var(--ot-border, #e5e7eb) 80%, transparent);
-  border-top-color: #2563eb;
+  border-top-color: var(--ot-blue, #81a6c6);
   animation: app-spin 0.75s linear infinite;
 }
 
@@ -100,14 +101,16 @@ function cellWidth(index) {
 
 .app-table-loading__row {
   display: flex;
+  min-height: 2.8rem;
   align-items: center;
   gap: 0.7rem;
-  min-height: 2.8rem;
+  overflow: hidden;
   border-bottom: 1px solid var(--ot-border, #e5e7eb);
 }
 
 .app-table-loading__cell {
   height: 0.78rem;
+  flex: 0 0 auto;
   border-radius: 999px;
   background: linear-gradient(
     90deg,
@@ -133,9 +136,5 @@ function cellWidth(index) {
   100% {
     background-position: -200% 0;
   }
-}
-
-:global(.dark) .app-table-loading__spinner {
-  border-top-color: #60a5fa;
 }
 </style>
