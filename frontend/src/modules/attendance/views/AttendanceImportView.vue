@@ -1,14 +1,12 @@
 <!-- frontend/src/modules/attendance/views/AttendanceImportView.vue -->
 <script setup>
-// frontend/src/modules/attendance/views/AttendanceImportView.vue
-
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
 import Column from 'primevue/column'
 import DataTable from 'primevue/datatable'
-import DatePicker from 'primevue/datepicker'
 import Dialog from 'primevue/dialog'
 import IconField from 'primevue/iconfield'
 import InputIcon from 'primevue/inputicon'
@@ -17,8 +15,9 @@ import Message from 'primevue/message'
 import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 
-import { useAuthStore } from '@/modules/auth/auth.store'
 import AttendanceImportDialog from '@/modules/attendance/components/AttendanceImportDialog.vue'
+import HolidayDatePicker from '@/modules/calendar/components/HolidayDatePicker.vue'
+import { useAuthStore } from '@/modules/auth/auth.store'
 import {
   getAttendanceImportById,
   getAttendanceImports,
@@ -26,6 +25,7 @@ import {
 
 const toast = useToast()
 const auth = useAuthStore()
+const { t } = useI18n()
 
 const PAGE_SIZE = 10
 const SEARCH_DEBOUNCE_MS = 250
@@ -47,29 +47,34 @@ const latestImportResult = ref(null)
 const filters = reactive({
   search: '',
   status: '',
-  periodFrom: null,
-  periodTo: null,
+  periodFrom: '',
+  periodTo: '',
   sortField: 'createdAt',
   sortOrder: -1,
 })
 
-const statusOptions = [
-  { label: 'All Status', value: '' },
-  { label: 'Processing', value: 'PROCESSING' },
-  { label: 'Success', value: 'SUCCESS' },
-  { label: 'Partial Success', value: 'PARTIAL_SUCCESS' },
-  { label: 'Failed', value: 'FAILED' },
-]
+const statusOptions = computed(() => [
+  { label: t('common.allStatus'), value: '' },
+  { label: t('attendance.statusLabel.processing'), value: 'PROCESSING' },
+  { label: t('attendance.statusLabel.success'), value: 'SUCCESS' },
+  { label: t('attendance.statusLabel.partialSuccess'), value: 'PARTIAL_SUCCESS' },
+  { label: t('attendance.statusLabel.failed'), value: 'FAILED' },
+])
 
 const totalImports = computed(() => Number(totalRecords.value || 0))
 const loadedCount = computed(() => rows.value.filter(Boolean).length)
-const summaryText = computed(() => `${loadedCount.value} of ${totalImports.value}`)
-
+const loadedLabel = computed(() =>
+  t('common.loaded', {
+    loaded: loadedCount.value,
+    total: totalImports.value,
+  }),
+)
 const hasAnyData = computed(() => rows.value.some(Boolean))
 const useVirtualScroll = computed(() => totalImports.value > PAGE_SIZE)
 
 const canImportAttendance = computed(() => {
   if (auth.user?.isRootAdmin || auth.isRootAdmin) return true
+  if (auth.hasPermission?.('ATTENDANCE_IMPORT')) return true
   return auth.hasAnyPermission?.(['ATTENDANCE_IMPORT']) ?? false
 })
 
@@ -140,19 +145,6 @@ function upper(value) {
   return s(value).toUpperCase()
 }
 
-function formatDateYMD(value) {
-  if (!value) return undefined
-
-  const date = value instanceof Date ? value : new Date(value)
-  if (Number.isNaN(date.getTime())) return undefined
-
-  const yyyy = date.getFullYear()
-  const mm = String(date.getMonth() + 1).padStart(2, '0')
-  const dd = String(date.getDate()).padStart(2, '0')
-
-  return `${yyyy}-${mm}-${dd}`
-}
-
 function formatDateDMY(value) {
   if (!value) return '—'
 
@@ -192,7 +184,7 @@ function formatPeriod(row) {
   const from = s(row?.periodFrom)
   const to = s(row?.periodTo)
 
-  if (from && to) return `${formatDateDMY(from)} → ${formatDateDMY(to)}`
+  if (from && to && from !== to) return `${formatDateDMY(from)} → ${formatDateDMY(to)}`
   if (from) return formatDateDMY(from)
   if (to) return formatDateDMY(to)
 
@@ -231,10 +223,10 @@ function formatImportStatusLabel(status) {
   const normalized = upper(status)
 
   const labels = {
-    PROCESSING: 'Processing',
-    SUCCESS: 'Success',
-    PARTIAL_SUCCESS: 'Partial Success',
-    FAILED: 'Failed',
+    PROCESSING: t('attendance.statusLabel.processing'),
+    SUCCESS: t('attendance.statusLabel.success'),
+    PARTIAL_SUCCESS: t('attendance.statusLabel.partialSuccess'),
+    FAILED: t('attendance.statusLabel.failed'),
   }
 
   return labels[normalized] || normalized || '-'
@@ -244,18 +236,18 @@ function formatRecordStatusLabel(status) {
   const normalized = upper(status)
 
   const labels = {
-    SUCCESS: 'Success',
-    VALID: 'Valid',
-    PRESENT: 'Present',
-    IMPORTED: 'Imported',
-    FAILED: 'Failed',
-    ERROR: 'Error',
-    INVALID: 'Invalid',
-    ABSENT: 'Absent',
-    WARNING: 'Warning',
-    DUPLICATE: 'Duplicate',
-    PROCESSING: 'Processing',
-    PENDING: 'Pending',
+    SUCCESS: t('attendance.statusLabel.success'),
+    VALID: t('attendance.statusLabel.valid'),
+    PRESENT: t('attendance.statusLabel.present'),
+    IMPORTED: t('attendance.statusLabel.imported'),
+    FAILED: t('attendance.statusLabel.failed'),
+    ERROR: t('attendance.statusLabel.error'),
+    INVALID: t('attendance.statusLabel.invalid'),
+    ABSENT: t('attendance.statusLabel.absent'),
+    WARNING: t('attendance.statusLabel.warning'),
+    DUPLICATE: t('attendance.statusLabel.duplicate'),
+    PROCESSING: t('attendance.statusLabel.processing'),
+    PENDING: t('attendance.statusLabel.pending'),
   }
 
   return labels[normalized] || normalized || '-'
@@ -275,8 +267,8 @@ function buildQuery(page) {
     limit: PAGE_SIZE,
     search: s(filters.search) || undefined,
     status: filters.status || undefined,
-    periodFrom: formatDateYMD(filters.periodFrom),
-    periodTo: formatDateYMD(filters.periodTo),
+    periodFrom: s(filters.periodFrom) || undefined,
+    periodTo: s(filters.periodTo) || undefined,
     sortBy: filters.sortField,
     sortOrder: filters.sortOrder === 1 ? 'asc' : 'desc',
   }
@@ -298,30 +290,31 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
     const payload = normalizePayload(res)
     const items = normalizeItems(payload)
     const total = Number(payload?.pagination?.total || 0)
+    const startIndex = (page - 1) * PAGE_SIZE
 
     totalRecords.value = total
 
     if (replace) {
-      const nextRows = Array.from({ length: total }, () => null)
-      const startIndex = (page - 1) * PAGE_SIZE
+      const nextRows = total > 0 ? Array.from({ length: total }, () => null) : []
 
       for (let i = 0; i < items.length; i += 1) {
         nextRows[startIndex + i] = items[i]
       }
 
-      rows.value = total === 0 ? [] : nextRows
+      rows.value = nextRows
       loadedPages.value = new Set([page])
     } else {
       if (!rows.value.length && total > 0) {
         rows.value = Array.from({ length: total }, () => null)
       }
 
-      const startIndex = (page - 1) * PAGE_SIZE
+      const nextRows = [...rows.value]
 
       for (let i = 0; i < items.length; i += 1) {
-        rows.value[startIndex + i] = items[i]
+        nextRows[startIndex + i] = items[i]
       }
 
+      rows.value = nextRows
       loadedPages.value.add(page)
     }
 
@@ -329,11 +322,11 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
   } catch (error) {
     toast.add({
       severity: 'error',
-      summary: 'Load failed',
+      summary: t('attendance.message.loadFailed'),
       detail:
         error?.response?.data?.message ||
         error?.message ||
-        'Failed to load attendance imports.',
+        t('attendance.import.noImports'),
       life: 3000,
     })
   } finally {
@@ -356,6 +349,7 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
 
 function runSearchSoon() {
   window.clearTimeout(searchTimer)
+
   searchTimer = window.setTimeout(() => {
     reloadFirstPage({ keepVisible: true })
   }, SEARCH_DEBOUNCE_MS)
@@ -375,7 +369,11 @@ function onSort(event) {
     fileName: 'fileName',
     status: 'status',
     createdAt: 'createdAt',
+    importedAt: 'importedAt',
     rowCount: 'rowCount',
+    successRowCount: 'successRowCount',
+    failedRowCount: 'failedRowCount',
+    duplicateRowCount: 'duplicateRowCount',
   }
 
   filters.sortField = fieldMap[event.sortField] || 'createdAt'
@@ -403,8 +401,8 @@ async function onVirtualLazyLoad(event) {
 function clearFilters() {
   filters.search = ''
   filters.status = ''
-  filters.periodFrom = null
-  filters.periodTo = null
+  filters.periodFrom = ''
+  filters.periodTo = ''
   filters.sortField = 'createdAt'
   filters.sortOrder = -1
 
@@ -421,8 +419,8 @@ async function openImportDetail(row) {
   if (!importId) {
     toast.add({
       severity: 'warn',
-      summary: 'Missing import ID',
-      detail: 'Cannot open this import detail because ID is missing.',
+      summary: t('attendance.message.missingImportId'),
+      detail: t('attendance.message.missingImportIdDetail'),
       life: 2500,
     })
     return
@@ -438,11 +436,11 @@ async function openImportDetail(row) {
   } catch (error) {
     toast.add({
       severity: 'error',
-      summary: 'Detail load failed',
+      summary: t('attendance.message.detailLoadFailed'),
       detail:
         error?.response?.data?.message ||
         error?.message ||
-        'Failed to load attendance import detail.',
+        t('attendance.import.detailLoadFailed'),
       life: 3000,
     })
   } finally {
@@ -472,49 +470,50 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4">
-    <section
-      class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] shadow-sm"
-    >
-      <div class="flex flex-col gap-3 p-3 sm:p-4 lg:flex-row lg:items-center lg:justify-between">
-        <div class="min-w-0">
-          <div class="text-base font-medium text-[color:var(--ot-text)]">
-            Attendance Imports
-          </div>
-
-          <div class="mt-0.5 text-xs text-[color:var(--ot-text-muted)]">
-            Upload, review, and verify attendance import history.
-          </div>
+  <div class="ot-page-shell">
+    <section class="ot-page-header">
+      <div class="ot-page-header-main">
+        <div class="ot-page-kicker">
+          <i class="pi pi-upload" />
+          {{ t('attendance.page.importKicker') }}
         </div>
 
-        <div class="flex flex-wrap items-center gap-2">
-          <Button
-            v-if="canImportAttendance"
-            label="Import Attendance"
-            icon="pi pi-upload"
-            size="small"
-            @click="importDialogVisible = true"
-          />
+        <h1 class="ot-page-title">
+          {{ t('attendance.importTitle') }}
+        </h1>
 
-          <Button
-            label="Refresh"
-            icon="pi pi-refresh"
-            severity="secondary"
-            outlined
-            size="small"
-            :loading="backgroundLoading"
-            @click="refresh"
-          />
+        <p class="ot-page-subtitle">
+          {{ t('attendance.page.importSubtitle') }}
+        </p>
+      </div>
 
-          <Button
-            label="Clear"
-            icon="pi pi-filter-slash"
-            severity="secondary"
-            outlined
-            size="small"
-            @click="clearFilters"
-          />
-        </div>
+      <div class="ot-page-actions">
+        <Button
+          v-if="canImportAttendance"
+          :label="t('attendance.import.importAttendance')"
+          icon="pi pi-upload"
+          size="small"
+          @click="importDialogVisible = true"
+        />
+
+        <Button
+          :label="t('common.refresh')"
+          icon="pi pi-refresh"
+          severity="secondary"
+          outlined
+          size="small"
+          :loading="backgroundLoading"
+          @click="refresh"
+        />
+
+        <Button
+          :label="t('common.clear')"
+          icon="pi pi-filter-slash"
+          severity="secondary"
+          outlined
+          size="small"
+          @click="clearFilters"
+        />
       </div>
     </section>
 
@@ -525,54 +524,53 @@ onBeforeUnmount(() => {
       <div class="flex flex-col gap-4">
         <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <div class="flex items-center gap-2 text-base font-medium text-[color:var(--ot-text)]">
+            <div class="flex items-center gap-2 text-base font-bold text-[color:var(--ot-text)]">
               <i class="pi pi-check-circle text-emerald-500" />
-              <span>Latest Import Result</span>
+              <span>{{ t('attendance.import.latestImportResult') }}</span>
             </div>
 
             <p class="mt-1 text-sm text-[color:var(--ot-text-muted)]">
-              Latest uploaded file has been processed by the backend import engine.
+              {{ t('attendance.import.latestImportDescription') }}
             </p>
           </div>
 
           <Tag
             :value="formatImportStatusLabel(latestImportInfo.status)"
             :severity="getImportStatusSeverity(latestImportInfo.status)"
-            class="attendance-tag"
           />
         </div>
 
         <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <div class="attendance-stat-box">
-            <div class="attendance-stat-label">Import No</div>
+            <div class="attendance-stat-label">{{ t('attendance.field.importNo') }}</div>
             <div class="attendance-stat-value text-sm">
               {{ latestImportInfo.importNo || '—' }}
             </div>
           </div>
 
           <div class="attendance-stat-box">
-            <div class="attendance-stat-label">Total Rows</div>
+            <div class="attendance-stat-label">{{ t('attendance.field.totalRows') }}</div>
             <div class="attendance-stat-value">
               {{ Number(latestImportInfo.rowCount || 0) }}
             </div>
           </div>
 
           <div class="attendance-stat-box border-emerald-200 dark:border-emerald-800">
-            <div class="attendance-stat-label">Success</div>
+            <div class="attendance-stat-label">{{ t('attendance.field.successRows') }}</div>
             <div class="attendance-stat-value text-emerald-600 dark:text-emerald-400">
               {{ Number(latestImportInfo.successRowCount || 0) }}
             </div>
           </div>
 
           <div class="attendance-stat-box border-amber-200 dark:border-amber-800">
-            <div class="attendance-stat-label">Failed</div>
+            <div class="attendance-stat-label">{{ t('attendance.field.failedRows') }}</div>
             <div class="attendance-stat-value text-amber-600 dark:text-amber-400">
               {{ Number(latestImportInfo.failedRowCount || 0) }}
             </div>
           </div>
 
           <div class="attendance-stat-box border-sky-200 dark:border-sky-800">
-            <div class="attendance-stat-label">Duplicate</div>
+            <div class="attendance-stat-label">{{ t('attendance.field.duplicateRows') }}</div>
             <div class="attendance-stat-value text-sky-600 dark:text-sky-400">
               {{ Number(latestImportInfo.duplicateRowCount || 0) }}
             </div>
@@ -584,15 +582,15 @@ onBeforeUnmount(() => {
           severity="warn"
           :closable="false"
         >
-          Attendance was imported with some skipped, duplicated, or invalid rows. Please review the detail result.
+          {{ t('attendance.message.partialImportWarning') }}
         </Message>
 
         <div
           v-if="latestFailedRowsPreview.length"
           class="rounded-2xl border border-amber-200 bg-white/80 p-3 dark:border-amber-800 dark:bg-surface-900"
         >
-          <div class="mb-2 text-xs font-medium uppercase tracking-[0.12em] text-amber-700 dark:text-amber-300">
-            Failed Row Preview
+          <div class="mb-2 text-xs font-bold uppercase tracking-[0.12em] text-amber-700 dark:text-amber-300">
+            {{ t('attendance.import.failedRowPreview') }}
           </div>
 
           <div class="grid gap-2 md:grid-cols-2">
@@ -601,8 +599,8 @@ onBeforeUnmount(() => {
               :key="`${row.rawRowNo || row.rowNo || row.row || ''}-${row.message || row.reason || ''}`"
               class="rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-3 py-2 text-sm"
             >
-              <div class="font-medium text-[color:var(--ot-text)]">
-                Row {{ row.rawRowNo || row.rowNo || row.row || '—' }}
+              <div class="font-bold text-[color:var(--ot-text)]">
+                {{ t('attendance.field.row') }} {{ row.rawRowNo || row.rowNo || row.row || '—' }}
               </div>
 
               <div class="mt-0.5 text-xs text-[color:var(--ot-text-muted)]">
@@ -614,202 +612,258 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <section
-      class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]"
-    >
-      <div class="border-b border-[color:var(--ot-border)] px-3 py-3">
-        <div class="flex flex-col gap-2 xl:flex-row xl:items-center">
-          <IconField class="w-full xl:w-[360px] xl:shrink-0">
-            <InputIcon class="pi pi-search" />
+    <section class="ot-filter-bar">
+      <div class="ot-field">
+        <label class="ot-field-label">{{ t('common.search') }}</label>
 
-            <InputText
-              v-model="filters.search"
-              placeholder="Search import no, file name, remark"
-              class="w-full"
-              size="small"
-              @input="onSearchInput"
-            />
-          </IconField>
+        <IconField>
+          <InputIcon class="pi pi-search" />
 
-          <div class="w-full xl:w-[180px] xl:shrink-0">
-            <Select
-              v-model="filters.status"
-              :options="statusOptions"
-              optionLabel="label"
-              optionValue="value"
-              placeholder="Status"
-              class="w-full"
-              size="small"
-            />
-          </div>
+          <InputText
+            v-model="filters.search"
+            :placeholder="t('attendance.field.searchImportPlaceholder')"
+            class="w-full"
+            size="small"
+            @input="onSearchInput"
+          />
+        </IconField>
+      </div>
 
-          <div class="w-full xl:w-[180px] xl:shrink-0">
-            <DatePicker
-              v-model="filters.periodFrom"
-              dateFormat="dd/mm/yy"
-              showIcon
-              class="w-full"
-              inputClass="w-full"
-              placeholder="Period From"
-            />
-          </div>
+      <div class="ot-field">
+        <label class="ot-field-label">{{ t('common.status') }}</label>
 
-          <div class="w-full xl:w-[180px] xl:shrink-0">
-            <DatePicker
-              v-model="filters.periodTo"
-              dateFormat="dd/mm/yy"
-              showIcon
-              class="w-full"
-              inputClass="w-full"
-              placeholder="Period To"
-            />
-          </div>
+        <Select
+          v-model="filters.status"
+          :options="statusOptions"
+          option-label="label"
+          option-value="value"
+          :placeholder="t('common.allStatus')"
+          class="w-full"
+          size="small"
+        />
+      </div>
 
-          <div class="flex items-center gap-2 xl:ml-auto xl:shrink-0">
-            <div class="rounded-lg border border-[color:var(--ot-border)] px-3 py-1.5 text-xs font-medium text-[color:var(--ot-text-muted)]">
-              Loaded {{ summaryText }}
-            </div>
-          </div>
+      <div class="ot-field">
+        <HolidayDatePicker
+          v-model="filters.periodFrom"
+          :label="t('attendance.field.periodFrom')"
+          :placeholder="t('attendance.field.periodFrom')"
+        />
+      </div>
+
+      <div class="ot-field">
+        <HolidayDatePicker
+          v-model="filters.periodTo"
+          :label="t('attendance.field.periodTo')"
+          :placeholder="t('attendance.field.periodTo')"
+        />
+      </div>
+
+      <div class="ot-filter-actions">
+        <span class="ot-loaded-badge">
+          {{ loadedLabel }}
+        </span>
+
+        <Button
+          :label="t('common.clear')"
+          icon="pi pi-filter-slash"
+          severity="secondary"
+          outlined
+          size="small"
+          @click="clearFilters"
+        />
+      </div>
+    </section>
+
+    <section class="ot-table-card">
+      <div class="ot-table-toolbar">
+        <div>
+          <h2 class="ot-table-title">
+            {{ t('attendance.import.importHistory') }}
+          </h2>
+
+          <p class="ot-table-subtitle">
+            {{ t('attendance.import.importHistorySubtitle') }}
+          </p>
+        </div>
+
+        <div class="ot-table-actions">
+          <span
+            v-if="backgroundLoading && hasAnyData"
+            class="ot-loaded-badge"
+          >
+            <i class="pi pi-spin pi-spinner" />
+            {{ t('attendance.message.updating') }}
+          </span>
         </div>
       </div>
 
-      <DataTable
-        :value="rows"
-        lazy
-        removableSort
-        scrollable
-        scrollHeight="500px"
-        :sortField="filters.sortField"
-        :sortOrder="filters.sortOrder"
-        tableStyle="width: max-content; min-width: 100%;"
-        class="attendance-import-table"
-        :virtualScrollerOptions="useVirtualScroll ? {
-          lazy: true,
-          onLazyLoad: onVirtualLazyLoad,
-          itemSize: 72,
-          delay: 0,
-          showLoader: false,
-          loading: false,
-          numToleratedItems: 12,
-        } : null"
-        @sort="onSort"
-      >
-        <template #empty>
-          <div
-            v-if="bootstrapped"
-            class="py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
+      <div class="ot-table-wrapper">
+        <DataTable
+          :value="rows"
+          lazy
+          removable-sort
+          scrollable
+          scroll-height="500px"
+          :sort-field="filters.sortField"
+          :sort-order="filters.sortOrder"
+          table-style="width: max-content; min-width: 100%;"
+          class="ot-data-table ot-data-table-compact"
+          :virtual-scroller-options="useVirtualScroll ? {
+            lazy: true,
+            onLazyLoad: onVirtualLazyLoad,
+            itemSize: 72,
+            delay: 0,
+            showLoader: false,
+            loading: false,
+            numToleratedItems: 12,
+          } : null"
+          @sort="onSort"
+        >
+          <template #empty>
+            <div
+              v-if="bootstrapped"
+              class="ot-empty-state"
+            >
+              <div class="ot-empty-icon">
+                <i class="pi pi-upload" />
+              </div>
+
+              <div class="ot-empty-title">
+                {{ t('attendance.message.noDataFound') }}
+              </div>
+
+              <div class="ot-empty-text">
+                {{ t('attendance.import.noImports') }}
+              </div>
+            </div>
+          </template>
+
+          <Column
+            field="importNo"
+            :header="t('attendance.field.importNo')"
+            sortable
+            style="min-width: 11rem"
           >
-            No attendance imports found.
-          </div>
-        </template>
-
-        <Column
-          field="importNo"
-          header="Import No"
-          sortable
-        >
-          <template #body="{ data }">
-            <span
-              v-if="data"
-              class="font-medium text-[color:var(--ot-text)]"
-            >
-              {{ formatImportNo(data) }}
-            </span>
-          </template>
-        </Column>
-
-        <Column
-          field="fileName"
-          header="File Name"
-          sortable
-        >
-          <template #body="{ data }">
-            <div
-              v-if="data"
-              class="file-cell"
-              :title="formatFileName(data)"
-            >
-              <i class="pi pi-file-excel text-emerald-500" />
-
-              <span class="truncate">
-                {{ formatFileName(data) }}
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="font-bold text-[color:var(--ot-text)]"
+              >
+                {{ formatImportNo(data) }}
               </span>
-            </div>
-          </template>
-        </Column>
+            </template>
+          </Column>
 
-        <Column header="Period">
-          <template #body="{ data }">
-            <span
-              v-if="data"
-              class="text-sm text-[color:var(--ot-text)]"
-            >
-              {{ formatPeriod(data) }}
-            </span>
-          </template>
-        </Column>
+          <Column
+            field="fileName"
+            :header="t('attendance.field.fileName')"
+            sortable
+            style="min-width: 18rem"
+          >
+            <template #body="{ data }">
+              <div
+                v-if="data"
+                class="flex min-w-0 items-center gap-2"
+                :title="formatFileName(data)"
+              >
+                <i class="pi pi-file-excel text-emerald-500" />
+                <span class="truncate">
+                  {{ formatFileName(data) }}
+                </span>
+              </div>
+            </template>
+          </Column>
 
-        <Column header="Rows">
-          <template #body="{ data }">
-            <div
-              v-if="data"
-              class="row-count-group"
-            >
-              <span class="count-pill is-total">
-                Total {{ Number(data.rowCount || 0) }}
+          <Column
+            :header="t('attendance.field.period')"
+            style="min-width: 12rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="text-sm text-[color:var(--ot-text)]"
+              >
+                {{ formatPeriod(data) }}
               </span>
+            </template>
+          </Column>
 
-              <span class="count-pill is-success">
-                Success {{ Number(data.successRowCount || 0) }}
+          <Column
+            :header="t('attendance.field.rows')"
+            style="min-width: 25rem"
+          >
+            <template #body="{ data }">
+              <div
+                v-if="data"
+                class="flex flex-wrap items-center gap-1.5"
+              >
+                <span class="count-pill is-total">
+                  {{ t('attendance.field.totalRows') }} {{ Number(data.rowCount || 0) }}
+                </span>
+
+                <span class="count-pill is-success">
+                  {{ t('attendance.field.successRows') }} {{ Number(data.successRowCount || 0) }}
+                </span>
+
+                <span class="count-pill is-failed">
+                  {{ t('attendance.field.failedRows') }} {{ Number(data.failedRowCount || 0) }}
+                </span>
+
+                <span class="count-pill is-duplicate">
+                  {{ t('attendance.field.duplicateRows') }} {{ Number(data.duplicateRowCount || 0) }}
+                </span>
+              </div>
+            </template>
+          </Column>
+
+          <Column
+            field="status"
+            :header="t('common.status')"
+            sortable
+            style="min-width: 9rem"
+          >
+            <template #body="{ data }">
+              <Tag
+                v-if="data"
+                :value="formatImportStatusLabel(data.status)"
+                :severity="getImportStatusSeverity(data.status)"
+              />
+            </template>
+          </Column>
+
+          <Column
+            field="createdAt"
+            :header="t('attendance.field.importedAt')"
+            sortable
+            style="min-width: 13rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="text-sm text-[color:var(--ot-text)]"
+              >
+                {{ formatDateTime(data.importedAt || data.createdAt) }}
               </span>
+            </template>
+          </Column>
 
-              <span class="count-pill is-failed">
-                Failed {{ Number(data.failedRowCount || 0) }}
-              </span>
-
-              <span class="count-pill is-duplicate">
-                Duplicate {{ Number(data.duplicateRowCount || 0) }}
-              </span>
-            </div>
-          </template>
-        </Column>
-
-        <Column
-          field="status"
-          header="Status"
-          sortable
-        >
-          <template #body="{ data }">
-            <Tag
-              v-if="data"
-              :value="formatImportStatusLabel(data.status)"
-              :severity="getImportStatusSeverity(data.status)"
-              class="attendance-tag"
-            />
-          </template>
-        </Column>
-
-        <Column
-          field="createdAt"
-          header="Imported At"
-          sortable
-        >
-          <template #body="{ data }">
-            <span
-              v-if="data"
-              class="text-sm text-[color:var(--ot-text)]"
-            >
-              {{ formatDateTime(data.importedAt || data.createdAt) }}
-            </span>
-          </template>
-        </Column>
-      </DataTable>
-
-      <div
-        v-if="backgroundLoading && hasAnyData"
-        class="flex items-center justify-center border-t border-[color:var(--ot-border)] px-3 py-2 text-xs text-[color:var(--ot-text-muted)]"
-      >
-        Updating...
+          <Column
+            :header="t('common.actions')"
+            style="width: 7rem; min-width: 7rem"
+          >
+            <template #body="{ data }">
+              <Button
+                v-if="data"
+                :label="t('common.detail')"
+                icon="pi pi-eye"
+                outlined
+                size="small"
+                @click="openImportDetail(data)"
+              />
+            </template>
+          </Column>
+        </DataTable>
       </div>
     </section>
 
@@ -823,13 +877,13 @@ onBeforeUnmount(() => {
       modal
       maximizable
       :style="{ width: '96vw', maxWidth: '1280px' }"
-      header="Attendance Import Detail"
+      :header="t('attendance.import.importDetail')"
     >
       <div
         v-if="detailLoading"
         class="py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
       >
-        Loading import detail...
+        {{ t('attendance.import.loadingImportDetail') }}
       </div>
 
       <div
@@ -838,7 +892,7 @@ onBeforeUnmount(() => {
       >
         <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <div class="attendance-metric-box">
-            <div class="attendance-metric-label">Import No</div>
+            <div class="attendance-metric-label">{{ t('attendance.field.importNo') }}</div>
 
             <div class="attendance-metric-value">
               {{ detailImport.importNo || '—' }}
@@ -846,19 +900,18 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="attendance-metric-box">
-            <div class="attendance-metric-label">Status</div>
+            <div class="attendance-metric-label">{{ t('common.status') }}</div>
 
             <div class="mt-1">
               <Tag
                 :value="formatImportStatusLabel(detailImport.status)"
                 :severity="getImportStatusSeverity(detailImport.status)"
-                class="attendance-tag"
               />
             </div>
           </div>
 
           <div class="attendance-metric-box">
-            <div class="attendance-metric-label">Period</div>
+            <div class="attendance-metric-label">{{ t('attendance.field.period') }}</div>
 
             <div class="attendance-metric-value">
               {{ formatPeriod(detailImport) }}
@@ -866,77 +919,75 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="attendance-metric-box">
-            <div class="attendance-metric-label">File Name</div>
+            <div class="attendance-metric-label">{{ t('attendance.field.importedAt') }}</div>
 
-            <div class="attendance-metric-value break-all">
-              {{ detailImport.fileName || '—' }}
+            <div class="attendance-metric-value">
+              {{ formatDateTime(detailImport.importedAt || detailImport.createdAt) }}
             </div>
           </div>
         </div>
 
-        <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <div class="attendance-stat-box">
-            <div class="attendance-stat-label">Total Rows</div>
-
+            <div class="attendance-stat-label">{{ t('attendance.field.totalRows') }}</div>
             <div class="attendance-stat-value">
               {{ Number(detailImport.rowCount || 0) }}
             </div>
           </div>
 
-          <div class="attendance-stat-box border-emerald-200 dark:border-emerald-800">
-            <div class="attendance-stat-label">Success Rows</div>
-
-            <div class="attendance-stat-value text-emerald-600 dark:text-emerald-400">
+          <div class="attendance-stat-box">
+            <div class="attendance-stat-label">{{ t('attendance.field.successRows') }}</div>
+            <div class="attendance-stat-value text-emerald-600">
               {{ Number(detailImport.successRowCount || 0) }}
             </div>
           </div>
 
-          <div class="attendance-stat-box border-amber-200 dark:border-amber-800">
-            <div class="attendance-stat-label">Failed Rows</div>
-
-            <div class="attendance-stat-value text-amber-600 dark:text-amber-400">
+          <div class="attendance-stat-box">
+            <div class="attendance-stat-label">{{ t('attendance.field.failedRows') }}</div>
+            <div class="attendance-stat-value text-amber-600">
               {{ Number(detailImport.failedRowCount || 0) }}
             </div>
           </div>
 
-          <div class="attendance-stat-box border-sky-200 dark:border-sky-800">
-            <div class="attendance-stat-label">Duplicate Rows</div>
-
-            <div class="attendance-stat-value text-sky-600 dark:text-sky-400">
+          <div class="attendance-stat-box">
+            <div class="attendance-stat-label">{{ t('attendance.field.duplicateRows') }}</div>
+            <div class="attendance-stat-value text-sky-600">
               {{ Number(detailImport.duplicateRowCount || 0) }}
+            </div>
+          </div>
+
+          <div class="attendance-stat-box">
+            <div class="attendance-stat-label">{{ t('attendance.field.overriddenRows') }}</div>
+            <div class="attendance-stat-value">
+              {{ Number(detailImport.overriddenRowCount || 0) }}
             </div>
           </div>
         </div>
 
-        <div
-          v-if="detailImport.remark"
-          class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-bg)] p-4"
-        >
-          <div class="mb-1 text-sm font-medium text-[color:var(--ot-text)]">
-            Remark
-          </div>
-
-          <div class="text-sm text-[color:var(--ot-text-muted)]">
-            {{ detailImport.remark }}
-          </div>
-        </div>
-
-        <section
+        <Message
           v-if="detailFailedRows.length"
-          class="rounded-2xl border border-amber-200 bg-amber-50/60 p-4 dark:border-amber-800 dark:bg-amber-950/20"
+          severity="warn"
+          :closable="false"
         >
-          <div class="mb-3 text-sm font-medium text-[color:var(--ot-text)]">
-            Failed Rows
+          {{ t('attendance.message.failedRowsWarning') }}
+        </Message>
+
+        <div
+          v-if="detailFailedRows.length"
+          class="rounded-2xl border border-[color:var(--ot-border)] p-3"
+        >
+          <div class="mb-3 text-sm font-bold text-[color:var(--ot-text)]">
+            {{ t('attendance.field.failedRows') }}
           </div>
 
           <div class="grid gap-2 md:grid-cols-2">
             <div
               v-for="row in detailFailedRows"
               :key="`${row.rawRowNo || row.rowNo || row.row || ''}-${row.message || row.reason || ''}`"
-              class="rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-3 py-2 text-sm"
+              class="rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-bg)] px-3 py-2 text-sm"
             >
-              <div class="font-medium text-[color:var(--ot-text)]">
-                Row {{ row.rawRowNo || row.rowNo || row.row || '—' }}
+              <div class="font-bold text-[color:var(--ot-text)]">
+                {{ t('attendance.field.row') }} {{ row.rawRowNo || row.rowNo || row.row || '—' }}
               </div>
 
               <div class="mt-0.5 text-xs text-[color:var(--ot-text-muted)]">
@@ -944,231 +995,162 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </div>
-        </section>
+        </div>
 
-        <section
-          v-if="detailRecords.length"
-          class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]"
+        <DataTable
+          :value="detailRecords"
+          scrollable
+          scroll-height="420px"
+          table-style="width: max-content; min-width: 100%;"
+          class="ot-data-table ot-data-table-compact"
         >
-          <div class="border-b border-[color:var(--ot-border)] px-4 py-3 text-sm font-medium text-[color:var(--ot-text)]">
-            Imported Record Preview
-          </div>
+          <template #empty>
+            <div class="py-8 text-center text-sm text-[color:var(--ot-text-muted)]">
+              {{ t('attendance.import.noImportRecords') }}
+            </div>
+          </template>
 
-          <DataTable
-            :value="detailRecords"
-            scrollable
-            scrollHeight="360px"
-            tableStyle="width: max-content; min-width: 100%;"
-            class="attendance-import-detail-table"
+          <Column
+            :header="t('attendance.field.row')"
+            style="min-width: 5rem"
           >
-            <Column
-              field="attendanceDate"
-              header="Date"
-            >
-              <template #body="{ data }">
-                {{ formatDateDMY(data.attendanceDate) }}
-              </template>
-            </Column>
+            <template #body="{ data }">
+              {{ data.rawRowNo || '—' }}
+            </template>
+          </Column>
 
-            <Column
-              field="employeeNo"
-              header="Employee No"
-            />
+          <Column
+            :header="t('attendance.field.employee')"
+            style="min-width: 16rem"
+          >
+            <template #body="{ data }">
+              <div class="flex flex-col">
+                <span class="font-bold text-[color:var(--ot-text)]">
+                  {{ data.employeeNo || data.importedEmployeeId || '—' }}
+                </span>
 
-            <Column
-              field="employeeName"
-              header="Employee Name"
-            />
+                <span class="text-xs text-[color:var(--ot-text-muted)]">
+                  {{ data.employeeName || data.importedEmployeeName || '—' }}
+                </span>
+              </div>
+            </template>
+          </Column>
 
-            <Column
-              field="clockIn"
-              header="Clock In"
-            />
+          <Column
+            :header="t('common.date')"
+            style="min-width: 8rem"
+          >
+            <template #body="{ data }">
+              {{ formatDateDMY(data.attendanceDate) }}
+            </template>
+          </Column>
 
-            <Column
-              field="clockOut"
-              header="Clock Out"
-            />
+          <Column
+            :header="t('attendance.field.clockIn')"
+            style="min-width: 7rem"
+          >
+            <template #body="{ data }">
+              {{ data.clockIn || '—' }}
+            </template>
+          </Column>
 
-            <Column
-              field="status"
-              header="Status"
-            >
-              <template #body="{ data }">
-                <Tag
-                  :value="formatRecordStatusLabel(data.status)"
-                  :severity="getRecordStatusSeverity(data.status)"
-                  class="attendance-tag"
-                />
-              </template>
-            </Column>
+          <Column
+            :header="t('attendance.field.clockOut')"
+            style="min-width: 7rem"
+          >
+            <template #body="{ data }">
+              {{ data.clockOut || '—' }}
+            </template>
+          </Column>
 
-            <Column header="Issues">
-              <template #body="{ data }">
-                <div
-                  class="issues-cell line-clamp-2 text-sm text-[color:var(--ot-text-muted)]"
-                  :title="formatIssues(data.validationIssues)"
-                >
-                  {{ formatIssues(data.validationIssues) }}
-                </div>
-              </template>
-            </Column>
-          </DataTable>
-        </section>
+          <Column
+            :header="t('common.status')"
+            style="min-width: 9rem"
+          >
+            <template #body="{ data }">
+              <Tag
+                :value="formatRecordStatusLabel(data.status || data.importedStatus)"
+                :severity="getRecordStatusSeverity(data.status || data.importedStatus)"
+              />
+            </template>
+          </Column>
+
+          <Column
+            :header="t('attendance.field.issues')"
+            style="min-width: 18rem"
+          >
+            <template #body="{ data }">
+              <span class="ot-truncate-2">
+                {{ formatIssues(data.validationIssues || data.issues) }}
+              </span>
+            </template>
+          </Column>
+        </DataTable>
       </div>
 
       <div
         v-else
         class="py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
       >
-        No import detail found.
+        {{ t('attendance.import.noImportDetail') }}
       </div>
     </Dialog>
   </div>
 </template>
 
 <style scoped>
-:deep(.attendance-import-table .p-datatable-table),
-:deep(.attendance-import-detail-table .p-datatable-table) {
-  width: max-content !important;
-  min-width: 100% !important;
-  table-layout: auto !important;
+.attendance-stat-box,
+.attendance-metric-box {
+  border: 1px solid var(--ot-border);
+  border-radius: 1rem;
+  background: var(--ot-surface);
+  padding: 0.85rem 1rem;
 }
 
-:deep(.attendance-import-table .p-datatable-thead > tr > th),
-:deep(.attendance-import-detail-table .p-datatable-thead > tr > th) {
-  width: auto !important;
-  padding: 0.64rem 0.75rem !important;
-  white-space: nowrap !important;
+.attendance-stat-label,
+.attendance-metric-label {
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--ot-text-muted);
 }
 
-:deep(.attendance-import-table .p-datatable-tbody > tr > td) {
-  width: auto !important;
-  height: 72px !important;
-  padding: 0.54rem 0.75rem !important;
-  vertical-align: middle !important;
-  white-space: nowrap !important;
-}
-
-:deep(.attendance-import-detail-table .p-datatable-tbody > tr > td) {
-  width: auto !important;
-  padding: 0.54rem 0.75rem !important;
-  vertical-align: middle !important;
-  white-space: nowrap !important;
-}
-
-:deep(.p-tag.attendance-tag) {
-  min-height: 1.3rem !important;
-  padding: 0.12rem 0.48rem !important;
-  font-size: 0.7rem !important;
-  font-weight: 500 !important;
-  line-height: 1 !important;
-  border-radius: 999px !important;
-}
-
-.file-cell {
-  display: inline-flex;
-  max-width: clamp(13rem, 24vw, 26rem);
-  min-width: 0;
-  align-items: center;
-  gap: 0.45rem;
-  font-size: 0.88rem;
-  font-weight: 500;
+.attendance-stat-value,
+.attendance-metric-value {
+  margin-top: 0.25rem;
+  font-size: 1.1rem;
+  font-weight: 800;
   color: var(--ot-text);
-}
-
-.row-count-group {
-  display: inline-flex;
-  flex-wrap: nowrap;
-  gap: 0.35rem;
 }
 
 .count-pill {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  padding: 0.16rem 0.48rem;
-  font-size: 0.68rem;
-  font-weight: 500;
-  line-height: 1;
+  border-radius: 9999px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 800;
   white-space: nowrap;
 }
 
 .count-pill.is-total {
-  background: color-mix(in srgb, #64748b 12%, transparent);
-  color: #475569;
+  background: rgba(100, 116, 139, 0.12);
+  color: rgb(71, 85, 105);
 }
 
 .count-pill.is-success {
-  background: color-mix(in srgb, #22c55e 13%, transparent);
-  color: #15803d;
+  background: rgba(16, 185, 129, 0.12);
+  color: rgb(4, 120, 87);
 }
 
 .count-pill.is-failed {
-  background: color-mix(in srgb, #f59e0b 16%, transparent);
-  color: #b45309;
+  background: rgba(245, 158, 11, 0.14);
+  color: rgb(180, 83, 9);
 }
 
 .count-pill.is-duplicate {
-  background: color-mix(in srgb, #0ea5e9 13%, transparent);
-  color: #0369a1;
-}
-
-:global(.dark) .count-pill.is-total,
-:global(.dark) .count-pill.is-success,
-:global(.dark) .count-pill.is-failed,
-:global(.dark) .count-pill.is-duplicate {
-  color: var(--ot-text);
-}
-
-.issues-cell {
-  max-width: clamp(16rem, 32vw, 34rem);
-}
-
-.attendance-metric-box,
-.attendance-stat-box {
-  border: 1px solid var(--ot-border);
-  background: var(--ot-bg);
-  border-radius: 1rem;
-  padding: 0.9rem;
-}
-
-.attendance-metric-label,
-.attendance-stat-label {
-  margin-bottom: 0.3rem;
-  font-size: 0.72rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--ot-text-muted);
-}
-
-.attendance-metric-value {
-  word-break: break-word;
-  font-size: 0.92rem;
-  font-weight: 500;
-  color: var(--ot-text);
-}
-
-.attendance-stat-value {
-  word-break: break-word;
-  font-size: 1.35rem;
-  font-weight: 600;
-  line-height: 1.1;
-  color: var(--ot-text);
-}
-
-.line-clamp-2 {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-@media (max-width: 640px) {
-  .row-count-group {
-    flex-wrap: wrap;
-  }
+  background: rgba(14, 165, 233, 0.12);
+  color: rgb(3, 105, 161);
 }
 </style>

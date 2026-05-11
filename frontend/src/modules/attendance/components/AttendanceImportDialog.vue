@@ -1,11 +1,14 @@
 <!-- frontend/src/modules/attendance/components/AttendanceImportDialog.vue -->
 <script setup>
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
-import DatePicker from 'primevue/datepicker'
 import Dialog from 'primevue/dialog'
+import ProgressBar from 'primevue/progressbar'
+
+import HolidayDatePicker from '@/modules/calendar/components/HolidayDatePicker.vue'
 
 import {
   downloadAttendanceImportSample,
@@ -22,14 +25,25 @@ const props = defineProps({
 const emit = defineEmits(['update:visible', 'success'])
 
 const toast = useToast()
+const { t } = useI18n()
 
 const fileInputRef = ref(null)
 const selectedFile = ref(null)
-const attendanceDate = ref(null)
+const attendanceDate = ref('')
+
 const downloading = ref(false)
 const importing = ref(false)
+const uploadProgress = ref(0)
+
+const errorTitle = ref('')
+const errorMessage = ref('')
+const successMessage = ref('')
 
 const fileName = computed(() => selectedFile.value?.name || '')
+
+const canImport = computed(() => {
+  return Boolean(selectedFile.value && attendanceDate.value && !importing.value)
+})
 
 watch(
   () => props.visible,
@@ -42,7 +56,11 @@ watch(
 
 function resetForm() {
   selectedFile.value = null
-  attendanceDate.value = null
+  attendanceDate.value = ''
+  uploadProgress.value = 0
+  errorTitle.value = ''
+  errorMessage.value = ''
+  successMessage.value = ''
 
   if (fileInputRef.value) {
     fileInputRef.value.value = ''
@@ -54,40 +72,40 @@ function closeDialog() {
   emit('update:visible', false)
 }
 
+function clearMessages() {
+  errorTitle.value = ''
+  errorMessage.value = ''
+  successMessage.value = ''
+}
+
 function triggerChooseFile() {
   if (importing.value) return
+  clearMessages()
   fileInputRef.value?.click()
 }
 
-function formatDateForApi(value) {
-  if (!(value instanceof Date) || Number.isNaN(value.getTime())) return ''
-
-  const year = value.getFullYear()
-  const month = String(value.getMonth() + 1).padStart(2, '0')
-  const day = String(value.getDate()).padStart(2, '0')
-
-  return `${year}-${month}-${day}`
-}
-
 function validateFile(file) {
-  if (!file) return 'Please choose an Excel file.'
+  if (!file) return t('attendance.importDialog.chooseExcelFile')
 
-  const fileName = String(file.name || '').toLowerCase()
-  const isExcel = fileName.endsWith('.xlsx') || fileName.endsWith('.xls')
+  const name = String(file.name || '').toLowerCase()
+  const isExcel = name.endsWith('.xlsx') || name.endsWith('.xls') || name.endsWith('.csv')
 
   if (!isExcel) {
-    return 'Please upload Excel file only: .xlsx or .xls.'
+    return t('attendance.importDialog.invalidExcelFile')
   }
 
   const maxSize = 10 * 1024 * 1024
+
   if (file.size > maxSize) {
-    return 'File size must not exceed 10 MB.'
+    return t('attendance.importDialog.fileTooLarge')
   }
 
   return ''
 }
 
 function onFileChange(event) {
+  clearMessages()
+
   const file = event?.target?.files?.[0] || null
   const message = validateFile(file)
 
@@ -98,27 +116,36 @@ function onFileChange(event) {
       fileInputRef.value.value = ''
     }
 
-    toast.add({
-      severity: 'warn',
-      summary: 'Invalid file',
-      detail: message,
-      life: 3000,
-    })
+    errorTitle.value = t('attendance.importDialog.invalidFile')
+    errorMessage.value = message
+
     return
   }
 
   selectedFile.value = file
 }
 
-function saveBlobFile(blob, filename) {
-  const url = window.URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
+function normalizePayload(res) {
+  return res?.data?.data || res?.data || {}
+}
 
-  anchor.href = url
-  anchor.download = filename || 'attendance-import-sample.xlsx'
-  document.body.appendChild(anchor)
-  anchor.click()
-  anchor.remove()
+function getFilenameFromHeader(res, fallback) {
+  const disposition = String(res?.headers?.['content-disposition'] || '')
+  const match = disposition.match(/filename="?([^"]+)"?/i)
+
+  return match?.[1] || fallback
+}
+
+function downloadBlob(blob, filename) {
+  const url = window.URL.createObjectURL(blob)
+  const link = document.createElement('a')
+
+  link.href = url
+  link.download = filename
+
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
 
   window.URL.revokeObjectURL(url)
 }
@@ -127,31 +154,29 @@ async function handleDownloadSample() {
   if (downloading.value) return
 
   downloading.value = true
+  clearMessages()
 
   try {
-    const response = await downloadAttendanceImportSample()
+    const res = await downloadAttendanceImportSample()
 
-    const contentDisposition = String(response?.headers?.['content-disposition'] || '')
-    const match = contentDisposition.match(/filename="?([^"]+)"?/i)
-    const filename = match?.[1] || 'attendance-import-sample.xlsx'
-
-    const blob = new Blob([response.data], {
+    const blob = new Blob([res.data], {
       type:
-        response?.headers?.['content-type'] ||
+        res?.headers?.['content-type'] ||
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     })
 
-    saveBlobFile(blob, filename)
+    downloadBlob(
+      blob,
+      getFilenameFromHeader(res, 'attendance-import-sample.xlsx'),
+    )
+
+    successMessage.value = t('attendance.importDialog.sampleDownloaded')
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Download failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to download sample file.',
-      life: 3500,
-    })
+    errorTitle.value = t('attendance.importDialog.downloadFailed')
+    errorMessage.value =
+      error?.response?.data?.message ||
+      error?.message ||
+      t('attendance.importDialog.failedDownloadSample')
   } finally {
     downloading.value = false
   }
@@ -160,66 +185,58 @@ async function handleDownloadSample() {
 async function handleImport() {
   if (importing.value) return
 
-  const selectedDate = formatDateForApi(attendanceDate.value)
+  clearMessages()
 
-  if (!selectedDate) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Validation',
-      detail: 'Please select attendance date.',
-      life: 3000,
-    })
+  if (!attendanceDate.value) {
+    errorTitle.value = t('attendance.importDialog.validation')
+    errorMessage.value = t('attendance.importDialog.selectAttendanceDate')
     return
   }
 
   const fileMessage = validateFile(selectedFile.value)
 
   if (fileMessage) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Validation',
-      detail: fileMessage,
-      life: 3000,
-    })
+    errorTitle.value = t('attendance.importDialog.validation')
+    errorMessage.value = fileMessage
     return
   }
 
   importing.value = true
+  uploadProgress.value = 0
 
   try {
-    const formData = new FormData()
+    const res = await importAttendanceExcel(selectedFile.value, {
+      payload: {
+        sourceType: 'EXCEL',
+        attendanceDate: attendanceDate.value,
+      },
+      onUploadProgress(event) {
+        if (!event.total) return
+        uploadProgress.value = Math.round((event.loaded * 100) / event.total)
+      },
+    })
 
-    formData.append('file', selectedFile.value)
-    formData.append('sourceType', 'EXCEL')
-    formData.append('attendanceDate', selectedDate)
-
-    const response = await importAttendanceExcel(formData)
-
-    const payload = response?.data?.data || response?.data || null
-    const importInfo = payload?.import || null
+    const payload = normalizePayload(res)
+    const importInfo = payload?.import || payload?.item || payload || null
 
     toast.add({
       severity: 'success',
-      summary: 'Import completed',
+      summary: t('attendance.importDialog.importCompleted'),
       detail:
         importInfo?.status === 'PARTIAL_SUCCESS'
-          ? 'Attendance imported with some skipped or invalid rows.'
-          : 'Attendance imported successfully.',
+          ? t('attendance.importDialog.importCompletedPartial')
+          : t('attendance.importDialog.importCompletedSuccess'),
       life: 3000,
     })
 
     emit('success', payload)
     closeDialog()
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Import failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to import attendance file.',
-      life: 4000,
-    })
+    errorTitle.value = t('attendance.importDialog.importFailed')
+    errorMessage.value =
+      error?.response?.data?.message ||
+      error?.message ||
+      t('attendance.importDialog.failedImportFile')
   } finally {
     importing.value = false
   }
@@ -230,28 +247,64 @@ async function handleImport() {
   <Dialog
     :visible="visible"
     modal
-    header="Import Attendance"
+    :header="t('attendance.importDialog.title')"
     :style="{ width: '34rem', maxWidth: '96vw' }"
     :closable="!importing"
-    :dismissableMask="!importing"
+    :dismissable-mask="!importing"
     @update:visible="emit('update:visible', $event)"
   >
     <div class="space-y-4">
-      <div class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-4 py-4">
-        <div class="text-sm font-semibold text-[color:var(--ot-text)]">
-          Import guide
+      <div
+        v-if="errorMessage"
+        class="ot-inline-error"
+      >
+        <div class="flex items-start gap-3">
+          <i class="pi pi-exclamation-triangle mt-0.5" />
+
+          <div class="min-w-0">
+            <div class="font-bold">
+              {{ errorTitle || t('common.somethingWentWrong') }}
+            </div>
+
+            <div class="mt-1 whitespace-pre-line leading-6">
+              {{ errorMessage }}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div
+        v-if="successMessage"
+        class="ot-inline-info"
+      >
+        <div class="flex items-start gap-3">
+          <i class="pi pi-check-circle mt-0.5" />
+
+          <div class="min-w-0">
+            {{ successMessage }}
+          </div>
+        </div>
+      </div>
+
+      <div class="ot-panel">
+        <div class="text-sm font-bold text-[color:var(--ot-text)]">
+          {{ t('attendance.importDialog.guideTitle') }}
         </div>
 
-        <div class="mt-2 space-y-1 text-sm text-[color:var(--ot-text-muted)]">
-          <div>1. Select attendance date.</div>
-          <div>2. Download the sample file.</div>
-          <div>3. Fill Employee ID, Clock In, and Clock Out.</div>
-          <div>4. Choose the completed Excel file and click Import.</div>
+        <div class="mt-2 space-y-1 text-sm leading-6 text-[color:var(--ot-text-muted)]">
+          <div>1. {{ t('attendance.importDialog.guideStep1') }}</div>
+          <div>2. {{ t('attendance.importDialog.guideStep2') }}</div>
+          <div>3. {{ t('attendance.importDialog.guideStep3') }}</div>
+          <div>4. {{ t('attendance.importDialog.guideStep4') }}</div>
+        </div>
+
+        <div class="mt-3 rounded-xl bg-[color:var(--ot-bg)] px-3 py-2 text-xs leading-5 text-[color:var(--ot-text-muted)]">
+          {{ t('attendance.importDialog.note') }}
         </div>
 
         <div class="mt-4">
           <Button
-            label="Download Sample"
+            :label="t('attendance.importDialog.downloadSample')"
             icon="pi pi-download"
             outlined
             severity="secondary"
@@ -262,18 +315,12 @@ async function handleImport() {
         </div>
       </div>
 
-      <div class="space-y-2">
-        <label class="text-sm font-medium text-[color:var(--ot-text)]">
-          Attendance Date
-        </label>
-
-        <DatePicker
+      <div class="ot-field">
+        <HolidayDatePicker
           v-model="attendanceDate"
-          showIcon
-          fluid
-          dateFormat="yy-mm-dd"
-          inputClass="w-full"
-          placeholder="Select attendance date"
+          :label="t('attendance.field.attendanceDate')"
+          :placeholder="t('attendance.field.selectAttendanceDate')"
+          :clearable="false"
         />
       </div>
 
@@ -281,24 +328,24 @@ async function handleImport() {
         <input
           ref="fileInputRef"
           type="file"
-          accept=".xlsx,.xls"
+          accept=".xlsx,.xls,.csv"
           class="hidden"
           @change="onFileChange"
         >
 
         <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div class="min-w-0">
-            <div class="text-sm font-medium text-[color:var(--ot-text)]">
-              Excel file
+            <div class="text-sm font-bold text-[color:var(--ot-text)]">
+              {{ t('attendance.importDialog.excelFile') }}
             </div>
 
             <div class="mt-1 truncate text-sm text-[color:var(--ot-text-muted)]">
-              {{ fileName || 'No file selected' }}
+              {{ fileName || t('attendance.importDialog.noFileSelected') }}
             </div>
           </div>
 
           <Button
-            label="Choose File"
+            :label="t('attendance.importDialog.chooseFile')"
             icon="pi pi-upload"
             severity="secondary"
             outlined
@@ -308,12 +355,18 @@ async function handleImport() {
           />
         </div>
       </div>
+
+      <ProgressBar
+        v-if="importing"
+        :value="uploadProgress"
+        style="height: 6px"
+      />
     </div>
 
     <template #footer>
-      <div class="flex justify-end gap-2">
+      <div class="ot-form-footer">
         <Button
-          label="Cancel"
+          :label="t('common.cancel')"
           text
           size="small"
           :disabled="importing"
@@ -321,10 +374,10 @@ async function handleImport() {
         />
 
         <Button
-          label="Import"
+          :label="t('common.import')"
           icon="pi pi-check"
           size="small"
-          :disabled="!selectedFile || !attendanceDate"
+          :disabled="!canImport"
           :loading="importing"
           @click="handleImport"
         />

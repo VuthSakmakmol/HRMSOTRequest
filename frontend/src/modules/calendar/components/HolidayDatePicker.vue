@@ -1,6 +1,7 @@
 <!-- frontend/src/modules/calendar/components/HolidayDatePicker.vue -->
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
@@ -22,7 +23,7 @@ const props = defineProps({
   },
   placeholder: {
     type: String,
-    default: 'Select date',
+    default: '',
   },
   disabled: {
     type: Boolean,
@@ -36,20 +37,34 @@ const props = defineProps({
 
 const emit = defineEmits(['update:modelValue', 'change', 'selectedInfo'])
 
+const { t, locale } = useI18n()
+
 const rootRef = ref(null)
 const open = ref(false)
 const loading = ref(false)
 const holidays = ref([])
 const currentMonth = ref(getInitialMonth())
 
-const weekLabels = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
+const weekLabels = computed(() => [
+  t('calendar.holidayPicker.week.sun'),
+  t('calendar.holidayPicker.week.mon'),
+  t('calendar.holidayPicker.week.tue'),
+  t('calendar.holidayPicker.week.wed'),
+  t('calendar.holidayPicker.week.thu'),
+  t('calendar.holidayPicker.week.fri'),
+  t('calendar.holidayPicker.week.sat'),
+])
 
 const selectedYmd = computed(() => normalizeYmd(props.modelValue))
 
 const displayValue = computed(() => formatDdMmYyyy(selectedYmd.value))
 
+const inputPlaceholder = computed(() => {
+  return props.placeholder || t('calendar.holidayPicker.selectDate')
+})
+
 const monthTitle = computed(() => {
-  return currentMonth.value.toLocaleDateString('en-US', {
+  return currentMonth.value.toLocaleDateString(locale.value || 'en-US', {
     month: 'long',
     year: 'numeric',
   })
@@ -367,7 +382,7 @@ onBeforeUnmount(() => {
         :model-value="displayValue"
         readonly
         class="w-full"
-        :placeholder="placeholder"
+        :placeholder="inputPlaceholder"
         :disabled="disabled"
         size="small"
         @click="toggleCalendar"
@@ -402,8 +417,8 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="holiday-month-subtitle">
-            <span v-if="loading">Loading holidays...</span>
-            <span v-else>{{ holidays.length }} active holiday{{ holidays.length === 1 ? '' : 's' }}</span>
+            <span v-if="loading">{{ t('calendar.holidayPicker.loadingHolidays') }}</span>
+            <span v-else>{{ t('calendar.holidayPicker.activeHolidayCount', { count: holidays.length }) }}</span>
           </div>
         </div>
 
@@ -437,7 +452,7 @@ onBeforeUnmount(() => {
             'is-sunday': cell.isSunday,
             'is-holiday': cell.isHoliday,
           }"
-          :title="cell.holiday?.name || (cell.isSunday ? 'Sunday' : '')"
+          :title="cell.holiday?.name || (cell.isSunday ? t('calendar.holidayPicker.sunday') : '')"
           @click="onCellClick(cell)"
         >
           <span>{{ cell.day }}</span>
@@ -463,14 +478,14 @@ onBeforeUnmount(() => {
         </div>
 
         <Tag
-          value="Holiday"
+          :value="t('calendar.holidayPicker.holiday')"
           severity="danger"
         />
       </div>
 
       <div class="holiday-picker-footer">
         <Button
-          label="Today"
+          :label="t('calendar.holidayPicker.today')"
           icon="pi pi-calendar"
           severity="secondary"
           outlined
@@ -480,7 +495,7 @@ onBeforeUnmount(() => {
 
         <Button
           v-if="clearable"
-          label="Clear"
+          :label="t('calendar.holidayPicker.clear')"
           icon="pi pi-times"
           severity="secondary"
           text

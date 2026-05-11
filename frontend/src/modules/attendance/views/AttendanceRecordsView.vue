@@ -1,23 +1,23 @@
 <!-- frontend/src/modules/attendance/views/AttendanceRecordsView.vue -->
 <script setup>
-// frontend/src/modules/attendance/views/AttendanceRecordsView.vue
-
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
 import Column from 'primevue/column'
 import DataTable from 'primevue/datatable'
-import DatePicker from 'primevue/datepicker'
 import IconField from 'primevue/iconfield'
 import InputIcon from 'primevue/inputicon'
 import InputText from 'primevue/inputtext'
 import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 
+import HolidayDatePicker from '@/modules/calendar/components/HolidayDatePicker.vue'
 import { getAttendanceRecords } from '@/modules/attendance/attendance.api'
 
 const toast = useToast()
+const { t } = useI18n()
 
 const PAGE_SIZE = 10
 const SEARCH_DEBOUNCE_MS = 250
@@ -36,54 +36,59 @@ const filters = reactive({
   importedStatus: '',
   shiftMatchStatus: '',
   dayType: '',
-  attendanceDateFrom: null,
-  attendanceDateTo: null,
+  attendanceDateFrom: '',
+  attendanceDateTo: '',
 })
 
-let searchTimer = null
-let currentRequestId = 0
+const statusOptions = computed(() => [
+  { label: t('attendance.option.allDerivedStatus'), value: '' },
+  { label: t('attendance.statusLabel.present'), value: 'PRESENT' },
+  { label: t('attendance.statusLabel.late'), value: 'LATE' },
+  { label: t('attendance.statusLabel.absent'), value: 'ABSENT' },
+  { label: t('attendance.statusLabel.forgetScanIn'), value: 'FORGET_SCAN_IN' },
+  { label: t('attendance.statusLabel.forgetScanOut'), value: 'FORGET_SCAN_OUT' },
+  { label: t('attendance.statusLabel.shiftMismatch'), value: 'SHIFT_MISMATCH' },
+  { label: t('attendance.statusLabel.leave'), value: 'LEAVE' },
+  { label: t('attendance.statusLabel.off'), value: 'OFF' },
+  { label: t('attendance.statusLabel.unknown'), value: 'UNKNOWN' },
+])
 
-const statusOptions = [
-  { label: 'All Derived Status', value: '' },
-  { label: 'Present', value: 'PRESENT' },
-  { label: 'Late', value: 'LATE' },
-  { label: 'Absent', value: 'ABSENT' },
-  { label: 'Forget Scan In', value: 'FORGET_SCAN_IN' },
-  { label: 'Forget Scan Out', value: 'FORGET_SCAN_OUT' },
-  { label: 'Wrong Shift', value: 'SHIFT_MISMATCH' },
-  { label: 'Leave', value: 'LEAVE' },
-  { label: 'Off', value: 'OFF' },
-  { label: 'Unknown', value: 'UNKNOWN' },
-]
+const importedStatusOptions = computed(() => [
+  { label: t('attendance.option.allImportedStatus'), value: '' },
+  { label: t('attendance.statusLabel.present'), value: 'PRESENT' },
+  { label: t('attendance.statusLabel.absent'), value: 'ABSENT' },
+  { label: t('attendance.statusLabel.leave'), value: 'LEAVE' },
+  { label: t('attendance.statusLabel.off'), value: 'OFF' },
+  { label: t('attendance.statusLabel.unknown'), value: 'UNKNOWN' },
+])
 
-const importedStatusOptions = [
-  { label: 'All Imported Status', value: '' },
-  { label: 'Present', value: 'PRESENT' },
-  { label: 'Absent', value: 'ABSENT' },
-  { label: 'Leave', value: 'LEAVE' },
-  { label: 'Off', value: 'OFF' },
-  { label: 'Unknown', value: 'UNKNOWN' },
-]
+const shiftMatchStatusOptions = computed(() => [
+  { label: t('attendance.option.allShiftStatus'), value: '' },
+  { label: t('attendance.statusLabel.matched'), value: 'MATCHED' },
+  { label: t('attendance.statusLabel.mismatch'), value: 'MISMATCH' },
+  { label: t('attendance.statusLabel.unknown'), value: 'UNKNOWN' },
+])
 
-const shiftMatchStatusOptions = [
-  { label: 'All Shift Status', value: '' },
-  { label: 'Matched', value: 'MATCHED' },
-  { label: 'Mismatch', value: 'MISMATCH' },
-  { label: 'Unknown', value: 'UNKNOWN' },
-]
-
-const dayTypeOptions = [
-  { label: 'All Day Types', value: '' },
-  { label: 'Working Day', value: 'WORKING_DAY' },
-  { label: 'Sunday', value: 'SUNDAY' },
-  { label: 'Holiday', value: 'HOLIDAY' },
-]
+const dayTypeOptions = computed(() => [
+  { label: t('attendance.option.allDayTypes'), value: '' },
+  { label: t('attendance.statusLabel.workingDay'), value: 'WORKING_DAY' },
+  { label: t('attendance.statusLabel.sunday'), value: 'SUNDAY' },
+  { label: t('attendance.statusLabel.holiday'), value: 'HOLIDAY' },
+])
 
 const totalRows = computed(() => Number(totalRecords.value || 0))
 const loadedCount = computed(() => rows.value.filter(Boolean).length)
-const summaryText = computed(() => `${loadedCount.value} of ${totalRows.value}`)
+const loadedLabel = computed(() =>
+  t('common.loaded', {
+    loaded: loadedCount.value,
+    total: totalRows.value,
+  }),
+)
 const hasAnyData = computed(() => rows.value.some(Boolean))
 const useVirtualScroll = computed(() => totalRows.value > PAGE_SIZE)
+
+let searchTimer = null
+let currentRequestId = 0
 
 function normalizePayload(res) {
   return res?.data?.data || res?.data || {}
@@ -99,19 +104,6 @@ function s(value) {
 
 function upper(value) {
   return s(value).toUpperCase()
-}
-
-function formatDateYMD(value) {
-  if (!value) return undefined
-
-  const date = value instanceof Date ? value : new Date(value)
-  if (Number.isNaN(date.getTime())) return undefined
-
-  const yyyy = date.getFullYear()
-  const mm = String(date.getMonth() + 1).padStart(2, '0')
-  const dd = String(date.getDate()).padStart(2, '0')
-
-  return `${yyyy}-${mm}-${dd}`
 }
 
 function formatDateDMY(value) {
@@ -165,7 +157,7 @@ function isMissingTime(value) {
 }
 
 function scanTimeLabel(value) {
-  return isMissingTime(value) ? 'Missing' : value
+  return isMissingTime(value) ? t('attendance.statusLabel.missing') : value
 }
 
 function scanTimeTone(value) {
@@ -182,8 +174,8 @@ function buildQuery(page) {
     importedStatus: filters.importedStatus || undefined,
     shiftMatchStatus: filters.shiftMatchStatus || undefined,
     dayType: filters.dayType || undefined,
-    attendanceDateFrom: formatDateYMD(filters.attendanceDateFrom),
-    attendanceDateTo: formatDateYMD(filters.attendanceDateTo),
+    attendanceDateFrom: s(filters.attendanceDateFrom) || undefined,
+    attendanceDateTo: s(filters.attendanceDateTo) || undefined,
     sortBy: 'attendanceDate',
     sortOrder: 'desc',
   }
@@ -205,30 +197,31 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
     const payload = normalizePayload(res)
     const items = normalizeItems(payload)
     const total = Number(payload?.pagination?.total || 0)
+    const startIndex = (page - 1) * PAGE_SIZE
 
     totalRecords.value = total
 
     if (replace) {
-      const nextRows = Array.from({ length: total }, () => null)
-      const startIndex = (page - 1) * PAGE_SIZE
+      const nextRows = total > 0 ? Array.from({ length: total }, () => null) : []
 
       for (let i = 0; i < items.length; i += 1) {
         nextRows[startIndex + i] = items[i]
       }
 
-      rows.value = total === 0 ? [] : nextRows
+      rows.value = nextRows
       loadedPages.value = new Set([page])
     } else {
       if (!rows.value.length && total > 0) {
         rows.value = Array.from({ length: total }, () => null)
       }
 
-      const startIndex = (page - 1) * PAGE_SIZE
+      const nextRows = [...rows.value]
 
       for (let i = 0; i < items.length; i += 1) {
-        rows.value[startIndex + i] = items[i]
+        nextRows[startIndex + i] = items[i]
       }
 
+      rows.value = nextRows
       loadedPages.value.add(page)
     }
 
@@ -236,11 +229,11 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
   } catch (error) {
     toast.add({
       severity: 'error',
-      summary: 'Load failed',
+      summary: t('attendance.message.loadFailed'),
       detail:
         error?.response?.data?.message ||
         error?.message ||
-        'Failed to load attendance records.',
+        t('attendance.records.loadFailed'),
       life: 3000,
     })
   } finally {
@@ -263,6 +256,7 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
 
 function runSearchSoon() {
   window.clearTimeout(searchTimer)
+
   searchTimer = window.setTimeout(() => {
     reloadFirstPage({ keepVisible: true })
   }, SEARCH_DEBOUNCE_MS)
@@ -299,8 +293,8 @@ function clearFilters() {
   filters.importedStatus = ''
   filters.shiftMatchStatus = ''
   filters.dayType = ''
-  filters.attendanceDateFrom = null
-  filters.attendanceDateTo = null
+  filters.attendanceDateFrom = ''
+  filters.attendanceDateTo = ''
 
   reloadFirstPage({ keepVisible: true })
 }
@@ -348,15 +342,15 @@ function statusLabel(value) {
   const normalized = upper(value)
 
   const labels = {
-    PRESENT: 'Present',
-    LATE: 'Late',
-    ABSENT: 'Absent',
-    FORGET_SCAN_IN: 'Forget Scan In',
-    FORGET_SCAN_OUT: 'Forget Scan Out',
-    SHIFT_MISMATCH: 'Wrong Shift',
-    LEAVE: 'Leave',
-    OFF: 'Off',
-    UNKNOWN: 'Unknown',
+    PRESENT: t('attendance.statusLabel.present'),
+    LATE: t('attendance.statusLabel.late'),
+    ABSENT: t('attendance.statusLabel.absent'),
+    FORGET_SCAN_IN: t('attendance.statusLabel.forgetScanIn'),
+    FORGET_SCAN_OUT: t('attendance.statusLabel.forgetScanOut'),
+    SHIFT_MISMATCH: t('attendance.statusLabel.shiftMismatch'),
+    LEAVE: t('attendance.statusLabel.leave'),
+    OFF: t('attendance.statusLabel.off'),
+    UNKNOWN: t('attendance.statusLabel.unknown'),
   }
 
   return labels[normalized] || normalized || '-'
@@ -366,9 +360,9 @@ function shiftMatchLabel(value) {
   const normalized = upper(value)
 
   const labels = {
-    MATCHED: 'Matched',
-    MISMATCH: 'Mismatch',
-    UNKNOWN: 'Unknown',
+    MATCHED: t('attendance.statusLabel.matched'),
+    MISMATCH: t('attendance.statusLabel.mismatch'),
+    UNKNOWN: t('attendance.statusLabel.unknown'),
   }
 
   return labels[normalized] || normalized || '-'
@@ -378,9 +372,9 @@ function dayTypeLabel(value) {
   const normalized = upper(value)
 
   const labels = {
-    WORKING_DAY: 'Working Day',
-    SUNDAY: 'Sunday',
-    HOLIDAY: 'Holiday',
+    WORKING_DAY: t('attendance.statusLabel.workingDay'),
+    SUNDAY: t('attendance.statusLabel.sunday'),
+    HOLIDAY: t('attendance.statusLabel.holiday'),
   }
 
   return labels[normalized] || normalized || '-'
@@ -422,6 +416,17 @@ function formatShift(row) {
   if (shiftCode && shiftName) return `${shiftCode} · ${shiftName}`
   if (shiftCode) return shiftCode
   if (shiftName) return shiftName
+
+  return '-'
+}
+
+function formatLine(row) {
+  const lineCode = s(row?.lineCode)
+  const lineName = s(row?.lineName)
+
+  if (lineCode && lineName) return `${lineCode} · ${lineName}`
+  if (lineCode) return lineCode
+  if (lineName) return lineName
 
   return '-'
 }
@@ -499,541 +504,526 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4">
-    <section
-      class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]"
-    >
-      <div class="border-b border-[color:var(--ot-border)] px-3 py-3">
-        <div class="attendance-filter-panel">
-          <div class="attendance-main-filter-row">
-            <IconField class="filter-search">
-              <InputIcon class="pi pi-search" />
+  <div class="ot-page-shell">
+    <section class="ot-page-header">
+      <div class="ot-page-header-main">
+        <div class="ot-page-kicker">
+          <i class="pi pi-clock" />
+          {{ t('attendance.page.recordsKicker') }}
+        </div>
 
-              <InputText
-                v-model="filters.search"
-                placeholder="Search employee, imported name, reason"
-                class="w-full"
-                size="small"
-                @input="onSearchInput"
-              />
-            </IconField>
+        <h1 class="ot-page-title">
+          {{ t('attendance.recordsTitle') }}
+        </h1>
 
-            <InputText
-              v-model="filters.employeeNo"
-              placeholder="Employee No"
-              class="w-full"
-              size="small"
-            />
+        <p class="ot-page-subtitle">
+          {{ t('attendance.page.recordsSubtitle') }}
+        </p>
+      </div>
 
-            <Select
-              v-model="filters.status"
-              :options="statusOptions"
-              optionLabel="label"
-              optionValue="value"
-              placeholder="Derived Status"
-              class="w-full"
-              size="small"
-            />
+      <div class="ot-page-actions">
+        <Button
+          :label="t('common.refresh')"
+          icon="pi pi-refresh"
+          severity="secondary"
+          outlined
+          size="small"
+          :loading="backgroundLoading"
+          @click="refresh"
+        />
 
-            <Select
-              v-model="filters.importedStatus"
-              :options="importedStatusOptions"
-              optionLabel="label"
-              optionValue="value"
-              placeholder="Imported Status"
-              class="w-full"
-              size="small"
-            />
+        <Button
+          :label="t('common.clear')"
+          icon="pi pi-filter-slash"
+          severity="secondary"
+          outlined
+          size="small"
+          @click="clearFilters"
+        />
+      </div>
+    </section>
 
-            <Select
-              v-model="filters.shiftMatchStatus"
-              :options="shiftMatchStatusOptions"
-              optionLabel="label"
-              optionValue="value"
-              placeholder="Shift Status"
-              class="w-full"
-              size="small"
-            />
+    <section class="ot-filter-bar">
+      <div class="ot-field">
+        <label class="ot-field-label">{{ t('common.search') }}</label>
 
-            <Select
-              v-model="filters.dayType"
-              :options="dayTypeOptions"
-              optionLabel="label"
-              optionValue="value"
-              placeholder="Day Type"
-              class="w-full"
-              size="small"
-            />
-          </div>
+        <IconField>
+          <InputIcon class="pi pi-search" />
 
-          <div class="attendance-date-action-row">
-            <DatePicker
-              v-model="filters.attendanceDateFrom"
-              dateFormat="dd/mm/yy"
-              showIcon
-              class="date-filter-control"
-              inputClass="w-full"
-              placeholder="Date From"
-            />
+          <InputText
+            v-model="filters.search"
+            :placeholder="t('attendance.field.searchRecordsPlaceholder')"
+            class="w-full"
+            size="small"
+            @input="onSearchInput"
+          />
+        </IconField>
+      </div>
 
-            <DatePicker
-              v-model="filters.attendanceDateTo"
-              dateFormat="dd/mm/yy"
-              showIcon
-              class="date-filter-control"
-              inputClass="w-full"
-              placeholder="Date To"
-            />
+      <div class="ot-field">
+        <label class="ot-field-label">{{ t('attendance.field.employeeNo') }}</label>
 
-            <div class="loaded-chip">
-              Loaded {{ summaryText }}
-            </div>
+        <InputText
+          v-model="filters.employeeNo"
+          :placeholder="t('attendance.field.employeeNo')"
+          class="w-full"
+          size="small"
+        />
+      </div>
 
-            <Button
-              label="Refresh"
-              icon="pi pi-refresh"
-              severity="secondary"
-              outlined
-              size="small"
-              :loading="backgroundLoading"
-              class="date-action-button"
-              @click="refresh"
-            />
+      <div class="ot-field">
+        <label class="ot-field-label">{{ t('attendance.field.derivedStatus') }}</label>
 
-            <Button
-              label="Clear"
-              icon="pi pi-filter-slash"
-              severity="secondary"
-              outlined
-              size="small"
-              class="date-action-button"
-              @click="clearFilters"
-            />
-          </div>
+        <Select
+          v-model="filters.status"
+          :options="statusOptions"
+          option-label="label"
+          option-value="value"
+          :placeholder="t('attendance.field.derivedStatus')"
+          class="w-full"
+          size="small"
+        />
+      </div>
+
+      <div class="ot-field">
+        <label class="ot-field-label">{{ t('attendance.field.importedStatus') }}</label>
+
+        <Select
+          v-model="filters.importedStatus"
+          :options="importedStatusOptions"
+          option-label="label"
+          option-value="value"
+          :placeholder="t('attendance.field.importedStatus')"
+          class="w-full"
+          size="small"
+        />
+      </div>
+
+      <div class="ot-field">
+        <label class="ot-field-label">{{ t('attendance.field.shiftStatus') }}</label>
+
+        <Select
+          v-model="filters.shiftMatchStatus"
+          :options="shiftMatchStatusOptions"
+          option-label="label"
+          option-value="value"
+          :placeholder="t('attendance.field.shiftStatus')"
+          class="w-full"
+          size="small"
+        />
+      </div>
+
+      <div class="ot-field">
+        <label class="ot-field-label">{{ t('attendance.field.dayType') }}</label>
+
+        <Select
+          v-model="filters.dayType"
+          :options="dayTypeOptions"
+          option-label="label"
+          option-value="value"
+          :placeholder="t('attendance.field.dayType')"
+          class="w-full"
+          size="small"
+        />
+      </div>
+
+      <div class="ot-field">
+        <HolidayDatePicker
+          v-model="filters.attendanceDateFrom"
+          :label="t('common.fromDate')"
+          :placeholder="t('common.fromDate')"
+        />
+      </div>
+
+      <div class="ot-field">
+        <HolidayDatePicker
+          v-model="filters.attendanceDateTo"
+          :label="t('common.toDate')"
+          :placeholder="t('common.toDate')"
+        />
+      </div>
+
+      <div class="ot-filter-actions">
+        <span class="ot-loaded-badge">
+          {{ loadedLabel }}
+        </span>
+
+        <Button
+          :label="t('common.clear')"
+          icon="pi pi-filter-slash"
+          severity="secondary"
+          outlined
+          size="small"
+          @click="clearFilters"
+        />
+      </div>
+    </section>
+
+    <section class="ot-table-card">
+      <div class="ot-table-toolbar">
+        <div>
+          <h2 class="ot-table-title">
+            {{ t('attendance.records.attendanceList') }}
+          </h2>
+
+          <p class="ot-table-subtitle">
+            {{ t('attendance.records.attendanceListSubtitle') }}
+          </p>
+        </div>
+
+        <div class="ot-table-actions">
+          <span
+            v-if="backgroundLoading && hasAnyData"
+            class="ot-loaded-badge"
+          >
+            <i class="pi pi-spin pi-spinner" />
+            {{ t('attendance.message.updating') }}
+          </span>
         </div>
       </div>
 
-      <DataTable
-        :value="rows"
-        lazy
-        scrollable
-        scrollHeight="500px"
-        tableStyle="width: max-content; min-width: 100%;"
-        class="attendance-records-table"
-        :virtualScrollerOptions="useVirtualScroll ? {
-          lazy: true,
-          onLazyLoad: onVirtualLazyLoad,
-          itemSize: 72,
-          delay: 0,
-          showLoader: false,
-          loading: false,
-          numToleratedItems: 12,
-        } : null"
-      >
-        <template #empty>
-          <div
-            v-if="bootstrapped"
-            class="py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
+      <div class="ot-table-wrapper">
+        <DataTable
+          :value="rows"
+          lazy
+          scrollable
+          scroll-height="500px"
+          table-style="width: max-content; min-width: 100%;"
+          class="ot-data-table ot-data-table-compact attendance-records-table"
+          :virtual-scroller-options="useVirtualScroll ? {
+            lazy: true,
+            onLazyLoad: onVirtualLazyLoad,
+            itemSize: 72,
+            delay: 0,
+            showLoader: false,
+            loading: false,
+            numToleratedItems: 12,
+          } : null"
+        >
+          <template #empty>
+            <div
+              v-if="bootstrapped"
+              class="ot-empty-state"
+            >
+              <div class="ot-empty-icon">
+                <i class="pi pi-clock" />
+              </div>
+
+              <div class="ot-empty-title">
+                {{ t('attendance.message.noDataFound') }}
+              </div>
+
+              <div class="ot-empty-text">
+                {{ t('attendance.records.noRecords') }}
+              </div>
+            </div>
+          </template>
+
+          <Column
+            field="attendanceDate"
+            :header="t('common.date')"
+            style="min-width: 8rem"
           >
-            No attendance records found.
-          </div>
-        </template>
-
-        <Column
-          field="attendanceDate"
-          header="Date"
-        >
-          <template #body="{ data }">
-            <span
-              v-if="data"
-              class="text-sm text-[color:var(--ot-text)]"
-            >
-              {{ formatDateDMY(data.attendanceDate) }}
-            </span>
-          </template>
-        </Column>
-
-        <Column header="Employee">
-          <template #body="{ data }">
-            <div
-              v-if="data"
-              class="employee-cell"
-            >
-              <span class="font-medium text-[color:var(--ot-text)]">
-                {{ formatEmployee(data) }}
-              </span>
-
+            <template #body="{ data }">
               <span
-                v-if="shouldShowImportedEmployee(data)"
-                class="text-xs text-[color:var(--ot-text-muted)]"
+                v-if="data"
+                class="font-bold text-[color:var(--ot-text)]"
               >
-                Imported: {{ formatImportedEmployee(data) }}
+                {{ formatDateDMY(data.attendanceDate) }}
               </span>
-            </div>
-          </template>
-        </Column>
+            </template>
+          </Column>
 
-        <Column header="Shift">
-          <template #body="{ data }">
-            <div
-              v-if="data"
-              class="shift-cell"
-            >
-              <span class="font-medium text-[color:var(--ot-text)]">
-                {{ formatShift(data) }}
+          <Column
+            :header="t('attendance.field.employee')"
+            style="min-width: 18rem"
+          >
+            <template #body="{ data }">
+              <div
+                v-if="data"
+                class="flex flex-col"
+              >
+                <span class="font-bold text-[color:var(--ot-text)]">
+                  {{ formatEmployee(data) }}
+                </span>
+
+                <span
+                  v-if="shouldShowImportedEmployee(data)"
+                  class="text-xs text-[color:var(--ot-text-muted)]"
+                >
+                  {{ t('attendance.field.importedEmployee') }}: {{ formatImportedEmployee(data) }}
+                </span>
+              </div>
+            </template>
+          </Column>
+
+          <Column
+            :header="t('attendance.field.department')"
+            style="min-width: 13rem"
+          >
+            <template #body="{ data }">
+              <span v-if="data">
+                {{ data.departmentName || data.importedDepartmentName || '-' }}
               </span>
+            </template>
+          </Column>
 
-              <span class="text-xs text-[color:var(--ot-text-muted)]">
-                {{ formatShiftTime(data) }}
+          <Column
+            :header="t('attendance.field.position')"
+            style="min-width: 13rem"
+          >
+            <template #body="{ data }">
+              <span v-if="data">
+                {{ data.positionName || data.importedPositionName || '-' }}
               </span>
-            </div>
-          </template>
-        </Column>
+            </template>
+          </Column>
 
-        <Column header="Scan In">
-          <template #body="{ data }">
-            <span
-              v-if="data"
-              class="scan-time-chip"
-              :class="scanTimeTone(displayTime(data.clockIn))"
-            >
-              {{ scanTimeLabel(displayTime(data.clockIn)) }}
-            </span>
-          </template>
-        </Column>
+          <Column
+            :header="t('attendance.field.line')"
+            style="min-width: 12rem"
+          >
+            <template #body="{ data }">
+              <span v-if="data">
+                {{ formatLine(data) }}
+              </span>
+            </template>
+          </Column>
 
-        <Column header="Scan Out">
-          <template #body="{ data }">
-            <span
-              v-if="data"
-              class="scan-time-chip"
-              :class="scanTimeTone(displayTime(data.clockOut))"
-            >
-              {{ scanTimeLabel(displayTime(data.clockOut)) }}
-            </span>
-          </template>
-        </Column>
+          <Column
+            :header="t('attendance.field.shift')"
+            style="min-width: 14rem"
+          >
+            <template #body="{ data }">
+              <div
+                v-if="data"
+                class="flex flex-col"
+              >
+                <span class="font-bold text-[color:var(--ot-text)]">
+                  {{ formatShift(data) }}
+                </span>
 
-        <Column
-          field="importedStatus"
-          header="Imported Status"
-        >
-          <template #body="{ data }">
-            <Tag
-              v-if="data"
-              :value="statusLabel(data.importedStatus)"
-              :severity="statusSeverity(data.importedStatus)"
-              class="attendance-tag"
-            />
-          </template>
-        </Column>
+                <span class="text-xs text-[color:var(--ot-text-muted)]">
+                  {{ formatShiftTime(data) }}
+                </span>
+              </div>
+            </template>
+          </Column>
 
-        <Column
-          field="status"
-          header="Derived Status"
-        >
-          <template #body="{ data }">
-            <Tag
-              v-if="data"
-              :value="statusLabel(data.status)"
-              :severity="statusSeverity(data.status)"
-              class="attendance-tag"
-            />
-          </template>
-        </Column>
+          <Column
+            :header="t('attendance.field.scanIn')"
+            style="min-width: 8rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="scan-time-chip"
+                :class="scanTimeTone(displayTime(data.clockIn))"
+              >
+                {{ scanTimeLabel(displayTime(data.clockIn)) }}
+              </span>
+            </template>
+          </Column>
 
-        <Column
-          field="dayType"
-          header="Day Type"
-        >
-          <template #body="{ data }">
-            <Tag
-              v-if="data"
-              :value="dayTypeLabel(data.dayType)"
-              :severity="dayTypeSeverity(data.dayType)"
-              class="attendance-tag"
-            />
-          </template>
-        </Column>
+          <Column
+            :header="t('attendance.field.scanOut')"
+            style="min-width: 8rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="scan-time-chip"
+                :class="scanTimeTone(displayTime(data.clockOut))"
+              >
+                {{ scanTimeLabel(displayTime(data.clockOut)) }}
+              </span>
+            </template>
+          </Column>
 
-        <Column
-          field="shiftMatchStatus"
-          header="Shift Match"
-        >
-          <template #body="{ data }">
-            <Tag
-              v-if="data"
-              :value="shiftMatchLabel(data.shiftMatchStatus)"
-              :severity="shiftMatchSeverity(data.shiftMatchStatus)"
-              class="attendance-tag"
-            />
-          </template>
-        </Column>
+          <Column
+            field="importedStatus"
+            :header="t('attendance.field.importedStatus')"
+            style="min-width: 11rem"
+          >
+            <template #body="{ data }">
+              <Tag
+                v-if="data"
+                :value="statusLabel(data.importedStatus)"
+                :severity="statusSeverity(data.importedStatus)"
+              />
+            </template>
+          </Column>
 
-        <Column
-          field="workedMinutes"
-          header="Worked"
-        >
-          <template #body="{ data }">
-            <span
-              v-if="data"
-              class="minute-chip"
-              :class="minuteTone(data.workedMinutes)"
-            >
-              {{ formatMinutes(data.workedMinutes) }}
-            </span>
-          </template>
-        </Column>
+          <Column
+            field="status"
+            :header="t('attendance.field.derivedStatus')"
+            style="min-width: 11rem"
+          >
+            <template #body="{ data }">
+              <Tag
+                v-if="data"
+                :value="statusLabel(data.status)"
+                :severity="statusSeverity(data.status)"
+              />
+            </template>
+          </Column>
 
-        <Column
-          field="lateMinutes"
-          header="Late"
-        >
-          <template #body="{ data }">
-            <span
-              v-if="data"
-              class="minute-chip"
-              :class="minuteTone(data.lateMinutes, 'late')"
-            >
-              {{ formatMinutes(data.lateMinutes) }}
-            </span>
-          </template>
-        </Column>
+          <Column
+            field="dayType"
+            :header="t('attendance.field.dayType')"
+            style="min-width: 10rem"
+          >
+            <template #body="{ data }">
+              <Tag
+                v-if="data"
+                :value="dayTypeLabel(data.dayType)"
+                :severity="dayTypeSeverity(data.dayType)"
+              />
+            </template>
+          </Column>
 
-        <Column
-          field="earlyOutMinutes"
-          header="Early Out"
-        >
-          <template #body="{ data }">
-            <span
-              v-if="data"
-              class="minute-chip"
-              :class="minuteTone(data.earlyOutMinutes, 'early')"
-            >
-              {{ formatMinutes(data.earlyOutMinutes) }}
-            </span>
-          </template>
-        </Column>
+          <Column
+            field="shiftMatchStatus"
+            :header="t('attendance.field.shiftMatch')"
+            style="min-width: 10rem"
+          >
+            <template #body="{ data }">
+              <Tag
+                v-if="data"
+                :value="shiftMatchLabel(data.shiftMatchStatus)"
+                :severity="shiftMatchSeverity(data.shiftMatchStatus)"
+              />
+            </template>
+          </Column>
 
-        <Column header="Import">
-          <template #body="{ data }">
-            <span
-              v-if="data"
-              class="text-sm text-[color:var(--ot-text-muted)]"
-            >
-              {{ formatImportNo(data) }}
-            </span>
-          </template>
-        </Column>
+          <Column
+            field="workedMinutes"
+            :header="t('attendance.field.worked')"
+            style="min-width: 8rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="minute-chip"
+                :class="minuteTone(data.workedMinutes)"
+              >
+                {{ formatMinutes(data.workedMinutes) }}
+              </span>
+            </template>
+          </Column>
 
-        <Column header="Issues">
-          <template #body="{ data }">
-            <div
-              v-if="data"
-              class="issues-cell line-clamp-2 text-sm text-[color:var(--ot-text-muted)]"
-              :title="formatIssues(data.validationIssues)"
-            >
-              {{ formatIssues(data.validationIssues) || '—' }}
-            </div>
-          </template>
-        </Column>
-      </DataTable>
+          <Column
+            field="lateMinutes"
+            :header="t('attendance.field.late')"
+            style="min-width: 7rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="minute-chip"
+                :class="minuteTone(data.lateMinutes, 'late')"
+              >
+                {{ formatMinutes(data.lateMinutes) }}
+              </span>
+            </template>
+          </Column>
 
-      <div
-        v-if="backgroundLoading && hasAnyData"
-        class="flex items-center justify-center border-t border-[color:var(--ot-border)] px-3 py-2 text-xs text-[color:var(--ot-text-muted)]"
-      >
-        Updating...
+          <Column
+            field="earlyOutMinutes"
+            :header="t('attendance.field.earlyOut')"
+            style="min-width: 8rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="minute-chip"
+                :class="minuteTone(data.earlyOutMinutes, 'early')"
+              >
+                {{ formatMinutes(data.earlyOutMinutes) }}
+              </span>
+            </template>
+          </Column>
+
+          <Column
+            :header="t('attendance.field.importNo')"
+            style="min-width: 11rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="text-sm text-[color:var(--ot-text-muted)]"
+              >
+                {{ formatImportNo(data) }}
+              </span>
+            </template>
+          </Column>
+
+          <Column
+            :header="t('attendance.field.issues')"
+            style="min-width: 20rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="ot-truncate-2 text-sm text-[color:var(--ot-text-muted)]"
+              >
+                {{ formatIssues(data.validationIssues) || data.derivedStatusReason || '-' }}
+              </span>
+            </template>
+          </Column>
+        </DataTable>
       </div>
     </section>
   </div>
 </template>
 
 <style scoped>
-.attendance-filter-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 0.55rem;
-}
-
-.attendance-main-filter-row {
-  display: grid;
-  grid-template-columns:
-    minmax(260px, 1.4fr)
-    minmax(130px, 0.7fr)
-    minmax(150px, 0.8fr)
-    minmax(150px, 0.8fr)
-    minmax(145px, 0.78fr)
-    minmax(130px, 0.7fr);
-  gap: 0.5rem;
-  align-items: center;
-}
-
-.attendance-date-action-row {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: 0.5rem;
-  overflow-x: auto;
-  padding-bottom: 0.05rem;
-}
-
-.filter-search {
-  min-width: 0;
-}
-
-.date-filter-control {
-  width: 160px;
-  min-width: 160px;
-}
-
-.loaded-chip {
-  display: inline-flex;
-  min-width: 120px;
-  min-height: 2.15rem;
-  align-items: center;
-  justify-content: center;
-  white-space: nowrap;
-  border-radius: 0.65rem;
-  border: 1px solid var(--ot-border);
-  padding: 0 0.75rem;
-  font-size: 0.72rem;
-  font-weight: 500;
-  color: var(--ot-text-muted);
-}
-
-.date-action-button {
-  min-width: max-content;
-  height: 2.15rem;
-  white-space: nowrap;
-}
-
-:deep(.attendance-records-table .p-datatable-table) {
-  width: max-content !important;
-  min-width: 100% !important;
-  table-layout: auto !important;
-}
-
-:deep(.attendance-records-table .p-datatable-thead > tr > th) {
-  width: auto !important;
-  padding: 0.64rem 0.75rem !important;
-  white-space: nowrap !important;
-}
-
-:deep(.attendance-records-table .p-datatable-tbody > tr > td) {
-  width: auto !important;
-  height: 72px !important;
-  padding: 0.54rem 0.75rem !important;
-  vertical-align: middle !important;
-  white-space: nowrap !important;
-}
-
-:deep(.attendance-records-table .p-tag.attendance-tag) {
-  min-height: 1.3rem !important;
-  padding: 0.12rem 0.48rem !important;
-  font-size: 0.7rem !important;
-  font-weight: 500 !important;
-  line-height: 1 !important;
-  border-radius: 999px !important;
-}
-
-.employee-cell,
-.shift-cell {
-  display: inline-flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 0.12rem;
-  white-space: nowrap;
-}
-
-.scan-time-chip,
-.minute-chip {
+.scan-time-chip {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 999px;
-  padding: 0.18rem 0.52rem;
-  font-size: 0.72rem;
-  font-weight: 500;
-  line-height: 1;
+  min-width: 4.5rem;
+  border-radius: 9999px;
+  padding: 0.25rem 0.65rem;
+  font-size: 0.78rem;
+  font-weight: 800;
   white-space: nowrap;
 }
 
 .scan-time-chip.is-complete {
-  background: color-mix(in srgb, #22c55e 11%, transparent);
-  color: #15803d;
+  background: rgba(16, 185, 129, 0.12);
+  color: rgb(4, 120, 87);
 }
 
 .scan-time-chip.is-missing {
-  background: color-mix(in srgb, #ef4444 12%, transparent);
-  color: #b91c1c;
+  background: rgba(239, 68, 68, 0.12);
+  color: rgb(185, 28, 28);
 }
 
-.minute-chip.is-normal {
-  background: color-mix(in srgb, #22c55e 11%, transparent);
-  color: #15803d;
-}
-
-.minute-chip.is-warning {
-  background: color-mix(in srgb, #f59e0b 16%, transparent);
-  color: #b45309;
+.minute-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 3.6rem;
+  border-radius: 9999px;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.76rem;
+  font-weight: 800;
+  white-space: nowrap;
 }
 
 .minute-chip.is-zero {
-  background: color-mix(in srgb, #64748b 11%, transparent);
-  color: #475569;
+  background: rgba(100, 116, 139, 0.12);
+  color: rgb(100, 116, 139);
 }
 
-:global(.dark) .scan-time-chip.is-complete,
-:global(.dark) .scan-time-chip.is-missing,
-:global(.dark) .minute-chip.is-normal,
-:global(.dark) .minute-chip.is-warning,
-:global(.dark) .minute-chip.is-zero {
-  color: var(--ot-text);
+.minute-chip.is-normal {
+  background: rgba(14, 165, 233, 0.12);
+  color: rgb(3, 105, 161);
 }
 
-.issues-cell {
-  max-width: clamp(16rem, 32vw, 34rem);
-}
-
-.line-clamp-2 {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-@media (max-width: 1280px) {
-  .attendance-main-filter-row {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .filter-search {
-    grid-column: span 2;
-  }
-}
-
-@media (max-width: 768px) {
-  .attendance-main-filter-row {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .filter-search {
-    grid-column: span 2;
-  }
-
-  :deep(.attendance-records-table .p-datatable-tbody > tr > td) {
-    height: 68px !important;
-  }
-}
-
-@media (max-width: 520px) {
-  .attendance-main-filter-row {
-    grid-template-columns: 1fr;
-  }
-
-  .filter-search {
-    grid-column: span 1;
-  }
+.minute-chip.is-warning {
+  background: rgba(245, 158, 11, 0.14);
+  color: rgb(180, 83, 9);
 }
 </style>

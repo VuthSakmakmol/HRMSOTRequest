@@ -4,12 +4,12 @@
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 
 import Button from 'primevue/button'
 import Card from 'primevue/card'
 import Column from 'primevue/column'
 import DataTable from 'primevue/datatable'
-import DatePicker from 'primevue/datepicker'
 import IconField from 'primevue/iconfield'
 import InputIcon from 'primevue/inputicon'
 import InputText from 'primevue/inputtext'
@@ -18,6 +18,8 @@ import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 import { useToast } from 'primevue/usetoast'
 
+import HolidayDatePicker from '@/modules/calendar/components/HolidayDatePicker.vue'
+
 import {
   searchOTVerificationRequests,
   verifyOTAttendance,
@@ -25,12 +27,13 @@ import {
 
 const route = useRoute()
 const toast = useToast()
+const { t } = useI18n()
 
 const loading = ref(false)
 const searchLoading = ref(false)
 const payload = ref(null)
 
-const verificationDate = ref(null)
+const verificationDate = ref('')
 const requestOptions = ref([])
 const selectedOtRequestId = ref('')
 const selectedRequestStatus = ref('')
@@ -40,26 +43,26 @@ const tableCategory = ref('')
 let requestSearchTimer = null
 let suppressRequestSearch = false
 
-const requestStatusOptions = [
-  { label: 'All Status', value: '' },
-  { label: 'Pending', value: 'PENDING' },
-  { label: 'Approved', value: 'APPROVED' },
-  { label: 'Rejected', value: 'REJECTED' },
-  { label: 'Cancelled', value: 'CANCELLED' },
-]
+const requestStatusOptions = computed(() => [
+  { label: t('common.allStatus'), value: '' },
+  { label: t('attendance.statusLabel.pending'), value: 'PENDING' },
+  { label: t('common.approve'), value: 'APPROVED' },
+  { label: t('common.reject'), value: 'REJECTED' },
+  { label: t('attendance.statusLabel.cancelled') || 'Cancelled', value: 'CANCELLED' },
+])
 
-const categoryOptions = [
-  { label: 'All Results', value: '' },
-  { label: 'Matched', value: 'MATCH' },
-  { label: 'Accepted by Policy', value: 'MATCH_WITHOUT_EXACT_OUT' },
-  { label: 'Needs Check', value: 'MISMATCH' },
-  { label: 'Forget Scan In', value: 'FORGET_SCAN_IN' },
-  { label: 'Forget Scan Out', value: 'FORGET_SCAN_OUT' },
-  { label: 'OT Staff Absent', value: 'ABSENT_APPROVED' },
-  { label: 'Wrong Shift', value: 'SHIFT_MISMATCH' },
-  { label: 'Not in OT Staff', value: 'NOT_APPROVED' },
-  { label: 'Not Eligible', value: 'NOT_ELIGIBLE' },
-]
+const categoryOptions = computed(() => [
+  { label: t('attendance.verification.allResults'), value: '' },
+  { label: t('attendance.verification.matched'), value: 'MATCH' },
+  { label: t('attendance.verification.acceptedByPolicy'), value: 'MATCH_WITHOUT_EXACT_OUT' },
+  { label: t('attendance.verification.needsCheck'), value: 'MISMATCH' },
+  { label: t('attendance.verification.forgetScanIn'), value: 'FORGET_SCAN_IN' },
+  { label: t('attendance.verification.forgetScanOut'), value: 'FORGET_SCAN_OUT' },
+  { label: t('attendance.verification.otStaffAbsent'), value: 'ABSENT_APPROVED' },
+  { label: t('attendance.verification.wrongShift'), value: 'SHIFT_MISMATCH' },
+  { label: t('attendance.verification.notInOtStaff'), value: 'NOT_APPROVED' },
+  { label: t('attendance.verification.notEligible'), value: 'NOT_ELIGIBLE' },
+])
 
 const routeOtRequestId = computed(() => {
   return (
@@ -228,7 +231,7 @@ const needsCheckVerificationRows = computed(() => {
 
 const summaryCards = computed(() => [
   {
-    label: 'Request Staff',
+    label: t('attendance.verification.requestStaff'),
     value: Number(
       verification.value?.approvedEmployeeCount ||
         verification.value?.requestedEmployeeCount ||
@@ -238,37 +241,37 @@ const summaryCards = computed(() => [
     tone: 'blue',
   },
   {
-    label: 'Matched',
+    label: t('attendance.verification.matched'),
     value: verificationRows.value.filter((row) => row.result === 'MATCH').length,
     icon: 'pi pi-check-circle',
     tone: 'green',
   },
   {
-    label: 'Needs Check',
+    label: t('attendance.verification.needsCheck'),
     value: needsCheckVerificationRows.value.length,
     icon: 'pi pi-times-circle',
     tone: 'red',
   },
   {
-    label: 'Forget In',
+    label: t('attendance.verification.forgetIn'),
     value: forgetScanInRows.value.length,
     icon: 'pi pi-sign-in',
     tone: 'violet',
   },
   {
-    label: 'Forget Out',
+    label: t('attendance.verification.forgetOut'),
     value: forgetScanOutRows.value.length,
     icon: 'pi pi-sign-out',
     tone: 'violet',
   },
   {
-    label: 'Absent',
+    label: t('attendance.verification.absent'),
     value: Number(verification.value?.absentFromApprovedCount || 0),
     icon: 'pi pi-user-minus',
     tone: 'amber',
   },
   {
-    label: 'Not in OT',
+    label: t('attendance.verification.notInOt'),
     value: Number(verification.value?.attendedButNotApprovedCount || 0),
     icon: 'pi pi-exclamation-triangle',
     tone: 'cyan',
@@ -324,6 +327,10 @@ function normalizeItems(payloadValue) {
 }
 
 function formatDateYMD(value) {
+  const raw = s(value)
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw
+
   if (!value) return ''
 
   const date = value instanceof Date ? value : new Date(value)
@@ -334,17 +341,6 @@ function formatDateYMD(value) {
   const dd = String(date.getDate()).padStart(2, '0')
 
   return `${yyyy}-${mm}-${dd}`
-}
-
-function parseYMD(value) {
-  const raw = s(value)
-  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/)
-
-  if (!match) return null
-
-  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
-
-  return Number.isNaN(date.getTime()) ? null : date
 }
 
 function normalizeTimeValue(value) {
@@ -383,7 +379,7 @@ function isMissingTime(value) {
 }
 
 function scanTimeLabel(value) {
-  return isMissingTime(value) ? 'Missing' : value
+  return isMissingTime(value) ? t('attendance.statusLabel.missing') : value
 }
 
 function scanTimeTone(value) {
@@ -431,15 +427,15 @@ function categoryPriority(category) {
 
 function categoryLabel(category) {
   const labels = {
-    MATCH: 'Matched',
-    MATCH_WITHOUT_EXACT_OUT: 'Accepted by Policy',
-    FORGET_SCAN_IN: 'Forget Scan In',
-    FORGET_SCAN_OUT: 'Forget Scan Out',
-    MISMATCH: 'Needs Check',
-    ABSENT_APPROVED: 'OT Staff Absent',
-    SHIFT_MISMATCH: 'Wrong Shift',
-    NOT_APPROVED: 'Not in OT Staff',
-    NOT_ELIGIBLE: 'Not Eligible',
+    MATCH: t('attendance.verification.matched'),
+    MATCH_WITHOUT_EXACT_OUT: t('attendance.verification.acceptedByPolicy'),
+    FORGET_SCAN_IN: t('attendance.verification.forgetScanIn'),
+    FORGET_SCAN_OUT: t('attendance.verification.forgetScanOut'),
+    MISMATCH: t('attendance.verification.needsCheck'),
+    ABSENT_APPROVED: t('attendance.verification.otStaffAbsent'),
+    SHIFT_MISMATCH: t('attendance.verification.wrongShift'),
+    NOT_APPROVED: t('attendance.verification.notInOtStaff'),
+    NOT_ELIGIBLE: t('attendance.verification.notEligible'),
   }
 
   return labels[category] || category || '-'
@@ -504,10 +500,10 @@ function requestStatusSeverity(value) {
 function timingModeLabel(value) {
   const normalized = upper(value)
 
-  if (normalized === 'FIXED_TIME') return 'Fixed OT'
-  if (normalized === 'AFTER_SHIFT_END') return 'After Shift'
+  if (normalized === 'FIXED_TIME') return t('attendance.verification.fixedOt')
+  if (normalized === 'AFTER_SHIFT_END') return t('attendance.verification.afterShift')
 
-  return 'OT Option'
+  return t('attendance.verification.otOption')
 }
 
 function timingModeSeverity(value) {
@@ -518,15 +514,15 @@ function attendanceStatusLabel(value) {
   const normalized = upper(value)
 
   const labels = {
-    PRESENT: 'Present',
-    LATE: 'Late',
-    ABSENT: 'Absent',
-    OFF: 'Off',
-    FORGET_SCAN_IN: 'Forget Scan In',
-    FORGET_SCAN_OUT: 'Forget Scan Out',
-    SHIFT_MISMATCH: 'Wrong Shift',
-    MISMATCH: 'Needs Check',
-    PENDING: 'Pending',
+    PRESENT: t('attendance.statusLabel.present'),
+    LATE: t('attendance.statusLabel.late'),
+    ABSENT: t('attendance.statusLabel.absent'),
+    OFF: t('attendance.statusLabel.off'),
+    FORGET_SCAN_IN: t('attendance.statusLabel.forgetScanIn'),
+    FORGET_SCAN_OUT: t('attendance.statusLabel.forgetScanOut'),
+    SHIFT_MISMATCH: t('attendance.statusLabel.shiftMismatch'),
+    MISMATCH: t('attendance.verification.needsCheck'),
+    PENDING: t('attendance.statusLabel.pending'),
   }
 
   return labels[normalized] || normalized || '-'
@@ -560,43 +556,43 @@ function resultMeaningLabel(row) {
   const clockOut = s(row?.clockOut)
   const attendanceStatus = upper(row?.attendanceStatus)
 
-  if (category === 'FORGET_SCAN_IN') return 'Forget Scan In'
-  if (category === 'FORGET_SCAN_OUT') return 'Forget Scan Out'
-  if (category === 'MATCH_WITHOUT_EXACT_OUT') return 'Accepted by policy'
-  if (category === 'ABSENT_APPROVED') return 'OT staff absent'
-  if (category === 'SHIFT_MISMATCH') return 'Wrong shift'
-  if (category === 'NOT_APPROVED') return 'Not in OT staff'
-  if (category === 'NOT_ELIGIBLE') return 'Not eligible for OT'
+  if (category === 'FORGET_SCAN_IN') return t('attendance.verification.meaningLabel.forgetScanIn')
+  if (category === 'FORGET_SCAN_OUT') return t('attendance.verification.meaningLabel.forgetScanOut')
+  if (category === 'MATCH_WITHOUT_EXACT_OUT') return t('attendance.verification.meaningLabel.acceptedByPolicy')
+  if (category === 'ABSENT_APPROVED') return t('attendance.verification.meaningLabel.otStaffAbsent')
+  if (category === 'SHIFT_MISMATCH') return t('attendance.verification.meaningLabel.wrongShift')
+  if (category === 'NOT_APPROVED') return t('attendance.verification.meaningLabel.notInOtStaff')
+  if (category === 'NOT_ELIGIBLE') return t('attendance.verification.meaningLabel.notEligible')
 
-  if (result === 'MATCH') return 'OT matched request'
-  if (attendanceStatus === 'ABSENT') return 'Absent'
+  if (result === 'MATCH') return t('attendance.verification.meaningLabel.otMatchedRequest')
+  if (attendanceStatus === 'ABSENT') return t('attendance.verification.meaningLabel.absent')
 
   if (!clockIn || !clockOut || clockIn === '-' || clockOut === '-') {
-    return 'Missing scan time'
+    return t('attendance.verification.meaningLabel.missingScanTime')
   }
 
-  if (requested > 0 && credited <= 0) return 'No credited OT'
-  if (requested > 0 && credited < requested) return 'Credited less than request'
-  if (requested > 0 && credited > requested) return 'Credited over request'
-  if (actual > 0 && credited !== actual) return 'Adjusted by rule'
+  if (requested > 0 && credited <= 0) return t('attendance.verification.meaningLabel.noCreditedOt')
+  if (requested > 0 && credited < requested) return t('attendance.verification.meaningLabel.creditedLessThanRequest')
+  if (requested > 0 && credited > requested) return t('attendance.verification.meaningLabel.creditedOverRequest')
+  if (actual > 0 && credited !== actual) return t('attendance.verification.meaningLabel.adjustedByRule')
 
-  return 'Check OT rule'
+  return t('attendance.verification.meaningLabel.checkOtRule')
 }
 
 function requestStatusLabel(value) {
   const normalized = upper(value)
 
-  if (normalized === 'PENDING') return 'Pending'
-  if (normalized === 'APPROVED') return 'Approved'
-  if (normalized === 'REJECTED') return 'Rejected'
-  if (normalized === 'CANCELLED') return 'Cancelled'
-  if (normalized === 'DRAFT') return 'Draft'
+  if (normalized === 'PENDING') return t('attendance.statusLabel.pending')
+  if (normalized === 'APPROVED') return t('common.approve')
+  if (normalized === 'REJECTED') return t('common.reject')
+  if (normalized === 'CANCELLED') return t('attendance.statusLabel.cancelled') || 'Cancelled'
+  if (normalized === 'DRAFT') return t('attendance.statusLabel.draft') || 'Draft'
 
   return normalized || '-'
 }
 
 function requestOptionLabel(row) {
-  const requestNo = s(row?.requestNo) || 'No Request No'
+  const requestNo = s(row?.requestNo) || t('attendance.verification.noRequestNo')
   const status = requestStatusLabel(row?.status)
   const requester = s(row?.requesterName)
   const option = s(row?.shiftOtOptionLabel)
@@ -610,10 +606,10 @@ function requestOptionLabel(row) {
 
   return [
     requestNo,
-    `Status: ${status}`,
+    `${t('attendance.verification.statusPrefix')}: ${status}`,
     requester,
     option,
-    `${staffCount} staff`,
+    `${staffCount} ${t('attendance.verification.staff')}`,
   ]
     .filter(Boolean)
     .join(' · ')
@@ -730,16 +726,16 @@ async function loadData() {
 
     if (!verificationDate.value && nextPayload?.otRequest?.otDate) {
       suppressRequestSearch = true
-      verificationDate.value = parseYMD(nextPayload.otRequest.otDate)
+      verificationDate.value = formatDateYMD(nextPayload.otRequest.otDate)
     }
   } catch (error) {
     toast.add({
       severity: 'error',
-      summary: 'Load failed',
+      summary: t('attendance.verification.loadFailed'),
       detail:
         error?.response?.data?.message ||
         error?.message ||
-        'Failed to load OT attendance verification.',
+        t('attendance.verification.loadVerificationFailed'),
       life: 4000,
     })
   } finally {
@@ -759,8 +755,8 @@ async function loadRequestsByDate(options = {}) {
     if (!silent) {
       toast.add({
         severity: 'warn',
-        summary: 'OT date required',
-        detail: 'Please select OT date first.',
+        summary: t('attendance.verification.otDateRequired'),
+        detail: t('attendance.verification.otDateRequiredDetail'),
         life: 2500,
       })
     }
@@ -794,19 +790,19 @@ async function loadRequestsByDate(options = {}) {
     if (!requestOptions.value.length && !silent) {
       toast.add({
         severity: 'warn',
-        summary: 'No OT requests',
-        detail: 'No OT request found for the selected date and status.',
+        summary: t('attendance.verification.noOtRequests'),
+        detail: t('attendance.verification.noOtRequestsDetail'),
         life: 3000,
       })
     }
   } catch (error) {
     toast.add({
       severity: 'error',
-      summary: 'Load failed',
+      summary: t('attendance.verification.loadFailed'),
       detail:
         error?.response?.data?.message ||
         error?.message ||
-        'Failed to load OT requests.',
+        t('attendance.verification.loadRequestsFailed'),
       life: 3500,
     })
   } finally {
@@ -842,7 +838,7 @@ async function onRequestSelected() {
 function clearAll() {
   window.clearTimeout(requestSearchTimer)
 
-  verificationDate.value = null
+  verificationDate.value = ''
   selectedRequestStatus.value = ''
   requestOptions.value = []
   selectedOtRequestId.value = ''
@@ -883,32 +879,25 @@ onBeforeUnmount(() => {
     >
       <div class="ot-filter-row">
         <div class="filter-field">
-          <label class="filter-label">
-            OT Date
-          </label>
-
-          <DatePicker
+          <HolidayDatePicker
             v-model="verificationDate"
-            dateFormat="yy-mm-dd"
-            showIcon
-            fluid
-            inputClass="w-full"
-            placeholder="Select date"
+            :label="t('attendance.verification.otDate')"
+            :placeholder="t('attendance.verification.selectOtDate')"
           />
         </div>
 
         <div class="filter-field">
           <label class="filter-label">
-            Search OT Request
+            {{ t('attendance.verification.searchOtRequest') }}
           </label>
 
           <Select
             v-model="selectedOtRequestId"
             :options="requestOptions"
-            optionLabel="optionLabel"
-            optionValue="id"
+            option-label="optionLabel"
+            option-value="id"
             class="w-full"
-            placeholder="Select OT request"
+            :placeholder="t('attendance.verification.selectOtRequest')"
             :loading="searchLoading"
             :disabled="!requestOptions.length || searchLoading"
             filter
@@ -918,21 +907,21 @@ onBeforeUnmount(() => {
 
         <div class="filter-field">
           <label class="filter-label">
-            Request Status
+            {{ t('attendance.verification.requestStatus') }}
           </label>
 
           <Select
             v-model="selectedRequestStatus"
             :options="requestStatusOptions"
-            optionLabel="label"
-            optionValue="value"
+            option-label="label"
+            option-value="value"
             class="w-full"
-            placeholder="All Status"
+            :placeholder="t('common.allStatus')"
           />
         </div>
 
         <Button
-          label="Clear"
+          :label="t('common.clear')"
           icon="pi pi-filter-slash"
           severity="secondary"
           outlined
@@ -950,8 +939,11 @@ onBeforeUnmount(() => {
         :closable="false"
         class="verification-warning"
       >
-        This OT request is currently {{ requestStatusLabel(otRequest.status) }}.
-        You can verify for checking, but final OT payment should follow the final approved request.
+        {{
+          t('attendance.verification.nonFinalWarning', {
+            status: requestStatusLabel(otRequest.status),
+          })
+        }}
       </Message>
 
       <section class="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-7">
@@ -982,12 +974,12 @@ onBeforeUnmount(() => {
         class="grid grid-cols-1 gap-3 rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] p-3 shadow-sm md:grid-cols-2 xl:grid-cols-7"
       >
         <div class="info-box xl:col-span-1">
-          <div class="info-label">Request No</div>
+          <div class="info-label">{{ t('attendance.verification.requestNo') }}</div>
           <div class="info-value">{{ otRequest.requestNo || '-' }}</div>
         </div>
 
         <div class="info-box xl:col-span-1">
-          <div class="info-label">Status</div>
+          <div class="info-label">{{ t('common.status') }}</div>
           <div class="info-value">
             <Tag
               :value="requestStatusLabel(otRequest.status)"
@@ -998,29 +990,29 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="info-box xl:col-span-1">
-          <div class="info-label">Requester</div>
+          <div class="info-label">{{ t('attendance.verification.requester') }}</div>
           <div class="info-value">
             {{ otRequest.requesterEmployeeNo || '-' }} · {{ otRequest.requesterName || '-' }}
           </div>
         </div>
 
         <div class="info-box">
-          <div class="info-label">Shift</div>
+          <div class="info-label">{{ t('attendance.verification.shift') }}</div>
           <div class="info-value">{{ requestShiftTime }}</div>
         </div>
 
         <div class="info-box">
-          <div class="info-label">Expected OT</div>
+          <div class="info-label">{{ t('attendance.verification.expectedOt') }}</div>
           <div class="info-value">{{ requestExpectedOtTime }}</div>
         </div>
 
         <div class="info-box">
-          <div class="info-label">Requested</div>
+          <div class="info-label">{{ t('attendance.verification.requested') }}</div>
           <div class="info-value">{{ requestRequestedOtLabel }}</div>
         </div>
 
         <div class="info-box">
-          <div class="info-label">Policy</div>
+          <div class="info-label">{{ t('attendance.verification.policy') }}</div>
           <div
             class="info-value truncate"
             :title="requestPolicyLabel"
@@ -1035,11 +1027,11 @@ onBeforeUnmount(() => {
           <div class="mb-3 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
             <div class="flex flex-wrap items-center gap-2">
               <div class="text-base font-medium text-[color:var(--ot-text)]">
-                Verification Result
+                {{ t('attendance.verification.verificationResult') }}
               </div>
 
               <Tag
-                :value="`${filteredVerificationRows.length} rows`"
+                :value="t('attendance.verification.rowCount', { count: filteredVerificationRows.length })"
                 severity="secondary"
                 rounded
               />
@@ -1053,38 +1045,38 @@ onBeforeUnmount(() => {
                   v-model="tableSearch"
                   size="small"
                   class="w-full"
-                  placeholder="Search employee/result/reason"
+                  :placeholder="t('attendance.verification.searchPlaceholder')"
                 />
               </IconField>
 
               <Select
                 v-model="tableCategory"
                 :options="categoryOptions"
-                optionLabel="label"
-                optionValue="value"
+                option-label="label"
+                option-value="value"
                 size="small"
                 class="w-full sm:w-56"
-                placeholder="Result"
+                :placeholder="t('attendance.verification.result')"
               />
             </div>
           </div>
 
           <DataTable
             :value="filteredVerificationRows"
-            dataKey="rowKey"
+            data-key="rowKey"
             scrollable
-            scrollHeight="520px"
-            tableStyle="width: max-content; min-width: 100%;"
+            scroll-height="520px"
+            table-style="width: max-content; min-width: 100%;"
             class="verification-table"
-            stripedRows
+            striped-rows
           >
             <template #empty>
               <div class="py-8 text-center text-sm text-[color:var(--ot-text-muted)]">
-                No verification rows found.
+                {{ t('attendance.verification.noVerificationRows') }}
               </div>
             </template>
 
-            <Column header="Meaning">
+            <Column :header="t('attendance.verification.meaning')">
               <template #body="{ data }">
                 <div
                   class="result-meaning-label"
@@ -1096,7 +1088,7 @@ onBeforeUnmount(() => {
               </template>
             </Column>
 
-            <Column header="Employee">
+            <Column :header="t('attendance.verification.employee')">
               <template #body="{ data }">
                 <div class="font-medium text-[color:var(--ot-text)]">
                   {{ data.employeeNo || '-' }}
@@ -1108,17 +1100,17 @@ onBeforeUnmount(() => {
               </template>
             </Column>
 
-            <Column header="OT Type">
+            <Column :header="t('attendance.verification.otType')">
               <template #body="{ data }">
                 <Tag
-                  :value="data.isFixed ? 'Fixed OT' : timingModeLabel(data.timingMode)"
+                  :value="data.isFixed ? t('attendance.verification.fixedOt') : timingModeLabel(data.timingMode)"
                   :severity="timingModeSeverity(data.timingMode)"
                   class="verify-tag"
                 />
               </template>
             </Column>
 
-            <Column header="Scan In">
+            <Column :header="t('attendance.verification.scanIn')">
               <template #body="{ data }">
                 <span
                   class="scan-time-chip"
@@ -1129,7 +1121,7 @@ onBeforeUnmount(() => {
               </template>
             </Column>
 
-            <Column header="Scan Out">
+            <Column :header="t('attendance.verification.scanOut')">
               <template #body="{ data }">
                 <span
                   class="scan-time-chip"
@@ -1140,7 +1132,7 @@ onBeforeUnmount(() => {
               </template>
             </Column>
 
-            <Column header="Status">
+            <Column :header="t('attendance.verification.status')">
               <template #body="{ data }">
                 <Tag
                   :value="attendanceStatusLabel(data.attendanceStatus)"
@@ -1150,31 +1142,31 @@ onBeforeUnmount(() => {
               </template>
             </Column>
 
-            <Column header="Expected OT">
+            <Column :header="t('attendance.verification.expectedOt')">
               <template #body="{ data }">
                 <div class="font-medium text-[color:var(--ot-text)]">
                   {{ data.expectedOtTime }}
                 </div>
 
                 <div class="mt-0.5 text-xs text-[color:var(--ot-text-muted)]">
-                  Requested: {{ formatMinutesLabel(data.requestedMinutes) }}
+                  {{ t('attendance.verification.requested') }}: {{ formatMinutesLabel(data.requestedMinutes) }}
                 </div>
               </template>
             </Column>
 
-            <Column header="Credited OT">
+            <Column :header="t('attendance.verification.creditedOt')">
               <template #body="{ data }">
                 <div class="font-medium text-[color:var(--ot-text)]">
                   {{ formatMinutesLabel(data.roundedOtMinutes) }}
                 </div>
 
                 <div class="mt-0.5 text-xs text-[color:var(--ot-text-muted)]">
-                  Actual: {{ formatMinutesLabel(data.actualOtMinutes) }}
+                  {{ t('attendance.verification.actual') }}: {{ formatMinutesLabel(data.actualOtMinutes) }}
                 </div>
               </template>
             </Column>
 
-            <Column header="Shift">
+            <Column :header="t('attendance.verification.shift')">
               <template #body="{ data }">
                 <div class="font-medium text-[color:var(--ot-text)]">
                   {{ data.shiftName || '-' }}
@@ -1186,7 +1178,7 @@ onBeforeUnmount(() => {
               </template>
             </Column>
 
-            <Column header="Reason">
+            <Column :header="t('attendance.verification.reason')">
               <template #body="{ data }">
                 <div
                   class="reason-cell line-clamp-2 text-sm text-[color:var(--ot-text-muted)]"
@@ -1205,7 +1197,7 @@ onBeforeUnmount(() => {
       v-else
       class="rounded-2xl border border-dashed border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-4 py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
     >
-      Select an OT date, choose an OT request, then verify attendance result.
+      {{ t('attendance.verification.emptyInstruction') }}
     </div>
   </div>
 </template>
@@ -1330,6 +1322,26 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
+.result-meaning-label.is-match {
+  background: rgba(16, 185, 129, 0.12);
+  color: rgb(4, 120, 87);
+}
+
+.result-meaning-label.is-mismatch {
+  background: rgba(239, 68, 68, 0.12);
+  color: rgb(185, 28, 28);
+}
+
+.result-meaning-label.is-warning {
+  background: rgba(245, 158, 11, 0.14);
+  color: rgb(180, 83, 9);
+}
+
+.result-meaning-label.is-forget {
+  background: rgba(139, 92, 246, 0.13);
+  color: rgb(109, 40, 217);
+}
+
 .scan-time-chip {
   display: inline-flex;
   align-items: center;
@@ -1340,6 +1352,16 @@ onBeforeUnmount(() => {
   font-weight: 500;
   line-height: 1;
   white-space: nowrap;
+}
+
+.scan-time-chip.is-complete {
+  background: rgba(16, 185, 129, 0.12);
+  color: rgb(4, 120, 87);
+}
+
+.scan-time-chip.is-missing {
+  background: rgba(239, 68, 68, 0.12);
+  color: rgb(185, 28, 28);
 }
 
 .reason-cell {
