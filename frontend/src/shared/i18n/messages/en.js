@@ -594,6 +594,74 @@ accountCreateConflict:
     },
   },
 
+  calendar: {
+  holidayMaster: 'Holiday Master',
+
+  holiday: {
+    subtitle:
+      'Manage holiday master data used by OT day type, attendance verification, payment, and date pickers.',
+    tableTitle: 'Holiday List',
+    tableSubtitle:
+      'Server-side holiday list with lazy loading, import, export, and holiday-aware date selection.',
+    searchPlaceholder: 'Search date, code, name, or description',
+
+    newHoliday: 'New Holiday',
+    createTitle: 'Create Holiday',
+    editTitle: 'Edit Holiday',
+
+    holidayCode: 'Holiday Code',
+    holidayName: 'Holiday Name',
+    codeExample: 'Example: KHNY',
+    nameExample: 'Example: Khmer New Year',
+    descriptionPlaceholder: 'Optional holiday description',
+    selectHolidayDate: 'Select holiday date',
+
+    paidHoliday: 'Paid Holiday',
+    paidHolidayHelp: 'Paid holidays can be used later for OT/payment calculation.',
+    activeHelp: 'Inactive holidays will not be used for day type classification.',
+    paid: 'Paid',
+    unpaid: 'Unpaid',
+    allPaidTypes: 'All Paid Types',
+    noCode: 'No Code',
+    selectedDayType: 'Selected day type',
+
+    importExcel: 'Import Excel',
+    exportExcel: 'Export Excel',
+
+    exported: 'Exported',
+    exportedSuccess: 'Holiday Excel exported successfully.',
+    exportFailed: 'Export failed',
+
+    imported: 'Imported',
+    importedSuccess: 'Import completed. Created: {created}, Updated: {updated}.',
+
+    importTitle: 'Import Holiday Excel',
+    importGuideTitle: 'Import guide',
+    importGuideStep1: 'Download the sample file.',
+    importGuideStep2: 'Fill holiday data using DD/MM/YYYY date format.',
+    importGuideStep3: 'Users only need readable data such as Date, Code, Name, and Status.',
+    importGuideStep4: 'Click Import to upload and process it.',
+    importNote:
+      'Users never need Mongo IDs in Excel. Holiday import updates existing records by Date.',
+
+    downloadSample: 'Download Sample',
+    downloadSampleFailed: 'Download sample failed',
+    sampleDownloaded: 'Sample file downloaded successfully.',
+    excelFile: 'Excel file',
+    chooseFile: 'Choose File',
+    noFileSelected: 'No file selected',
+    importInvalidFileTitle: 'Invalid file type',
+    importInvalidFileMessage: 'Please choose an Excel file only: .xlsx, .xls, or .csv.',
+    importFailed: 'Import failed',
+
+    noData: 'No holidays matched your filters.',
+    loadFailed: 'Failed to load holidays.',
+    saveFailed: 'Failed to save holiday.',
+    createdSuccess: 'Holiday created successfully.',
+    updatedSuccess: 'Holiday updated successfully.',
+  },
+},
+
   ot: {
     requests: {
       title: 'OT Requests',

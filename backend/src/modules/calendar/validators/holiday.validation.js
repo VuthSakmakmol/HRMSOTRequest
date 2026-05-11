@@ -24,6 +24,19 @@ function toBoolean(value, defaultValue = undefined) {
   return defaultValue
 }
 
+function toBooleanString(value) {
+  if (value === '' || value === undefined || value === null) return ''
+  if (value === true || value === 'true' || value === 1 || value === '1') return 'true'
+  if (value === false || value === 'false' || value === 0 || value === '0') return 'false'
+
+  const text = String(value).trim().toLowerCase()
+
+  if (['yes', 'y', 'active'].includes(text)) return 'true'
+  if (['no', 'n', 'inactive'].includes(text)) return 'false'
+
+  return ''
+}
+
 function parseDateOnly(value) {
   const raw = s(value)
 
@@ -65,6 +78,16 @@ const dateOnlySchema = z
   .refine((value) => !!parseDateOnly(value), 'calendar.holiday.validation.dateInvalid')
   .transform((value) => parseDateOnly(value))
 
+const optionalDateQuerySchema = z
+  .string()
+  .trim()
+  .optional()
+  .default('')
+  .refine(
+    (value) => !value || !!parseDateOnly(value),
+    'calendar.holiday.validation.dateInvalid',
+  )
+
 const createHolidaySchema = z.object({
   date: dateOnlySchema,
 
@@ -89,9 +112,9 @@ const createHolidaySchema = z.object({
     .optional()
     .default(''),
 
-  isPaidHoliday: booleanLike.transform((value) => toBoolean(value, true)).default(true),
+  isPaidHoliday: booleanLike.transform((value) => toBoolean(value, true)),
 
-  isActive: booleanLike.transform((value) => toBoolean(value, true)).default(true),
+  isActive: booleanLike.transform((value) => toBoolean(value, true)),
 })
 
 const updateHolidaySchema = z
@@ -141,19 +164,27 @@ const listHolidayQuerySchema = z.object({
 
   search: z.string().trim().optional().default(''),
 
-  isActive: booleanLike.transform((value) => toBoolean(value)).optional(),
+  isActive: z
+    .union([z.string(), z.boolean(), z.number()])
+    .optional()
+    .transform(toBooleanString),
 
   year: z.coerce.number().int().min(2000).max(2100).optional(),
 
   month: z.coerce.number().int().min(1).max(12).optional(),
 
+  fromDate: optionalDateQuerySchema,
+
+  toDate: optionalDateQuerySchema,
+
   sortField: z
-    .enum(['date', 'name', 'code', 'isActive', 'createdAt', 'updatedAt'])
+    .enum(['date', 'name', 'code', 'isPaidHoliday', 'isActive', 'createdAt', 'updatedAt'])
     .optional()
     .default('date'),
 
+  // Backward compatible with old frontend using sortBy
   sortBy: z
-    .enum(['date', 'name', 'code', 'isActive', 'createdAt', 'updatedAt'])
+    .enum(['date', 'name', 'code', 'isPaidHoliday', 'isActive', 'createdAt', 'updatedAt'])
     .optional(),
 
   sortOrder: z
@@ -169,11 +200,21 @@ const listHolidayQuerySchema = z.object({
 const holidayLookupQuerySchema = z.object({
   search: z.string().trim().optional().default(''),
 
-  isActive: booleanLike.transform((value) => toBoolean(value, true)).optional(),
+  isActive: z
+    .union([z.string(), z.boolean(), z.number()])
+    .optional()
+    .transform((value) => {
+      const result = toBooleanString(value)
+      return result || 'true'
+    }),
 
   year: z.coerce.number().int().min(2000).max(2100).optional(),
 
   month: z.coerce.number().int().min(1).max(12).optional(),
+
+  fromDate: optionalDateQuerySchema,
+
+  toDate: optionalDateQuerySchema,
 
   limit: z.coerce.number().int().min(1).max(100).default(50),
 })
@@ -199,6 +240,8 @@ function normalizeListQuery(raw = {}) {
     isActive: parsed.isActive,
     year: parsed.year,
     month: parsed.month,
+    fromDate: parsed.fromDate,
+    toDate: parsed.toDate,
     sortField: parsed.sortBy || parsed.sortField || 'date',
     sortOrder: parsed.sortOrder,
   }
@@ -212,14 +255,19 @@ function normalizeLookupQuery(raw = {}) {
     isActive: parsed.isActive,
     year: parsed.year,
     month: parsed.month,
+    fromDate: parsed.fromDate,
+    toDate: parsed.toDate,
     limit: parsed.limit,
   }
 }
 
 module.exports = {
   parseDateOnly,
+  objectIdSchema,
   createHolidaySchema,
   updateHolidaySchema,
+  listHolidayQuerySchema,
+  holidayLookupQuerySchema,
   normalizeListQuery,
   normalizeLookupQuery,
   resolveDayTypeQuerySchema,

@@ -1,91 +1,152 @@
-// frontend/src/modules/calendar/views/HolidayListView.vue
 <!-- frontend/src/modules/calendar/views/HolidayListView.vue -->
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
+import Column from 'primevue/column'
+import DataTable from 'primevue/datatable'
 import Dialog from 'primevue/dialog'
+import IconField from 'primevue/iconfield'
+import InputIcon from 'primevue/inputicon'
 import InputSwitch from 'primevue/inputswitch'
 import InputText from 'primevue/inputtext'
+import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 import Textarea from 'primevue/textarea'
 
-import { useAuthStore } from '@/modules/auth/auth.store'
 import {
   createHoliday,
+  exportHolidaysExcel,
   getHolidays,
   updateHoliday,
-} from '../holiday.api'
+} from '@/modules/calendar/holiday.api'
+import HolidayDatePicker from '@/modules/calendar/components/HolidayDatePicker.vue'
+import HolidayImportDialog from '@/modules/calendar/components/HolidayImportDialog.vue'
+import { useAuthStore } from '@/modules/auth/auth.store'
+import { buildSaveErrorMessage, getApiErrorMessage } from '@/shared/utils/apiError'
+import { formatDateTime } from '@/shared/utils/dateFormat'
 
 const toast = useToast()
 const auth = useAuthStore()
+const { t } = useI18n()
+
+const PAGE_SIZE = 10
+const SEARCH_DEBOUNCE_MS = 250
 
 const saving = ref(false)
-const loadingCalendar = ref(false)
-const loadingSummary = ref(false)
+const exporting = ref(false)
+const importDialogVisible = ref(false)
 
-const dialogVisible = ref(false)
-const editingId = ref('')
-
-const selectedDate = ref(new Date())
-const currentMonth = ref(new Date(new Date().getFullYear(), new Date().getMonth(), 1))
-const monthHolidayRows = ref([])
+const rows = ref([])
 const totalRecords = ref(0)
+const loadedPages = ref(new Set())
 
-const form = reactive(getDefaultForm())
+const bootstrapped = ref(false)
+const backgroundLoading = ref(false)
+
+const holidayDialogVisible = ref(false)
+const editingHolidayId = ref('')
+const selectedDayInfo = ref(null)
+
+const previewLoading = ref(false)
+const previewMonth = ref(getMonthStart(new Date()))
+const previewSelectedDate = ref(new Date())
+const previewHolidayRows = ref([])
+
+const filters = reactive({
+  search: '',
+  isActive: '',
+  fromDate: '',
+  toDate: '',
+  sortField: 'date',
+  sortOrder: -1,
+})
+
+const form = reactive({
+  date: '',
+  code: '',
+  name: '',
+  description: '',
+  isPaidHoliday: true,
+  isActive: true,
+})
 
 const weekLabels = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
 
-const isEditMode = computed(() => !!editingId.value)
+const canCreate = computed(() => auth.hasPermission('HOLIDAY_CREATE'))
+const canUpdate = computed(() => auth.hasPermission('HOLIDAY_UPDATE'))
 
-const canCreateHoliday = computed(() => auth.hasAnyPermission(['HOLIDAY_CREATE']))
-const canUpdateHoliday = computed(() => auth.hasAnyPermission(['HOLIDAY_UPDATE']))
-const canSubmitForm = computed(() => {
-  return isEditMode.value ? canUpdateHoliday.value : canCreateHoliday.value
-})
+const statusOptions = computed(() => [
+  { label: t('common.allStatus'), value: '' },
+  { label: t('common.active'), value: 'true' },
+  { label: t('common.inactive'), value: 'false' },
+])
+
+const isEditMode = computed(() => !!editingHolidayId.value)
+const totalHolidays = computed(() => Number(totalRecords.value || 0))
+const loadedCount = computed(() => rows.value.filter(Boolean).length)
+const hasAnyData = computed(() => rows.value.some(Boolean))
+const useVirtualScroll = computed(() => totalHolidays.value > PAGE_SIZE)
+
+const loadedLabel = computed(() =>
+  t('common.loaded', {
+    loaded: loadedCount.value,
+    total: totalHolidays.value,
+  }),
+)
+
+const dialogTitle = computed(() =>
+  isEditMode.value ? t('calendar.holiday.editTitle') : t('calendar.holiday.createTitle'),
+)
+
+const saveLabel = computed(() =>
+  isEditMode.value ? t('common.save') : t('calendar.holiday.createTitle'),
+)
 
 const isSaveDisabled = computed(() => {
   return (
     saving.value ||
-    !canSubmitForm.value ||
     !String(form.date || '').trim() ||
     !String(form.name || '').trim()
   )
 })
 
-const monthTitle = computed(() => {
-  return currentMonth.value.toLocaleDateString('en-US', {
+const previewMonthTitle = computed(() => {
+  return previewMonth.value.toLocaleDateString('en-US', {
     month: 'long',
     year: 'numeric',
   })
 })
 
-const selectedDateKey = computed(() => formatYMD(selectedDate.value))
+const previewSelectedYmd = computed(() => formatYmd(previewSelectedDate.value))
 
-const holidayMap = computed(() => {
+const previewHolidayMap = computed(() => {
   const map = new Map()
-  for (const item of monthHolidayRows.value) {
-    if (item?.date) map.set(item.date, item)
+
+  for (const item of previewHolidayRows.value) {
+    if (item?.date) {
+      map.set(item.date, item)
+    }
   }
+
   return map
 })
 
-const selectedHoliday = computed(() => {
-  return holidayMap.value.get(selectedDateKey.value) || null
+const previewSelectedHoliday = computed(() => {
+  return previewHolidayMap.value.get(previewSelectedYmd.value) || null
 })
 
-const sortedMonthHolidays = computed(() => {
-  return [...monthHolidayRows.value].sort((a, b) => {
-    return String(a.date || '').localeCompare(String(b.date || ''))
-  })
+const previewSortedHolidays = computed(() => {
+  return [...previewHolidayRows.value].sort((a, b) =>
+    String(a.date || '').localeCompare(String(b.date || '')),
+  )
 })
 
-const totalHolidays = computed(() => totalRecords.value || 0)
-
-const calendarDays = computed(() => {
-  const year = currentMonth.value.getFullYear()
-  const month = currentMonth.value.getMonth()
+const previewCalendarDays = computed(() => {
+  const year = previewMonth.value.getFullYear()
+  const month = previewMonth.value.getMonth()
 
   const firstDayIndex = new Date(year, month, 1).getDay()
   const daysInMonth = new Date(year, month + 1, 0).getDate()
@@ -93,64 +154,31 @@ const calendarDays = computed(() => {
 
   const cells = []
 
-  for (let i = 0; i < firstDayIndex; i += 1) {
-    const day = daysInPrevMonth - firstDayIndex + i + 1
+  for (let index = 0; index < firstDayIndex; index += 1) {
+    const day = daysInPrevMonth - firstDayIndex + index + 1
     const date = new Date(year, month - 1, day)
-    cells.push(buildCalendarCell(date, false))
+
+    cells.push(buildPreviewCell(date, false))
   }
 
   for (let day = 1; day <= daysInMonth; day += 1) {
     const date = new Date(year, month, day)
-    cells.push(buildCalendarCell(date, true))
+
+    cells.push(buildPreviewCell(date, true))
   }
 
   while (cells.length < 42) {
     const nextDay = cells.length - (firstDayIndex + daysInMonth) + 1
     const date = new Date(year, month + 1, nextDay)
-    cells.push(buildCalendarCell(date, false))
+
+    cells.push(buildPreviewCell(date, false))
   }
 
   return cells
 })
 
-function getDefaultForm() {
-  return {
-    date: '',
-    code: '',
-    name: '',
-    description: '',
-    isPaidHoliday: true,
-    isActive: true,
-  }
-}
-
-function resetForm() {
-  editingId.value = ''
-  Object.assign(form, getDefaultForm())
-}
-
-function pad2(v) {
-  return String(v).padStart(2, '0')
-}
-
-function formatYMD(value) {
-  if (!value) return ''
-  const d = value instanceof Date ? value : new Date(value)
-  if (Number.isNaN(d.getTime())) return ''
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
-}
-
-function formatPrettyDate(value) {
-  if (!value) return '-'
-  const d = value instanceof Date ? value : new Date(value)
-  if (Number.isNaN(d.getTime())) return '-'
-  return d.toLocaleDateString('en-US', {
-    weekday: 'short',
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
-  })
-}
+let searchTimer = null
+let currentRequestId = 0
 
 function normalizePayload(res) {
   return res?.data?.data || res?.data || {}
@@ -160,61 +188,146 @@ function normalizeItems(payload) {
   return Array.isArray(payload?.items) ? payload.items : []
 }
 
-function statusSeverity(active) {
-  return active ? 'success' : 'contrast'
+function normalizePaginationTotal(payload) {
+  return Number(payload?.pagination?.total || payload?.total || 0)
 }
 
-function paidSeverity(isPaid) {
-  return isPaid ? 'warning' : 'contrast'
+function normalizeId(row) {
+  return String(row?.id || row?._id || '').trim()
 }
 
-function isSameDate(a, b) {
-  return formatYMD(a) === formatYMD(b)
+function showToast(severity, summary, detail, life = 3000) {
+  toast.add({
+    severity,
+    summary,
+    detail,
+    life,
+  })
+}
+
+function pad2(value) {
+  return String(value).padStart(2, '0')
+}
+
+function getMonthStart(value) {
+  const date = value instanceof Date ? value : new Date(value)
+
+  if (Number.isNaN(date.getTime())) {
+    const now = new Date()
+    return new Date(now.getFullYear(), now.getMonth(), 1)
+  }
+
+  return new Date(date.getFullYear(), date.getMonth(), 1)
+}
+
+function formatYmd(value) {
+  if (!value) return ''
+
+  const date = value instanceof Date ? value : new Date(value)
+
+  if (Number.isNaN(date.getTime())) return ''
+
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
+}
+
+function normalizeYmd(value) {
+  const raw = String(value || '').trim()
+
+  if (!raw) return ''
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw
+
+  const date = new Date(raw)
+
+  if (Number.isNaN(date.getTime())) return ''
+
+  return formatYmd(date)
+}
+
+function ymdToDate(ymd) {
+  const raw = normalizeYmd(ymd)
+
+  if (!raw) return new Date()
+
+  const [year, month, day] = raw.split('-').map(Number)
+
+  return new Date(year, month - 1, day)
+}
+
+function formatDate(value) {
+  const raw = normalizeYmd(value)
+
+  if (!raw) return '-'
+
+  const [year, month, day] = raw.split('-')
+
+  return `${day}/${month}/${year}`
+}
+
+function formatPrettyDate(value) {
+  const raw = normalizeYmd(value)
+
+  if (!raw) return '-'
+
+  const date = ymdToDate(raw)
+
+  return date.toLocaleDateString('en-US', {
+    weekday: 'short',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  })
 }
 
 function isToday(date) {
-  return isSameDate(date, new Date())
+  return formatYmd(date) === formatYmd(new Date())
 }
 
-function isHolidayDate(date) {
-  return holidayMap.value.has(formatYMD(date))
+function isSameDate(a, b) {
+  return formatYmd(a) === formatYmd(b)
 }
 
-function buildCalendarCell(date, inCurrentMonth) {
+function isSunday(date) {
+  return date.getDay() === 0
+}
+
+function buildPreviewCell(date, inCurrentMonth) {
+  const ymd = formatYmd(date)
+  const holiday = previewHolidayMap.value.get(ymd) || null
+
   return {
-    key: formatYMD(date),
+    key: ymd,
+    ymd,
     date,
     day: date.getDate(),
+    holiday,
     inCurrentMonth,
     isToday: isToday(date),
-    isSelected: isSameDate(date, selectedDate.value),
-    isHoliday: isHolidayDate(date),
+    isSelected: isSameDate(date, previewSelectedDate.value),
+    isSunday: isSunday(date),
+    isHoliday: !!holiday,
   }
 }
 
-async function fetchTotal() {
-  loadingSummary.value = true
-  try {
-    const res = await getHolidays({
-      page: 1,
-      limit: 1,
-      sortBy: 'date',
-      sortOrder: 'desc',
-    })
-    const payload = normalizePayload(res)
-    totalRecords.value = Number(payload?.pagination?.total || 0)
-  } catch (error) {
-    totalRecords.value = 0
-  } finally {
-    loadingSummary.value = false
+function buildQuery(page) {
+  return {
+    page,
+    limit: PAGE_SIZE,
+    search: String(filters.search || '').trim(),
+    isActive: filters.isActive,
+    fromDate: filters.fromDate,
+    toDate: filters.toDate,
+    sortField: filters.sortField,
+    sortOrder: filters.sortOrder,
   }
 }
 
-async function fetchMonthHolidays() {
-  loadingCalendar.value = true
+async function fetchPreviewHolidays() {
+  previewLoading.value = true
+
   try {
-    const year = currentMonth.value.getFullYear()
-    const month = currentMonth.value.getMonth() + 1
+    const year = previewMonth.value.getFullYear()
+    const month = previewMonth.value.getMonth() + 1
 
     const res = await getHolidays({
       page: 1,
@@ -223,199 +336,465 @@ async function fetchMonthHolidays() {
       isActive: true,
       year,
       month,
-      sortBy: 'date',
-      sortOrder: 'asc',
+      sortField: 'date',
+      sortOrder: 1,
     })
 
     const payload = normalizePayload(res)
-    monthHolidayRows.value = normalizeItems(payload)
+
+    previewHolidayRows.value = normalizeItems(payload)
   } catch (error) {
-    monthHolidayRows.value = []
-    toast.add({
-      severity: 'error',
-      summary: 'Load failed',
-      detail: error?.response?.data?.message || error?.message || 'Failed to load holiday calendar',
-      life: 3000,
-    })
+    previewHolidayRows.value = []
+
+    showToast(
+      'error',
+      t('common.loadFailed'),
+      getApiErrorMessage(error, t('calendar.holiday.loadFailed')),
+    )
   } finally {
-    loadingCalendar.value = false
+    previewLoading.value = false
   }
 }
 
-function selectDate(cell) {
-  selectedDate.value = new Date(cell.date)
-  if (!cell.inCurrentMonth) {
-    currentMonth.value = new Date(cell.date.getFullYear(), cell.date.getMonth(), 1)
-    fetchMonthHolidays()
+async function fetchPage(page, { replace = false, silent = false } = {}) {
+  if (!replace && loadedPages.value.has(page)) return
+
+  const requestId = ++currentRequestId
+
+  if (silent) {
+    backgroundLoading.value = true
+  }
+
+  try {
+    const res = await getHolidays(buildQuery(page))
+    if (requestId !== currentRequestId) return
+
+    const payload = normalizePayload(res)
+    const items = normalizeItems(payload)
+    const total = normalizePaginationTotal(payload)
+    const startIndex = (page - 1) * PAGE_SIZE
+
+    totalRecords.value = total
+
+    if (replace) {
+      const nextRows = total > 0 ? Array.from({ length: total }, () => null) : []
+
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
+      }
+
+      rows.value = nextRows
+      loadedPages.value = new Set([page])
+    } else {
+      if (!rows.value.length && total > 0) {
+        rows.value = Array.from({ length: total }, () => null)
+      }
+
+      const nextRows = [...rows.value]
+
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
+      }
+
+      rows.value = nextRows
+      loadedPages.value.add(page)
+    }
+
+    bootstrapped.value = true
+  } catch (error) {
+    showToast(
+      'error',
+      t('common.loadFailed'),
+      getApiErrorMessage(error, t('calendar.holiday.loadFailed')),
+    )
+  } finally {
+    backgroundLoading.value = false
   }
 }
 
-function previousMonth() {
-  currentMonth.value = new Date(
-    currentMonth.value.getFullYear(),
-    currentMonth.value.getMonth() - 1,
-    1
-  )
-  fetchMonthHolidays()
+async function reloadFirstPage({ keepVisible = true } = {}) {
+  if (!keepVisible) {
+    rows.value = []
+    totalRecords.value = 0
+    loadedPages.value = new Set()
+  }
+
+  await fetchPage(1, {
+    replace: true,
+    silent: true,
+  })
 }
 
-function nextMonth() {
-  currentMonth.value = new Date(
-    currentMonth.value.getFullYear(),
-    currentMonth.value.getMonth() + 1,
-    1
-  )
-  fetchMonthHolidays()
+function runSearchSoon() {
+  window.clearTimeout(searchTimer)
+
+  searchTimer = window.setTimeout(() => {
+    reloadFirstPage({ keepVisible: true })
+  }, SEARCH_DEBOUNCE_MS)
 }
 
-function goToday() {
+function onSearchInput() {
+  runSearchSoon()
+}
+
+function onFilterChange() {
+  reloadFirstPage({ keepVisible: true })
+}
+
+function clearFilters() {
+  filters.search = ''
+  filters.isActive = ''
+  filters.fromDate = ''
+  filters.toDate = ''
+  filters.sortField = 'date'
+  filters.sortOrder = -1
+
+  reloadFirstPage({ keepVisible: true })
+}
+
+function onSort(event) {
+  filters.sortField = event.sortField || 'date'
+  filters.sortOrder = typeof event.sortOrder === 'number' ? event.sortOrder : -1
+
+  reloadFirstPage({ keepVisible: true })
+}
+
+async function onVirtualLazyLoad(event) {
+  if (!useVirtualScroll.value) return
+
+  const first = Number(event?.first || 0)
+  const last = Number(event?.last || first + PAGE_SIZE)
+
+  const startPage = Math.floor(first / PAGE_SIZE) + 1
+  const endPage = Math.floor(Math.max(last - 1, first) / PAGE_SIZE) + 1
+
+  for (let page = startPage; page <= endPage; page += 1) {
+    if (!loadedPages.value.has(page)) {
+      await fetchPage(page, { silent: true })
+    }
+  }
+}
+
+function previousPreviewMonth() {
+  previewMonth.value = new Date(
+    previewMonth.value.getFullYear(),
+    previewMonth.value.getMonth() - 1,
+    1,
+  )
+
+  fetchPreviewHolidays()
+}
+
+function nextPreviewMonth() {
+  previewMonth.value = new Date(
+    previewMonth.value.getFullYear(),
+    previewMonth.value.getMonth() + 1,
+    1,
+  )
+
+  fetchPreviewHolidays()
+}
+
+function goPreviewToday() {
   const now = new Date()
-  selectedDate.value = now
-  currentMonth.value = new Date(now.getFullYear(), now.getMonth(), 1)
-  fetchMonthHolidays()
+
+  previewSelectedDate.value = now
+  previewMonth.value = getMonthStart(now)
+
+  fetchPreviewHolidays()
 }
 
-function openCreateDialog() {
-  if (!canCreateHoliday.value) return
+function selectPreviewCell(cell) {
+  previewSelectedDate.value = new Date(cell.date)
+
+  if (!cell.inCurrentMonth) {
+    previewMonth.value = getMonthStart(cell.date)
+    fetchPreviewHolidays()
+  }
+}
+
+function resetForm() {
+  editingHolidayId.value = ''
+  selectedDayInfo.value = null
+
+  form.date = ''
+  form.code = ''
+  form.name = ''
+  form.description = ''
+  form.isPaidHoliday = true
+  form.isActive = true
+}
+
+function openCreateDialog(date = '') {
   resetForm()
-  form.date = formatYMD(selectedDate.value)
-  dialogVisible.value = true
+
+  form.date = normalizeYmd(date) || previewSelectedYmd.value
+
+  holidayDialogVisible.value = true
 }
 
 function openEditDialog(row) {
-  if (!canUpdateHoliday.value) return
-  editingId.value = row?.id || row?._id || ''
-  form.date = row?.date || ''
+  editingHolidayId.value = normalizeId(row)
+  selectedDayInfo.value = null
+
+  form.date = normalizeYmd(row?.date)
   form.code = row?.code || ''
   form.name = row?.name || ''
   form.description = row?.description || ''
-  form.isPaidHoliday = !!row?.isPaidHoliday
-  form.isActive = !!row?.isActive
-  dialogVisible.value = true
+  form.isPaidHoliday = row?.isPaidHoliday !== false
+  form.isActive = row?.isActive !== false
+
+  holidayDialogVisible.value = true
 }
 
-async function submitForm() {
-  if (!canSubmitForm.value) return
+function onFormDateInfo(info) {
+  selectedDayInfo.value = info || null
+}
 
+async function submitHoliday() {
   saving.value = true
+
   try {
     const payload = {
       date: String(form.date || '').trim(),
-      code: String(form.code || '').trim(),
+      code: String(form.code || '').trim().toUpperCase(),
       name: String(form.name || '').trim(),
       description: String(form.description || '').trim(),
       isPaidHoliday: !!form.isPaidHoliday,
       isActive: !!form.isActive,
     }
 
-    if (editingId.value) {
-      await updateHoliday(editingId.value, payload)
-      toast.add({
-        severity: 'success',
-        summary: 'Updated',
-        detail: 'Holiday updated successfully',
-        life: 2500,
-      })
+    if (editingHolidayId.value) {
+      await updateHoliday(editingHolidayId.value, payload)
+      showToast('success', t('common.updated'), t('calendar.holiday.updatedSuccess'), 2500)
     } else {
       await createHoliday(payload)
-      toast.add({
-        severity: 'success',
-        summary: 'Created',
-        detail: 'Holiday created successfully',
-        life: 2500,
-      })
+      showToast('success', t('common.created'), t('calendar.holiday.createdSuccess'), 2500)
     }
 
-    dialogVisible.value = false
+    holidayDialogVisible.value = false
     resetForm()
-    await Promise.all([fetchMonthHolidays(), fetchTotal()])
+
+    await Promise.all([
+      reloadFirstPage({ keepVisible: false }),
+      fetchPreviewHolidays(),
+    ])
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: isEditMode.value ? 'Update failed' : 'Create failed',
-      detail: error?.response?.data?.message || error?.message || 'Failed to save holiday',
-      life: 3500,
-    })
+    showToast(
+      'error',
+      isEditMode.value ? t('common.updateFailed') : t('common.createFailed'),
+      buildSaveErrorMessage(error, t('calendar.holiday.saveFailed')),
+      3500,
+    )
   } finally {
     saving.value = false
   }
 }
 
-onMounted(async () => {
-  await Promise.all([fetchMonthHolidays(), fetchTotal()])
+function statusSeverity(active) {
+  return active ? 'success' : 'secondary'
+}
+
+function paidSeverity(isPaid) {
+  return isPaid ? 'warning' : 'secondary'
+}
+
+function dayTypeSeverity(dayType) {
+  if (dayType === 'HOLIDAY') return 'danger'
+  if (dayType === 'SUNDAY') return 'warning'
+  return 'success'
+}
+
+function getFilenameFromHeader(res, fallback) {
+  const disposition = String(res?.headers?.['content-disposition'] || '')
+  const match = disposition.match(/filename="?([^"]+)"?/i)
+
+  return match?.[1] || fallback
+}
+
+function downloadBlob(blob, filename) {
+  const url = window.URL.createObjectURL(blob)
+  const link = document.createElement('a')
+
+  link.href = url
+  link.download = filename
+
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+
+  window.URL.revokeObjectURL(url)
+}
+
+async function handleExport() {
+  exporting.value = true
+
+  try {
+    const res = await exportHolidaysExcel({
+      search: String(filters.search || '').trim(),
+      isActive: filters.isActive,
+      fromDate: filters.fromDate,
+      toDate: filters.toDate,
+      sortField: filters.sortField,
+      sortOrder: filters.sortOrder,
+    })
+
+    const blob = new Blob([res.data], {
+      type:
+        res?.headers?.['content-type'] ||
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+
+    downloadBlob(blob, getFilenameFromHeader(res, `holidays-${Date.now()}.xlsx`))
+
+    showToast(
+      'success',
+      t('calendar.holiday.exported'),
+      t('calendar.holiday.exportedSuccess'),
+      2500,
+    )
+  } catch (error) {
+    showToast(
+      'error',
+      t('calendar.holiday.exportFailed'),
+      getApiErrorMessage(error, t('calendar.holiday.exportFailed')),
+      3500,
+    )
+  } finally {
+    exporting.value = false
+  }
+}
+
+async function handleImportSuccess(payload) {
+  const summary = payload?.summary || {}
+  const created = Number(summary.created || payload?.created || payload?.createdCount || 0)
+  const updated = Number(summary.updated || payload?.updated || payload?.updatedCount || 0)
+
+  showToast(
+    'success',
+    t('calendar.holiday.imported'),
+    t('calendar.holiday.importedSuccess', { created, updated }),
+    3500,
+  )
+
+  await Promise.all([
+    reloadFirstPage({ keepVisible: false }),
+    fetchPreviewHolidays(),
+  ])
+}
+
+onMounted(() => {
+  Promise.all([
+    reloadFirstPage({ keepVisible: false }),
+    fetchPreviewHolidays(),
+  ])
+})
+
+onBeforeUnmount(() => {
+  window.clearTimeout(searchTimer)
 })
 </script>
 
 <template>
-  <div class="flex flex-col gap-4">
-    <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+  <div class="ot-page-shell">
+    <HolidayImportDialog
+      v-model:visible="importDialogVisible"
+      @success="handleImportSuccess"
+    />
 
-      <div class="flex items-center gap-2">
-        <div class="rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-3 py-2">
-          <div class="text-[11px] font-semibold uppercase tracking-[0.14em] text-[color:var(--ot-text-muted)]">
-            Total
-          </div>
-          <div class="mt-1 text-lg font-semibold text-[color:var(--ot-text)]">
-            {{ totalHolidays }}
-          </div>
+    <section class="ot-page-header">
+      <div class="ot-page-header-main">
+        <div class="ot-page-kicker">
+          <i class="pi pi-calendar" />
+          {{ t('nav.calendar') }}
         </div>
 
+        <h1 class="ot-page-title">
+          {{ t('nav.holidayMaster') }}
+        </h1>
+
+        <p class="ot-page-subtitle">
+          {{ t('calendar.holiday.subtitle') }}
+        </p>
+      </div>
+
+      <div class="ot-page-actions">
         <Button
-          label="Today"
-          icon="pi pi-calendar"
+          v-if="canCreate"
+          :label="t('calendar.holiday.importExcel')"
+          icon="pi pi-upload"
           severity="secondary"
           outlined
           size="small"
-          @click="goToday"
+          @click="importDialogVisible = true"
         />
+
         <Button
-          v-if="canCreateHoliday"
-          label="Create Holiday"
+          :label="t('calendar.holiday.exportExcel')"
+          icon="pi pi-download"
+          severity="secondary"
+          outlined
+          size="small"
+          :loading="exporting"
+          @click="handleExport"
+        />
+
+        <Button
+          v-if="canCreate"
+          :label="t('calendar.holiday.newHoliday')"
           icon="pi pi-plus"
           size="small"
-          @click="openCreateDialog"
+          @click="openCreateDialog()"
         />
       </div>
-    </div>
+    </section>
 
-    <div class="grid grid-cols-1 gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
-      <div class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] p-4">
-        <div class="mb-3 flex items-start justify-between gap-3">
+    <section class="grid grid-cols-1 gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
+      <div class="ot-table-card">
+        <div class="ot-table-toolbar">
           <div>
-            <div class="text-sm font-semibold text-[color:var(--ot-text)]">
-              Holiday Calendar
-            </div>
-            <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
-              {{ monthTitle }}
-            </div>
+            <h2 class="ot-table-title">
+              Calendar Preview
+            </h2>
+
+            <p class="ot-table-subtitle">
+              Sundays and active holidays are highlighted.
+            </p>
           </div>
 
           <Tag
-            :value="`${sortedMonthHolidays.length} holiday${sortedMonthHolidays.length === 1 ? '' : 's'}`"
+            :value="`${previewHolidayRows.length} holidays`"
             severity="info"
           />
         </div>
 
         <div class="rounded-2xl bg-[color:var(--ot-bg)] p-4">
-          <div class="mb-4 flex items-center justify-between">
+          <div class="mb-4 flex items-center justify-between gap-3">
             <button
               type="button"
-              class="calendar-nav-btn"
-              @click="previousMonth"
+              class="holiday-preview-nav"
+              @click="previousPreviewMonth"
             >
-              <i class="pi pi-chevron-left text-sm" />
+              <i class="pi pi-chevron-left" />
             </button>
 
-            <div class="text-center text-[26px] font-semibold tracking-tight text-[color:var(--ot-text)]">
-              {{ monthTitle }}
+            <div class="min-w-0 text-center">
+              <div class="text-lg font-bold text-[color:var(--ot-text)]">
+                {{ previewMonthTitle }}
+              </div>
+
+              <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
+                <span v-if="previewLoading">Loading...</span>
+                <span v-else>{{ previewHolidayRows.length }} active holiday{{ previewHolidayRows.length === 1 ? '' : 's' }}</span>
+              </div>
             </div>
 
             <button
               type="button"
-              class="calendar-nav-btn"
-              @click="nextMonth"
+              class="holiday-preview-nav"
+              @click="nextPreviewMonth"
             >
-              <i class="pi pi-chevron-right text-sm" />
+              <i class="pi pi-chevron-right" />
             </button>
           </div>
 
@@ -423,248 +802,501 @@ onMounted(async () => {
             <div
               v-for="label in weekLabels"
               :key="label"
-              class="pb-1 text-center text-xs font-semibold text-[color:var(--ot-text-muted)]"
+              class="pb-1 text-center text-xs font-bold text-[color:var(--ot-text-muted)]"
             >
               {{ label }}
             </div>
 
             <button
-              v-for="cell in calendarDays"
+              v-for="cell in previewCalendarDays"
               :key="cell.key"
               type="button"
-              class="calendar-cell"
+              class="holiday-preview-cell"
               :class="{
                 'is-outside': !cell.inCurrentMonth,
-                'is-selected': cell.isSelected,
                 'is-today': cell.isToday,
+                'is-selected': cell.isSelected,
+                'is-sunday': cell.isSunday,
                 'is-holiday': cell.isHoliday,
-                'is-sunday': cell.date.getDay() === 0,
               }"
-              @click="selectDate(cell)"
+              :title="cell.holiday?.name || (cell.isSunday ? 'Sunday' : '')"
+              @click="selectPreviewCell(cell)"
             >
-              <span class="calendar-number">{{ cell.day }}</span>
-              <span v-if="cell.isHoliday" class="calendar-dot" />
+              <span>{{ cell.day }}</span>
+              <span
+                v-if="cell.isHoliday"
+                class="holiday-preview-dot"
+              />
             </button>
           </div>
         </div>
 
-        <div class="mt-3 rounded-2xl bg-[color:var(--ot-bg)] px-4 py-3">
-          <div class="text-[11px] font-semibold uppercase tracking-[0.14em] text-[color:var(--ot-text-muted)]">
+        <div class="mt-3 rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-bg)] px-4 py-3">
+          <div class="text-[11px] font-bold uppercase tracking-[0.14em] text-[color:var(--ot-text-muted)]">
             Selected Date
           </div>
-          <div class="mt-1 text-sm font-medium text-[color:var(--ot-text)]">
-            {{ formatPrettyDate(selectedDate) }}
-          </div>
-        </div>
-      </div>
 
-      <div class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] p-4">
-        <div class="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <h2 class="text-lg font-semibold text-[color:var(--ot-text)]">
-              Holiday Summary
-            </h2>
-          </div>
-        </div>
-
-        <div
-          v-if="selectedHoliday"
-          class="rounded-2xl bg-[color:var(--ot-bg)] p-4"
-        >
-          <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-            <div class="min-w-0">
-              <div class="text-lg font-semibold text-[color:var(--ot-text)]">
-                {{ selectedHoliday.name }}
-              </div>
-              <div class="mt-1 text-sm text-[color:var(--ot-text-muted)]">
-                {{ formatPrettyDate(selectedHoliday.date) }}
-              </div>
-            </div>
-
-            <div class="flex items-center gap-2">
-              <Tag
-                :value="selectedHoliday.isPaidHoliday ? 'Paid' : 'Unpaid'"
-                :severity="paidSeverity(selectedHoliday.isPaidHoliday)"
-              />
-              <Tag
-                :value="selectedHoliday.isActive ? 'Active' : 'Inactive'"
-                :severity="statusSeverity(selectedHoliday.isActive)"
-              />
-            </div>
+          <div class="mt-1 text-sm font-semibold text-[color:var(--ot-text)]">
+            {{ formatPrettyDate(previewSelectedDate) }}
           </div>
 
-          <div class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
-            <div class="rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-3 py-3">
-              <div class="text-xs text-[color:var(--ot-text-muted)]">Date</div>
-              <div class="mt-1 font-medium text-[color:var(--ot-text)]">
-                {{ selectedHoliday.date || '-' }}
-              </div>
-            </div>
+          <div class="mt-3 flex flex-wrap items-center gap-2">
+            <Tag
+              v-if="previewSelectedHoliday"
+              :value="previewSelectedHoliday.name"
+              severity="danger"
+            />
 
-            <div class="rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-3 py-3">
-              <div class="text-xs text-[color:var(--ot-text-muted)]">Code</div>
-              <div class="mt-1 font-medium text-[color:var(--ot-text)]">
-                {{ selectedHoliday.code || '-' }}
-              </div>
-            </div>
+            <Tag
+              v-else-if="previewSelectedDate.getDay() === 0"
+              value="Sunday"
+              severity="warning"
+            />
+
+            <Tag
+              v-else
+              value="Working Day"
+              severity="success"
+            />
           </div>
 
-          <div
-            v-if="selectedHoliday.description"
-            class="mt-3 rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-3 py-3 text-sm text-[color:var(--ot-text)]"
-          >
-            {{ selectedHoliday.description }}
-          </div>
-
-          <div v-if="canUpdateHoliday" class="mt-3 flex justify-end">
+          <div class="mt-4 flex flex-wrap justify-end gap-2">
             <Button
-              label="Edit Holiday"
-              icon="pi pi-pencil"
-              size="small"
+              label="Today"
+              icon="pi pi-calendar"
+              severity="secondary"
               outlined
-              @click="openEditDialog(selectedHoliday)"
+              size="small"
+              @click="goPreviewToday"
+            />
+
+            <Button
+              v-if="canCreate && !previewSelectedHoliday"
+              label="Create on selected date"
+              icon="pi pi-plus"
+              size="small"
+              @click="openCreateDialog(previewSelectedYmd)"
+            />
+
+            <Button
+              v-if="canUpdate && previewSelectedHoliday"
+              label="Edit holiday"
+              icon="pi pi-pencil"
+              outlined
+              size="small"
+              @click="openEditDialog(previewSelectedHoliday)"
             />
           </div>
         </div>
 
         <div
-          v-else
-          class="rounded-2xl bg-[color:var(--ot-bg)] p-4"
+          v-if="previewSortedHolidays.length"
+          class="mt-3 space-y-2"
         >
-          <div class="mb-3 text-sm font-semibold text-[color:var(--ot-text)]">
-            {{ monthTitle }} Holiday List
-          </div>
-
-          <div v-if="loadingCalendar" class="py-8 text-center text-sm text-[color:var(--ot-text-muted)]">
-            Loading...
-          </div>
-
-          <div v-else-if="sortedMonthHolidays.length" class="space-y-3">
-            <button
-              v-for="item in sortedMonthHolidays"
-              :key="item.id || item._id || item.date"
-              type="button"
-              class="summary-row"
-              @click="selectedDate = new Date(item.date)"
-            >
-              <div class="min-w-0 text-left">
-                <div class="font-semibold text-[color:var(--ot-text)]">
-                  {{ item.name }}
-                </div>
-                <div class="mt-1 text-sm text-[color:var(--ot-text-muted)]">
-                  {{ formatPrettyDate(item.date) }}
-                </div>
-                <div
-                  v-if="item.description"
-                  class="mt-2 text-sm text-[color:var(--ot-text-muted)]"
-                >
-                  {{ item.description }}
-                </div>
-              </div>
-
-              <div class="flex items-center gap-2">
-                <Tag :value="item.code || 'No Code'" severity="contrast" />
-                <Tag
-                  :value="item.isPaidHoliday ? 'Paid' : 'Unpaid'"
-                  :severity="paidSeverity(item.isPaidHoliday)"
-                />
-              </div>
-            </button>
-          </div>
-
-          <div
-            v-else
-            class="rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-4 py-8 text-center text-sm text-[color:var(--ot-text-muted)]"
+          <button
+            v-for="item in previewSortedHolidays"
+            :key="item.id || item._id || item.date"
+            type="button"
+            class="holiday-summary-row"
+            @click="previewSelectedDate = ymdToDate(item.date)"
           >
-            No holiday in this month.
-          </div>
+            <div class="min-w-0">
+              <div class="truncate text-sm font-bold text-[color:var(--ot-text)]">
+                {{ item.name }}
+              </div>
+
+              <div class="mt-0.5 text-xs text-[color:var(--ot-text-muted)]">
+                {{ formatDate(item.date) }}
+              </div>
+            </div>
+
+            <Tag
+              :value="item.code || 'No Code'"
+              severity="secondary"
+            />
+          </button>
         </div>
       </div>
-    </div>
+
+      <div class="flex min-w-0 flex-col gap-4">
+        <section class="ot-filter-bar">
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('common.search') }}
+            </label>
+
+            <IconField>
+              <InputIcon class="pi pi-search" />
+
+              <InputText
+                v-model="filters.search"
+                :placeholder="t('calendar.holiday.searchPlaceholder')"
+                class="w-full"
+                size="small"
+                @input="onSearchInput"
+              />
+            </IconField>
+          </div>
+
+          <div class="ot-field">
+            <HolidayDatePicker
+              v-model="filters.fromDate"
+              :label="t('common.fromDate')"
+              :placeholder="t('common.fromDate')"
+              @change="onFilterChange"
+            />
+          </div>
+
+          <div class="ot-field">
+            <HolidayDatePicker
+              v-model="filters.toDate"
+              :label="t('common.toDate')"
+              :placeholder="t('common.toDate')"
+              @change="onFilterChange"
+            />
+          </div>
+
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('common.status') }}
+            </label>
+
+            <Select
+              v-model="filters.isActive"
+              :options="statusOptions"
+              option-label="label"
+              option-value="value"
+              class="w-full"
+              size="small"
+              @change="onFilterChange"
+            />
+          </div>
+
+          <div class="ot-filter-actions">
+            <span class="ot-loaded-badge">
+              {{ loadedLabel }}
+            </span>
+
+            <Button
+              :label="t('common.clear')"
+              icon="pi pi-filter-slash"
+              severity="secondary"
+              outlined
+              size="small"
+              @click="clearFilters"
+            />
+          </div>
+        </section>
+
+        <section class="ot-table-card">
+          <div class="ot-table-toolbar">
+            <div>
+              <h2 class="ot-table-title">
+                {{ t('calendar.holiday.tableTitle') }}
+              </h2>
+
+              <p class="ot-table-subtitle">
+                {{ t('calendar.holiday.tableSubtitle') }}
+              </p>
+            </div>
+
+            <div class="ot-table-actions">
+              <span
+                v-if="backgroundLoading && hasAnyData"
+                class="ot-loaded-badge"
+              >
+                <i class="pi pi-spin pi-spinner" />
+                {{ t('common.updating') }}
+              </span>
+            </div>
+          </div>
+
+          <div class="ot-table-wrapper">
+            <DataTable
+              :value="rows"
+              lazy
+              removable-sort
+              scrollable
+              scroll-height="500px"
+              :sort-field="filters.sortField"
+              :sort-order="filters.sortOrder"
+              table-style="min-width: max-content"
+              class="ot-data-table ot-data-table-compact"
+              :virtual-scroller-options="useVirtualScroll ? {
+                lazy: true,
+                onLazyLoad: onVirtualLazyLoad,
+                itemSize: 72,
+                delay: 0,
+                showLoader: false,
+                loading: false,
+                numToleratedItems: 12,
+              } : null"
+              @sort="onSort"
+            >
+              <template #empty>
+                <div
+                  v-if="bootstrapped"
+                  class="ot-empty-state"
+                >
+                  <div class="ot-empty-icon">
+                    <i class="pi pi-calendar" />
+                  </div>
+
+                  <div class="ot-empty-title">
+                    {{ t('common.noData') }}
+                  </div>
+
+                  <div class="ot-empty-text">
+                    {{ t('calendar.holiday.noData') }}
+                  </div>
+                </div>
+              </template>
+
+              <Column
+                field="date"
+                :header="t('common.date')"
+                sortable
+                style="min-width: 8.5rem"
+              >
+                <template #body="{ data }">
+                  <span
+                    v-if="data"
+                    class="font-bold"
+                  >
+                    {{ formatDate(data.date) }}
+                  </span>
+                </template>
+              </Column>
+
+              <Column
+                field="code"
+                :header="t('common.code')"
+                sortable
+                style="min-width: 8rem"
+              >
+                <template #body="{ data }">
+                  <Tag
+                    v-if="data"
+                    :value="data.code || t('calendar.holiday.noCode')"
+                    severity="secondary"
+                  />
+                </template>
+              </Column>
+
+              <Column
+                field="name"
+                :header="t('common.name')"
+                sortable
+                style="min-width: 14rem"
+              >
+                <template #body="{ data }">
+                  <span v-if="data">{{ data.name || '-' }}</span>
+                </template>
+              </Column>
+
+              <Column
+                field="description"
+                :header="t('common.description')"
+                style="min-width: 18rem"
+              >
+                <template #body="{ data }">
+                  <span
+                    v-if="data"
+                    class="ot-truncate-2"
+                  >
+                    {{ data.description || '-' }}
+                  </span>
+                </template>
+              </Column>
+
+              <Column
+                field="isPaidHoliday"
+                :header="t('calendar.holiday.paidHoliday')"
+                sortable
+                style="min-width: 9rem"
+              >
+                <template #body="{ data }">
+                  <Tag
+                    v-if="data"
+                    :value="data.isPaidHoliday ? t('calendar.holiday.paid') : t('calendar.holiday.unpaid')"
+                    :severity="paidSeverity(data.isPaidHoliday)"
+                  />
+                </template>
+              </Column>
+
+              <Column
+                field="isActive"
+                :header="t('common.status')"
+                sortable
+                style="min-width: 7rem"
+              >
+                <template #body="{ data }">
+                  <Tag
+                    v-if="data"
+                    :value="data.isActive ? t('common.active') : t('common.inactive')"
+                    :severity="statusSeverity(data.isActive)"
+                  />
+                </template>
+              </Column>
+
+              <Column
+                field="createdAt"
+                :header="t('common.createdAt')"
+                sortable
+                style="min-width: 13rem"
+              >
+                <template #body="{ data }">
+                  <span v-if="data">{{ formatDateTime(data.createdAt) }}</span>
+                </template>
+              </Column>
+
+              <Column
+                :header="t('common.actions')"
+                style="width: 7rem; min-width: 7rem"
+              >
+                <template #body="{ data }">
+                  <Button
+                    v-if="data && canUpdate"
+                    :label="t('common.edit')"
+                    icon="pi pi-pencil"
+                    size="small"
+                    outlined
+                    @click="openEditDialog(data)"
+                  />
+                </template>
+              </Column>
+            </DataTable>
+          </div>
+        </section>
+      </div>
+    </section>
 
     <Dialog
-      v-model:visible="dialogVisible"
+      v-model:visible="holidayDialogVisible"
       modal
-      :header="isEditMode ? 'Edit Holiday' : 'Create Holiday'"
-      :style="{ width: '40rem', maxWidth: '96vw' }"
+      :header="dialogTitle"
+      :style="{ width: '42rem', maxWidth: '96vw' }"
       @hide="resetForm"
     >
-      <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Date
-          </label>
-          <InputText
-            v-model="form.date"
-            type="date"
-            class="w-full"
-          />
+      <div class="ot-dialog-form">
+        <div class="ot-form-grid">
+          <div class="ot-field">
+            <HolidayDatePicker
+              v-model="form.date"
+              :label="t('common.date')"
+              :placeholder="t('calendar.holiday.selectHolidayDate')"
+              :clearable="false"
+              @selected-info="onFormDateInfo"
+            />
+          </div>
+
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('calendar.holiday.holidayCode') }}
+            </label>
+
+            <InputText
+              v-model="form.code"
+              class="w-full"
+              :placeholder="t('calendar.holiday.codeExample')"
+            />
+          </div>
         </div>
 
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Code
-          </label>
-          <InputText
-            v-model="form.code"
-            class="w-full"
-            placeholder="Example: KHNY-1"
-          />
+        <div
+          v-if="selectedDayInfo"
+          class="rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-bg)] px-4 py-3"
+        >
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="text-sm font-semibold text-[color:var(--ot-text)]">
+              {{ t('calendar.holiday.selectedDayType') }}
+            </span>
+
+            <Tag
+              :value="selectedDayInfo.dayType || '-'"
+              :severity="dayTypeSeverity(selectedDayInfo.dayType)"
+            />
+
+            <span
+              v-if="selectedDayInfo.holiday?.name"
+              class="text-sm text-[color:var(--ot-text-muted)]"
+            >
+              {{ selectedDayInfo.holiday.name }}
+            </span>
+          </div>
         </div>
 
-        <div class="space-y-2 md:col-span-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Holiday Name
+        <div class="ot-field">
+          <label class="ot-field-label">
+            {{ t('calendar.holiday.holidayName') }}
           </label>
+
           <InputText
             v-model="form.name"
             class="w-full"
-            placeholder="Enter holiday name"
+            :placeholder="t('calendar.holiday.nameExample')"
           />
         </div>
 
-        <div class="space-y-2 md:col-span-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Description
+        <div class="ot-field">
+          <label class="ot-field-label">
+            {{ t('common.description') }}
           </label>
+
           <Textarea
             v-model="form.description"
             class="w-full"
             rows="3"
-            placeholder="Optional holiday description"
+            :placeholder="t('calendar.holiday.descriptionPlaceholder')"
           />
         </div>
 
-        <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] px-4 py-3">
-          <span class="text-sm font-medium text-[color:var(--ot-text)]">
-            Paid Holiday
-          </span>
-          <InputSwitch v-model="form.isPaidHoliday" />
-        </div>
+        <div class="ot-form-grid">
+          <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] px-4 py-3">
+            <div>
+              <div class="text-sm font-semibold text-[color:var(--ot-text)]">
+                {{ t('calendar.holiday.paidHoliday') }}
+              </div>
 
-        <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] px-4 py-3">
-          <span class="text-sm font-medium text-[color:var(--ot-text)]">
-            Active Status
-          </span>
-          <InputSwitch v-model="form.isActive" />
+              <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
+                {{ t('calendar.holiday.paidHolidayHelp') }}
+              </div>
+            </div>
+
+            <InputSwitch v-model="form.isPaidHoliday" />
+          </div>
+
+          <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] px-4 py-3">
+            <div>
+              <div class="text-sm font-semibold text-[color:var(--ot-text)]">
+                {{ t('common.active') }}
+              </div>
+
+              <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
+                {{ t('calendar.holiday.activeHelp') }}
+              </div>
+            </div>
+
+            <InputSwitch v-model="form.isActive" />
+          </div>
         </div>
       </div>
 
       <template #footer>
-        <div class="flex justify-end gap-2">
+        <div class="ot-form-footer">
           <Button
-            label="Cancel"
+            :label="t('common.cancel')"
             text
             size="small"
-            @click="dialogVisible = false"
+            @click="holidayDialogVisible = false"
           />
+
           <Button
-            v-if="canSubmitForm"
-            :label="isEditMode ? 'Save Changes' : 'Create Holiday'"
+            :label="saveLabel"
             :loading="saving"
             :disabled="isSaveDisabled"
             size="small"
-            @click="submitForm"
+            @click="submitHoliday"
           />
         </div>
       </template>
@@ -673,106 +1305,97 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.calendar-nav-btn {
+.holiday-preview-nav {
   display: inline-flex;
+  width: 2.15rem;
+  height: 2.15rem;
   align-items: center;
   justify-content: center;
-  width: 2.2rem;
-  height: 2.2rem;
-  border-radius: 9999px;
   border: 1px solid var(--ot-border);
+  border-radius: 9999px;
   background: var(--ot-surface);
   color: var(--ot-text);
-  transition: 0.2s ease;
+  transition: 0.18s ease;
 }
 
-.calendar-nav-btn:hover {
-  background: var(--ot-hover, rgba(148, 163, 184, 0.08));
+.holiday-preview-nav:hover {
+  background: var(--ot-hover, rgba(148, 163, 184, 0.1));
 }
 
-.calendar-cell {
+.holiday-preview-cell {
   position: relative;
-  height: 2.9rem;
+  display: inline-flex;
+  min-height: 2.45rem;
+  align-items: center;
+  justify-content: center;
+  border: 0;
   border-radius: 9999px;
   background: transparent;
   color: var(--ot-text);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: 0.2s ease;
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: 0.18s ease;
 }
 
-.calendar-cell:hover {
-  background: rgba(148, 163, 184, 0.12);
+.holiday-preview-cell:hover {
+  background: rgba(148, 163, 184, 0.13);
 }
 
-.calendar-cell.is-outside {
+.holiday-preview-cell.is-outside {
   color: var(--ot-text-muted);
   opacity: 0.42;
 }
 
-.calendar-cell.is-today {
+.holiday-preview-cell.is-today {
   box-shadow: inset 0 0 0 1px var(--ot-border);
 }
 
-.calendar-cell.is-sunday {
+.holiday-preview-cell.is-sunday {
   color: #dc2626;
-  font-weight: 600;
 }
 
-.calendar-cell.is-holiday {
+.holiday-preview-cell.is-holiday {
   background: rgba(220, 38, 38, 0.12);
   color: #dc2626;
-  font-weight: 700;
 }
 
-.calendar-cell.is-sunday.is-holiday {
-  background: rgba(220, 38, 38, 0.16);
-  color: #b91c1c;
-}
-
-.calendar-cell.is-selected {
+.holiday-preview-cell.is-selected {
   background: var(--p-primary-500);
-  color: white;
-  font-weight: 700;
+  color: #ffffff;
 }
 
-.calendar-cell.is-selected.is-holiday,
-.calendar-cell.is-selected.is-sunday,
-.calendar-cell.is-selected.is-sunday.is-holiday {
+.holiday-preview-cell.is-selected.is-sunday,
+.holiday-preview-cell.is-selected.is-holiday {
   background: var(--p-primary-500);
-  color: white;
+  color: #ffffff;
 }
 
-.calendar-number {
-  font-size: 0.95rem;
-  line-height: 1;
-}
-
-.calendar-dot {
+.holiday-preview-dot {
   position: absolute;
-  right: 0.58rem;
-  bottom: 0.48rem;
-  width: 0.34rem;
-  height: 0.34rem;
+  right: 0.48rem;
+  bottom: 0.38rem;
+  width: 0.32rem;
+  height: 0.32rem;
   border-radius: 9999px;
   background: currentColor;
-  opacity: 0.9;
 }
 
-.summary-row {
-  width: 100%;
+.holiday-summary-row {
   display: flex;
+  width: 100%;
+  align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
   border: 1px solid var(--ot-border);
+  border-radius: 0.95rem;
   background: var(--ot-surface);
-  border-radius: 0.9rem;
-  padding: 0.95rem 1rem;
-  transition: 0.2s ease;
+  padding: 0.7rem 0.8rem;
+  text-align: left;
+  transition: 0.18s ease;
 }
 
-.summary-row:hover {
+.holiday-summary-row:hover {
   background: var(--ot-hover, rgba(148, 163, 184, 0.08));
 }
 </style>

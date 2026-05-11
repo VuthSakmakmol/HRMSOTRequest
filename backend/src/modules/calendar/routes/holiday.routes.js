@@ -1,12 +1,20 @@
 // backend/src/modules/calendar/routes/holiday.routes.js
 
 const express = require('express')
+const multer = require('multer')
 
 const holidayController = require('../controllers/holiday.controller')
 const requireAuth = require('../../../middlewares/requireAuth')
 const requirePermission = require('../../../middlewares/requirePermission.middleware')
 
 const router = express.Router()
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024,
+  },
+})
 
 router.use(requireAuth)
 
@@ -21,6 +29,25 @@ router.get(
   '/resolve-day-type',
   requirePermission('HOLIDAY_LOOKUP'),
   holidayController.resolveDayType,
+)
+
+router.get(
+  '/export',
+  requirePermission('HOLIDAY_VIEW'),
+  holidayController.exportExcel,
+)
+
+router.get(
+  '/import-sample',
+  requirePermission('HOLIDAY_VIEW'),
+  holidayController.downloadImportSample,
+)
+
+router.post(
+  '/import',
+  requirePermission('HOLIDAY_CREATE'),
+  upload.single('file'),
+  holidayController.importExcel,
 )
 
 router.get(
