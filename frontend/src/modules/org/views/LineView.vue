@@ -22,11 +22,12 @@ import LineImportDialog from '@/modules/org/components/LineImportDialog.vue'
 import {
   createLine,
   exportLinesExcel,
-  getDepartmentLookupOptions,
   getLines,
-  getPositionLookupOptions,
   updateLine,
 } from '@/modules/org/line.api'
+
+import { getDepartmentLookupOptions } from '@/modules/org/department.api'
+import { getPositionLookupOptions } from '@/modules/org/position.api'
 
 const toast = useToast()
 

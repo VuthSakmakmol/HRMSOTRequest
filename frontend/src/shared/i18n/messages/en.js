@@ -342,4 +342,113 @@ export default {
     calculateExport: 'Calculate & Export',
     salaryTemplate: 'Salary Template',
   },
+
+  line: {
+  subtitle: 'Manage production lines, department mapping, and allowed position restrictions.',
+  tableTitle: 'Production lines',
+  tableSubtitle: 'Server-side list with lazy loading, filters, and Excel tools.',
+
+  lineCode: 'Line Code',
+  lineName: 'Line Name',
+  allowedPositions: 'Allowed Positions',
+  allPositionsInDepartment: 'All positions in department',
+
+  newLine: 'New Line',
+  createTitle: 'Create Production Line',
+  editTitle: 'Edit Production Line',
+
+  importExcel: 'Import Excel',
+  exportExcel: 'Export Excel',
+
+  searchPlaceholder: 'Search code, name, or description',
+  allDepartments: 'All Departments',
+  selectDepartment: 'Select department',
+  selectAllowedPositions: 'Optional: select allowed positions',
+  allowedPositionsHelp:
+    'Leave empty if this line can be used by all positions in the selected department.',
+
+  codeExample: 'Example: LINE-01',
+  nameExample: 'Example: Sewing Line 01',
+  descriptionPlaceholder: 'Optional production line description',
+  activeHelp: 'Inactive lines will be hidden from normal employee assignment selectors.',
+
+  createdSuccess: 'Production line created successfully.',
+  updatedSuccess: 'Production line updated successfully.',
+  saveFailed: 'Failed to save production line.',
+  loadFailed: 'Failed to load production lines.',
+  noData: 'No production lines found.',
+  departmentLoadFailed: 'Failed to load departments.',
+  positionLoadFailed: 'Failed to load positions.',
+
+  exported: 'Exported',
+  exportedSuccess: 'Production lines exported successfully.',
+  exportFailed: 'Failed to export production lines.',
+
+  imported: 'Imported',
+  importedSuccess: 'Import completed. Created: {created}, Updated: {updated}.',
+
+  importTitle: 'Import Production Lines',
+  importFailed: 'Import failed',
+  importInvalidFileTitle: 'Invalid file',
+  importInvalidFileMessage: 'Please choose an Excel file: .xlsx, .xls, or .csv.',
+  importGuideTitle: 'Import guide',
+  importGuideStep1: 'Download the sample file first.',
+  importGuideStep2: 'Use Department Code to connect each line to a department.',
+  importGuideStep3:
+    'Use comma-separated Position Codes when the line only allows specific positions.',
+  importGuideStep4: 'Leave Position Codes blank to allow all positions in the department.',
+  importNote:
+    'Users never need Mongo IDs in Excel. Use readable codes such as Department Code and Position Codes.',
+  downloadSample: 'Download Sample',
+  downloadSampleFailed: 'Failed to download sample.',
+  sampleDownloaded: 'Sample downloaded.',
+  excelFile: 'Excel File',
+  noFileSelected: 'No file selected',
+  chooseFile: 'Choose File',
+
+  validation: {
+    codeRequired: 'Line code is required.',
+    codeTooLong: 'Line code is too long.',
+    nameRequired: 'Line name is required.',
+    nameTooLong: 'Line name is too long.',
+    descriptionTooLong: 'Description is too long.',
+    updatePayloadRequired: 'At least one field is required.',
+  },
+
+  field: {
+    departmentId: {
+      required: 'Department is required.',
+      invalid: 'Invalid department.',
+    },
+    positionIds: {
+      invalid: 'Invalid position.',
+    },
+  },
+
+  error: {
+    notFound: 'Production line not found.',
+    codeExists: 'Line code already exists.',
+    excelFileRequired: 'Excel file is required.',
+    excelNoRows: 'Excel file has no rows.',
+    excelNoValidRows: 'Excel file has no valid rows.',
+    positionDepartmentMismatch:
+      'Selected position does not belong to selected department.',
+  },
+
+  import: {
+    success: {
+      completed: 'Production line import completed.',
+    },
+    error: {
+      codeRequired: 'Code is required.',
+      nameRequired: 'Name is required.',
+      departmentRequired: 'Department Code is required.',
+      departmentNotFound: 'Department Code not found.',
+      positionNotFound: 'Position Code not found.',
+      positionDepartmentMismatch: 'Position does not belong to Department.',
+      invalidStatus: 'Invalid status.',
+      duplicateCode: 'Duplicate line code in import file.',
+    },
+  },
+},
 }

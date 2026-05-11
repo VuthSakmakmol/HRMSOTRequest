@@ -11,20 +11,18 @@ function isObjectId(value) {
   return mongoose.Types.ObjectId.isValid(String(value || ''))
 }
 
-function toBoolean(value, defaultValue = undefined) {
-  if (value === undefined || value === null || value === '') return defaultValue
-  if (typeof value === 'boolean') return value
-  if (typeof value === 'number') return value === 1
+function toBooleanString(value) {
+  if (value === '' || value === undefined || value === null || value === 'all') return ''
+  if (value === true || value === 'true' || value === 1 || value === '1') return 'true'
+  if (value === false || value === 'false' || value === 0 || value === '0') return 'false'
 
   const text = String(value).trim().toLowerCase()
 
-  if (['true', '1', 'yes', 'y', 'active'].includes(text)) return true
-  if (['false', '0', 'no', 'n', 'inactive'].includes(text)) return false
+  if (['yes', 'y', 'active'].includes(text)) return 'true'
+  if (['no', 'n', 'inactive'].includes(text)) return 'false'
 
-  return defaultValue
+  return ''
 }
-
-const booleanLike = z.union([z.boolean(), z.string(), z.number()]).optional()
 
 const objectIdField = (fieldKey) =>
   z
@@ -32,6 +30,12 @@ const objectIdField = (fieldKey) =>
     .trim()
     .min(1, `${fieldKey}.required`)
     .refine((value) => isObjectId(value), `${fieldKey}.invalid`)
+
+const optionalObjectIdField = (fieldKey) =>
+  z
+    .union([z.string(), z.null(), z.undefined()])
+    .transform((value) => s(value))
+    .refine((value) => !value || isObjectId(value), `${fieldKey}.invalid`)
 
 const objectIdArrayField = (fieldKey) =>
   z
@@ -50,19 +54,19 @@ const listProductionLineQuerySchema = z.object({
 
   search: z.string().trim().optional().default(''),
 
-  departmentId: z
-    .string()
-    .trim()
+  departmentId: optionalObjectIdField('org.line.field.departmentId')
     .optional()
-    .default('')
-    .refine((value) => !value || isObjectId(value), 'org.line.field.departmentId.invalid'),
+    .default(''),
 
-  isActive: booleanLike,
+  isActive: z
+    .union([z.string(), z.boolean(), z.number()])
+    .optional()
+    .transform(toBooleanString),
 
   sortField: z
     .enum(['code', 'name', 'isActive', 'createdAt', 'updatedAt'])
     .optional()
-    .default('code'),
+    .default('createdAt'),
 
   sortOrder: z
     .union([z.string(), z.number()])
@@ -70,21 +74,24 @@ const listProductionLineQuerySchema = z.object({
     .transform((value) => {
       if (value === -1 || value === '-1' || value === 'desc') return -1
       if (value === 1 || value === '1' || value === 'asc') return 1
-      return 1
+      return -1
     }),
 })
 
 const productionLineLookupQuerySchema = z.object({
   search: z.string().trim().optional().default(''),
 
-  departmentId: z
-    .string()
-    .trim()
+  departmentId: optionalObjectIdField('org.line.field.departmentId')
     .optional()
-    .default('')
-    .refine((value) => !value || isObjectId(value), 'org.line.field.departmentId.invalid'),
+    .default(''),
 
-  isActive: booleanLike,
+  isActive: z
+    .union([z.string(), z.boolean(), z.number()])
+    .optional()
+    .transform((value) => {
+      const result = toBooleanString(value)
+      return result || 'true'
+    }),
 
   limit: z.coerce.number().int().min(1).max(100).default(50),
 })
@@ -159,40 +166,6 @@ const updateProductionLineSchema = z
     },
   )
 
-const importProductionLineRowSchema = z.object({
-  lineId: z
-    .union([z.string(), z.null(), z.undefined()])
-    .transform((value) => s(value))
-    .refine((value) => !value || isObjectId(value), 'org.line.validation.lineIdInvalid'),
-
-  code: z
-    .string()
-    .trim()
-    .min(1, 'org.line.validation.codeRequired')
-    .max(50, 'org.line.validation.codeTooLong')
-    .transform((value) => s(value).toUpperCase()),
-
-  name: z
-    .string()
-    .trim()
-    .min(1, 'org.line.validation.nameRequired')
-    .max(120, 'org.line.validation.nameTooLong'),
-
-  departmentId: objectIdField('org.line.field.departmentId'),
-
-  positionIds: objectIdArrayField('org.line.field.positionIds'),
-
-  description: z
-    .union([z.string(), z.null(), z.undefined()])
-    .transform((value) => s(value))
-    .refine((value) => value.length <= 500, 'org.line.validation.descriptionTooLong'),
-
-  isActive: z
-    .union([z.boolean(), z.string(), z.number(), z.null(), z.undefined()])
-    .transform((value) => toBoolean(value, true))
-    .refine((value) => typeof value === 'boolean', 'org.line.validation.isActiveInvalid'),
-})
-
 function normalizeListQuery(raw = {}) {
   const parsed = listProductionLineQuerySchema.parse(raw)
 
@@ -201,7 +174,7 @@ function normalizeListQuery(raw = {}) {
     limit: parsed.limit,
     search: parsed.search,
     departmentId: parsed.departmentId,
-    isActive: toBoolean(parsed.isActive),
+    isActive: parsed.isActive,
     sortField: parsed.sortField,
     sortOrder: parsed.sortOrder,
   }
@@ -213,7 +186,7 @@ function normalizeLookupQuery(raw = {}) {
   return {
     search: parsed.search,
     departmentId: parsed.departmentId,
-    isActive: toBoolean(parsed.isActive, true),
+    isActive: parsed.isActive,
     limit: parsed.limit,
   }
 }
@@ -223,7 +196,6 @@ module.exports = {
   updateProductionLineSchema,
   listProductionLineQuerySchema,
   productionLineLookupQuerySchema,
-  importProductionLineRowSchema,
   normalizeListQuery,
   normalizeLookupQuery,
 }

@@ -45,9 +45,7 @@ const productionLineSchema = new mongoose.Schema(
       index: true,
     },
 
-    // Optional restriction.
     // Empty = all positions under selected department are allowed.
-    // Not empty = only these positions are allowed to use this line.
     positionIds: [
       {
         type: mongoose.Schema.Types.ObjectId,
@@ -83,6 +81,8 @@ const productionLineSchema = new mongoose.Schema(
   {
     timestamps: true,
     versionKey: false,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
   },
 )
 
@@ -96,6 +96,14 @@ productionLineSchema.pre('validate', function normalize(next) {
   this.name = s(this.name)
   this.description = s(this.description)
   this.positionIds = uniqueObjectIdStrings(this.positionIds)
+
+  if (!this.createdBy) {
+    this.createdBy = null
+  }
+
+  if (!this.updatedBy) {
+    this.updatedBy = null
+  }
 
   next()
 })

@@ -3,7 +3,7 @@
 const express = require('express')
 const multer = require('multer')
 
-const productionLineController = require('../controllers/productionLine.controller')
+const controller = require('../controllers/productionLine.controller')
 const requireAuth = require('../../../middlewares/requireAuth')
 const requirePermission = require('../../../middlewares/requirePermission.middleware')
 
@@ -18,53 +18,30 @@ const upload = multer({
 
 router.use(requireAuth)
 
-router.get(
-  '/lookup',
-  requirePermission('LINE_LOOKUP'),
-  productionLineController.lookup,
-)
+// Fixed routes must stay before '/:id'
+router.get('/lookup', requirePermission('LINE_LOOKUP'), controller.lookup)
 
-router.get(
-  '/export',
-  requirePermission('LINE_EXPORT'),
-  productionLineController.exportExcel,
-)
+router.get('/export', requirePermission('LINE_VIEW'), controller.exportExcel)
 
 router.get(
   '/import-sample',
-  requirePermission('LINE_IMPORT'),
-  productionLineController.downloadImportSample,
+  requirePermission('LINE_VIEW'),
+  controller.downloadImportSample,
 )
 
 router.post(
   '/import',
-  requirePermission('LINE_IMPORT'),
-  upload.single('file'),
-  productionLineController.importExcel,
-)
-
-router.get(
-  '/',
-  requirePermission('LINE_VIEW'),
-  productionLineController.list,
-)
-
-router.post(
-  '/',
   requirePermission('LINE_CREATE'),
-  productionLineController.create,
+  upload.single('file'),
+  controller.importExcel,
 )
 
-router.get(
-  '/:id',
-  requirePermission('LINE_VIEW'),
-  productionLineController.getById,
-)
+router.get('/', requirePermission('LINE_VIEW'), controller.list)
 
-router.patch(
-  '/:id',
-  requirePermission('LINE_UPDATE'),
-  productionLineController.update,
-)
+router.post('/', requirePermission('LINE_CREATE'), controller.create)
+
+router.get('/:id', requirePermission('LINE_VIEW'), controller.getById)
+
+router.patch('/:id', requirePermission('LINE_UPDATE'), controller.update)
 
 module.exports = router

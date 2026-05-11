@@ -1,16 +1,17 @@
 <!-- frontend/src/modules/org/components/LineImportDialog.vue -->
 <script setup>
-// frontend/src/modules/org/components/LineImportDialog.vue
 import { computed, ref, watch } from 'vue'
-import { useToast } from 'primevue/usetoast'
+import { useI18n } from 'vue-i18n'
 
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
+import ProgressBar from 'primevue/progressbar'
 
 import {
   downloadLineImportSample,
   importLinesExcel,
 } from '@/modules/org/line.api'
+import { getApiErrorMessage } from '@/shared/utils/apiError'
 
 const props = defineProps({
   visible: {
@@ -21,37 +22,60 @@ const props = defineProps({
 
 const emit = defineEmits(['update:visible', 'success'])
 
-const toast = useToast()
+const { t } = useI18n()
 
 const fileInputRef = ref(null)
 const selectedFile = ref(null)
 const downloading = ref(false)
 const importing = ref(false)
+const uploadProgress = ref(0)
+
+const errorTitle = ref('')
+const errorMessage = ref('')
+const successMessage = ref('')
 
 const fileName = computed(() => selectedFile.value?.name || '')
-const canImport = computed(() => !!selectedFile.value && !importing.value)
 
 watch(
   () => props.visible,
   (value) => {
-    if (!value) resetFile()
+    if (!value) {
+      resetState()
+    }
   },
 )
 
-function resetFile() {
+function resetState() {
   selectedFile.value = null
-  if (fileInputRef.value) fileInputRef.value.value = ''
+  uploadProgress.value = 0
+  errorTitle.value = ''
+  errorMessage.value = ''
+  successMessage.value = ''
+
+  if (fileInputRef.value) {
+    fileInputRef.value.value = ''
+  }
 }
 
 function closeDialog() {
+  if (importing.value) return
   emit('update:visible', false)
 }
 
+function clearMessage() {
+  errorTitle.value = ''
+  errorMessage.value = ''
+  successMessage.value = ''
+}
+
 function triggerChooseFile() {
+  clearMessage()
   fileInputRef.value?.click()
 }
 
 function onFileChange(event) {
+  clearMessage()
+
   const file = event?.target?.files?.[0] || null
 
   if (!file) {
@@ -60,50 +84,49 @@ function onFileChange(event) {
   }
 
   const lowerName = String(file.name || '').toLowerCase()
-  const isExcel = lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls')
+  const isValidFile =
+    lowerName.endsWith('.xlsx') ||
+    lowerName.endsWith('.xls') ||
+    lowerName.endsWith('.csv')
 
-  if (!isExcel) {
+  if (!isValidFile) {
     selectedFile.value = null
-    if (fileInputRef.value) fileInputRef.value.value = ''
 
-    toast.add({
-      severity: 'warn',
-      summary: 'Invalid file',
-      detail: 'Please choose an Excel file: .xlsx or .xls',
-      life: 3000,
-    })
+    if (fileInputRef.value) {
+      fileInputRef.value.value = ''
+    }
 
+    errorTitle.value = t('org.line.importInvalidFileTitle')
+    errorMessage.value = t('org.line.importInvalidFileMessage')
     return
   }
 
   selectedFile.value = file
 }
 
-function getFilenameFromDisposition(disposition, fallback) {
-  const raw = String(disposition || '')
-
-  const utfMatch = raw.match(/filename\*=UTF-8''([^;]+)/i)
-  if (utfMatch?.[1]) return decodeURIComponent(utfMatch[1])
-
-  const normalMatch = raw.match(/filename="?([^"]+)"?/i)
-  if (normalMatch?.[1]) return normalMatch[1]
-
-  return fallback
+function normalizePayload(res) {
+  return res?.data?.data || res?.data || {}
 }
 
-function downloadBlobResponse(response, fallbackName) {
-  const blob = response?.data
-  const disposition =
-    response?.headers?.['content-disposition'] ||
-    response?.headers?.['Content-Disposition']
+function normalizeImportPayload(res) {
+  const payload = normalizePayload(res)
+  return payload.item || payload
+}
 
-  const filename = getFilenameFromDisposition(disposition, fallbackName)
+function getFilenameFromHeader(res, fallback) {
+  const disposition = String(res?.headers?.['content-disposition'] || '')
+  const match = disposition.match(/filename="?([^"]+)"?/i)
 
+  return match?.[1] || fallback
+}
+
+function downloadBlob(blob, filename) {
   const url = window.URL.createObjectURL(blob)
   const link = document.createElement('a')
 
   link.href = url
   link.download = filename
+
   document.body.appendChild(link)
   link.click()
   link.remove()
@@ -111,63 +134,50 @@ function downloadBlobResponse(response, fallbackName) {
   window.URL.revokeObjectURL(url)
 }
 
-async function downloadSample() {
+async function handleDownloadSample() {
   downloading.value = true
+  clearMessage()
 
   try {
-    const response = await downloadLineImportSample()
-    downloadBlobResponse(response, 'line-import-sample.xlsx')
+    const res = await downloadLineImportSample()
+    const blob = new Blob([res.data], {
+      type:
+        res?.headers?.['content-type'] ||
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
 
-    toast.add({
-      severity: 'success',
-      summary: 'Sample downloaded',
-      detail: 'Line import sample downloaded successfully.',
-      life: 2500,
-    })
+    downloadBlob(blob, getFilenameFromHeader(res, 'line-import-sample.xlsx'))
+    successMessage.value = t('org.line.sampleDownloaded')
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Download failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to download line import sample.',
-      life: 3500,
-    })
+    errorTitle.value = t('org.line.downloadSampleFailed')
+    errorMessage.value = getApiErrorMessage(error, t('org.line.downloadSampleFailed'))
   } finally {
     downloading.value = false
   }
 }
 
-async function submitImport() {
-  if (!selectedFile.value) return
+async function handleImport() {
+  if (!selectedFile.value || importing.value) return
 
   importing.value = true
+  uploadProgress.value = 0
+  clearMessage()
 
   try {
-    const response = await importLinesExcel(selectedFile.value)
-    const payload = response?.data?.data || response?.data || {}
-
-    toast.add({
-      severity: 'success',
-      summary: 'Import completed',
-      detail: payload?.message || 'Production lines imported successfully.',
-      life: 3000,
+    const res = await importLinesExcel(selectedFile.value, {
+      onUploadProgress(event) {
+        if (!event.total) return
+        uploadProgress.value = Math.round((event.loaded * 100) / event.total)
+      },
     })
+
+    const payload = normalizeImportPayload(res)
 
     emit('success', payload)
     closeDialog()
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Import failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.response?.data?.error ||
-        error?.message ||
-        'Failed to import production lines.',
-      life: 4500,
-    })
+    errorTitle.value = t('org.line.importFailed')
+    errorMessage.value = getApiErrorMessage(error, t('org.line.importFailed'))
   } finally {
     importing.value = false
   }
@@ -178,82 +188,130 @@ async function submitImport() {
   <Dialog
     :visible="visible"
     modal
-    header="Import Production Lines"
-    :style="{ width: '38rem', maxWidth: '96vw' }"
+    :header="t('org.line.importTitle')"
+    :style="{ width: '36rem', maxWidth: '96vw' }"
     @update:visible="emit('update:visible', $event)"
   >
     <div class="space-y-4">
-      <div class="rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface-muted)] p-4">
-        <div class="mb-2 text-sm font-semibold text-[color:var(--ot-text)]">
-          Excel format
-        </div>
+      <div
+        v-if="errorMessage"
+        class="ot-inline-error"
+      >
+        <div class="flex items-start gap-3">
+          <i class="pi pi-exclamation-triangle mt-0.5" />
 
-        <ul class="list-disc space-y-1 pl-5 text-sm text-[color:var(--ot-text-muted)]">
-          <li>Download the sample file first.</li>
-          <li>Use department code to connect each line to a department.</li>
-          <li>Use comma-separated position codes if the line allows specific positions.</li>
-          <li>Leave position codes empty if the line allows all positions in the department.</li>
-        </ul>
+          <div class="min-w-0">
+            <div class="font-bold">
+              {{ errorTitle || t('org.line.importFailed') }}
+            </div>
+
+            <div class="mt-1 whitespace-pre-line leading-6">
+              {{ errorMessage }}
+            </div>
+          </div>
+        </div>
       </div>
 
-      <div class="flex flex-col gap-3 rounded-xl border border-dashed border-[color:var(--ot-border)] p-4">
+      <div
+        v-if="successMessage"
+        class="ot-inline-info"
+      >
+        <div class="flex items-start gap-3">
+          <i class="pi pi-check-circle mt-0.5" />
+
+          <div class="min-w-0">
+            {{ successMessage }}
+          </div>
+        </div>
+      </div>
+
+      <div class="ot-panel">
+        <div class="text-sm font-bold text-[color:var(--ot-text)]">
+          {{ t('org.line.importGuideTitle') }}
+        </div>
+
+        <div class="mt-2 space-y-1 text-sm leading-6 text-[color:var(--ot-text-muted)]">
+          <div>1. {{ t('org.line.importGuideStep1') }}</div>
+          <div>2. {{ t('org.line.importGuideStep2') }}</div>
+          <div>3. {{ t('org.line.importGuideStep3') }}</div>
+          <div>4. {{ t('org.line.importGuideStep4') }}</div>
+        </div>
+
+        <div class="mt-4">
+          <Button
+            :label="t('org.line.downloadSample')"
+            icon="pi pi-download"
+            outlined
+            severity="secondary"
+            size="small"
+            :loading="downloading"
+            @click="handleDownloadSample"
+          />
+        </div>
+      </div>
+
+      <div class="rounded-2xl border border-dashed border-[color:var(--ot-border)] px-4 py-4">
         <input
           ref="fileInputRef"
           type="file"
-          accept=".xlsx,.xls"
+          accept=".xlsx,.xls,.csv"
           class="hidden"
           @change="onFileChange"
         >
 
-        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div class="min-w-0">
-            <div class="text-sm font-medium text-[color:var(--ot-text)]">
-              Selected file
+            <div class="text-sm font-bold text-[color:var(--ot-text)]">
+              {{ t('org.line.excelFile') }}
             </div>
+
             <div class="mt-1 truncate text-sm text-[color:var(--ot-text-muted)]">
-              {{ fileName || 'No file selected' }}
+              {{ fileName || t('org.line.noFileSelected') }}
             </div>
           </div>
 
           <Button
-            label="Choose File"
+            :label="t('org.line.chooseFile')"
             icon="pi pi-upload"
             severity="secondary"
             outlined
             size="small"
+            :disabled="importing"
             @click="triggerChooseFile"
           />
         </div>
       </div>
 
-      <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <Button
-          label="Download Sample"
-          icon="pi pi-download"
-          severity="secondary"
-          outlined
-          size="small"
-          :loading="downloading"
-          @click="downloadSample"
-        />
+      <ProgressBar
+        v-if="importing"
+        :value="uploadProgress"
+        style="height: 6px"
+      />
 
-        <div class="flex justify-end gap-2">
-          <Button
-            label="Cancel"
-            text
-            size="small"
-            @click="closeDialog"
-          />
-          <Button
-            label="Import Lines"
-            icon="pi pi-file-import"
-            size="small"
-            :loading="importing"
-            :disabled="!canImport"
-            @click="submitImport"
-          />
-        </div>
+      <div class="ot-inline-info">
+        {{ t('org.line.importNote') }}
       </div>
     </div>
+
+    <template #footer>
+      <div class="ot-form-footer">
+        <Button
+          :label="t('common.cancel')"
+          text
+          size="small"
+          :disabled="importing"
+          @click="closeDialog"
+        />
+
+        <Button
+          :label="t('common.import')"
+          icon="pi pi-check"
+          size="small"
+          :disabled="!selectedFile || importing"
+          :loading="importing"
+          @click="handleImport"
+        />
+      </div>
+    </template>
   </Dialog>
 </template>

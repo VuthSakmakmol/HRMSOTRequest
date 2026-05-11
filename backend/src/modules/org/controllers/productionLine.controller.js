@@ -119,7 +119,10 @@ async function downloadImportSample(req, res, next) {
 
 async function importExcel(req, res, next) {
   try {
-    const item = await productionLineService.importExcel(req.file, req.user)
+    const item = await productionLineService.importExcel(
+      req.file?.buffer,
+      req.user,
+    )
 
     return successResponse(
       res,
