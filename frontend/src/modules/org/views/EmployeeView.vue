@@ -149,7 +149,7 @@ const managerRuleHint = computed(() => {
     return t('org.employee.manualManagerHelp')
   }
 
-  if (position.managerScope === 'GLOBAL') {
+  if ((position.hierarchyScope || position.managerScope) === 'GLOBAL') {
     return t('org.employee.globalManagerHelp', {
       position: position.reportsToPositionName || t('org.position.reportsToPosition'),
     })
@@ -231,7 +231,8 @@ function mapPositionOptions(items = []) {
       reportsToPositionId: item.reportsToPositionId || null,
       reportsToPositionCode: item.reportsToPositionCode || '',
       reportsToPositionName: item.reportsToPositionName || '',
-      managerScope: item.managerScope || 'SAME_LINE',
+      hierarchyScope: item.hierarchyScope || item.managerScope || 'SAME_LINE',
+      managerScope: item.hierarchyScope || item.managerScope || 'SAME_LINE',
     }))
     .filter((item) => item.value)
 }

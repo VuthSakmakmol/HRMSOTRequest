@@ -26,6 +26,10 @@ function sameId(a, b) {
   return aa !== '' && aa === bb
 }
 
+function getPositionHierarchyScope(position) {
+  return upper(position?.hierarchyScope || position?.managerScope || 'SAME_LINE')
+}
+
 function uniqueIds(values = []) {
   return [
     ...new Set(
@@ -182,7 +186,7 @@ function buildDynamicSameLineChildrenMap(employees = [], positionById = new Map(
   for (const employee of employees) {
     const employeePosition = positionById.get(id(employee.positionId))
     const parentPositionId = id(employeePosition?.reportsToPositionId)
-    const managerScope = upper(employeePosition?.managerScope || 'SAME_LINE')
+    const managerScope = getPositionHierarchyScope(employeePosition)
     const departmentId = id(employee.departmentId)
     const lineId = id(employee.lineId)
 
@@ -207,7 +211,7 @@ function isSameLinePositionChild(manager, child, childPosition) {
 
   const parentPositionId = id(childPosition.reportsToPositionId)
   const managerPositionId = id(manager.positionId)
-  const managerScope = upper(childPosition.managerScope || 'SAME_LINE')
+  const managerScope = getPositionHierarchyScope(childPosition)
 
   return (
     managerScope === 'SAME_LINE' &&
@@ -256,6 +260,7 @@ async function loadActiveEmployeesAndPositions() {
         name: 1,
         departmentId: 1,
         reportsToPositionId: 1,
+        hierarchyScope: 1,
         managerScope: 1,
         isActive: 1,
       },

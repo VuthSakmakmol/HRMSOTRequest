@@ -78,6 +78,10 @@ function normalizeOTWorkflowRole(value) {
   return ['NONE', 'APPROVER', 'ACKNOWLEDGE'].includes(role) ? role : 'NONE'
 }
 
+function getPositionHierarchyScope(position) {
+  return upper(position?.hierarchyScope || position?.managerScope || 'SAME_LINE')
+}
+
 function otWorkflowRoleKey(value) {
   const role = normalizeOTWorkflowRole(value)
 
@@ -372,7 +376,8 @@ function sanitize(doc, accountDoc = null) {
     reportsToPositionId: doc.positionId?.reportsToPositionId
       ? id(doc.positionId.reportsToPositionId)
       : null,
-    managerScope: doc.positionId?.managerScope || '',
+    hierarchyScope: getPositionHierarchyScope(doc.positionId),
+    managerScope: getPositionHierarchyScope(doc.positionId),
 
     ...buildLineSummary(doc.lineId),
     ...buildShiftSummary(doc.shiftId),
@@ -569,7 +574,7 @@ async function ensurePositionExists(positionId, departmentId = null) {
   await ensureObjectId(positionId, 'positionId')
 
   const position = await Position.findById(positionId)
-    .select('_id code name departmentId reportsToPositionId managerScope isActive')
+    .select('_id code name departmentId reportsToPositionId reportsToPositionCode reportsToPositionName hierarchyScope managerScope isActive')
     .lean()
 
   if (!position) {
@@ -778,7 +783,7 @@ async function findAutoManagerIdsByPositionAndLine({
     return []
   }
 
-  const managerScope = upper(position.managerScope || 'SAME_LINE')
+  const managerScope = getPositionHierarchyScope(position)
 
   const filter = {
     positionId: position.reportsToPositionId,
@@ -966,7 +971,7 @@ async function lookup(query = {}, currentUser = null) {
   const [items, total] = await Promise.all([
     Employee.find(filter)
       .populate('departmentId', 'name code')
-      .populate('positionId', 'name code reportsToPositionId managerScope')
+      .populate('positionId', 'name code reportsToPositionId reportsToPositionCode reportsToPositionName hierarchyScope managerScope')
       .populate('lineId', 'code name')
       .populate('shiftId', 'code name type startTime breakStartTime breakEndTime endTime crossMidnight')
       .populate('reportsToEmployeeId', 'employeeCode displayName')
@@ -1006,7 +1011,7 @@ async function list(query, currentUser = null) {
   const [items, total, accountByEmployeeId] = await Promise.all([
     Employee.find(filter)
       .populate('departmentId', 'name code')
-      .populate('positionId', 'name code reportsToPositionId managerScope')
+      .populate('positionId', 'name code reportsToPositionId reportsToPositionCode reportsToPositionName hierarchyScope managerScope')
       .populate('lineId', 'code name')
       .populate('shiftId', 'code name type startTime breakStartTime breakEndTime endTime crossMidnight')
       .populate('reportsToEmployeeId', 'employeeCode displayName')
@@ -1072,7 +1077,7 @@ async function exportExcel(query = {}, currentUser = null) {
   const [items, accountByEmployeeId] = await Promise.all([
     Employee.find(filter)
       .populate('departmentId', 'name code')
-      .populate('positionId', 'name code reportsToPositionId managerScope')
+      .populate('positionId', 'name code reportsToPositionId reportsToPositionCode reportsToPositionName hierarchyScope managerScope')
       .populate('lineId', 'code name')
       .populate('shiftId', 'code name type startTime breakStartTime breakEndTime endTime crossMidnight')
       .populate('reportsToEmployeeId', 'employeeCode displayName')
@@ -1379,7 +1384,7 @@ async function importExcel(file, currentUser = null) {
 
     Position.find(
       { code: { $in: positionCodes } },
-      '_id code name departmentId reportsToPositionId managerScope isActive',
+      '_id code name departmentId reportsToPositionId reportsToPositionCode reportsToPositionName hierarchyScope managerScope isActive',
     ).lean(),
 
     lineCodes.length
@@ -1649,7 +1654,7 @@ async function getById(employeeId, currentUser = null) {
   const [doc, accountDoc] = await Promise.all([
     Employee.findById(employeeId)
       .populate('departmentId', 'name code')
-      .populate('positionId', 'name code reportsToPositionId managerScope')
+      .populate('positionId', 'name code reportsToPositionId reportsToPositionCode reportsToPositionName hierarchyScope managerScope')
       .populate('lineId', 'code name')
       .populate('shiftId', 'code name type startTime breakStartTime breakEndTime endTime crossMidnight')
       .populate('reportsToEmployeeId', 'employeeCode displayName')
@@ -1678,7 +1683,7 @@ async function getOrgChart(employeeId, currentUser = null) {
 
   const focusDoc = await Employee.findById(employeeId)
     .populate('departmentId', 'name code')
-    .populate('positionId', 'name code reportsToPositionId managerScope')
+    .populate('positionId', 'name code reportsToPositionId reportsToPositionCode reportsToPositionName hierarchyScope managerScope')
     .populate('lineId', 'code name')
     .populate('shiftId', 'code name type startTime endTime breakStartTime breakEndTime crossMidnight')
     .populate('reportsToEmployeeId', 'employeeCode displayName')
@@ -1705,7 +1710,7 @@ async function getOrgChart(employeeId, currentUser = null) {
 
     const managerDoc = await Employee.findById(currentManagerId)
       .populate('departmentId', 'name code')
-      .populate('positionId', 'name code reportsToPositionId managerScope')
+      .populate('positionId', 'name code reportsToPositionId reportsToPositionCode reportsToPositionName hierarchyScope managerScope')
       .populate('lineId', 'code name')
       .populate('shiftId', 'code name type startTime endTime breakStartTime breakEndTime crossMidnight')
       .populate('reportsToEmployeeId', 'employeeCode displayName')
@@ -1725,7 +1730,7 @@ async function getOrgChart(employeeId, currentUser = null) {
     reportsToEmployeeId: focusDoc._id,
   })
     .populate('departmentId', 'name code')
-    .populate('positionId', 'name code reportsToPositionId managerScope')
+    .populate('positionId', 'name code reportsToPositionId reportsToPositionCode reportsToPositionName hierarchyScope managerScope')
     .populate('lineId', 'code name')
     .populate('shiftId', 'code name type startTime endTime breakStartTime breakEndTime crossMidnight')
     .populate('reportsToEmployeeId', 'employeeCode displayName')
@@ -2067,6 +2072,7 @@ async function syncSameLineManagersForAllEmployees() {
         _id: 1,
         departmentId: 1,
         reportsToPositionId: 1,
+        hierarchyScope: 1,
         managerScope: 1,
       },
     ).lean(),
@@ -2125,7 +2131,7 @@ async function syncSameLineManagersForAllEmployees() {
     if (!position?.reportsToPositionId) continue
 
     const parentPositionId = id(position.reportsToPositionId)
-    const managerScope = upper(position.managerScope || 'SAME_LINE')
+    const managerScope = getPositionHierarchyScope(position)
 
     let managerCandidates = []
 
