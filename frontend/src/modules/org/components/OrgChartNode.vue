@@ -1,11 +1,11 @@
 <!-- frontend/src/modules/org/components/OrgChartNode.vue -->
 <script setup>
-// frontend/src/modules/org/components/OrgChartNode.vue
+import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
+
+import Tag from 'primevue/tag'
 
 defineOptions({ name: 'OrgChartNode' })
-
-import { computed, ref, watch } from 'vue'
-import Tag from 'primevue/tag'
 
 const props = defineProps({
   node: {
@@ -30,12 +30,22 @@ const props = defineProps({
   },
 })
 
-function s(v) {
-  return String(v ?? '').trim()
+const { t } = useI18n()
+
+function s(value) {
+  return String(value ?? '').trim()
+}
+
+function buildLabel(...parts) {
+  return parts
+    .map((part) => s(part))
+    .filter(Boolean)
+    .join(' - ')
 }
 
 function avatarText(name) {
   const value = s(name)
+
   if (!value) return 'NA'
 
   return value
@@ -48,14 +58,14 @@ function avatarText(name) {
 }
 
 function managerName(manager) {
-  return [s(manager?.employeeNo), s(manager?.displayName)]
-    .filter(Boolean)
-    .join(' - ')
+  return buildLabel(manager?.employeeCode, manager?.displayName)
 }
 
 const nodeKey = computed(() => s(props.node?.key || props.node?.data?.id))
 const nodeData = computed(() => props.node?.data || {})
-const children = computed(() => (Array.isArray(props.node?.children) ? props.node.children : []))
+const children = computed(() =>
+  Array.isArray(props.node?.children) ? props.node.children : [],
+)
 const hasChildren = computed(() => children.value.length > 0)
 
 const isMatched = computed(() => {
@@ -65,6 +75,7 @@ const isMatched = computed(() => {
 const initialExpanded = computed(() => {
   if (props.expandedIds.includes(nodeKey.value)) return true
   if (props.node?.expanded === true) return true
+
   return props.depth < 1
 })
 
@@ -74,9 +85,19 @@ watch(initialExpanded, (value) => {
   isOpen.value = value
 })
 
-const lineManagers = computed(() => {
-  return Array.isArray(nodeData.value.lineManagers) ? nodeData.value.lineManagers : []
-})
+const employeeCode = computed(() =>
+  s(nodeData.value.employeeCode || nodeData.value.employeeNo),
+)
+
+const displayName = computed(() => s(nodeData.value.name || nodeData.value.displayName))
+const positionTitle = computed(() => s(nodeData.value.title || nodeData.value.positionName))
+const departmentName = computed(() =>
+  s(nodeData.value.department || nodeData.value.departmentName),
+)
+
+const lineManagers = computed(() =>
+  Array.isArray(nodeData.value.lineManagers) ? nodeData.value.lineManagers : [],
+)
 
 const lineManagerText = computed(() => {
   return lineManagers.value
@@ -86,26 +107,30 @@ const lineManagerText = computed(() => {
 })
 
 const lineText = computed(() => {
-  const code = s(nodeData.value.lineCode)
-  const name = s(nodeData.value.lineName)
-  return [code, name].filter(Boolean).join(' • ')
+  return buildLabel(nodeData.value.lineCode, nodeData.value.lineName)
 })
 
 const shiftText = computed(() => {
   const code = s(nodeData.value.shiftCode)
   const name = s(nodeData.value.shiftName)
   const type = s(nodeData.value.shiftType)
+  const time =
+    nodeData.value.shiftStartTime && nodeData.value.shiftEndTime
+      ? `${nodeData.value.shiftStartTime}-${nodeData.value.shiftEndTime}`
+      : ''
 
-  const parts = [code, name, type].filter(Boolean)
-  return parts.join(' • ')
+  return [buildLabel(code, name), type, time].filter(Boolean).join(' · ')
 })
 
 const lineManagerCount = computed(() => lineManagers.value.length)
 
 const lineManagerTagLabel = computed(() => {
   if (!lineManagerCount.value) return ''
-  if (lineManagerCount.value === 1) return '1 Line Sup'
-  return `${lineManagerCount.value} Line Sup`
+  if (lineManagerCount.value === 1) return t('org.orgChart.oneLineSupervisor')
+
+  return t('org.orgChart.lineSupervisorCount', {
+    count: lineManagerCount.value,
+  })
 })
 
 function toggleOpen() {
@@ -132,31 +157,31 @@ function toggleOpen() {
               compact ? 'h-10 w-10 text-sm' : 'h-14 w-14 text-base',
             ]"
           >
-            {{ avatarText(nodeData.name) }}
+            {{ avatarText(displayName) }}
           </div>
 
           <div class="min-w-0 flex-1">
             <div
               class="truncate font-bold text-[color:var(--ot-text)]"
               :class="compact ? 'text-base' : 'text-xl'"
-              :title="nodeData.name || 'Unknown'"
+              :title="displayName || t('common.unknown')"
             >
-              {{ nodeData.name || 'Unknown' }}
+              {{ displayName || t('common.unknown') }}
             </div>
 
             <div
               class="truncate text-[color:var(--ot-text-soft)]"
               :class="compact ? 'text-sm' : 'text-lg'"
-              :title="nodeData.title || 'No position'"
+              :title="positionTitle || t('org.orgChart.noPosition')"
             >
-              {{ nodeData.title || 'No position' }}
+              {{ positionTitle || t('org.orgChart.noPosition') }}
             </div>
 
             <div
               class="mt-1 truncate text-xs text-[color:var(--ot-text-muted)]"
-              :title="nodeData.department || 'No department'"
+              :title="departmentName || t('org.orgChart.noDepartment')"
             >
-              {{ nodeData.department || 'No department' }}
+              {{ departmentName || t('org.orgChart.noDepartment') }}
             </div>
 
             <div
@@ -183,20 +208,18 @@ function toggleOpen() {
               :title="lineManagerText"
             >
               <i class="pi pi-users" />
-              <span>
-                {{ lineManagerText }}
-              </span>
+              <span>{{ lineManagerText }}</span>
             </div>
 
             <div class="mt-2 flex flex-wrap items-center gap-2">
               <Tag
-                :value="nodeData.employeeNo || 'No ID'"
+                :value="employeeCode || t('org.orgChart.noEmployeeCode')"
                 severity="contrast"
                 class="org-node-tag"
               />
 
               <Tag
-                :value="nodeData.isActive ? 'Active' : 'Inactive'"
+                :value="nodeData.isActive ? t('common.active') : t('common.inactive')"
                 :severity="nodeData.isActive ? 'success' : 'secondary'"
                 class="org-node-tag"
               />
@@ -210,14 +233,14 @@ function toggleOpen() {
 
               <Tag
                 v-if="lineManagerCount > 1"
-                value="Multi Sup"
+                :value="t('org.orgChart.multiSupervisor')"
                 severity="warning"
                 class="org-node-tag"
               />
 
               <Tag
                 v-if="isMatched"
-                value="Matched"
+                :value="t('org.orgChart.matched')"
                 severity="warning"
                 class="org-node-tag"
               />
@@ -233,6 +256,7 @@ function toggleOpen() {
         <button
           type="button"
           class="org-toggle-btn"
+          :aria-label="isOpen ? t('org.orgChart.collapseNode') : t('org.orgChart.expandNode')"
           @click="toggleOpen"
         >
           <i :class="isOpen ? 'pi pi-chevron-up' : 'pi pi-chevron-down'" />

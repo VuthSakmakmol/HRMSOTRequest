@@ -87,6 +87,13 @@ const form = reactive({
   phone: '',
   email: '',
   joinDate: '',
+  createAccount: false,
+  accountLoginId: '',
+  accountPassword: '',
+  accountMustChangePassword: true,
+  accountIsActive: true,
+  hasAccount: false,
+  currentAccountLoginId: '',
   isActive: true,
 })
 
@@ -124,6 +131,41 @@ const otWorkflowRoleOptions = computed(() => [
   { label: t('org.employee.otWorkflowRole.approver'), value: 'APPROVER' },
   { label: t('org.employee.otWorkflowRole.acknowledge'), value: 'ACKNOWLEDGE' },
 ])
+
+
+const generatedAccountLoginId = computed(() =>
+  String(form.accountLoginId || form.employeeCode || '').trim().toLowerCase(),
+)
+
+const generatedAccountPassword = computed(() => {
+  const explicitPassword = String(form.accountPassword || '').trim()
+
+  if (explicitPassword) return explicitPassword
+
+  const employeeCode = String(form.employeeCode || '').trim().toUpperCase()
+  const phone = String(form.phone || '').trim().replace(/\s+/g, '')
+
+  if (!employeeCode || !phone) return ''
+
+  return `${employeeCode}${phone}`
+})
+
+const accountPreviewText = computed(() => {
+  if (form.hasAccount) {
+    return t('org.employee.accountAlreadyExistsPreview', {
+      loginId: form.currentAccountLoginId || '-',
+    })
+  }
+
+  if (!form.createAccount) return t('org.employee.accountDefaultNoAccount')
+
+  return t('org.employee.accountPreview', {
+    loginId: generatedAccountLoginId.value || '-',
+    password: generatedAccountPassword.value || '-',
+  })
+})
+
+const showCreateAccountFields = computed(() => !form.hasAccount && form.createAccount)
 
 const isEditMode = computed(() => !!editingEmployeeId.value)
 const totalEmployees = computed(() => Number(totalRecords.value || 0))
@@ -169,14 +211,27 @@ const saveLabel = computed(() =>
 )
 
 const isSaveDisabled = computed(() => {
-  return (
+  if (
     saving.value ||
     !String(form.employeeCode || '').trim() ||
     !String(form.displayName || '').trim() ||
     !String(form.departmentId || '').trim() ||
     !String(form.positionId || '').trim() ||
     !String(form.shiftId || '').trim()
-  )
+  ) {
+    return true
+  }
+
+  if (!form.hasAccount && form.createAccount) {
+    return (
+      !generatedAccountLoginId.value ||
+      !String(form.phone || '').trim() ||
+      !generatedAccountPassword.value ||
+      generatedAccountPassword.value.length < 6
+    )
+  }
+
+  return false
 })
 
 let searchTimer = null
@@ -605,6 +660,13 @@ function resetForm() {
   form.phone = ''
   form.email = ''
   form.joinDate = ''
+  form.createAccount = false
+  form.accountLoginId = ''
+  form.accountPassword = ''
+  form.accountMustChangePassword = true
+  form.accountIsActive = true
+  form.hasAccount = false
+  form.currentAccountLoginId = ''
   form.isActive = true
 }
 
@@ -644,6 +706,13 @@ async function openEditDialog(row) {
   form.phone = row?.phone || ''
   form.email = row?.email || ''
   form.joinDate = row?.joinDate ? toApiDate(row.joinDate, '') : ''
+  form.createAccount = false
+  form.accountLoginId = ''
+  form.accountPassword = ''
+  form.accountMustChangePassword = true
+  form.accountIsActive = true
+  form.hasAccount = !!row?.hasAccount
+  form.currentAccountLoginId = row?.accountLoginId || ''
   form.isActive = row?.isActive !== false
 
   employeeDialogVisible.value = true
@@ -687,12 +756,38 @@ async function submitEmployee() {
       isActive: !!form.isActive,
     }
 
+    const willCreateAccount = !!form.createAccount && !form.hasAccount
+
+    if (willCreateAccount) {
+      payload.createAccount = {
+        enabled: true,
+        loginId: String(form.accountLoginId || '').trim().toLowerCase(),
+        password: String(form.accountPassword || '').trim(),
+        mustChangePassword: !!form.accountMustChangePassword,
+        isActive: !!form.accountIsActive,
+      }
+    }
+
     if (editingEmployeeId.value) {
       await updateEmployee(editingEmployeeId.value, payload)
-      showToast('success', t('common.updated'), t('org.employee.updatedSuccess'), 2500)
+      showToast(
+        'success',
+        t('common.updated'),
+        willCreateAccount
+          ? t('org.employee.updatedWithAccountSuccess')
+          : t('org.employee.updatedSuccess'),
+        3000,
+      )
     } else {
       await createEmployee(payload)
-      showToast('success', t('common.created'), t('org.employee.createdSuccess'), 2500)
+      showToast(
+        'success',
+        t('common.created'),
+        willCreateAccount
+          ? t('org.employee.createdWithAccountSuccess')
+          : t('org.employee.createdSuccess'),
+        3000,
+      )
     }
 
     employeeDialogVisible.value = false
@@ -1524,6 +1619,128 @@ onBeforeUnmount(() => {
 
         <div class="ot-inline-info">
           {{ t('org.employee.accountInfo') }}
+        </div>
+
+        <div class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface-2)] p-4">
+          <div
+            v-if="form.hasAccount"
+            class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+          >
+            <div>
+              <div class="text-sm font-semibold text-[color:var(--ot-text)]">
+                {{ t('org.employee.employeeHasAccount') }}
+              </div>
+
+              <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
+                {{ t('org.employee.employeeHasAccountHelp', { loginId: form.currentAccountLoginId || '-' }) }}
+              </div>
+            </div>
+
+            <Tag
+              :value="form.currentAccountLoginId || t('org.employee.hasAccount')"
+              severity="success"
+            />
+          </div>
+
+          <template v-else>
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div class="text-sm font-semibold text-[color:var(--ot-text)]">
+                  {{ t('org.employee.createLoginAccount') }}
+                </div>
+
+                <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
+                  {{ t('org.employee.createLoginAccountHelp') }}
+                </div>
+              </div>
+
+              <InputSwitch v-model="form.createAccount" />
+            </div>
+
+            <div
+              v-if="showCreateAccountFields"
+              class="mt-4 space-y-4"
+            >
+              <div class="ot-form-grid">
+                <div class="ot-field">
+                  <label class="ot-field-label">
+                    {{ t('auth.loginId') }}
+                  </label>
+
+                  <InputText
+                    v-model="form.accountLoginId"
+                    class="w-full"
+                    :placeholder="t('org.employee.accountLoginIdPlaceholder')"
+                  />
+
+                  <p class="ot-field-help">
+                    {{ t('org.employee.accountLoginIdHelp', { loginId: generatedAccountLoginId || '-' }) }}
+                  </p>
+                </div>
+
+                <div class="ot-field">
+                  <label class="ot-field-label">
+                    {{ t('org.employee.defaultPassword') }}
+                  </label>
+
+                  <InputText
+                    v-model="form.accountPassword"
+                    class="w-full"
+                    :placeholder="t('org.employee.defaultPasswordPlaceholder')"
+                  />
+
+                  <p class="ot-field-help">
+                    {{ t('org.employee.defaultPasswordHelp', { password: generatedAccountPassword || '-' }) }}
+                  </p>
+                </div>
+              </div>
+
+              <div class="ot-inline-error" v-if="!String(form.phone || '').trim()">
+                {{ t('org.employee.phoneRequiredForAccount') }}
+              </div>
+
+              <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-4 py-3">
+                  <div>
+                    <div class="text-sm font-semibold text-[color:var(--ot-text)]">
+                      {{ t('auth.account.forcePasswordChange') }}
+                    </div>
+
+                    <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
+                      {{ t('org.employee.mustChangePasswordHelp') }}
+                    </div>
+                  </div>
+
+                  <InputSwitch v-model="form.accountMustChangePassword" />
+                </div>
+
+                <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-4 py-3">
+                  <div>
+                    <div class="text-sm font-semibold text-[color:var(--ot-text)]">
+                      {{ t('org.employee.accountActive') }}
+                    </div>
+
+                    <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
+                      {{ t('org.employee.accountActiveHelp') }}
+                    </div>
+                  </div>
+
+                  <InputSwitch v-model="form.accountIsActive" />
+                </div>
+              </div>
+
+              <div class="ot-inline-info">
+                {{ accountPreviewText }}
+              </div>
+            </div>
+
+            <div
+              v-else
+              class="ot-inline-info mt-4"
+            >
+              {{ accountPreviewText }}
+            </div>
+          </template>
         </div>
 
         <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] px-4 py-3">

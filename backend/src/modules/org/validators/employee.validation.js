@@ -110,6 +110,37 @@ const otWorkflowRoleField = z
     'org.employee.validation.otWorkflowRoleInvalid',
   )
 
+
+const createAccountOptionSchema = z
+  .object({
+    enabled: z.boolean().optional().default(false),
+
+    loginId: z
+      .union([z.string(), z.null(), z.undefined()])
+      .transform((value) => s(value).toLowerCase())
+      .refine(
+        (value) => value.length <= 100,
+        'auth.account.validation.loginIdTooLong',
+      ),
+
+    password: z
+      .union([z.string(), z.null(), z.undefined()])
+      .transform((value) => s(value))
+      .refine(
+        (value) => !value || value.length >= 6,
+        'auth.account.validation.passwordMinLength',
+      )
+      .refine(
+        (value) => value.length <= 100,
+        'auth.account.validation.passwordMaxLength',
+      ),
+
+    mustChangePassword: z.boolean().optional().default(true),
+    isActive: z.boolean().optional().default(true),
+  })
+  .optional()
+  .default({ enabled: false })
+
 const listEmployeeQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(10),
@@ -188,6 +219,8 @@ const createEmployeeSchema = z.object({
   email: emailField,
   joinDate: joinDateField,
 
+  createAccount: createAccountOptionSchema,
+
   isActive: z.boolean().optional().default(true),
 })
 
@@ -215,6 +248,11 @@ const updateEmployeeSchema = z
     joinDate: joinDateField.optional(),
 
     isActive: z.boolean().optional(),
+
+    // Used only when editing an employee that does not yet have an account.
+    // Backend remains source of truth: if enabled=true, service validates phone, login ID,
+    // password rule, duplicate account, and duplicate login ID.
+    createAccount: createAccountOptionSchema.optional(),
   })
   .refine(
     (value) =>
@@ -229,7 +267,8 @@ const updateEmployeeSchema = z
       value.phone !== undefined ||
       value.email !== undefined ||
       value.joinDate !== undefined ||
-      value.isActive !== undefined,
+      value.isActive !== undefined ||
+      value.createAccount !== undefined,
     {
       message: 'org.employee.validation.updatePayloadRequired',
     },

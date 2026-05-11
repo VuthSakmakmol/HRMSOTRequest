@@ -348,7 +348,10 @@ function getLineManagerIdsFromDoc(doc) {
 }
 
 function employeeDisplayLabel(doc) {
-  return [doc?.employeeCode, doc?.displayName].filter(Boolean).join(' - ') || s(doc?.displayName)
+  return (
+    [doc?.employeeCode, doc?.displayName].filter(Boolean).join(' - ') ||
+    s(doc?.displayName)
+  )
 }
 
 function sanitize(doc, accountDoc = null) {
@@ -356,6 +359,7 @@ function sanitize(doc, accountDoc = null) {
 
   const lineManagers = buildLineManagersSummary(doc.lineManagerIds)
   const workflowRole = normalizeOTWorkflowRole(doc.otWorkflowRole)
+  const hierarchyScope = getPositionHierarchyScope(doc.positionId)
 
   return {
     id: id(doc._id),
@@ -376,8 +380,10 @@ function sanitize(doc, accountDoc = null) {
     reportsToPositionId: doc.positionId?.reportsToPositionId
       ? id(doc.positionId.reportsToPositionId)
       : null,
-    hierarchyScope: getPositionHierarchyScope(doc.positionId),
-    managerScope: getPositionHierarchyScope(doc.positionId),
+    reportsToPositionCode: doc.positionId?.reportsToPositionCode || '',
+    reportsToPositionName: doc.positionId?.reportsToPositionName || '',
+    hierarchyScope,
+    managerScope: hierarchyScope,
 
     ...buildLineSummary(doc.lineId),
     ...buildShiftSummary(doc.shiftId),
@@ -411,7 +417,7 @@ function sanitize(doc, accountDoc = null) {
 }
 
 function sanitizeOrgNode(doc) {
-  const item = sanitize(doc)
+  const item = doc?.employeeId && doc?.employeeCode ? doc : sanitize(doc)
 
   if (!item) return null
 
@@ -436,6 +442,7 @@ function sanitizeOrgNode(doc) {
     shiftId: item.shiftId,
     shiftCode: item.shiftCode,
     shiftName: item.shiftName,
+    shiftType: item.shiftType,
     shiftStartTime: item.shiftStartTime,
     shiftEndTime: item.shiftEndTime,
 
@@ -445,6 +452,7 @@ function sanitizeOrgNode(doc) {
 
     lineManagerIds: item.lineManagerIds,
     lineManagers: item.lineManagers,
+    lineManagerNames: item.lineManagerNames,
 
     otWorkflowRole: item.otWorkflowRole,
     otWorkflowRoleKey: item.otWorkflowRoleKey,
@@ -535,6 +543,150 @@ async function loadAccountMapForEmployees() {
   return accountByEmployeeId
 }
 
+function normalizeAccountLoginId(employeeCode, loginId = '') {
+  const rawLoginId = s(loginId) || s(employeeCode)
+
+  return rawLoginId.toLowerCase()
+}
+
+function normalizePhoneForPassword(phone = '') {
+  return s(phone).replace(/\s+/g, '')
+}
+
+function buildDefaultAccountPassword(employeeCode = '', phone = '') {
+  return `${upper(employeeCode)}${normalizePhoneForPassword(phone)}`
+}
+
+async function ensureAccountLoginIdAvailable(loginId) {
+  const normalizedLoginId = s(loginId).toLowerCase()
+
+  if (!normalizedLoginId) {
+    throw appError({
+      statusCode: 400,
+      code: 'ACCOUNT_LOGIN_ID_REQUIRED',
+      messageKey: 'auth.account.validation.loginIdRequired',
+      message: 'Login ID is required',
+      field: 'createAccount.loginId',
+    })
+  }
+
+  const exists = await Account.exists({ loginId: normalizedLoginId })
+
+  if (exists) {
+    throw appError({
+      statusCode: 409,
+      code: 'ACCOUNT_LOGIN_ID_EXISTS',
+      messageKey: 'auth.account.error.loginIdExists',
+      message: 'Login ID already exists',
+      field: 'createAccount.loginId',
+      params: {
+        loginId: normalizedLoginId,
+      },
+    })
+  }
+}
+
+async function ensureEmployeeHasNoAccount(employeeId) {
+  const exists = await Account.exists({ employeeId })
+
+  if (exists) {
+    throw appError({
+      statusCode: 409,
+      code: 'EMPLOYEE_ACCOUNT_EXISTS',
+      messageKey: 'org.employee.error.accountExists',
+      message: 'This employee already has an account',
+      field: 'createAccount.enabled',
+    })
+  }
+}
+
+function normalizeCreateAccountPayload(payload = {}, employeePayload = {}) {
+  const enabled = payload?.enabled === true
+
+  if (!enabled) {
+    return {
+      enabled: false,
+      loginId: '',
+      password: '',
+      mustChangePassword: true,
+      isActive: true,
+    }
+  }
+
+  const loginId = normalizeAccountLoginId(employeePayload.employeeCode, payload.loginId)
+  const password =
+    s(payload.password) ||
+    buildDefaultAccountPassword(employeePayload.employeeCode, employeePayload.phone)
+
+  return {
+    enabled: true,
+    loginId,
+    password,
+    mustChangePassword: payload.mustChangePassword !== false,
+    isActive: payload.isActive !== false,
+  }
+}
+
+async function validateCreateAccountOption(accountPayload = {}, employeePayload = {}) {
+  const account = normalizeCreateAccountPayload(accountPayload, employeePayload)
+
+  if (!account.enabled) return account
+
+  if (!s(employeePayload.phone)) {
+    throw appError({
+      statusCode: 400,
+      code: 'EMPLOYEE_PHONE_REQUIRED_FOR_ACCOUNT',
+      messageKey: 'org.employee.validation.phoneRequiredForAccount',
+      message: 'Phone number is required when creating a login account for an employee',
+      field: 'phone',
+    })
+  }
+
+  if (account.password.length < 6) {
+    throw appError({
+      statusCode: 400,
+      code: 'ACCOUNT_PASSWORD_TOO_SHORT',
+      messageKey: 'auth.account.validation.passwordMinLength',
+      message: 'Password must be at least 6 characters',
+      field: 'createAccount.password',
+    })
+  }
+
+  if (account.password.length > 100) {
+    throw appError({
+      statusCode: 400,
+      code: 'ACCOUNT_PASSWORD_TOO_LONG',
+      messageKey: 'auth.account.validation.passwordMaxLength',
+      message: 'Password is too long',
+      field: 'createAccount.password',
+    })
+  }
+
+  await ensureAccountLoginIdAvailable(account.loginId)
+
+  return account
+}
+
+async function createAccountForEmployee(employeeDoc, accountPayload = {}) {
+  if (!accountPayload?.enabled) return null
+
+  await ensureEmployeeHasNoAccount(employeeDoc._id)
+
+  const passwordHash = await Account.hashPassword(accountPayload.password)
+
+  return Account.create({
+    loginId: accountPayload.loginId,
+    passwordHash,
+    displayName: s(employeeDoc.displayName),
+    employeeId: employeeDoc._id,
+    roleIds: [],
+    directPermissionCodes: [],
+    passwordVersion: 1,
+    mustChangePassword: accountPayload.mustChangePassword !== false,
+    isActive: accountPayload.isActive !== false,
+  })
+}
+
 async function ensureObjectId(value, field = 'id') {
   if (!isObjectId(value)) {
     throw appError({
@@ -574,7 +726,9 @@ async function ensurePositionExists(positionId, departmentId = null) {
   await ensureObjectId(positionId, 'positionId')
 
   const position = await Position.findById(positionId)
-    .select('_id code name departmentId reportsToPositionId reportsToPositionCode reportsToPositionName hierarchyScope managerScope isActive')
+    .select(
+      '_id code name departmentId reportsToPositionId reportsToPositionCode reportsToPositionName hierarchyScope managerScope isActive',
+    )
     .lean()
 
   if (!position) {
@@ -665,7 +819,9 @@ async function ensureShiftExists(shiftId) {
     _id: shiftId,
     isActive: true,
   })
-    .select('_id code name type startTime endTime breakStartTime breakEndTime crossMidnight isActive')
+    .select(
+      '_id code name type startTime endTime breakStartTime breakEndTime crossMidnight isActive',
+    )
     .lean()
 
   if (!shift) {
@@ -783,20 +939,26 @@ async function findAutoManagerIdsByPositionAndLine({
     return []
   }
 
-  const managerScope = getPositionHierarchyScope(position)
+  const hierarchyScope = getPositionHierarchyScope(position)
 
   const filter = {
     positionId: position.reportsToPositionId,
     isActive: true,
   }
 
-  if (managerScope === 'SAME_LINE') {
+  if (hierarchyScope === 'SAME_LINE') {
     if (!lineId || !departmentId) {
       return []
     }
 
     filter.departmentId = departmentId
     filter.lineId = lineId
+  }
+
+  if (hierarchyScope === 'GLOBAL') {
+    if (departmentId) {
+      filter.departmentId = departmentId
+    }
   }
 
   if (employeeId) {
@@ -947,6 +1109,12 @@ function buildEmployeeLookupItem(doc) {
   }
 }
 
+const POSITION_POPULATE_FIELDS =
+  'name code reportsToPositionId reportsToPositionCode reportsToPositionName hierarchyScope managerScope'
+
+const SHIFT_POPULATE_FIELDS =
+  'code name type startTime breakStartTime breakEndTime endTime crossMidnight'
+
 async function lookup(query = {}, currentUser = null) {
   const scopeFilter = await buildEmployeeLookupScopeFilter(query, currentUser)
 
@@ -971,9 +1139,9 @@ async function lookup(query = {}, currentUser = null) {
   const [items, total] = await Promise.all([
     Employee.find(filter)
       .populate('departmentId', 'name code')
-      .populate('positionId', 'name code reportsToPositionId reportsToPositionCode reportsToPositionName hierarchyScope managerScope')
+      .populate('positionId', POSITION_POPULATE_FIELDS)
       .populate('lineId', 'code name')
-      .populate('shiftId', 'code name type startTime breakStartTime breakEndTime endTime crossMidnight')
+      .populate('shiftId', SHIFT_POPULATE_FIELDS)
       .populate('reportsToEmployeeId', 'employeeCode displayName')
       .populate('lineManagerIds', 'employeeCode displayName')
       .sort({ displayName: 1, employeeCode: 1, _id: 1 })
@@ -1011,9 +1179,9 @@ async function list(query, currentUser = null) {
   const [items, total, accountByEmployeeId] = await Promise.all([
     Employee.find(filter)
       .populate('departmentId', 'name code')
-      .populate('positionId', 'name code reportsToPositionId reportsToPositionCode reportsToPositionName hierarchyScope managerScope')
+      .populate('positionId', POSITION_POPULATE_FIELDS)
       .populate('lineId', 'code name')
-      .populate('shiftId', 'code name type startTime breakStartTime breakEndTime endTime crossMidnight')
+      .populate('shiftId', SHIFT_POPULATE_FIELDS)
       .populate('reportsToEmployeeId', 'employeeCode displayName')
       .populate('lineManagerIds', 'employeeCode displayName')
       .sort(sort)
@@ -1077,9 +1245,9 @@ async function exportExcel(query = {}, currentUser = null) {
   const [items, accountByEmployeeId] = await Promise.all([
     Employee.find(filter)
       .populate('departmentId', 'name code')
-      .populate('positionId', 'name code reportsToPositionId reportsToPositionCode reportsToPositionName hierarchyScope managerScope')
+      .populate('positionId', POSITION_POPULATE_FIELDS)
       .populate('lineId', 'code name')
-      .populate('shiftId', 'code name type startTime breakStartTime breakEndTime endTime crossMidnight')
+      .populate('shiftId', SHIFT_POPULATE_FIELDS)
       .populate('reportsToEmployeeId', 'employeeCode displayName')
       .populate('lineManagerIds', 'employeeCode displayName')
       .sort(sort)
@@ -1139,13 +1307,19 @@ async function downloadImportSample() {
     ['Employee Import Guide', ''],
     ['', ''],
     ['Field', 'Rule'],
-    ['Employee Code', 'Required. Human-readable employee code. If it already exists, the row updates that employee. If it does not exist, the row creates a new employee.'],
+    [
+      'Employee Code',
+      'Required. Human-readable employee code. If it already exists, the row updates that employee. If it does not exist, the row creates a new employee.',
+    ],
     ['Display Name', 'Required.'],
     ['Department Code', 'Required. Must already exist in Department master.'],
     ['Position Code', 'Required. Must already exist and belong to Department Code.'],
     ['Line Code', 'Optional. Must already exist if provided.'],
     ['Shift Code', 'Required. Must already exist and be active.'],
-    ['Reports To Employee Code', 'Optional. Use employee code of the manager/supervisor. Do not use Mongo ID.'],
+    [
+      'Reports To Employee Code',
+      'Optional. Use employee code of the manager/supervisor. Do not use Mongo ID.',
+    ],
     ['OT Workflow Role', 'Use NONE, APPROVER, or ACKNOWLEDGE. Blank = NONE.'],
     ['Phone', 'Optional.'],
     ['Email', 'Optional. Must be unique if provided.'],
@@ -1168,18 +1342,8 @@ async function downloadImportSample() {
 }
 
 function normalizeImportRow(raw = {}) {
-  const rawJoinDate = getImportField(raw, [
-    'joinDate',
-    'Join Date',
-    'JOIN DATE',
-  ])
-
-  const rawStatus = getImportField(raw, [
-    'isActive',
-    'Status',
-    'STATUS',
-  ])
-
+  const rawJoinDate = getImportField(raw, ['joinDate', 'Join Date', 'JOIN DATE'])
+  const rawStatus = getImportField(raw, ['isActive', 'Status', 'STATUS'])
   const joinDate = parseImportDate(rawJoinDate)
 
   return {
@@ -1288,7 +1452,9 @@ async function importExcel(file, currentUser = null) {
         code: 'EMPLOYEE_IMPORT_ROW_INVALID',
         messageKey:
           result.error.issues[0]?.message || 'org.employee.import.error.rowInvalid',
-        message: `Row ${rowNo}: ${result.error.issues[0]?.message || 'Invalid data'}`,
+        message: `Row ${rowNo}: ${
+          result.error.issues[0]?.message || 'Invalid data'
+        }`,
         params: {
           rowNo,
         },
@@ -1430,7 +1596,6 @@ async function importExcel(file, currentUser = null) {
 
   for (const row of parsedRows) {
     const existing = employeeByCode.get(row.employeeCode) || null
-
     const department = departmentByCode.get(row.departmentCode)
 
     if (!department) {
@@ -1593,6 +1758,13 @@ async function importExcel(file, currentUser = null) {
         employeeCode: row.employeeCode,
         displayName: row.displayName,
         email: row.email || '',
+        departmentId: department._id,
+        positionId: position._id,
+        lineId: line?._id || null,
+        shiftId: shift._id,
+        reportsToEmployeeId: managerResult.primaryManagerId || null,
+        lineManagerIds: managerResult.lineManagerIds || [],
+        otWorkflowRole: normalizeOTWorkflowRole(row.otWorkflowRole),
         isActive: true,
       })
 
@@ -1654,9 +1826,9 @@ async function getById(employeeId, currentUser = null) {
   const [doc, accountDoc] = await Promise.all([
     Employee.findById(employeeId)
       .populate('departmentId', 'name code')
-      .populate('positionId', 'name code reportsToPositionId reportsToPositionCode reportsToPositionName hierarchyScope managerScope')
+      .populate('positionId', POSITION_POPULATE_FIELDS)
       .populate('lineId', 'code name')
-      .populate('shiftId', 'code name type startTime breakStartTime breakEndTime endTime crossMidnight')
+      .populate('shiftId', SHIFT_POPULATE_FIELDS)
       .populate('reportsToEmployeeId', 'employeeCode displayName')
       .populate('lineManagerIds', 'employeeCode displayName')
       .lean(),
@@ -1683,9 +1855,9 @@ async function getOrgChart(employeeId, currentUser = null) {
 
   const focusDoc = await Employee.findById(employeeId)
     .populate('departmentId', 'name code')
-    .populate('positionId', 'name code reportsToPositionId reportsToPositionCode reportsToPositionName hierarchyScope managerScope')
+    .populate('positionId', POSITION_POPULATE_FIELDS)
     .populate('lineId', 'code name')
-    .populate('shiftId', 'code name type startTime endTime breakStartTime breakEndTime crossMidnight')
+    .populate('shiftId', SHIFT_POPULATE_FIELDS)
     .populate('reportsToEmployeeId', 'employeeCode displayName')
     .populate('lineManagerIds', 'employeeCode displayName')
     .lean()
@@ -1710,9 +1882,9 @@ async function getOrgChart(employeeId, currentUser = null) {
 
     const managerDoc = await Employee.findById(currentManagerId)
       .populate('departmentId', 'name code')
-      .populate('positionId', 'name code reportsToPositionId reportsToPositionCode reportsToPositionName hierarchyScope managerScope')
+      .populate('positionId', POSITION_POPULATE_FIELDS)
       .populate('lineId', 'code name')
-      .populate('shiftId', 'code name type startTime endTime breakStartTime breakEndTime crossMidnight')
+      .populate('shiftId', SHIFT_POPULATE_FIELDS)
       .populate('reportsToEmployeeId', 'employeeCode displayName')
       .populate('lineManagerIds', 'employeeCode displayName')
       .lean()
@@ -1720,7 +1892,6 @@ async function getOrgChart(employeeId, currentUser = null) {
     if (!managerDoc) break
 
     upwardDocs.push(managerDoc)
-
     currentManagerId = id(managerDoc.reportsToEmployeeId)
   }
 
@@ -1730,9 +1901,9 @@ async function getOrgChart(employeeId, currentUser = null) {
     reportsToEmployeeId: focusDoc._id,
   })
     .populate('departmentId', 'name code')
-    .populate('positionId', 'name code reportsToPositionId reportsToPositionCode reportsToPositionName hierarchyScope managerScope')
+    .populate('positionId', POSITION_POPULATE_FIELDS)
     .populate('lineId', 'code name')
-    .populate('shiftId', 'code name type startTime endTime breakStartTime breakEndTime crossMidnight')
+    .populate('shiftId', SHIFT_POPULATE_FIELDS)
     .populate('reportsToEmployeeId', 'employeeCode displayName')
     .populate('lineManagerIds', 'employeeCode displayName')
     .sort({ displayName: 1, employeeCode: 1, _id: 1 })
@@ -1746,17 +1917,42 @@ async function getOrgChart(employeeId, currentUser = null) {
 }
 
 function makeOrgTreeNode(employee, children = [], expanded = false, highlighted = false) {
-  const item = sanitizeOrgNode(employee)
+  if (!employee) return null
 
   return {
-    key: item.id,
+    key: employee.id,
     expanded,
     selectable: true,
     data: {
-      ...item,
-      name: item.displayName,
-      title: item.positionName || 'No position',
-      department: item.departmentName || 'No department',
+      ...employee,
+
+      id: employee.id,
+      _id: employee._id,
+      employeeId: employee.employeeId,
+      employeeCode: employee.employeeCode,
+      displayName: employee.displayName,
+
+      name: employee.displayName || employee.employeeCode || 'Unknown',
+      title: employee.positionName || 'No position',
+      department: employee.departmentName || 'No department',
+
+      lineCode: employee.lineCode || '',
+      lineName: employee.lineName || '',
+
+      shiftCode: employee.shiftCode || '',
+      shiftName: employee.shiftName || '',
+      shiftType: employee.shiftType || '',
+      shiftStartTime: employee.shiftStartTime || '',
+      shiftEndTime: employee.shiftEndTime || '',
+
+      reportsToEmployeeId: employee.reportsToEmployeeId || null,
+      reportsToEmployeeCode: employee.reportsToEmployeeCode || '',
+      reportsToEmployeeName: employee.reportsToEmployeeName || '',
+
+      lineManagerIds: employee.lineManagerIds || [],
+      lineManagers: employee.lineManagers || [],
+      lineManagerNames: employee.lineManagerNames || '',
+
       highlighted,
     },
     children,
@@ -1816,14 +2012,9 @@ function collectAncestorIds(startId, employeeMap, parentIdsByEmployeeId = new Ma
     result.add(currentId)
 
     const parentIds = parentIdsByEmployeeId.get(currentId) || []
-    const current = employeeMap.get(currentId)
-
-    if (!parentIds.length && current?.reportsToEmployeeId) {
-      parentIds.push(id(current.reportsToEmployeeId))
-    }
 
     for (const parentId of parentIds) {
-      if (parentId && !visited.has(parentId)) {
+      if (parentId && !visited.has(parentId) && employeeMap.has(parentId)) {
         queue.push(parentId)
       }
     }
@@ -1874,6 +2065,12 @@ async function getOrgTree(
       expandedEmployeeIds: [],
       totalVisibleEmployees: 0,
       tree: [],
+      meta: {
+        rootMode: 'NO_SCOPE',
+        hasNaturalRoot: false,
+        scopedIdsSize: 0,
+        allDocs: 0,
+      },
     }
   }
 
@@ -1898,28 +2095,52 @@ async function getOrgTree(
       otWorkflowRole: 1,
       isActive: 1,
       email: 1,
+      phone: 1,
+      joinDate: 1,
+      createdAt: 1,
+      updatedAt: 1,
     },
   )
     .populate('departmentId', 'name code')
-    .populate('positionId', 'name code')
+    .populate('positionId', POSITION_POPULATE_FIELDS)
     .populate('lineId', 'code name')
-    .populate('shiftId', 'code name type startTime endTime breakStartTime breakEndTime crossMidnight')
+    .populate('shiftId', SHIFT_POPULATE_FIELDS)
+    .populate('reportsToEmployeeId', 'employeeCode displayName')
     .populate('lineManagerIds', 'employeeCode displayName')
+    .sort({ displayName: 1, employeeCode: 1, _id: 1 })
     .lean()
 
-  const normalized = allDocs.map((doc) => sanitize(doc))
+  const normalized = allDocs.map((doc) => sanitize(doc)).filter(Boolean)
   const employeeMap = new Map(normalized.map((employee) => [employee.id, employee]))
+
+  if (!normalized.length) {
+    return {
+      rootEmployeeId: null,
+      rootOptions: [],
+      matchedEmployeeIds: [],
+      expandedEmployeeIds: [],
+      totalVisibleEmployees: 0,
+      tree: [],
+      meta: {
+        rootMode: 'NO_EMPLOYEES',
+        hasNaturalRoot: false,
+        scopedIdsSize: scopedIds.size,
+        allDocs: allDocs.length,
+      },
+    }
+  }
 
   const childrenMap = new Map()
   const parentIdsByEmployeeId = new Map()
 
   for (const employee of normalized) {
     const lineManagerIds = uniqueIds(employee.lineManagerIds || [])
+    const reportsToEmployeeId = id(employee.reportsToEmployeeId)
 
     const candidateParentIds = lineManagerIds.length
       ? lineManagerIds
-      : employee.reportsToEmployeeId
-        ? [employee.reportsToEmployeeId]
+      : reportsToEmployeeId
+        ? [reportsToEmployeeId]
         : []
 
     const validParentIds = [
@@ -1955,17 +2176,37 @@ async function getOrgTree(
     })
   }
 
-  const rootCandidates = normalized
+  function sortRootEmployees(a, b) {
+    const roleWeight = {
+      APPROVER: 1,
+      ACKNOWLEDGE: 2,
+      NONE: 3,
+    }
+
+    const aa = roleWeight[normalizeOTWorkflowRole(a.otWorkflowRole)] || 9
+    const bb = roleWeight[normalizeOTWorkflowRole(b.otWorkflowRole)] || 9
+
+    if (aa !== bb) return aa - bb
+
+    return `${a.displayName || ''} ${a.employeeCode || ''}`.localeCompare(
+      `${b.displayName || ''} ${b.employeeCode || ''}`,
+    )
+  }
+
+  const naturalRootCandidates = normalized
     .filter((employee) => {
       const parentIds = parentIdsByEmployeeId.get(employee.id) || []
 
       return !parentIds.length
     })
-    .sort((a, b) =>
-      `${a.displayName} ${a.employeeCode}`.localeCompare(
-        `${b.displayName} ${b.employeeCode}`,
-      ),
-    )
+    .sort(sortRootEmployees)
+
+  const fallbackRootCandidates = [...normalized].sort(sortRootEmployees)
+
+  const hasNaturalRoot = naturalRootCandidates.length > 0
+  const rootCandidates = hasNaturalRoot
+    ? naturalRootCandidates
+    : fallbackRootCandidates
 
   let selectedRootId = s(rootEmployeeId)
 
@@ -2006,7 +2247,9 @@ async function getOrgTree(
     if (rootNode) {
       tree = [rootNode]
     }
-  } else {
+  }
+
+  if (!tree.length && rootCandidates.length) {
     tree = rootCandidates
       .map((root) =>
         buildTreeRecursive(
@@ -2023,27 +2266,52 @@ async function getOrgTree(
 
   return {
     rootEmployeeId: selectedRootId || null,
+
     rootOptions: rootCandidates.map((employee) => ({
       id: employee.id,
       employeeId: employee.employeeId,
       employeeCode: employee.employeeCode,
       displayName: employee.displayName,
-      positionName: employee.positionName,
+
+      departmentId: employee.departmentId,
       departmentName: employee.departmentName,
+
+      positionId: employee.positionId,
+      positionName: employee.positionName,
+
+      lineId: employee.lineId,
       lineName: employee.lineName,
       lineCode: employee.lineCode,
+
+      shiftId: employee.shiftId,
       shiftName: employee.shiftName,
       shiftCode: employee.shiftCode,
       shiftStartTime: employee.shiftStartTime,
       shiftEndTime: employee.shiftEndTime,
-      otWorkflowRole: employee.otWorkflowRole,
+
+      reportsToEmployeeId: employee.reportsToEmployeeId,
       lineManagerIds: employee.lineManagerIds,
       lineManagers: employee.lineManagers,
+
+      otWorkflowRole: employee.otWorkflowRole,
+      isActive: employee.isActive,
     })),
+
     matchedEmployeeIds: matchedIds,
     expandedEmployeeIds: Array.from(expandedIds),
     totalVisibleEmployees: normalized.length,
     tree,
+
+    meta: {
+      rootMode: hasNaturalRoot ? 'NATURAL_ROOT' : 'FALLBACK_ROOT',
+      hasNaturalRoot,
+      naturalRootCount: naturalRootCandidates.length,
+      fallbackRootCount: fallbackRootCandidates.length,
+      scopedIdsSize: scopedIds.size,
+      allDocs: allDocs.length,
+      normalized: normalized.length,
+      treeCount: tree.length,
+    },
   }
 }
 
@@ -2080,6 +2348,7 @@ async function syncSameLineManagersForAllEmployees() {
 
   const positionById = new Map(positions.map((position) => [id(position._id), position]))
   const employeesByPositionDepartmentLine = new Map()
+  const employeesByPositionDepartment = new Map()
   const employeesByPosition = new Map()
 
   for (const employee of employees) {
@@ -2095,6 +2364,16 @@ async function syncSameLineManagersForAllEmployees() {
       employeesByPosition.get(positionId).push(employee)
     }
 
+    if (positionId && departmentId) {
+      const key = `${positionId}:${departmentId}`
+
+      if (!employeesByPositionDepartment.has(key)) {
+        employeesByPositionDepartment.set(key, [])
+      }
+
+      employeesByPositionDepartment.get(key).push(employee)
+    }
+
     if (positionId && departmentId && lineId) {
       const key = `${positionId}:${departmentId}:${lineId}`
 
@@ -2106,7 +2385,7 @@ async function syncSameLineManagersForAllEmployees() {
     }
   }
 
-  for (const group of employeesByPositionDepartmentLine.values()) {
+  const sortEmployeeGroup = (group) => {
     group.sort((a, b) =>
       `${a.employeeCode || ''} ${a.displayName || ''} ${a._id || ''}`.localeCompare(
         `${b.employeeCode || ''} ${b.displayName || ''} ${b._id || ''}`,
@@ -2114,13 +2393,9 @@ async function syncSameLineManagersForAllEmployees() {
     )
   }
 
-  for (const group of employeesByPosition.values()) {
-    group.sort((a, b) =>
-      `${a.employeeCode || ''} ${a.displayName || ''} ${a._id || ''}`.localeCompare(
-        `${b.employeeCode || ''} ${b.displayName || ''} ${b._id || ''}`,
-      ),
-    )
-  }
+  for (const group of employeesByPositionDepartmentLine.values()) sortEmployeeGroup(group)
+  for (const group of employeesByPositionDepartment.values()) sortEmployeeGroup(group)
+  for (const group of employeesByPosition.values()) sortEmployeeGroup(group)
 
   const operations = []
 
@@ -2131,11 +2406,11 @@ async function syncSameLineManagersForAllEmployees() {
     if (!position?.reportsToPositionId) continue
 
     const parentPositionId = id(position.reportsToPositionId)
-    const managerScope = getPositionHierarchyScope(position)
+    const hierarchyScope = getPositionHierarchyScope(position)
 
     let managerCandidates = []
 
-    if (managerScope === 'SAME_LINE') {
+    if (hierarchyScope === 'SAME_LINE') {
       const departmentId = id(employee.departmentId)
       const lineId = id(employee.lineId)
 
@@ -2143,7 +2418,14 @@ async function syncSameLineManagersForAllEmployees() {
         const key = `${parentPositionId}:${departmentId}:${lineId}`
         managerCandidates = employeesByPositionDepartmentLine.get(key) || []
       }
-    } else {
+    } else if (hierarchyScope === 'GLOBAL') {
+      const departmentId = id(employee.departmentId)
+
+      if (parentPositionId && departmentId) {
+        const key = `${parentPositionId}:${departmentId}`
+        managerCandidates = employeesByPositionDepartment.get(key) || []
+      }
+    } else if (hierarchyScope === 'CROSS_DEPARTMENT') {
       managerCandidates = employeesByPosition.get(parentPositionId) || []
     }
 
@@ -2204,6 +2486,11 @@ async function create(payload, currentUser = null) {
   await ensureEmployeeCodeUnique(payload.employeeCode || '')
   await ensureEmailUnique(payload.email || '')
 
+  const accountPayload = await validateCreateAccountOption(
+    payload.createAccount || {},
+    payload,
+  )
+
   const department = await ensureDepartmentExists(payload.departmentId)
   const position = await ensurePositionExists(payload.positionId, department._id)
 
@@ -2218,21 +2505,33 @@ async function create(payload, currentUser = null) {
     manualReportsToEmployeeId: payload.reportsToEmployeeId || null,
   })
 
-  const doc = await Employee.create({
-    employeeCode: upper(payload.employeeCode || ''),
-    displayName: s(payload.displayName),
-    departmentId: payload.departmentId,
-    positionId: payload.positionId,
-    lineId: payload.lineId || null,
-    shiftId: payload.shiftId,
-    reportsToEmployeeId: managerResult.primaryManagerId || null,
-    lineManagerIds: managerResult.lineManagerIds || [],
-    otWorkflowRole: normalizeOTWorkflowRole(payload.otWorkflowRole),
-    phone: s(payload.phone),
-    email: s(payload.email).toLowerCase(),
-    joinDate: payload.joinDate || null,
-    isActive: payload.isActive ?? true,
-  })
+  let doc = null
+
+  try {
+    doc = await Employee.create({
+      employeeCode: upper(payload.employeeCode || ''),
+      displayName: s(payload.displayName),
+      departmentId: payload.departmentId,
+      positionId: payload.positionId,
+      lineId: payload.lineId || null,
+      shiftId: payload.shiftId,
+      reportsToEmployeeId: managerResult.primaryManagerId || null,
+      lineManagerIds: managerResult.lineManagerIds || [],
+      otWorkflowRole: normalizeOTWorkflowRole(payload.otWorkflowRole),
+      phone: s(payload.phone),
+      email: s(payload.email).toLowerCase(),
+      joinDate: payload.joinDate || null,
+      isActive: payload.isActive ?? true,
+    })
+
+    await createAccountForEmployee(doc, accountPayload)
+  } catch (error) {
+    if (doc?._id && accountPayload.enabled) {
+      await Employee.deleteOne({ _id: doc._id }).catch(() => {})
+    }
+
+    throw error
+  }
 
   await syncSameLineManagersForAllEmployees()
 
@@ -2272,6 +2571,19 @@ async function update(employeeId, payload, currentUser = null) {
     payload.positionId !== undefined ? payload.positionId : doc.positionId
   const nextLineId = payload.lineId !== undefined ? payload.lineId : doc.lineId
   const nextShiftId = payload.shiftId !== undefined ? payload.shiftId : doc.shiftId
+
+  const accountPayload = await validateCreateAccountOption(
+    payload.createAccount || {},
+    {
+      employeeCode: nextEmployeeCode,
+      displayName: nextDisplayName,
+      phone: nextPhone,
+    },
+  )
+
+  if (accountPayload.enabled) {
+    await ensureEmployeeHasNoAccount(doc._id)
+  }
 
   if (payload.employeeCode !== undefined && nextEmployeeCode !== upper(doc.employeeCode)) {
     await ensureEmployeeCodeUnique(nextEmployeeCode, doc._id)
@@ -2328,6 +2640,10 @@ async function update(employeeId, payload, currentUser = null) {
   }
 
   await doc.save()
+
+  if (accountPayload.enabled) {
+    await createAccountForEmployee(doc, accountPayload)
+  }
 
   await syncSameLineManagersForAllEmployees()
 

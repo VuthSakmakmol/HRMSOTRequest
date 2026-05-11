@@ -1,9 +1,9 @@
 // frontend/src/shared/i18n/messages/en.js
+
 export default {
   common: {
     appName: 'OT Request',
 
-    // Basic actions
     loading: 'Loading',
     updating: 'Updating',
     search: 'Search',
@@ -26,16 +26,16 @@ export default {
     detail: 'Detail',
     actions: 'Actions',
 
-    // Status / values
     status: 'Status',
     allStatus: 'All Status',
     active: 'Active',
     inactive: 'Inactive',
     yes: 'Yes',
     no: 'No',
+    none: 'None',
+    unknown: 'Unknown',
     warning: 'Warning',
 
-    // Common fields
     fromDate: 'From Date',
     toDate: 'To Date',
     date: 'Date',
@@ -45,7 +45,6 @@ export default {
     createdAt: 'Created At',
     updatedAt: 'Updated At',
 
-    // States / messages
     loaded: 'Loaded {loaded} of {total}',
     noData: 'No data found',
     somethingWentWrong: 'Something went wrong',
@@ -162,12 +161,14 @@ export default {
       createdSuccess: 'Department created successfully.',
       updatedSuccess: 'Department updated successfully.',
     },
+
     position: {
       subtitle: 'Manage position master data, reporting hierarchy, and manager scope rules.',
       tableTitle: 'Position List',
       tableSubtitle: 'Server-side position list with department filtering, hierarchy, import, and export.',
       searchPlaceholder: 'Search code, name, or description',
 
+      department: 'Department',
       allDepartments: 'All Departments',
       newPosition: 'New Position',
       createTitle: 'Create Position',
@@ -177,13 +178,24 @@ export default {
       codeExample: 'Example: SW',
       nameExample: 'Example: Sewer',
       selectDepartment: 'Select department',
+
       reportsToPosition: 'Reports To Position',
       selectReportsToPosition: 'Optional: select parent/supervisor position',
       reportsToHelp: 'Example: Sewer reports to Sewer Supervisor. Cross-department reporting is allowed.',
+
+      hierarchyScope: 'Hierarchy Scope',
+      allScopes: 'All Scopes',
+      selectHierarchyScope: 'Select hierarchy scope',
+      scopeSameLine: 'Same Line',
+      scopeGlobal: 'Global',
+      scopeCrossDepartment: 'Cross Department',
       managerScope: 'Manager Scope',
       sameLine: 'Same Line',
       global: 'Global',
       managerScopeHelp: 'Same Line = find manager in the same production line. Global = find manager by parent position across departments.',
+
+      level: 'Level',
+      activeHelp: 'Inactive positions will be hidden from normal employee assignment selectors.',
       descriptionPlaceholder: 'Optional position description',
 
       importExcel: 'Import Excel',
@@ -191,19 +203,17 @@ export default {
       exported: 'Exported',
       exportedSuccess: 'Position Excel exported successfully.',
       exportFailed: 'Export failed',
-      employeeCodeHelp: 'Required business code used by users, Excel import, reports, and search.',
-      employeeCodeRequiredHelp: 'Employee Code is required because the system uses it as the human-readable employee key.',
 
       imported: 'Imported',
-      importedSuccess: 'Import completed. Created: {created}, Updated: {updated}.',
+      importedSuccess: 'Import completed. Created: {created}, Updated: {updated}, Failed: {failed}.',
       importTitle: 'Import Position Excel',
       importGuideTitle: 'Import guide',
       importGuideStep1: 'Download the sample file.',
-      importGuideStep2: 'Fill your employee data using codes only.',
-      importGuideStep3: 'Join Date format must be DD/MM/YYYY, for example 30/04/2026.',
-      importGuideStep4: 'Department Code, Position Code, Line Code, and Shift Code must already exist in master data.',
-      importGuideStep5: 'Use Reports To Employee Code for manager/supervisor, then click Import.',
-      checkManagerEmployeeCode: 'Please import the manager first or use an existing manager Employee Code.',
+      importGuideStep2: 'Fill your position data using readable codes only.',
+      importGuideStep3: 'Department Code must already exist in Department master data.',
+      importGuideStep4: 'Reports To Position Code must already exist or be included in the same import file.',
+      importGuideStep5: 'Click Import to upload and process it.',
+      importNote: 'Users never need Mongo IDs in Excel. Use readable codes such as Department Code and Position Code.',
       downloadSample: 'Download Sample',
       downloadSampleFailed: 'Download sample failed',
       sampleDownloaded: 'Sample file downloaded successfully.',
@@ -217,10 +227,293 @@ export default {
       noData: 'No positions matched your filters.',
       loadFailed: 'Failed to load positions.',
       departmentLoadFailed: 'Failed to load departments.',
+      departmentLookupFailed: 'Failed to load department options.',
       parentLoadFailed: 'Failed to load reports-to positions.',
+      reportsToLookupFailed: 'Failed to load reports-to position options.',
       saveFailed: 'Failed to save position.',
       createdSuccess: 'Position created successfully.',
       updatedSuccess: 'Position updated successfully.',
+    },
+
+    employee: {
+      subtitle: 'Manage employee master data, organization assignment, shift assignment, and account status.',
+      tableTitle: 'Employee List',
+      tableSubtitle: 'Server-side employee list with lazy loading, filters, import, and export.',
+      searchPlaceholder: 'Search employee code, name, phone, email, or role',
+
+      allDepartments: 'All Departments',
+      allPositions: 'All Positions',
+      allLines: 'All Lines',
+      allShifts: 'All Shifts',
+
+      newEmployee: 'New Employee',
+      createTitle: 'Create Employee',
+      editTitle: 'Edit Employee',
+
+      employeeCode: 'Employee Code',
+      displayName: 'Display Name',
+      employeeCodeExample: 'Example: TRX001',
+      displayNameExample: 'Example: John Smith',
+      employeeCodeHelp: 'Required business code used by users, Excel import, reports, and search.',
+      employeeCodeRequiredHelp: 'Employee Code is required because the system uses it as the human-readable employee key.',
+
+      selectDepartment: 'Select department',
+      selectPosition: 'Select position',
+      selectLine: 'Select line',
+      selectShift: 'Select shift',
+      selectManager: 'Optional: select manager/supervisor',
+      manager: 'Manager',
+      noManager: 'No Manager',
+
+      lineHelp: 'Optional. Use when the employee belongs to a production line.',
+      manualManagerHelp: 'No parent position rule found. You can manually select a manager if needed.',
+      globalManagerHelp: 'Manager can be found globally by parent position: {position}.',
+      sameLineManagerHelp: 'Manager should be found in the same line by parent position: {position}.',
+
+      otRole: 'OT Role',
+      otRoleHelp: 'Use Approver/Acknowledge only for employees who participate in OT workflow.',
+      otWorkflowRole: {
+        none: 'None',
+        approver: 'Approver',
+        acknowledge: 'Acknowledge',
+      },
+
+      createLoginAccount: 'Create Login Account',
+createLoginAccountHelp:
+  'Optional. Turn on only when this employee needs a login account.',
+createLoginAccountOnEditHelp:
+  'This employee has no login account yet. Turn on to create one now.',
+accountAlreadyExists: 'This employee already has a login account.',
+accountAlreadyExistsHelp:
+  'Login account already exists for this employee. Manage password or account status from the Account module.',
+
+accountDefaultNoAccount: 'Default: no login account will be created.',
+accountPreview: 'Login ID: {loginId} · Default Password: {password}',
+
+accountLoginIdPlaceholder: 'Default: employee code',
+accountLoginIdHelp: 'Default login ID will be: {loginId}',
+
+defaultPassword: 'Default Password',
+defaultPasswordPlaceholder: 'Default: employee code + phone number',
+defaultPasswordHelp: 'Default password will be: {password}',
+
+mustChangePasswordHelp:
+  'Recommended. The employee must change the password after first login.',
+accountActive: 'Account Active',
+accountActiveHelp: 'Inactive accounts cannot login.',
+
+createdWithAccountSuccess: 'Employee and login account created successfully.',
+updatedWithAccountSuccess: 'Employee updated and login account created successfully.',
+
+accountPhoneRequired:
+  'Phone number is required when creating a login account because the default password uses Employee Code + Phone Number.',
+accountCreateConflict:
+  'This employee or login ID already has an account. Please check the Account module.',
+
+      joinDate: 'Join Date',
+      email: 'Email',
+      phone: 'Phone',
+      phonePlaceholder: 'Example: 012345678',
+      accountInfo: 'Employee import and employee creation do not automatically create login accounts. Create login accounts from the Account module.',
+
+      hasAccount: 'Has Account',
+      noAccount: 'No Account',
+
+      importExcel: 'Import Excel',
+      exportExcel: 'Export Excel',
+      exported: 'Exported',
+      exportedSuccess: 'Employee Excel exported successfully.',
+      exportFailed: 'Export failed',
+
+      imported: 'Imported',
+      importedSuccess: 'Import completed. Created: {created}, Updated: {updated}.',
+      importTitle: 'Import Employee Excel',
+      importGuideTitle: 'Import guide',
+      importGuideStep1: 'Download the sample file.',
+      importGuideStep2: 'Fill your employee data using readable codes only.',
+      importGuideStep3: 'Join Date format must be DD/MM/YYYY, for example 30/04/2026.',
+      importGuideStep4: 'Department Code, Position Code, Line Code, and Shift Code must already exist in master data.',
+      importGuideStep5: 'Use Reports To Employee Code for manager/supervisor, then click Import.',
+      importNote: 'Users never need Mongo IDs in Excel. Use readable codes such as Employee Code, Department Code, Position Code, Line Code, and Shift Code.',
+      downloadSample: 'Download Sample',
+      downloadSampleFailed: 'Download sample failed',
+      sampleDownloaded: 'Sample file downloaded successfully.',
+      excelFile: 'Excel file',
+      chooseFile: 'Choose File',
+      noFileSelected: 'No file selected',
+      importInvalidFileTitle: 'Invalid file type',
+      importInvalidFileMessage: 'Please choose an Excel file only: .xlsx, .xls, or .csv.',
+      importFailed: 'Import failed',
+
+      invalidExcelData: 'Invalid Excel data',
+      importApiNotFound: 'Import API not found',
+      duplicateData: 'Duplicate data',
+      serverError: 'Server error',
+
+      joinDateFormatHelp: 'Please use DD/MM/YYYY format, for example 30/04/2026.',
+      checkDepartmentMaster: 'Please check Department master data.',
+      checkPositionMaster: 'Please check Position master data.',
+      positionDepartmentMismatchHelp: 'The Position Code must belong to the selected Department Code.',
+      checkLineMaster: 'Please check Line master data.',
+      checkShiftMaster: 'Please check Shift master data.',
+      checkManagerEmployeeCode: 'Please import the manager first or use an existing manager Employee Code.',
+      uniqueEmailHelp: 'Email must be unique or left blank.',
+
+      noData: 'No employees matched your filters.',
+      loadFailed: 'Failed to load employees.',
+      departmentLoadFailed: 'Failed to load departments.',
+      positionLoadFailed: 'Failed to load positions.',
+      lineLoadFailed: 'Failed to load lines.',
+      shiftLoadFailed: 'Failed to load shifts.',
+      managerLoadFailed: 'Failed to load managers.',
+      saveFailed: 'Failed to save employee.',
+      createdSuccess: 'Employee created successfully.',
+      updatedSuccess: 'Employee updated successfully.',
+    },
+
+    line: {
+      subtitle: 'Manage production lines, department mapping, and allowed position restrictions.',
+      tableTitle: 'Production lines',
+      tableSubtitle: 'Server-side list with lazy loading, filters, and Excel tools.',
+
+      lineCode: 'Line Code',
+      lineName: 'Line Name',
+      allowedPositions: 'Allowed Positions',
+      allPositionsInDepartment: 'All positions in department',
+
+      newLine: 'New Line',
+      createTitle: 'Create Production Line',
+      editTitle: 'Edit Production Line',
+
+      importExcel: 'Import Excel',
+      exportExcel: 'Export Excel',
+
+      searchPlaceholder: 'Search code, name, or description',
+      allDepartments: 'All Departments',
+      selectDepartment: 'Select department',
+      selectAllowedPositions: 'Optional: select allowed positions',
+      allowedPositionsHelp:
+        'Leave empty if this line can be used by all positions in the selected department.',
+
+      codeExample: 'Example: LINE-01',
+      nameExample: 'Example: Sewing Line 01',
+      descriptionPlaceholder: 'Optional production line description',
+      activeHelp: 'Inactive lines will be hidden from normal employee assignment selectors.',
+
+      createdSuccess: 'Production line created successfully.',
+      updatedSuccess: 'Production line updated successfully.',
+      saveFailed: 'Failed to save production line.',
+      loadFailed: 'Failed to load production lines.',
+      noData: 'No production lines found.',
+      departmentLoadFailed: 'Failed to load departments.',
+      positionLoadFailed: 'Failed to load positions.',
+
+      exported: 'Exported',
+      exportedSuccess: 'Production lines exported successfully.',
+      exportFailed: 'Failed to export production lines.',
+
+      imported: 'Imported',
+      importedSuccess: 'Import completed. Created: {created}, Updated: {updated}.',
+
+      importTitle: 'Import Production Lines',
+      importFailed: 'Import failed',
+      importInvalidFileTitle: 'Invalid file',
+      importInvalidFileMessage: 'Please choose an Excel file: .xlsx, .xls, or .csv.',
+      importGuideTitle: 'Import guide',
+      importGuideStep1: 'Download the sample file first.',
+      importGuideStep2: 'Use Department Code to connect each line to a department.',
+      importGuideStep3:
+        'Use comma-separated Position Codes when the line only allows specific positions.',
+      importGuideStep4: 'Leave Position Codes blank to allow all positions in the department.',
+      importNote:
+        'Users never need Mongo IDs in Excel. Use readable codes such as Department Code and Position Codes.',
+      downloadSample: 'Download Sample',
+      downloadSampleFailed: 'Failed to download sample.',
+      sampleDownloaded: 'Sample downloaded.',
+      excelFile: 'Excel File',
+      noFileSelected: 'No file selected',
+      chooseFile: 'Choose File',
+
+      validation: {
+        codeRequired: 'Line code is required.',
+        codeTooLong: 'Line code is too long.',
+        nameRequired: 'Line name is required.',
+        nameTooLong: 'Line name is too long.',
+        descriptionTooLong: 'Description is too long.',
+        updatePayloadRequired: 'At least one field is required.',
+      },
+
+      field: {
+        departmentId: {
+          required: 'Department is required.',
+          invalid: 'Invalid department.',
+        },
+        positionIds: {
+          invalid: 'Invalid position.',
+        },
+      },
+
+      error: {
+        notFound: 'Production line not found.',
+        codeExists: 'Line code already exists.',
+        excelFileRequired: 'Excel file is required.',
+        excelNoRows: 'Excel file has no rows.',
+        excelNoValidRows: 'Excel file has no valid rows.',
+        positionDepartmentMismatch:
+          'Selected position does not belong to selected department.',
+      },
+
+      import: {
+        success: {
+          completed: 'Production line import completed.',
+        },
+        error: {
+          codeRequired: 'Code is required.',
+          nameRequired: 'Name is required.',
+          departmentRequired: 'Department Code is required.',
+          departmentNotFound: 'Department Code not found.',
+          positionNotFound: 'Position Code not found.',
+          positionDepartmentMismatch: 'Position does not belong to Department.',
+          invalidStatus: 'Invalid status.',
+          duplicateCode: 'Duplicate line code in import file.',
+        },
+      },
+    },
+
+    orgChart: {
+      title: 'Organization Chart',
+      subtitle:
+        'View employee reporting lines, line supervisors, department, position, line, and shift information.',
+      treeTitle: 'Organization Tree',
+
+      visibleEmployees: 'Visible Employees',
+      searchResults: 'Search Results',
+      rootOptions: 'Root Options',
+
+      searchPlaceholder: 'Search employee code, name, department, position, line, or shift',
+      rootPerson: 'Root Person',
+      selectRootPerson: 'Select top/root person',
+      includeInactive: 'Include inactive',
+
+      zoomLabel: 'Zoom {zoom}',
+      zoomIn: 'Zoom In',
+      zoomOut: 'Zoom Out',
+      resetZoom: 'Reset',
+
+      noTreeData: 'No tree data available.',
+      loadFailed: 'Failed to load organization tree.',
+
+      noPosition: 'No position',
+      noDepartment: 'No department',
+      noEmployeeCode: 'No code',
+
+      oneLineSupervisor: '1 Line Sup',
+      lineSupervisorCount: '{count} Line Sup',
+      multiSupervisor: 'Multi Sup',
+      matched: 'Matched',
+
+      expandNode: 'Expand node',
+      collapseNode: 'Collapse node',
     },
   },
 
@@ -342,113 +635,4 @@ export default {
     calculateExport: 'Calculate & Export',
     salaryTemplate: 'Salary Template',
   },
-
-  line: {
-  subtitle: 'Manage production lines, department mapping, and allowed position restrictions.',
-  tableTitle: 'Production lines',
-  tableSubtitle: 'Server-side list with lazy loading, filters, and Excel tools.',
-
-  lineCode: 'Line Code',
-  lineName: 'Line Name',
-  allowedPositions: 'Allowed Positions',
-  allPositionsInDepartment: 'All positions in department',
-
-  newLine: 'New Line',
-  createTitle: 'Create Production Line',
-  editTitle: 'Edit Production Line',
-
-  importExcel: 'Import Excel',
-  exportExcel: 'Export Excel',
-
-  searchPlaceholder: 'Search code, name, or description',
-  allDepartments: 'All Departments',
-  selectDepartment: 'Select department',
-  selectAllowedPositions: 'Optional: select allowed positions',
-  allowedPositionsHelp:
-    'Leave empty if this line can be used by all positions in the selected department.',
-
-  codeExample: 'Example: LINE-01',
-  nameExample: 'Example: Sewing Line 01',
-  descriptionPlaceholder: 'Optional production line description',
-  activeHelp: 'Inactive lines will be hidden from normal employee assignment selectors.',
-
-  createdSuccess: 'Production line created successfully.',
-  updatedSuccess: 'Production line updated successfully.',
-  saveFailed: 'Failed to save production line.',
-  loadFailed: 'Failed to load production lines.',
-  noData: 'No production lines found.',
-  departmentLoadFailed: 'Failed to load departments.',
-  positionLoadFailed: 'Failed to load positions.',
-
-  exported: 'Exported',
-  exportedSuccess: 'Production lines exported successfully.',
-  exportFailed: 'Failed to export production lines.',
-
-  imported: 'Imported',
-  importedSuccess: 'Import completed. Created: {created}, Updated: {updated}.',
-
-  importTitle: 'Import Production Lines',
-  importFailed: 'Import failed',
-  importInvalidFileTitle: 'Invalid file',
-  importInvalidFileMessage: 'Please choose an Excel file: .xlsx, .xls, or .csv.',
-  importGuideTitle: 'Import guide',
-  importGuideStep1: 'Download the sample file first.',
-  importGuideStep2: 'Use Department Code to connect each line to a department.',
-  importGuideStep3:
-    'Use comma-separated Position Codes when the line only allows specific positions.',
-  importGuideStep4: 'Leave Position Codes blank to allow all positions in the department.',
-  importNote:
-    'Users never need Mongo IDs in Excel. Use readable codes such as Department Code and Position Codes.',
-  downloadSample: 'Download Sample',
-  downloadSampleFailed: 'Failed to download sample.',
-  sampleDownloaded: 'Sample downloaded.',
-  excelFile: 'Excel File',
-  noFileSelected: 'No file selected',
-  chooseFile: 'Choose File',
-
-  validation: {
-    codeRequired: 'Line code is required.',
-    codeTooLong: 'Line code is too long.',
-    nameRequired: 'Line name is required.',
-    nameTooLong: 'Line name is too long.',
-    descriptionTooLong: 'Description is too long.',
-    updatePayloadRequired: 'At least one field is required.',
-  },
-
-  field: {
-    departmentId: {
-      required: 'Department is required.',
-      invalid: 'Invalid department.',
-    },
-    positionIds: {
-      invalid: 'Invalid position.',
-    },
-  },
-
-  error: {
-    notFound: 'Production line not found.',
-    codeExists: 'Line code already exists.',
-    excelFileRequired: 'Excel file is required.',
-    excelNoRows: 'Excel file has no rows.',
-    excelNoValidRows: 'Excel file has no valid rows.',
-    positionDepartmentMismatch:
-      'Selected position does not belong to selected department.',
-  },
-
-  import: {
-    success: {
-      completed: 'Production line import completed.',
-    },
-    error: {
-      codeRequired: 'Code is required.',
-      nameRequired: 'Name is required.',
-      departmentRequired: 'Department Code is required.',
-      departmentNotFound: 'Department Code not found.',
-      positionNotFound: 'Position Code not found.',
-      positionDepartmentMismatch: 'Position does not belong to Department.',
-      invalidStatus: 'Invalid status.',
-      duplicateCode: 'Duplicate line code in import file.',
-    },
-  },
-},
 }

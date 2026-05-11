@@ -74,8 +74,11 @@ function canViewAllEmployees(user) {
   return (
     user?.isRootAdmin === true ||
     hasAnyPermission(user, [
+      'EMPLOYEE_VIEW',
       'EMPLOYEE_VIEW_ALL',
+      'ORG_EMPLOYEE_VIEW',
       'ORG_EMPLOYEE_VIEW_ALL',
+      'ORG.EMPLOYEE_VIEW',
       'ORG.EMPLOYEE_VIEW_ALL',
     ])
   )
@@ -272,6 +275,16 @@ async function getScopedEmployeeIds(currentUser, options = {}) {
   const allowAll = options.allowAll !== false
 
   const [employees, positions] = await loadActiveEmployeesAndPositions()
+  console.log('[ORG_SCOPE_DEBUG]', {
+  loginId: currentUser?.loginId,
+  accountId: currentUser?.accountId || currentUser?.id || currentUser?._id || currentUser?.sub,
+  isRootAdmin: currentUser?.isRootAdmin,
+  roleCodes: currentUser?.roleCodes,
+  effectivePermissionCodes: currentUser?.effectivePermissionCodes,
+  activeEmployees: employees.length,
+  activePositions: positions.length,
+  canViewAll: canViewAllEmployees(currentUser),
+})
 
   if (allowAll && canViewAllEmployees(currentUser)) {
     return new Set(employees.map((employee) => id(employee._id)).filter(Boolean))
