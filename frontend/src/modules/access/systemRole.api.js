@@ -17,6 +17,23 @@ export function updateSystemRole(id, payload) {
   return api.patch(`/access/roles/${id}`, payload)
 }
 
+export function getSystemRoleOptions(params = {}) {
+  return api.get('/access/roles', {
+    params: {
+      page: 1,
+      limit: 100,
+      isActive: true,
+      ...params,
+    },
+  })
+}
+
 export function getPermissionOptions(params = {}) {
-  return api.get('/access/permissions', { params })
+  return api.get('/access/permissions', {
+    params: {
+      page: 1,
+      limit: 100,
+      ...params,
+    },
+  })
 }

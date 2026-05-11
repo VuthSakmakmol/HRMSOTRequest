@@ -1,6 +1,6 @@
 // frontend/src/modules/org/employee.api.js
-// frontend/src/modules/org/employee.api.js
 import api from '@/shared/services/api'
+import { toFileFormData } from '@/shared/utils/formData'
 
 export function getEmployeeLookupOptions(params = {}) {
   return api.get('/org/employees/lookup', { params })
@@ -43,13 +43,13 @@ export function downloadEmployeeImportSample() {
   })
 }
 
-export function importEmployeesExcel(file) {
-  const formData = new FormData()
-  formData.append('file', file)
+export function importEmployeesExcel(input, options = {}) {
+  const { onUploadProgress } = options
 
-  return api.post('/org/employees/import', formData, {
+  return api.post('/org/employees/import', toFileFormData(input), {
     headers: {
       'Content-Type': 'multipart/form-data',
     },
+    onUploadProgress,
   })
 }

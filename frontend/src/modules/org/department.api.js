@@ -1,5 +1,6 @@
 // frontend/src/modules/org/department.api.js
 import api from '@/shared/services/api'
+import { toFileFormData } from '@/shared/utils/formData'
 
 export function getDepartmentLookupOptions(params = {}) {
   return api.get('/org/departments/lookup', { params })
@@ -34,10 +35,13 @@ export function downloadDepartmentImportSample() {
   })
 }
 
-export function importDepartmentsExcel(formData) {
-  return api.post('/org/departments/import', formData, {
+export function importDepartmentsExcel(input, options = {}) {
+  const { onUploadProgress } = options
+
+  return api.post('/org/departments/import', toFileFormData(input), {
     headers: {
       'Content-Type': 'multipart/form-data',
     },
+    onUploadProgress,
   })
 }

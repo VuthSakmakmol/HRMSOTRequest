@@ -1,6 +1,7 @@
 <!-- frontend/src/modules/auth/views/AccountsView.vue -->
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
@@ -24,8 +25,11 @@ import {
   resetAccountPassword,
   updateAccount,
 } from '@/modules/auth/account.api'
+import { buildSaveErrorMessage, getApiErrorMessage } from '@/shared/utils/apiError'
+import { formatDateTime } from '@/shared/utils/dateFormat'
 
 const toast = useToast()
+const { t } = useI18n()
 
 const PAGE_SIZE = 10
 const SEARCH_DEBOUNCE_MS = 250
@@ -83,20 +87,28 @@ const resetForm = reactive({
 const directPermissionInput = ref('')
 const editDirectPermissionInput = ref('')
 
-const statusOptions = [
-  { label: 'All Status', value: '' },
-  { label: 'Active', value: 'true' },
-  { label: 'Inactive', value: 'false' },
-]
+const statusOptions = computed(() => [
+  { label: t('common.allStatus'), value: '' },
+  { label: t('common.active'), value: 'true' },
+  { label: t('common.inactive'), value: 'false' },
+])
 
-const yesNoOptions = [
-  { label: 'Yes', value: true },
-  { label: 'No', value: false },
-]
+const yesNoOptions = computed(() => [
+  { label: t('common.yes'), value: true },
+  { label: t('common.no'), value: false },
+])
 
 const totalAccounts = computed(() => Number(totalRecords.value || 0))
 const loadedCount = computed(() => rows.value.filter(Boolean).length)
-const summaryText = computed(() => `${loadedCount.value} of ${totalAccounts.value}`)
+const loadedLabel = computed(() =>
+  t('common.loaded', {
+    loaded: loadedCount.value,
+    total: totalAccounts.value,
+  }),
+)
+
+const hasAnyData = computed(() => rows.value.some(Boolean))
+const useVirtualScroll = computed(() => totalAccounts.value > PAGE_SIZE)
 
 const isCreateDisabled = computed(() => {
   return (
@@ -119,9 +131,6 @@ const isResetDisabled = computed(() => {
   return resetting.value || !String(resetForm.newPassword || '').trim()
 })
 
-const hasAnyData = computed(() => rows.value.some(Boolean))
-const useVirtualScroll = computed(() => totalAccounts.value > PAGE_SIZE)
-
 let searchTimer = null
 let currentRequestId = 0
 
@@ -133,8 +142,12 @@ function normalizeItems(payload) {
   return Array.isArray(payload?.items) ? payload.items : []
 }
 
+function normalizePaginationTotal(payload) {
+  return Number(payload?.pagination?.total || payload?.total || 0)
+}
+
 function normalizeId(row) {
-  return row?.id || row?._id || ''
+  return String(row?.id || row?._id || '').trim()
 }
 
 function normalizeRefId(value) {
@@ -144,32 +157,35 @@ function normalizeRefId(value) {
 }
 
 function employeeLabel(item = {}) {
-  const employeeNo = String(item?.employeeNo || '').trim()
-  const displayName = String(item?.displayName || '').trim()
-  return [employeeNo, displayName].filter(Boolean).join(' - ') || 'Unnamed Employee'
+  const employeeNo = String(item?.employeeNo || item?.code || '').trim()
+  const displayName = String(item?.displayName || item?.name || '').trim()
+  return [employeeNo, displayName].filter(Boolean).join(' - ') || t('auth.account.unnamedEmployee')
 }
 
 function normalizeEmployeeOptions(payload) {
-  const items = normalizeItems(payload)
-
-  return items.map((item) => ({
+  return normalizeItems(payload).map((item) => ({
     label: employeeLabel(item),
     value: normalizeId(item),
   }))
 }
 
 function normalizeRoleOptions(payload) {
-  const items = normalizeItems(payload)
-
-  return items.map((item) => ({
-    label: item?.displayName || item?.name || item?.title || item?.code || 'Unnamed Role',
-    value: item?.id || item?._id,
+  return normalizeItems(payload).map((item) => ({
+    label: item?.displayName || item?.name || item?.title || item?.code || t('auth.account.unnamedRole'),
+    value: normalizeId(item),
   }))
 }
 
 function normalizePermissionCodes(values) {
   if (!Array.isArray(values)) return []
-  return [...new Set(values.map((v) => String(v || '').trim().toUpperCase()).filter(Boolean))]
+
+  return [
+    ...new Set(
+      values
+        .map((value) => String(value || '').trim().toUpperCase())
+        .filter(Boolean),
+    ),
+  ]
 }
 
 function permissionChips(input) {
@@ -183,6 +199,15 @@ function buildQuery(page) {
     search: String(filters.search || '').trim(),
     isActive: filters.isActive,
   }
+}
+
+function showToast(severity, summary, detail, life = 3000) {
+  toast.add({
+    severity,
+    summary,
+    detail,
+    life,
+  })
 }
 
 async function fetchPage(page, { replace = false, silent = false } = {}) {
@@ -200,45 +225,42 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
     const payload = normalizePayload(res)
     const items = normalizeItems(payload)
-    const total = Number(payload?.pagination?.total || 0)
+    const total = normalizePaginationTotal(payload)
+    const startIndex = (page - 1) * PAGE_SIZE
 
     totalRecords.value = total
 
     if (replace) {
-      const nextRows = Array.from({ length: total }, () => null)
-      const startIndex = (page - 1) * PAGE_SIZE
+      const nextRows = total > 0 ? Array.from({ length: total }, () => null) : []
 
-      for (let i = 0; i < items.length; i += 1) {
-        nextRows[startIndex + i] = items[i]
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
       }
 
-      rows.value = total === 0 ? [] : nextRows
+      rows.value = nextRows
       loadedPages.value = new Set([page])
     } else {
       if (!rows.value.length && total > 0) {
         rows.value = Array.from({ length: total }, () => null)
       }
 
-      const startIndex = (page - 1) * PAGE_SIZE
+      const nextRows = [...rows.value]
 
-      for (let i = 0; i < items.length; i += 1) {
-        rows.value[startIndex + i] = items[i]
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
       }
 
+      rows.value = nextRows
       loadedPages.value.add(page)
     }
 
     bootstrapped.value = true
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Load failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to load accounts',
-      life: 3000,
-    })
+    showToast(
+      'error',
+      t('common.loadFailed'),
+      getApiErrorMessage(error, t('auth.account.loadFailed')),
+    )
   } finally {
     backgroundLoading.value = false
   }
@@ -270,24 +292,14 @@ async function fetchOptions() {
       employeeOptions.value = normalizeEmployeeOptions(normalizePayload(employeeResult.value))
     } else {
       employeeOptions.value = []
-      toast.add({
-        severity: 'warn',
-        summary: 'Reference data',
-        detail: 'Employee options could not be loaded',
-        life: 3000,
-      })
+      showToast('warn', t('common.warning'), t('auth.account.employeeOptionsLoadFailed'))
     }
 
     if (roleResult.status === 'fulfilled') {
       roleOptions.value = normalizeRoleOptions(normalizePayload(roleResult.value))
     } else {
       roleOptions.value = []
-      toast.add({
-        severity: 'warn',
-        summary: 'Reference data',
-        detail: 'Role options could not be loaded',
-        life: 3000,
-      })
+      showToast('warn', t('common.warning'), t('auth.account.roleOptionsLoadFailed'))
     }
   } finally {
     loadingOptions.value = false
@@ -296,6 +308,7 @@ async function fetchOptions() {
 
 function runSearchSoon() {
   window.clearTimeout(searchTimer)
+
   searchTimer = window.setTimeout(() => {
     reloadFirstPage({ keepVisible: true })
   }, SEARCH_DEBOUNCE_MS)
@@ -366,6 +379,7 @@ function openCreateDialog() {
 
 function openEditDialog(row) {
   selectedAccount.value = row
+
   editForm.loginId = row?.loginId || ''
   editForm.displayName = row?.displayName || ''
   editForm.employeeId = normalizeRefId(row?.employeeId)
@@ -376,6 +390,7 @@ function openEditDialog(row) {
   editForm.mustChangePassword = !!row?.mustChangePassword
   editForm.isActive = !!row?.isActive
   editDirectPermissionInput.value = editForm.directPermissionCodes.join(', ')
+
   editDialogVisible.value = true
 }
 
@@ -387,6 +402,7 @@ function openResetDialog(row) {
 
 async function submitCreate() {
   saving.value = true
+
   try {
     await createAccount({
       loginId: String(createForm.loginId || '').trim(),
@@ -402,25 +418,17 @@ async function submitCreate() {
     createDialogVisible.value = false
     resetCreateForm()
 
-    toast.add({
-      severity: 'success',
-      summary: 'Created',
-      detail: 'Account created successfully',
-      life: 2500,
-    })
+    showToast('success', t('common.created'), t('auth.account.createdSuccess'), 2500)
 
     await fetchOptions()
     await reloadFirstPage({ keepVisible: false })
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Create failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to create account',
-      life: 3500,
-    })
+    showToast(
+      'error',
+      t('common.createFailed'),
+      buildSaveErrorMessage(error, t('auth.account.createFailed')),
+      3500,
+    )
   } finally {
     saving.value = false
   }
@@ -431,6 +439,7 @@ async function submitEdit() {
   if (!accountId) return
 
   saving.value = true
+
   try {
     await updateAccount(accountId, {
       loginId: String(editForm.loginId || '').trim(),
@@ -445,25 +454,17 @@ async function submitEdit() {
     editDialogVisible.value = false
     resetEditForm()
 
-    toast.add({
-      severity: 'success',
-      summary: 'Updated',
-      detail: 'Account updated successfully',
-      life: 2500,
-    })
+    showToast('success', t('common.updated'), t('auth.account.updatedSuccess'), 2500)
 
     await fetchOptions()
     await reloadFirstPage({ keepVisible: false })
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Update failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to update account',
-      life: 3500,
-    })
+    showToast(
+      'error',
+      t('common.updateFailed'),
+      buildSaveErrorMessage(error, t('auth.account.updateFailed')),
+      3500,
+    )
   } finally {
     saving.value = false
   }
@@ -474,6 +475,7 @@ async function submitResetPassword() {
   if (!accountId) return
 
   resetting.value = true
+
   try {
     await resetAccountPassword(accountId, {
       newPassword: resetForm.newPassword,
@@ -483,41 +485,34 @@ async function submitResetPassword() {
     resetDialogVisible.value = false
     resetResetForm()
 
-    toast.add({
-      severity: 'success',
-      summary: 'Password reset',
-      detail: 'Password reset successfully',
-      life: 2500,
-    })
+    showToast('success', t('auth.account.passwordReset'), t('auth.account.passwordResetSuccess'), 2500)
 
     await reloadFirstPage({ keepVisible: true })
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Reset failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to reset password',
-      life: 3500,
-    })
+    showToast(
+      'error',
+      t('auth.account.resetFailed'),
+      buildSaveErrorMessage(error, t('auth.account.resetFailed')),
+      3500,
+    )
   } finally {
     resetting.value = false
   }
 }
 
 function statusSeverity(active) {
-  return active ? 'success' : 'contrast'
+  return active ? 'success' : 'secondary'
 }
 
 function yesNoSeverity(value) {
-  return value ? 'warn' : 'contrast'
+  return value ? 'warn' : 'secondary'
 }
 
 function formatRoleNames(roleIds = []) {
   if (!Array.isArray(roleIds) || !roleIds.length) return '-'
 
   const labelMap = new Map(roleOptions.value.map((item) => [item.value, item.label]))
+
   return roleIds.map((id) => labelMap.get(id) || id).join(', ')
 }
 
@@ -532,14 +527,11 @@ function formatEmployeeName(employeeValue) {
   return found?.label || '-'
 }
 
-function formatDateTime(value) {
-  if (!value) return '-'
-  return new Date(value).toLocaleString()
-}
-
 onMounted(async () => {
-  await fetchOptions()
-  await reloadFirstPage({ keepVisible: false })
+  await Promise.all([
+    fetchOptions(),
+    reloadFirstPage({ keepVisible: false }),
+  ])
 })
 
 onBeforeUnmount(() => {
@@ -548,309 +540,390 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4">
-    <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+  <div class="ot-page-shell">
+    <section class="ot-page-header">
+      <div class="ot-page-header-main">
+        <div class="ot-page-kicker">
+          <i class="pi pi-user-edit" />
+          {{ t('nav.accessControl') }}
+        </div>
 
-      <div class="flex flex-wrap items-center gap-2">
+        <h1 class="ot-page-title">
+          {{ t('nav.accounts') }}
+        </h1>
+
+        <p class="ot-page-subtitle">
+          {{ t('auth.account.subtitle') }}
+        </p>
+      </div>
+
+      <div class="ot-page-actions">
         <Button
-          label="New Account"
+          :label="t('auth.account.newAccount')"
           icon="pi pi-plus"
           size="small"
           @click="openCreateDialog"
         />
       </div>
-    </div>
+    </section>
 
-    <div class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]">
-      <div class="border-b border-[color:var(--ot-border)] px-3 py-3">
-        <div class="flex flex-col gap-2 xl:flex-row xl:items-center">
-          <IconField class="w-full xl:w-[320px] xl:shrink-0">
-            <InputIcon class="pi pi-search" />
-            <InputText
-              v-model="filters.search"
-              placeholder="Search login ID or display name"
-              class="w-full"
-              size="small"
-              @input="onSearchInput"
-            />
-          </IconField>
+    <section class="ot-filter-bar">
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('common.search') }}
+        </label>
 
-          <div class="w-full xl:w-[160px] xl:shrink-0">
-            <Select
-              v-model="filters.isActive"
-              :options="statusOptions"
-              optionLabel="label"
-              optionValue="value"
-              placeholder="Status"
-              class="w-full"
-              size="small"
-              @change="onStatusChange"
-            />
-          </div>
+        <IconField>
+          <InputIcon class="pi pi-search" />
+          <InputText
+            v-model="filters.search"
+            :placeholder="t('auth.account.searchPlaceholder')"
+            class="w-full"
+            size="small"
+            @input="onSearchInput"
+          />
+        </IconField>
+      </div>
 
-          <div class="flex items-center gap-2 xl:ml-auto xl:shrink-0">
-            <div class="rounded-lg border border-[color:var(--ot-border)] px-3 py-1.5 text-xs font-medium text-[color:var(--ot-text-muted)]">
-              Loaded {{ summaryText }}
-            </div>
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('common.status') }}
+        </label>
 
-            <Button
-              label="Clear"
-              icon="pi pi-refresh"
-              severity="secondary"
-              outlined
-              size="small"
-              @click="clearFilters"
-            />
-          </div>
+        <Select
+          v-model="filters.isActive"
+          :options="statusOptions"
+          option-label="label"
+          option-value="value"
+          class="w-full"
+          size="small"
+          @change="onStatusChange"
+        />
+      </div>
+
+      <div class="ot-filter-actions">
+        <span class="ot-loaded-badge">
+          {{ loadedLabel }}
+        </span>
+
+        <Button
+          :label="t('common.clear')"
+          icon="pi pi-filter-slash"
+          severity="secondary"
+          outlined
+          size="small"
+          @click="clearFilters"
+        />
+      </div>
+    </section>
+
+    <section class="ot-table-card">
+      <div class="ot-table-toolbar">
+        <div>
+          <h2 class="ot-table-title">
+            {{ t('auth.account.tableTitle') }}
+          </h2>
+
+          <p class="ot-table-subtitle">
+            {{ t('auth.account.tableSubtitle') }}
+          </p>
+        </div>
+
+        <div class="ot-table-actions">
+          <span
+            v-if="backgroundLoading && hasAnyData"
+            class="ot-loaded-badge"
+          >
+            <i class="pi pi-spin pi-spinner" />
+            {{ t('common.updating') }}
+          </span>
         </div>
       </div>
 
-      <DataTable
-        :value="rows"
-        lazy
-        scrollable
-        scrollHeight="500px"
-        tableStyle="min-width: 96rem"
-        class="accounts-table"
-        :virtualScrollerOptions="useVirtualScroll ? {
-          lazy: true,
-          onLazyLoad: onVirtualLazyLoad,
-          itemSize: 72,
-          delay: 0,
-          showLoader: false,
-          loading: false,
-          numToleratedItems: 12,
-        } : null"
-      >
-        <template #empty>
-          <div
-            v-if="bootstrapped"
-            class="py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
-          >
-            No accounts found.
-          </div>
-        </template>
-
-        <Column field="loginId" header="Login ID" style="min-width: 10rem">
-          <template #body="{ data }">
-            <span v-if="data">{{ data.loginId || '-' }}</span>
-          </template>
-        </Column>
-
-        <Column field="displayName" header="Display Name" style="min-width: 12rem">
-          <template #body="{ data }">
-            <span v-if="data">{{ data.displayName || '-' }}</span>
-          </template>
-        </Column>
-
-        <Column header="Employee" style="min-width: 16rem">
-          <template #body="{ data }">
-            <span v-if="data">{{ formatEmployeeName(data.employeeId) }}</span>
-          </template>
-        </Column>
-
-        <Column header="Roles" style="min-width: 18rem">
-          <template #body="{ data }">
-            <span v-if="data" class="line-clamp-2">
-              {{ formatRoleNames(data.roleIds) }}
-            </span>
-          </template>
-        </Column>
-
-        <Column header="Direct Permissions" style="min-width: 18rem">
-          <template #body="{ data }">
+      <div class="ot-table-wrapper">
+        <DataTable
+          :value="rows"
+          lazy
+          scrollable
+          scroll-height="500px"
+          table-style="min-width: 96rem"
+          class="ot-data-table ot-data-table-compact"
+          :virtual-scroller-options="useVirtualScroll ? {
+            lazy: true,
+            onLazyLoad: onVirtualLazyLoad,
+            itemSize: 72,
+            delay: 0,
+            showLoader: false,
+            loading: false,
+            numToleratedItems: 12,
+          } : null"
+        >
+          <template #empty>
             <div
-              v-if="data && Array.isArray(data.directPermissionCodes) && data.directPermissionCodes.length"
-              class="flex flex-wrap gap-1"
+              v-if="bootstrapped"
+              class="ot-empty-state"
             >
+              <div class="ot-empty-icon">
+                <i class="pi pi-users" />
+              </div>
+              <div class="ot-empty-title">
+                {{ t('common.noData') }}
+              </div>
+              <div class="ot-empty-text">
+                {{ t('auth.account.noData') }}
+              </div>
+            </div>
+          </template>
+
+          <Column
+            field="loginId"
+            :header="t('auth.loginId')"
+            style="min-width: 10rem"
+          >
+            <template #body="{ data }">
+              <span v-if="data">{{ data.loginId || '-' }}</span>
+            </template>
+          </Column>
+
+          <Column
+            field="displayName"
+            :header="t('auth.account.displayName')"
+            style="min-width: 12rem"
+          >
+            <template #body="{ data }">
+              <span v-if="data">{{ data.displayName || '-' }}</span>
+            </template>
+          </Column>
+
+          <Column
+            :header="t('nav.employees')"
+            style="min-width: 16rem"
+          >
+            <template #body="{ data }">
+              <span v-if="data">{{ formatEmployeeName(data.employeeId) }}</span>
+            </template>
+          </Column>
+
+          <Column
+            :header="t('nav.roles')"
+            style="min-width: 18rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="ot-truncate-2"
+              >
+                {{ formatRoleNames(data.roleIds) }}
+              </span>
+            </template>
+          </Column>
+
+          <Column
+            :header="t('auth.account.directPermissions')"
+            style="min-width: 18rem"
+          >
+            <template #body="{ data }">
+              <div
+                v-if="data && Array.isArray(data.directPermissionCodes) && data.directPermissionCodes.length"
+                class="flex flex-wrap gap-1"
+              >
+                <Tag
+                  v-for="code in data.directPermissionCodes"
+                  :key="code"
+                  :value="code"
+                  severity="info"
+                />
+              </div>
+              <span v-else-if="data">-</span>
+            </template>
+          </Column>
+
+          <Column
+            :header="t('auth.account.mustChangePassword')"
+            style="min-width: 9rem"
+          >
+            <template #body="{ data }">
               <Tag
-                v-for="code in data.directPermissionCodes"
-                :key="code"
-                :value="code"
-                severity="info"
-                class="ot-status-tag"
+                v-if="data"
+                :value="data.mustChangePassword ? t('common.yes') : t('common.no')"
+                :severity="yesNoSeverity(data.mustChangePassword)"
               />
-            </div>
-            <span v-else-if="data">-</span>
-          </template>
-        </Column>
+            </template>
+          </Column>
 
-        <Column header="Must Change" style="min-width: 8rem">
-          <template #body="{ data }">
-            <Tag
-              v-if="data"
-              :value="data.mustChangePassword ? 'Yes' : 'No'"
-              :severity="yesNoSeverity(data.mustChangePassword)"
-              class="ot-status-tag"
-            />
-          </template>
-        </Column>
-
-        <Column header="Status" style="min-width: 8rem">
-          <template #body="{ data }">
-            <Tag
-              v-if="data"
-              :value="data.isActive ? 'Active' : 'Inactive'"
-              :severity="statusSeverity(data.isActive)"
-              class="ot-status-tag"
-            />
-          </template>
-        </Column>
-
-        <Column header="Created At" style="min-width: 14rem">
-          <template #body="{ data }">
-            <span v-if="data">{{ formatDateTime(data.createdAt) }}</span>
-          </template>
-        </Column>
-
-        <Column header="Actions" style="width: 13rem; min-width: 13rem">
-          <template #body="{ data }">
-            <div v-if="data" class="flex flex-wrap gap-2">
-              <Button
-                label="Edit"
-                icon="pi pi-pencil"
-                size="small"
-                outlined
-                @click="openEditDialog(data)"
+          <Column
+            :header="t('common.status')"
+            style="min-width: 8rem"
+          >
+            <template #body="{ data }">
+              <Tag
+                v-if="data"
+                :value="data.isActive ? t('common.active') : t('common.inactive')"
+                :severity="statusSeverity(data.isActive)"
               />
-              <Button
-                label="Reset"
-                icon="pi pi-key"
-                size="small"
-                severity="danger"
-                outlined
-                @click="openResetDialog(data)"
-              />
-            </div>
-          </template>
-        </Column>
-      </DataTable>
+            </template>
+          </Column>
 
-      <div
-        v-if="backgroundLoading && hasAnyData"
-        class="flex items-center justify-center border-t border-[color:var(--ot-border)] px-3 py-2 text-xs text-[color:var(--ot-text-muted)]"
-      >
-        Updating...
+          <Column
+            :header="t('common.createdAt')"
+            style="min-width: 12rem"
+          >
+            <template #body="{ data }">
+              <span v-if="data">{{ formatDateTime(data.createdAt) }}</span>
+            </template>
+          </Column>
+
+          <Column
+            :header="t('common.actions')"
+            style="width: 13rem; min-width: 13rem"
+          >
+            <template #body="{ data }">
+              <div
+                v-if="data"
+                class="ot-row-actions"
+              >
+                <Button
+                  :label="t('common.edit')"
+                  icon="pi pi-pencil"
+                  size="small"
+                  outlined
+                  @click="openEditDialog(data)"
+                />
+                <Button
+                  :label="t('auth.account.reset')"
+                  icon="pi pi-key"
+                  size="small"
+                  severity="danger"
+                  outlined
+                  @click="openResetDialog(data)"
+                />
+              </div>
+            </template>
+          </Column>
+        </DataTable>
       </div>
-    </div>
+    </section>
 
     <Dialog
       v-model:visible="createDialogVisible"
       modal
-      header="Create Account"
+      :header="t('auth.account.createTitle')"
       :style="{ width: '52rem', maxWidth: '96vw' }"
       @hide="resetCreateForm"
     >
-      <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Login ID
-          </label>
-          <InputText
-            v-model="createForm.loginId"
-            class="w-full"
-            placeholder="Example: root_admin"
-          />
+      <div class="ot-dialog-form">
+        <div class="ot-form-grid">
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('auth.loginId') }}
+            </label>
+            <InputText
+              v-model="createForm.loginId"
+              class="w-full"
+              :placeholder="t('auth.account.loginIdExample')"
+            />
+          </div>
+
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('auth.account.displayName') }}
+            </label>
+            <InputText
+              v-model="createForm.displayName"
+              class="w-full"
+              :placeholder="t('auth.account.displayNameExample')"
+            />
+          </div>
+
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('auth.password') }}
+            </label>
+            <Password
+              v-model="createForm.password"
+              class="w-full"
+              input-class="w-full"
+              toggle-mask
+              :feedback="false"
+            />
+          </div>
+
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('nav.employees') }}
+            </label>
+            <Select
+              v-model="createForm.employeeId"
+              :options="employeeOptions"
+              option-label="label"
+              option-value="value"
+              filter
+              show-clear
+              :placeholder="t('auth.account.selectEmployee')"
+              class="w-full"
+              :loading="loadingOptions"
+            />
+          </div>
         </div>
 
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Display Name
-          </label>
-          <InputText
-            v-model="createForm.displayName"
-            class="w-full"
-            placeholder="Example: System Root Admin"
-          />
-        </div>
-
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Password
-          </label>
-          <Password
-            v-model="createForm.password"
-            class="w-full"
-            inputClass="w-full"
-            toggleMask
-            :feedback="false"
-          />
-        </div>
-
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Employee
-          </label>
-          <Select
-            v-model="createForm.employeeId"
-            :options="employeeOptions"
-            optionLabel="label"
-            optionValue="value"
-            filter
-            showClear
-            placeholder="Select employee"
-            class="w-full"
-            :loading="loadingOptions"
-            :disabled="!employeeOptions.length"
-          />
-        </div>
-
-        <div class="space-y-2 md:col-span-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Roles
+        <div class="ot-field">
+          <label class="ot-field-label">
+            {{ t('nav.roles') }}
           </label>
           <MultiSelect
             v-model="createForm.roleIds"
             :options="roleOptions"
-            optionLabel="label"
-            optionValue="value"
+            option-label="label"
+            option-value="value"
             filter
             display="chip"
-            placeholder="Select roles"
+            :placeholder="t('auth.account.selectRoles')"
             class="w-full"
             :loading="loadingOptions"
           />
         </div>
 
-        <div class="space-y-2 md:col-span-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Direct Permission Codes
+        <div class="ot-field">
+          <label class="ot-field-label">
+            {{ t('auth.account.directPermissions') }}
           </label>
           <InputText
             v-model="directPermissionInput"
             class="w-full"
-            placeholder="Example: ACCOUNT_VIEW, ACCOUNT_CREATE"
+            placeholder="ACCOUNT_VIEW, ACCOUNT_CREATE"
           />
-          <p class="text-xs text-[color:var(--ot-text-muted)]">
-            Separate permission codes with commas.
+          <p class="ot-field-help">
+            {{ t('auth.account.directPermissionHelp') }}
           </p>
         </div>
 
-        <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] px-4 py-3">
-          <span class="text-sm font-medium text-[color:var(--ot-text)]">
-            Must change password on first login
-          </span>
-          <InputSwitch v-model="createForm.mustChangePassword" />
-        </div>
+        <div class="ot-form-grid">
+          <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] px-4 py-3">
+            <span class="text-sm font-semibold text-[color:var(--ot-text)]">
+              {{ t('auth.account.mustChangePassword') }}
+            </span>
+            <InputSwitch v-model="createForm.mustChangePassword" />
+          </div>
 
-        <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] px-4 py-3">
-          <span class="text-sm font-medium text-[color:var(--ot-text)]">
-            Active Status
-          </span>
-          <InputSwitch v-model="createForm.isActive" />
+          <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] px-4 py-3">
+            <span class="text-sm font-semibold text-[color:var(--ot-text)]">
+              {{ t('common.active') }}
+            </span>
+            <InputSwitch v-model="createForm.isActive" />
+          </div>
         </div>
       </div>
 
       <template #footer>
-        <div class="flex justify-end gap-2">
+        <div class="ot-form-footer">
           <Button
-            label="Cancel"
+            :label="t('common.cancel')"
             text
             size="small"
             @click="createDialogVisible = false"
           />
           <Button
-            label="Create Account"
+            :label="t('auth.account.createTitle')"
             :loading="saving"
             :disabled="isCreateDisabled"
             size="small"
@@ -863,108 +936,109 @@ onBeforeUnmount(() => {
     <Dialog
       v-model:visible="editDialogVisible"
       modal
-      header="Edit Account"
+      :header="t('auth.account.editTitle')"
       :style="{ width: '52rem', maxWidth: '96vw' }"
       @hide="resetEditForm"
     >
-      <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Login ID
-          </label>
-          <InputText
-            v-model="editForm.loginId"
-            class="w-full"
-          />
+      <div class="ot-dialog-form">
+        <div class="ot-form-grid">
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('auth.loginId') }}
+            </label>
+            <InputText
+              v-model="editForm.loginId"
+              class="w-full"
+            />
+          </div>
+
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('auth.account.displayName') }}
+            </label>
+            <InputText
+              v-model="editForm.displayName"
+              class="w-full"
+            />
+          </div>
+
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('nav.employees') }}
+            </label>
+            <Select
+              v-model="editForm.employeeId"
+              :options="employeeOptions"
+              option-label="label"
+              option-value="value"
+              filter
+              show-clear
+              :placeholder="t('auth.account.selectEmployee')"
+              class="w-full"
+              :loading="loadingOptions"
+            />
+          </div>
+
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('auth.account.mustChangePassword') }}
+            </label>
+            <Select
+              v-model="editForm.mustChangePassword"
+              :options="yesNoOptions"
+              option-label="label"
+              option-value="value"
+              class="w-full"
+            />
+          </div>
         </div>
 
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Display Name
-          </label>
-          <InputText
-            v-model="editForm.displayName"
-            class="w-full"
-          />
-        </div>
-
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Employee
-          </label>
-          <Select
-            v-model="editForm.employeeId"
-            :options="employeeOptions"
-            optionLabel="label"
-            optionValue="value"
-            filter
-            showClear
-            placeholder="Select employee"
-            class="w-full"
-            :loading="loadingOptions"
-            :disabled="!employeeOptions.length"
-          />
-        </div>
-
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Must Change Password
-          </label>
-          <Select
-            v-model="editForm.mustChangePassword"
-            :options="yesNoOptions"
-            optionLabel="label"
-            optionValue="value"
-            class="w-full"
-          />
-        </div>
-
-        <div class="space-y-2 md:col-span-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Roles
+        <div class="ot-field">
+          <label class="ot-field-label">
+            {{ t('nav.roles') }}
           </label>
           <MultiSelect
             v-model="editForm.roleIds"
             :options="roleOptions"
-            optionLabel="label"
-            optionValue="value"
+            option-label="label"
+            option-value="value"
             filter
             display="chip"
-            placeholder="Select roles"
+            :placeholder="t('auth.account.selectRoles')"
             class="w-full"
             :loading="loadingOptions"
           />
         </div>
 
-        <div class="space-y-2 md:col-span-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Direct Permission Codes
+        <div class="ot-field">
+          <label class="ot-field-label">
+            {{ t('auth.account.directPermissions') }}
           </label>
           <InputText
             v-model="editDirectPermissionInput"
             class="w-full"
-            placeholder="Example: ACCOUNT_VIEW, ACCOUNT_CREATE"
+            placeholder="ACCOUNT_VIEW, ACCOUNT_CREATE"
           />
         </div>
 
-        <div class="md:col-span-2 flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] px-4 py-3">
-          <span class="text-sm font-medium text-[color:var(--ot-text)]">
-            Active Status
+        <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] px-4 py-3">
+          <span class="text-sm font-semibold text-[color:var(--ot-text)]">
+            {{ t('common.active') }}
           </span>
           <InputSwitch v-model="editForm.isActive" />
         </div>
       </div>
 
       <template #footer>
-        <div class="flex justify-end gap-2">
+        <div class="ot-form-footer">
           <Button
-            label="Cancel"
+            :label="t('common.cancel')"
             text
             size="small"
             @click="editDialogVisible = false"
           />
           <Button
-            label="Save Changes"
+            :label="t('common.save')"
             :loading="saving"
             :disabled="isEditDisabled"
             size="small"
@@ -977,46 +1051,47 @@ onBeforeUnmount(() => {
     <Dialog
       v-model:visible="resetDialogVisible"
       modal
-      header="Reset Password"
+      :header="t('auth.account.resetPassword')"
       :style="{ width: '34rem', maxWidth: '95vw' }"
       @hide="resetResetForm"
     >
-      <div class="space-y-5">
-        <div class="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300">
-          Resetting password for <strong>{{ selectedAccount?.loginId }}</strong>
+      <div class="ot-dialog-form">
+        <div class="ot-inline-error">
+          {{ t('auth.account.resettingFor') }}
+          <strong>{{ selectedAccount?.loginId }}</strong>
         </div>
 
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            New Password
+        <div class="ot-field">
+          <label class="ot-field-label">
+            {{ t('auth.account.newPassword') }}
           </label>
           <Password
             v-model="resetForm.newPassword"
             class="w-full"
-            inputClass="w-full"
-            toggleMask
+            input-class="w-full"
+            toggle-mask
             :feedback="false"
           />
         </div>
 
         <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] px-4 py-3">
-          <span class="text-sm font-medium text-[color:var(--ot-text)]">
-            Force password change after reset
+          <span class="text-sm font-semibold text-[color:var(--ot-text)]">
+            {{ t('auth.account.forcePasswordChange') }}
           </span>
           <InputSwitch v-model="resetForm.mustChangePassword" />
         </div>
       </div>
 
       <template #footer>
-        <div class="flex justify-end gap-2">
+        <div class="ot-form-footer">
           <Button
-            label="Cancel"
+            :label="t('common.cancel')"
             text
             size="small"
             @click="resetDialogVisible = false"
           />
           <Button
-            label="Reset Password"
+            :label="t('auth.account.resetPassword')"
             severity="danger"
             :loading="resetting"
             :disabled="isResetDisabled"
@@ -1028,23 +1103,3 @@ onBeforeUnmount(() => {
     </Dialog>
   </div>
 </template>
-
-<style scoped>
-:deep(.accounts-table .p-datatable-thead > tr > th) {
-  padding: 0.72rem 0.9rem !important;
-}
-
-:deep(.accounts-table .p-datatable-tbody > tr > td) {
-  padding: 0.72rem 0.9rem !important;
-  height: 72px !important;
-}
-
-:deep(.accounts-table .p-tag.ot-status-tag) {
-  min-height: 1.35rem !important;
-  padding: 0.12rem 0.45rem !important;
-  font-size: 0.7rem !important;
-  font-weight: 600 !important;
-  line-height: 1 !important;
-  border-radius: 999px !important;
-}
-</style>

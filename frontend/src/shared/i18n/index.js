@@ -20,9 +20,11 @@ export const i18n = createI18n({
 
 export function setAppLanguage(language) {
   const normalized = normalizeLanguage(language)
+
   i18n.global.locale.value = normalized
   saveLanguage(normalized)
   document.documentElement.lang = normalized
+
   return normalized
 }
 

@@ -1,5 +1,6 @@
 // frontend/src/modules/attendance/attendance.api.js
 import api from '@/shared/services/api'
+import { toFileFormData } from '@/shared/utils/formData'
 
 export function downloadAttendanceImportSample() {
   return api.get('/attendance/import/sample', {
@@ -7,10 +8,10 @@ export function downloadAttendanceImportSample() {
   })
 }
 
-export function importAttendanceExcel(formData, options = {}) {
+export function importAttendanceExcel(input, options = {}) {
   const { onUploadProgress } = options
 
-  return api.post('/attendance/import', formData, {
+  return api.post('/attendance/import', toFileFormData(input), {
     headers: {
       'Content-Type': 'multipart/form-data',
     },
@@ -30,10 +31,17 @@ export function getAttendanceRecords(params = {}) {
   return api.get('/attendance/records', { params })
 }
 
+export function exportAttendanceRecordsExcel(params = {}) {
+  return api.get('/attendance/records/export', {
+    params,
+    responseType: 'blob',
+  })
+}
+
 export function searchOTVerificationRequests(params = {}) {
   return api.get('/attendance/verification/ot/search', { params })
 }
 
-export function verifyOTAttendance(otRequestId) {
-  return api.get(`/attendance/verification/ot/${otRequestId}`)
+export function verifyOTAttendance(otRequestId, params = {}) {
+  return api.get(`/attendance/verification/ot/${otRequestId}`, { params })
 }

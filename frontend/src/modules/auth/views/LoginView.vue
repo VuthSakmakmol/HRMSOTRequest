@@ -1,101 +1,140 @@
 <!-- frontend/src/modules/auth/views/LoginView.vue -->
-<template>
-  <div class="flex min-h-screen items-center justify-center bg-gray-50 px-4 py-10 dark:bg-gray-950">
-    <div
-      class="w-full max-w-md rounded-3xl border border-gray-200 bg-white p-8 shadow-sm dark:border-gray-800 dark:bg-gray-900"
-    >
-      <div class="mb-6">
-        <p class="text-sm font-medium uppercase tracking-[0.2em] text-blue-600">
-          OT Request v2
-        </p>
-        <h1 class="mt-2 text-3xl font-semibold text-gray-900 dark:text-white">
-          Sign in
-        </h1>
-        <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">
-          Use the seeded admin account to enter the system.
-        </p>
-      </div>
-
-      <form class="space-y-4" @submit.prevent="submit">
-        <div>
-          <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-200">
-            Login ID
-          </label>
-          <input
-            v-model="form.loginId"
-            type="text"
-            autocomplete="username"
-            class="w-full rounded-2xl border border-gray-300 bg-white px-4 py-3 text-sm outline-none ring-0 placeholder:text-gray-400 focus:border-blue-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
-            placeholder="Enter login ID"
-          />
-        </div>
-
-        <div>
-          <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-200">
-            Password
-          </label>
-          <input
-            v-model="form.password"
-            type="password"
-            autocomplete="current-password"
-            class="w-full rounded-2xl border border-gray-300 bg-white px-4 py-3 text-sm outline-none ring-0 placeholder:text-gray-400 focus:border-blue-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
-            placeholder="Enter password"
-          />
-        </div>
-
-        <div
-          v-if="errorMessage"
-          class="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300"
-        >
-          {{ errorMessage }}
-        </div>
-
-        <button
-          type="submit"
-          :disabled="auth.loading"
-          class="inline-flex w-full items-center justify-center rounded-2xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {{ auth.loading ? 'Signing in...' : 'Sign in' }}
-        </button>
-      </form>
-
-      <div
-        class="mt-6 rounded-2xl bg-gray-50 p-4 text-sm text-gray-600 dark:bg-gray-800/70 dark:text-gray-300"
-      >
-        <div><span class="font-semibold">Login:</span> root_admin</div>
-        <div><span class="font-semibold">Password:</span> RootAdmin@123</div>
-      </div>
-    </div>
-  </div>
-</template>
-
 <script setup>
-import { reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, reactive, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
+
+import Button from 'primevue/button'
+import InputText from 'primevue/inputtext'
+import Password from 'primevue/password'
+
+import AppLanguageSwitcher from '@/shared/components/AppLanguageSwitcher.vue'
 import { useAuthStore } from '@/modules/auth/auth.store'
+import { getApiErrorMessage } from '@/shared/utils/apiError'
 
 const router = useRouter()
+const route = useRoute()
 const auth = useAuthStore()
+const { t } = useI18n()
 
 const form = reactive({
-  loginId: 'root_admin',
-  password: 'RootAdmin@123',
+  loginId: '',
+  password: '',
 })
 
 const errorMessage = ref('')
+
+const isSubmitDisabled = computed(() => {
+  return (
+    auth.loading ||
+    !String(form.loginId || '').trim() ||
+    !String(form.password || '').trim()
+  )
+})
+
+function safeRedirectPath(value, fallback = '/dashboard') {
+  const path = String(value || '').trim()
+
+  if (!path) return fallback
+  if (!path.startsWith('/')) return fallback
+  if (path.startsWith('//')) return fallback
+  if (path.startsWith('/login')) return fallback
+
+  return path
+}
 
 async function submit() {
   errorMessage.value = ''
 
   try {
     await auth.login({
-      loginId: form.loginId,
+      loginId: String(form.loginId || '').trim(),
       password: form.password,
     })
-    router.push('/')
+
+    await router.push(safeRedirectPath(route.query?.redirect))
   } catch (error) {
-    errorMessage.value =
-      error?.response?.data?.message || 'Login failed. Please try again.'
+    errorMessage.value = getApiErrorMessage(
+      error,
+      t('auth.error.loginFailed'),
+    )
   }
 }
 </script>
+
+<template>
+  <div class="min-h-screen bg-[color:var(--ot-bg)] text-[color:var(--ot-text)]">
+    <div class="flex min-h-screen items-center justify-center px-4 py-10">
+      <section class="w-full max-w-[34rem] rounded-[28px] border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] p-6 shadow-[var(--ot-shadow-lg)] sm:p-8">
+        <div class="mb-7 flex items-start justify-between gap-4">
+          <div class="min-w-0">
+            <div class="ot-page-kicker">
+              <i class="pi pi-shield" />
+              {{ t('common.appName') }}
+            </div>
+
+            <h1 class="ot-page-title">
+              {{ t('auth.login') }}
+            </h1>
+
+            <p class="ot-page-subtitle">
+              {{ t('auth.loginSubtitle') }}
+            </p>
+          </div>
+
+          <AppLanguageSwitcher />
+        </div>
+
+        <form
+          class="space-y-4"
+          @submit.prevent="submit"
+        >
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('auth.loginId') }}
+            </label>
+
+            <InputText
+              v-model="form.loginId"
+              autocomplete="username"
+              class="w-full"
+              :placeholder="t('auth.loginIdPlaceholder')"
+              autofocus
+            />
+          </div>
+
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('auth.password') }}
+            </label>
+
+            <Password
+              v-model="form.password"
+              class="w-full"
+              input-class="w-full"
+              toggle-mask
+              :feedback="false"
+              autocomplete="current-password"
+              :placeholder="t('auth.passwordPlaceholder')"
+            />
+          </div>
+
+          <div
+            v-if="errorMessage"
+            class="ot-inline-error"
+          >
+            {{ errorMessage }}
+          </div>
+
+          <Button
+            type="submit"
+            :label="auth.loading ? t('auth.signingIn') : t('auth.login')"
+            :loading="auth.loading"
+            :disabled="isSubmitDisabled"
+            class="w-full"
+          />
+        </form>
+      </section>
+    </div>
+  </div>
+</template>

@@ -1,16 +1,16 @@
 <!-- frontend/src/layouts/components/AppTopbar.vue -->
 <script setup>
-// frontend/src/layouts/components/AppTopbar.vue
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 
 import Avatar from 'primevue/avatar'
 import Button from 'primevue/button'
 import Menu from 'primevue/menu'
 
+import AppLanguageSwitcher from '@/shared/components/AppLanguageSwitcher.vue'
 import { useAuthStore } from '@/modules/auth/auth.store'
 import { useThemeStore } from '@/app/store/theme.store'
-import AppLanguageSwitcher from '@/shared/components/AppLanguageSwitcher.vue'
 
 defineProps({
   desktopCollapsed: {
@@ -25,13 +25,21 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const theme = useThemeStore()
+const { t } = useI18n()
 
 const profileMenu = ref(null)
 
-const pageTitle = computed(() => String(route.meta?.title || 'Dashboard').trim())
+const pageTitle = computed(() => {
+  const titleKey = String(route.meta?.titleKey || '').trim()
+  const fallbackTitle = String(route.meta?.title || 'Dashboard').trim()
+
+  return titleKey ? t(titleKey) : fallbackTitle
+})
 
 const accountInitial = computed(() =>
-  String(auth.user?.displayName || auth.user?.loginId || 'U').charAt(0).toUpperCase(),
+  String(auth.user?.displayName || auth.user?.loginId || 'U')
+    .charAt(0)
+    .toUpperCase(),
 )
 
 const displayName = computed(() =>
@@ -45,13 +53,13 @@ const profileItems = computed(() => [
     command: () => theme.toggle(),
   },
   {
-    label: 'Profile',
+    label: t('auth.profile'),
     icon: 'pi pi-user',
     command: () => router.push('/profile'),
   },
   { separator: true },
   {
-    label: 'Logout',
+    label: t('auth.logout'),
     icon: 'pi pi-sign-out',
     command: async () => {
       await auth.logout()
@@ -101,6 +109,8 @@ function toggleProfileMenu(event) {
       </div>
 
       <div class="flex shrink-0 items-center gap-1">
+        <AppLanguageSwitcher />
+
         <Button
           :icon="theme.isDark ? 'pi pi-sun' : 'pi pi-moon'"
           text
@@ -146,7 +156,6 @@ function toggleProfileMenu(event) {
           popup
           class="app-profile-menu w-56"
         />
-        <AppLanguageSwitcher />
       </div>
     </div>
   </header>

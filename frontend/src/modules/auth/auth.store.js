@@ -114,25 +114,35 @@ function normalizeUser(user) {
   }
 }
 
+function unwrapResponseData(responseData) {
+  const root = responseData || {}
+  const data = root.data || root
+
+  return (
+    data.item ||
+    data.result ||
+    data.payload ||
+    data
+  )
+}
+
 function extractLoginPayload(responseData) {
-  const payload = responseData?.data || responseData || {}
+  const item = unwrapResponseData(responseData)
 
   const token =
-    payload.token ||
-    payload.accessToken ||
-    payload.access_token ||
-    payload.jwt ||
-    responseData?.token ||
-    responseData?.accessToken ||
-    responseData?.access_token ||
+    item.token ||
+    item.accessToken ||
+    item.access_token ||
+    item.jwt ||
+    item.authToken ||
     ''
 
   const user =
-    payload.user ||
-    payload.account ||
-    payload.profile ||
-    responseData?.user ||
-    responseData?.account ||
+    item.user ||
+    item.account ||
+    item.profile ||
+    item.item?.user ||
+    item.item?.account ||
     null
 
   return {
@@ -142,13 +152,13 @@ function extractLoginPayload(responseData) {
 }
 
 function extractMePayload(responseData) {
-  const payload = responseData?.data || responseData || {}
+  const item = unwrapResponseData(responseData)
 
   return (
-    payload.user ||
-    payload.account ||
-    payload.profile ||
-    payload
+    item.user ||
+    item.account ||
+    item.profile ||
+    item
   )
 }
 

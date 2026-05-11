@@ -2,6 +2,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 
 import Button from 'primevue/button'
 import Drawer from 'primevue/drawer'
@@ -25,6 +26,7 @@ const emit = defineEmits(['update:mobileVisible', 'update:desktopCollapsed'])
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const { t } = useI18n()
 
 const openGroups = ref({})
 
@@ -68,12 +70,12 @@ const navGroups = computed(() => {
   const groups = [
     {
       key: 'workspace',
-      label: 'Workspace',
+      label: t('nav.workspace'),
       icon: 'pi pi-home',
       items: [
         {
           key: 'dashboard',
-          label: 'Dashboard',
+          label: t('nav.dashboard'),
           icon: 'pi pi-chart-bar',
           to: '/dashboard',
         },
@@ -81,54 +83,54 @@ const navGroups = computed(() => {
     },
     {
       key: 'organization',
-      label: 'Organization',
+      label: t('nav.organization'),
       icon: 'pi pi-sitemap',
       items: [
         {
           key: 'permissions',
-          label: 'Permissions',
+          label: t('nav.permissions'),
           icon: 'pi pi-shield',
           to: '/access/permissions',
           permissions: ['PERMISSION_VIEW'],
         },
         {
           key: 'roles',
-          label: 'Roles',
+          label: t('nav.roles'),
           icon: 'pi pi-id-card',
           to: '/org/roles',
           permissions: ['ROLE_VIEW', 'ROLE_CREATE', 'ROLE_UPDATE'],
         },
         {
           key: 'departments',
-          label: 'Departments',
+          label: t('nav.departments'),
           icon: 'pi pi-building',
           to: '/org/departments',
           permissions: ['DEPARTMENT_VIEW', 'DEPARTMENT_CREATE', 'DEPARTMENT_UPDATE'],
         },
         {
           key: 'positions',
-          label: 'Positions',
+          label: t('nav.positions'),
           icon: 'pi pi-briefcase',
           to: '/org/positions',
           permissions: ['POSITION_VIEW', 'POSITION_CREATE', 'POSITION_UPDATE'],
         },
         {
           key: 'lines',
-          label: 'Lines',
+          label: t('nav.lines'),
           icon: 'pi pi-sitemap',
           to: '/org/lines',
           permissions: ['LINE_VIEW', 'LINE_CREATE', 'LINE_UPDATE'],
         },
         {
           key: 'employees',
-          label: 'Employees',
+          label: t('nav.employees'),
           icon: 'pi pi-users',
           to: '/org/employees',
           permissions: ['EMPLOYEE_VIEW', 'EMPLOYEE_CREATE', 'EMPLOYEE_UPDATE'],
         },
         {
           key: 'org-chart',
-          label: 'Organization Chart',
+          label: t('nav.orgChart'),
           icon: 'pi pi-share-alt',
           to: '/org/org-chart',
           permissions: ['EMPLOYEE_VIEW'],
@@ -137,12 +139,12 @@ const navGroups = computed(() => {
     },
     {
       key: 'calendar',
-      label: 'Calendar',
+      label: t('nav.calendar'),
       icon: 'pi pi-calendar',
       items: [
         {
           key: 'holidays',
-          label: 'Holiday Master',
+          label: t('nav.holidayMaster'),
           icon: 'pi pi-calendar-plus',
           to: '/calendar/holidays',
           permissions: ['HOLIDAY_VIEW', 'HOLIDAY_CREATE', 'HOLIDAY_UPDATE'],
@@ -151,12 +153,12 @@ const navGroups = computed(() => {
     },
     {
       key: 'shift',
-      label: 'Shift',
+      label: t('nav.shift'),
       icon: 'pi pi-stopwatch',
       items: [
         {
           key: 'shift-master',
-          label: 'Shift Master',
+          label: t('nav.shiftMaster'),
           icon: 'pi pi-clock',
           to: '/shift/list',
           permissions: ['SHIFT_VIEW', 'SHIFT_CREATE', 'SHIFT_UPDATE'],
@@ -165,12 +167,12 @@ const navGroups = computed(() => {
     },
     {
       key: 'access',
-      label: 'Access Control',
+      label: t('nav.accessControl'),
       icon: 'pi pi-lock',
       items: [
         {
           key: 'accounts',
-          label: 'Accounts',
+          label: t('nav.accounts'),
           icon: 'pi pi-user-edit',
           to: '/auth/accounts',
           permissions: [
@@ -184,26 +186,26 @@ const navGroups = computed(() => {
     },
     {
       key: 'attendance',
-      label: 'Attendance',
+      label: t('nav.attendance'),
       icon: 'pi pi-calendar-clock',
       items: [
         {
           key: 'attendance-imports',
-          label: 'Attendance Import',
+          label: t('nav.attendanceImport'),
           icon: 'pi pi-upload',
           to: '/attendance/imports',
           permissions: ['ATTENDANCE_VIEW', 'ATTENDANCE_IMPORT'],
         },
         {
           key: 'attendance-records',
-          label: 'Attendance Records',
+          label: t('nav.attendanceRecords'),
           icon: 'pi pi-table',
           to: '/attendance/records',
           permissions: ['ATTENDANCE_VIEW'],
         },
         {
           key: 'attendance-verification',
-          label: 'OT Verification',
+          label: t('nav.otVerification'),
           icon: 'pi pi-check-square',
           to: '/attendance/ot-verification',
           permissions: ['ATTENDANCE_VERIFY'],
@@ -212,12 +214,12 @@ const navGroups = computed(() => {
     },
     {
       key: 'overtime',
-      label: 'Overtime',
+      label: t('nav.overtime'),
       icon: 'pi pi-clock',
       items: [
         {
           key: 'ot-requests',
-          label: 'OT Requests',
+          label: t('nav.otRequests'),
           icon: 'pi pi-file-edit',
           to: '/ot/requests',
           permissions: [
@@ -230,28 +232,28 @@ const navGroups = computed(() => {
         },
         {
           key: 'ot-approvals',
-          label: 'Approval Inbox',
+          label: t('nav.approvalInbox'),
           icon: 'pi pi-inbox',
           to: '/ot/approvals',
           permissions: ['OT_REQUEST_APPROVE'],
         },
         {
           key: 'ot-acknowledgements',
-          label: 'Acknowledge Inbox',
+          label: t('nav.acknowledgeInbox'),
           icon: 'pi pi-info-circle',
           to: '/ot/acknowledgements',
           permissions: ['OT_REQUEST_ACKNOWLEDGE'],
         },
         {
           key: 'ot-policies',
-          label: 'OT Policies',
+          label: t('nav.otPolicies'),
           icon: 'pi pi-sliders-h',
           to: '/ot/policies',
           permissions: ['OT_POLICY_VIEW', 'OT_POLICY_CREATE', 'OT_POLICY_UPDATE'],
         },
         {
           key: 'shift-ot-options',
-          label: 'Shift OT Options',
+          label: t('nav.shiftOtOptions'),
           icon: 'pi pi-list-check',
           to: '/ot/shift-options',
           permissions: [
@@ -264,19 +266,19 @@ const navGroups = computed(() => {
     },
     {
       key: 'payment',
-      label: 'Payment',
+      label: t('nav.payment'),
       icon: 'pi pi-wallet',
       items: [
         {
           key: 'payment-process',
-          label: 'Payment Process',
+          label: t('nav.paymentProcess'),
           icon: 'pi pi-file-excel',
           to: '/payment/process',
           permissions: ['PAYMENT_PROCESS'],
         },
         {
           key: 'payment-formulas',
-          label: 'Payment Formulas',
+          label: t('nav.paymentFormulas'),
           icon: 'pi pi-calculator',
           to: '/payment/formulas',
           permissions: ['PAYMENT_FORMULA_VIEW'],
@@ -335,7 +337,7 @@ function sidebarItemClass(to, collapsed = false) {
 
       <div v-if="!desktopCollapsed" class="min-w-0">
         <div class="truncate text-[15px] font-semibold text-[color:var(--ot-text)]">
-          OT Request
+          {{ t('common.appName') }}
         </div>
       </div>
     </div>
@@ -416,7 +418,7 @@ function sidebarItemClass(to, collapsed = false) {
     <div class="border-t border-[color:var(--ot-border)] p-2">
       <Button
         v-if="!desktopCollapsed"
-        label="Logout"
+        :label="t('auth.logout')"
         icon="pi pi-sign-out"
         text
         severity="secondary"
@@ -433,7 +435,7 @@ function sidebarItemClass(to, collapsed = false) {
         severity="secondary"
         size="small"
         class="w-full"
-        aria-label="Logout"
+        :aria-label="t('auth.logout')"
         @click="logout"
       />
     </div>
@@ -457,7 +459,7 @@ function sidebarItemClass(to, collapsed = false) {
 
         <div class="min-w-0">
           <div class="truncate text-[15px] font-semibold text-[color:var(--ot-text)]">
-            OT Request
+            {{ t('common.appName') }}
           </div>
         </div>
       </div>
@@ -517,7 +519,7 @@ function sidebarItemClass(to, collapsed = false) {
 
       <div class="border-t border-[color:var(--ot-border)] pt-3">
         <Button
-          label="Logout"
+          :label="t('auth.logout')"
           icon="pi pi-sign-out"
           text
           severity="secondary"

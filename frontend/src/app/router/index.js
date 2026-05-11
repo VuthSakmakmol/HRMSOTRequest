@@ -1,6 +1,7 @@
 // frontend/src/app/router/index.js
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/modules/auth/auth.store'
+import i18n from '@/shared/i18n'
 
 import AppLayout from '@/layouts/AppLayout.vue'
 
@@ -105,6 +106,17 @@ async function ensureAuthBootstrapped() {
   }
 }
 
+function getRouteTitle(to) {
+  const titleKey = s(to.meta?.titleKey)
+  const fallbackTitle = s(to.meta?.title) || 'OT Request'
+
+  if (titleKey) {
+    return i18n.global.t(titleKey)
+  }
+
+  return fallbackTitle
+}
+
 const routes = [
   {
     path: '/login',
@@ -113,6 +125,7 @@ const routes = [
     meta: {
       public: true,
       title: 'Login',
+      titleKey: 'auth.login',
     },
   },
   {
@@ -137,6 +150,7 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'Dashboard',
+          titleKey: 'nav.dashboard',
         },
       },
 
@@ -150,6 +164,7 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'Accounts',
+          titleKey: 'nav.accounts',
           requiredAnyPermissions: [
             'ACCOUNT_VIEW',
             'ACCOUNT_CREATE',
@@ -165,6 +180,7 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'Permissions',
+          titleKey: 'nav.permissions',
           requiredAnyPermissions: ['PERMISSION_VIEW'],
         },
       },
@@ -175,6 +191,7 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'Roles',
+          titleKey: 'nav.roles',
           requiredAnyPermissions: ['ROLE_VIEW', 'ROLE_CREATE', 'ROLE_UPDATE'],
         },
       },
@@ -189,6 +206,7 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'Departments',
+          titleKey: 'nav.departments',
           requiredAnyPermissions: [
             'DEPARTMENT_VIEW',
             'DEPARTMENT_CREATE',
@@ -203,6 +221,7 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'Positions',
+          titleKey: 'nav.positions',
           requiredAnyPermissions: [
             'POSITION_VIEW',
             'POSITION_CREATE',
@@ -217,6 +236,7 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'Production Lines',
+          titleKey: 'nav.lines',
           requiredAnyPermissions: ['LINE_VIEW', 'LINE_CREATE', 'LINE_UPDATE'],
         },
       },
@@ -227,6 +247,7 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'Employees',
+          titleKey: 'nav.employees',
           requiredAnyPermissions: [
             'EMPLOYEE_VIEW',
             'EMPLOYEE_CREATE',
@@ -241,6 +262,7 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'Organization Chart',
+          titleKey: 'nav.orgChart',
           requiredAnyPermissions: ['EMPLOYEE_VIEW'],
         },
       },
@@ -255,6 +277,7 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'Holiday Master',
+          titleKey: 'nav.holidayMaster',
           requiredAnyPermissions: [
             'HOLIDAY_VIEW',
             'HOLIDAY_CREATE',
@@ -269,6 +292,7 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'Shift Master',
+          titleKey: 'nav.shiftMaster',
           requiredAnyPermissions: ['SHIFT_VIEW', 'SHIFT_CREATE', 'SHIFT_UPDATE'],
         },
       },
@@ -283,6 +307,7 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'OT Requests',
+          titleKey: 'nav.otRequests',
           requiredAnyPermissions: [
             'OT_REQUEST_VIEW',
             'OT_REQUEST_CREATE',
@@ -299,6 +324,7 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'Create OT Request',
+          titleKey: 'ot.requests.createTitle',
           requiredAnyPermissions: ['OT_REQUEST_CREATE'],
         },
       },
@@ -309,6 +335,7 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'OT Approval Inbox',
+          titleKey: 'ot.requests.approvalTitle',
           requiredAnyPermissions: ['OT_REQUEST_APPROVE'],
         },
       },
@@ -319,6 +346,7 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'OT Acknowledge Inbox',
+          titleKey: 'ot.requests.acknowledgeTitle',
           requiredAnyPermissions: ['OT_REQUEST_ACKNOWLEDGE'],
         },
       },
@@ -329,6 +357,7 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'Edit OT Request',
+          titleKey: 'ot.requests.editTitle',
           requiredAnyPermissions: ['OT_REQUEST_UPDATE'],
         },
       },
@@ -343,6 +372,7 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'OT Calculation Policies',
+          titleKey: 'nav.otPolicies',
           requiredAnyPermissions: [
             'OT_POLICY_VIEW',
             'OT_POLICY_CREATE',
@@ -357,6 +387,7 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'Shift OT Options',
+          titleKey: 'nav.shiftOtOptions',
           requiredAnyPermissions: [
             'SHIFT_OT_OPTION_VIEW',
             'SHIFT_OT_OPTION_CREATE',
@@ -375,7 +406,8 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'Attendance Import',
-          requiredAnyPermissions: ['ATTENDANCE_VIEW'],
+          titleKey: 'nav.attendanceImport',
+          requiredAnyPermissions: ['ATTENDANCE_VIEW', 'ATTENDANCE_IMPORT'],
         },
       },
       {
@@ -385,6 +417,7 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'Attendance Records',
+          titleKey: 'nav.attendanceRecords',
           requiredAnyPermissions: ['ATTENDANCE_VIEW'],
         },
       },
@@ -395,6 +428,7 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'OT Attendance Verification',
+          titleKey: 'nav.otVerification',
           requiredAnyPermissions: ['ATTENDANCE_VERIFY'],
         },
       },
@@ -409,6 +443,7 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'Payment Formulas',
+          titleKey: 'nav.paymentFormulas',
           requiredAnyPermissions: ['PAYMENT_FORMULA_VIEW'],
         },
       },
@@ -419,6 +454,7 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'Payment Process',
+          titleKey: 'nav.paymentProcess',
           requiredAnyPermissions: ['PAYMENT_PROCESS'],
         },
       },
@@ -433,6 +469,7 @@ const routes = [
         meta: {
           requiresAuth: true,
           title: 'Forbidden',
+          titleKey: 'auth.accessDenied',
         },
       },
     ],
@@ -478,7 +515,8 @@ router.beforeEach(async (to) => {
 })
 
 router.afterEach((to) => {
-  document.title = to.meta?.title ? `${to.meta.title} | OT Request` : 'OT Request'
+  const title = getRouteTitle(to)
+  document.title = title ? `${title} | OT Request` : 'OT Request'
 })
 
 export default router

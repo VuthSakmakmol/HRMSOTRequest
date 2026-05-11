@@ -1,6 +1,17 @@
 // frontend/src/modules/org/line.api.js
-// frontend/src/modules/org/line.api.js
 import api from '@/shared/services/api'
+import { toFileFormData } from '@/shared/utils/formData'
+
+export function getLineLookupOptions(params = {}) {
+  return api.get('/org/lines/lookup', {
+    params: {
+      page: 1,
+      limit: 100,
+      isActive: true,
+      ...params,
+    },
+  })
+}
 
 export function getLines(params = {}) {
   return api.get('/org/lines', { params })
@@ -18,23 +29,12 @@ export function updateLine(lineId, payload) {
   return api.patch(`/org/lines/${lineId}`, payload)
 }
 
-export function getLineLookupOptions(params = {}) {
-  return api.get('/org/lines/lookup', {
-    params: {
-      page: 1,
-      limit: 100,
-      isActive: 'true',
-      ...params,
-    },
-  })
-}
-
 export function getDepartmentLookupOptions(params = {}) {
   return api.get('/org/departments/lookup', {
     params: {
       page: 1,
       limit: 100,
-      isActive: 'true',
+      isActive: true,
       ...params,
     },
   })
@@ -45,7 +45,7 @@ export function getPositionLookupOptions(params = {}) {
     params: {
       page: 1,
       limit: 100,
-      isActive: 'true',
+      isActive: true,
       ...params,
     },
   })
@@ -64,13 +64,13 @@ export function downloadLineImportSample() {
   })
 }
 
-export function importLinesExcel(file) {
-  const formData = new FormData()
-  formData.append('file', file)
+export function importLinesExcel(input, options = {}) {
+  const { onUploadProgress } = options
 
-  return api.post('/org/lines/import', formData, {
+  return api.post('/org/lines/import', toFileFormData(input), {
     headers: {
       'Content-Type': 'multipart/form-data',
     },
+    onUploadProgress,
   })
 }

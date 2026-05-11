@@ -1,5 +1,6 @@
 // frontend/src/modules/org/position.api.js
 import api from '@/shared/services/api'
+import { toFileFormData } from '@/shared/utils/formData'
 
 export function getPositionLookupOptions(params = {}) {
   return api.get('/org/positions/lookup', { params })
@@ -34,13 +35,13 @@ export function exportPositions(params = {}) {
   })
 }
 
-export function importPositions(file) {
-  const formData = new FormData()
-  formData.append('file', file)
+export function importPositions(input, options = {}) {
+  const { onUploadProgress } = options
 
-  return api.post('/org/positions/import', formData, {
+  return api.post('/org/positions/import', toFileFormData(input), {
     headers: {
       'Content-Type': 'multipart/form-data',
     },
+    onUploadProgress,
   })
 }

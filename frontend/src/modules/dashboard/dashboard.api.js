@@ -1,6 +1,4 @@
 // frontend/src/modules/dashboard/dashboard.api.js
-// frontend/src/modules/dashboard/dashboard.api.js
-
 import api from '@/shared/services/api'
 
 export function getDepartmentDashboardSummary() {

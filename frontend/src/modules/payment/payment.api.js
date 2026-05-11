@@ -1,6 +1,6 @@
 // frontend/src/modules/payment/payment.api.js
-
 import api from '@/shared/services/api'
+import { toFileFormData } from '@/shared/utils/formData'
 
 // =========================
 // Payment Formulas
@@ -34,19 +34,25 @@ export function downloadSalaryTemplate() {
   })
 }
 
-export function previewPayment(formData) {
-  return api.post('/payment/preview', formData, {
+export function previewPayment(input, options = {}) {
+  const { onUploadProgress } = options
+
+  return api.post('/payment/preview', toFileFormData(input), {
     headers: {
       'Content-Type': 'multipart/form-data',
     },
+    onUploadProgress,
   })
 }
 
-export function calculatePaymentExport(formData) {
-  return api.post('/payment/calculate-export', formData, {
+export function calculatePaymentExport(input, options = {}) {
+  const { onUploadProgress } = options
+
+  return api.post('/payment/calculate-export', toFileFormData(input), {
     responseType: 'blob',
     headers: {
       'Content-Type': 'multipart/form-data',
     },
+    onUploadProgress,
   })
 }

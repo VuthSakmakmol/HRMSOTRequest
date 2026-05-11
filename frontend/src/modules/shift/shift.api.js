@@ -1,5 +1,6 @@
 // frontend/src/modules/shift/shift.api.js
 import api from '@/shared/services/api'
+import { toFileFormData } from '@/shared/utils/formData'
 
 export function getShiftLookupOptions(params = {}) {
   return api.get('/shift/lookup', { params })
@@ -34,10 +35,13 @@ export function downloadShiftImportSample() {
   })
 }
 
-export function importShiftsExcel(formData) {
-  return api.post('/shift/import', formData, {
+export function importShiftsExcel(input, options = {}) {
+  const { onUploadProgress } = options
+
+  return api.post('/shift/import', toFileFormData(input), {
     headers: {
       'Content-Type': 'multipart/form-data',
     },
+    onUploadProgress,
   })
 }

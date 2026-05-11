@@ -8,3 +8,13 @@ export function getPermissions(params = {}) {
 export function getPermissionById(id) {
   return api.get(`/access/permissions/${id}`)
 }
+
+export function getPermissionOptions(params = {}) {
+  return api.get('/access/permissions', {
+    params: {
+      page: 1,
+      limit: 100,
+      ...params,
+    },
+  })
+}

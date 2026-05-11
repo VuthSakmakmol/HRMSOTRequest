@@ -20,3 +20,10 @@ export function createHoliday(payload) {
 export function updateHoliday(id, payload) {
   return api.patch(`/calendar/holidays/${id}`, payload)
 }
+
+export function exportHolidaysExcel(params = {}) {
+  return api.get('/calendar/holidays/export', {
+    params,
+    responseType: 'blob',
+  })
+}
