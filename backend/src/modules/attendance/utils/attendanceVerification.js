@@ -1,4 +1,7 @@
 // backend/src/modules/attendance/utils/attendanceVerification.js
+
+const { formatYmdToDmy, formatDateTimeToDmyHm } = require('../../../shared/utils/dateFormat')
+
 function s(value) {
   return String(value ?? '').trim()
 }
@@ -6,6 +9,62 @@ function s(value) {
 function upper(value) {
   return s(value).toUpperCase()
 }
+
+const MESSAGE_KEYS = Object.freeze({
+  ATTENDANCE: {
+    EMPLOYEE_NOT_MATCHED: 'attendance.result.employee_not_matched',
+    LEAVE: 'attendance.result.leave',
+    OFF: 'attendance.result.off',
+    ABSENT: 'attendance.result.absent',
+    FORGET_SCAN_IN: 'attendance.result.forget_scan_in',
+    FORGET_SCAN_OUT: 'attendance.result.forget_scan_out',
+    SHIFT_MISMATCH: 'attendance.result.shift_mismatch',
+    LATE: 'attendance.result.late',
+    PRESENT: 'attendance.result.present',
+    UNKNOWN: 'attendance.result.unknown',
+    INVALID_CLOCK_FORMAT: 'attendance.result.invalid_clock_format',
+    INVALID_SHIFT_TIME: 'attendance.result.invalid_shift_time',
+  },
+
+  VERIFICATION: {
+    MATCH: 'attendance.verification.result.match',
+    MISMATCH: 'attendance.verification.result.mismatch',
+    PENDING_REVIEW: 'attendance.verification.result.pending_review',
+
+    NO_PAID_OT_MINUTES: 'attendance.verification.no_paid_ot_minutes',
+    APPROVED_WITHOUT_EXACT_CLOCK_OUT:
+      'attendance.verification.approved_without_exact_clock_out',
+    APPROVED_WITHOUT_EXACT_CLOCK_OUT_LATE:
+      'attendance.verification.approved_without_exact_clock_out_late',
+    FIXED_OT_APPROVED_WITHOUT_EXACT_CLOCK_OUT:
+      'attendance.verification.fixed_ot_approved_without_exact_clock_out',
+    FIXED_OT_APPROVED_WITHOUT_EXACT_CLOCK_OUT_LATE:
+      'attendance.verification.fixed_ot_approved_without_exact_clock_out_late',
+
+    FORGET_SCAN_IN_PENDING: 'attendance.verification.forget_scan_in_pending',
+    FORGET_SCAN_OUT_PENDING: 'attendance.verification.forget_scan_out_pending',
+    ATTENDANCE_NOT_PRESENT: 'attendance.verification.attendance_not_present',
+    STATUS_REQUIRES_MANUAL_REVIEW:
+      'attendance.verification.status_requires_manual_review',
+
+    NO_REQUEST_WINDOW: 'attendance.verification.no_request_window',
+    NO_ATTENDANCE_WINDOW: 'attendance.verification.no_attendance_window',
+
+    SUNDAY_HOLIDAY_NO_OVERLAP:
+      'attendance.verification.sunday_holiday_no_overlap',
+    SUNDAY_HOLIDAY_BELOW_MIN:
+      'attendance.verification.sunday_holiday_below_min',
+    SUNDAY_HOLIDAY_MATCH: 'attendance.verification.sunday_holiday_match',
+    SUNDAY_HOLIDAY_SHORT: 'attendance.verification.sunday_holiday_short',
+    SUNDAY_HOLIDAY_EXCEED: 'attendance.verification.sunday_holiday_exceed',
+
+    POLICY_NOT_ELIGIBLE: 'attendance.verification.policy_not_eligible',
+    POLICY_BELOW_MIN: 'attendance.verification.policy_below_min',
+    POLICY_MATCH: 'attendance.verification.policy_match',
+    POLICY_SHORT: 'attendance.verification.policy_short',
+    POLICY_EXCEED: 'attendance.verification.policy_exceed',
+  },
+})
 
 function toMinutes(hhmm) {
   const raw = s(hhmm)
@@ -16,6 +75,7 @@ function toMinutes(hhmm) {
   const mm = Number(match[2])
 
   if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null
+
   return hh * 60 + mm
 }
 
@@ -23,13 +83,13 @@ function minutesToHHmm(totalMinutes) {
   const normalized = ((Number(totalMinutes || 0) % 1440) + 1440) % 1440
   const hh = Math.floor(normalized / 60)
   const mm = normalized % 60
+
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
 }
 
 function safeNumber(value, fallback = 0) {
   const num = Number(value)
-  if (!Number.isFinite(num)) return fallback
-  return num
+  return Number.isFinite(num) ? num : fallback
 }
 
 function safeNonNegativeInt(value, fallback = 0) {
@@ -67,13 +127,8 @@ function roundMinutesByPolicy(minutes, unitMinutes, roundMethod) {
   const factor = rawMinutes / unit
   const method = upper(roundMethod)
 
-  if (method === 'FLOOR') {
-    return Math.floor(factor) * unit
-  }
-
-  if (method === 'NEAREST') {
-    return Math.round(factor) * unit
-  }
+  if (method === 'FLOOR') return Math.floor(factor) * unit
+  if (method === 'NEAREST') return Math.round(factor) * unit
 
   return Math.ceil(factor) * unit
 }
@@ -81,6 +136,7 @@ function roundMinutesByPolicy(minutes, unitMinutes, roundMethod) {
 function overlapMinutes(startA, endA, startB, endB) {
   const start = Math.max(safeNumber(startA, 0), safeNumber(startB, 0))
   const end = Math.min(safeNumber(endA, 0), safeNumber(endB, 0))
+
   return Math.max(0, end - start)
 }
 
@@ -124,6 +180,7 @@ function normalizeActualClockOutMinutes({
     if (normalized <= shiftStartMinutes) {
       normalized += 24 * 60
     }
+
     return normalized
   }
 
@@ -137,6 +194,7 @@ function normalizeActualClockOutMinutes({
 function safeWorkedMinutes(clockInMinutes, normalizedClockOutMinutes) {
   if (clockInMinutes == null || normalizedClockOutMinutes == null) return 0
   if (normalizedClockOutMinutes <= clockInMinutes) return 0
+
   return normalizedClockOutMinutes - clockInMinutes
 }
 
@@ -144,7 +202,7 @@ function resolveDerivedStatusReason(status, fallbackReason = '') {
   const reason = s(fallbackReason)
   if (reason) return reason
 
-  switch (status) {
+  switch (upper(status)) {
     case 'LEAVE':
       return 'Imported status indicates leave and there are no punches'
     case 'OFF':
@@ -164,6 +222,33 @@ function resolveDerivedStatusReason(status, fallbackReason = '') {
     case 'UNKNOWN':
     default:
       return 'Unable to derive attendance result'
+  }
+}
+
+function resolveDerivedStatusReasonKey(status, fallbackKey = '') {
+  const key = s(fallbackKey)
+  if (key) return key
+
+  switch (upper(status)) {
+    case 'LEAVE':
+      return MESSAGE_KEYS.ATTENDANCE.LEAVE
+    case 'OFF':
+      return MESSAGE_KEYS.ATTENDANCE.OFF
+    case 'ABSENT':
+      return MESSAGE_KEYS.ATTENDANCE.ABSENT
+    case 'FORGET_SCAN_IN':
+      return MESSAGE_KEYS.ATTENDANCE.FORGET_SCAN_IN
+    case 'FORGET_SCAN_OUT':
+      return MESSAGE_KEYS.ATTENDANCE.FORGET_SCAN_OUT
+    case 'SHIFT_MISMATCH':
+      return MESSAGE_KEYS.ATTENDANCE.SHIFT_MISMATCH
+    case 'LATE':
+      return MESSAGE_KEYS.ATTENDANCE.LATE
+    case 'PRESENT':
+      return MESSAGE_KEYS.ATTENDANCE.PRESENT
+    case 'UNKNOWN':
+    default:
+      return MESSAGE_KEYS.ATTENDANCE.UNKNOWN
   }
 }
 
@@ -208,6 +293,7 @@ function deriveAttendanceResult({
 
   const base = {
     attendanceDate: s(attendanceDate),
+    attendanceDateDisplay: formatYmdToDmy(attendanceDate),
     hasClockIn,
     hasClockOut,
     isCrossMidnightShift: shiftWindow.isCrossMidnightShift,
@@ -216,6 +302,8 @@ function deriveAttendanceResult({
     earlyOutMinutes,
     derivedStatus: 'UNKNOWN',
     derivedStatusReason: '',
+    derivedStatusReasonKey: MESSAGE_KEYS.ATTENDANCE.UNKNOWN,
+    messageKey: MESSAGE_KEYS.ATTENDANCE.UNKNOWN,
   }
 
   if (!employeeMatched) {
@@ -223,6 +311,8 @@ function deriveAttendanceResult({
       ...base,
       derivedStatus: 'UNKNOWN',
       derivedStatusReason: 'Employee is not matched to Employee master',
+      derivedStatusReasonKey: MESSAGE_KEYS.ATTENDANCE.EMPLOYEE_NOT_MATCHED,
+      messageKey: MESSAGE_KEYS.ATTENDANCE.EMPLOYEE_NOT_MATCHED,
     }
   }
 
@@ -232,6 +322,8 @@ function deriveAttendanceResult({
         ...base,
         derivedStatus: 'LEAVE',
         derivedStatusReason: resolveDerivedStatusReason('LEAVE'),
+        derivedStatusReasonKey: MESSAGE_KEYS.ATTENDANCE.LEAVE,
+        messageKey: MESSAGE_KEYS.ATTENDANCE.LEAVE,
       }
     }
 
@@ -240,6 +332,8 @@ function deriveAttendanceResult({
         ...base,
         derivedStatus: 'OFF',
         derivedStatusReason: resolveDerivedStatusReason('OFF'),
+        derivedStatusReasonKey: MESSAGE_KEYS.ATTENDANCE.OFF,
+        messageKey: MESSAGE_KEYS.ATTENDANCE.OFF,
       }
     }
 
@@ -247,6 +341,8 @@ function deriveAttendanceResult({
       ...base,
       derivedStatus: 'ABSENT',
       derivedStatusReason: resolveDerivedStatusReason('ABSENT'),
+      derivedStatusReasonKey: MESSAGE_KEYS.ATTENDANCE.ABSENT,
+      messageKey: MESSAGE_KEYS.ATTENDANCE.ABSENT,
     }
   }
 
@@ -255,6 +351,8 @@ function deriveAttendanceResult({
       ...base,
       derivedStatus: 'FORGET_SCAN_OUT',
       derivedStatusReason: resolveDerivedStatusReason('FORGET_SCAN_OUT'),
+      derivedStatusReasonKey: MESSAGE_KEYS.ATTENDANCE.FORGET_SCAN_OUT,
+      messageKey: MESSAGE_KEYS.ATTENDANCE.FORGET_SCAN_OUT,
     }
   }
 
@@ -263,6 +361,8 @@ function deriveAttendanceResult({
       ...base,
       derivedStatus: 'FORGET_SCAN_IN',
       derivedStatusReason: resolveDerivedStatusReason('FORGET_SCAN_IN'),
+      derivedStatusReasonKey: MESSAGE_KEYS.ATTENDANCE.FORGET_SCAN_IN,
+      messageKey: MESSAGE_KEYS.ATTENDANCE.FORGET_SCAN_IN,
     }
   }
 
@@ -271,6 +371,8 @@ function deriveAttendanceResult({
       ...base,
       derivedStatus: 'UNKNOWN',
       derivedStatusReason: 'Clock in/out format is invalid',
+      derivedStatusReasonKey: MESSAGE_KEYS.ATTENDANCE.INVALID_CLOCK_FORMAT,
+      messageKey: MESSAGE_KEYS.ATTENDANCE.INVALID_CLOCK_FORMAT,
     }
   }
 
@@ -279,6 +381,8 @@ function deriveAttendanceResult({
       ...base,
       derivedStatus: 'UNKNOWN',
       derivedStatusReason: 'Assigned shift time is missing or invalid',
+      derivedStatusReasonKey: MESSAGE_KEYS.ATTENDANCE.INVALID_SHIFT_TIME,
+      messageKey: MESSAGE_KEYS.ATTENDANCE.INVALID_SHIFT_TIME,
     }
   }
 
@@ -287,6 +391,8 @@ function deriveAttendanceResult({
       ...base,
       derivedStatus: 'SHIFT_MISMATCH',
       derivedStatusReason: resolveDerivedStatusReason('SHIFT_MISMATCH'),
+      derivedStatusReasonKey: MESSAGE_KEYS.ATTENDANCE.SHIFT_MISMATCH,
+      messageKey: MESSAGE_KEYS.ATTENDANCE.SHIFT_MISMATCH,
     }
   }
 
@@ -295,6 +401,8 @@ function deriveAttendanceResult({
       ...base,
       derivedStatus: 'LATE',
       derivedStatusReason: resolveDerivedStatusReason('LATE'),
+      derivedStatusReasonKey: MESSAGE_KEYS.ATTENDANCE.LATE,
+      messageKey: MESSAGE_KEYS.ATTENDANCE.LATE,
     }
   }
 
@@ -302,26 +410,37 @@ function deriveAttendanceResult({
     ...base,
     derivedStatus: 'PRESENT',
     derivedStatusReason: resolveDerivedStatusReason('PRESENT'),
+    derivedStatusReasonKey: MESSAGE_KEYS.ATTENDANCE.PRESENT,
+    messageKey: MESSAGE_KEYS.ATTENDANCE.PRESENT,
   }
 }
 
 function mapEmployeeSnapshot(item) {
   return {
     employeeId: item?.employeeId ? String(item.employeeId) : null,
-    employeeCode: upper(item?.employeeCode),
-    employeeName: s(item?.employeeName),
+    employeeCode: upper(item?.employeeCode || item?.employeeNo),
+    employeeNo: upper(item?.employeeNo || item?.employeeCode),
+    employeeName: s(item?.employeeName || item?.name),
+
     departmentId: item?.departmentId ? String(item.departmentId) : null,
-    departmentCode: s(item?.departmentCode),
+    departmentCode: upper(item?.departmentCode),
     departmentName: s(item?.departmentName),
+
     positionId: item?.positionId ? String(item.positionId) : null,
-    positionCode: s(item?.positionCode),
+    positionCode: upper(item?.positionCode),
     positionName: s(item?.positionName),
   }
 }
 
 function mapAttendanceRecord(item) {
+  const status = upper(item?.status)
+  const messageKey =
+    s(item?.messageKey) ||
+    s(item?.derivedStatusReasonKey) ||
+    resolveDerivedStatusReasonKey(status)
+
   return {
-    id: item?._id ? String(item._id) : null,
+    id: item?._id ? String(item._id) : item?.id ? String(item.id) : null,
     importId: item?.importId ? String(item.importId) : null,
 
     employeeId: item?.employeeId ? String(item.employeeId) : null,
@@ -335,15 +454,15 @@ function mapAttendanceRecord(item) {
     importedShiftName: s(item?.importedShiftName),
     importedStatus: upper(item?.importedStatus),
 
-    departmentId: item?.departmentId ? String(item?.departmentId) : null,
+    departmentId: item?.departmentId ? String(item.departmentId) : null,
     departmentCode: upper(item?.departmentCode),
     departmentName: s(item?.departmentName),
 
-    positionId: item?.positionId ? String(item?.positionId) : null,
+    positionId: item?.positionId ? String(item.positionId) : null,
     positionCode: upper(item?.positionCode),
     positionName: s(item?.positionName),
 
-    shiftId: item?.shiftId ? String(item?.shiftId) : null,
+    shiftId: item?.shiftId ? String(item.shiftId) : null,
     shiftCode: upper(item?.shiftCode),
     shiftName: s(item?.shiftName),
     shiftType: upper(item?.shiftType),
@@ -351,10 +470,16 @@ function mapAttendanceRecord(item) {
     shiftEndTime: s(item?.shiftEndTime),
 
     attendanceDate: s(item?.attendanceDate),
+    attendanceDateDisplay: formatYmdToDmy(item?.attendanceDate),
+
     clockIn: s(item?.clockIn),
     clockOut: s(item?.clockOut),
-    status: upper(item?.status),
+
+    status,
     derivedStatusReason: s(item?.derivedStatusReason),
+    derivedStatusReasonKey: s(item?.derivedStatusReasonKey) || messageKey,
+    messageKey,
+
     dayType: upper(item?.dayType),
     matchedBy: upper(item?.matchedBy),
     matchRemark: s(item?.matchRemark),
@@ -371,6 +496,7 @@ function mapAttendanceRecord(item) {
     hasClockOut: typeof item?.hasClockOut === 'boolean' ? item.hasClockOut : Boolean(s(item?.clockOut)),
     isCrossMidnightShift:
       typeof item?.isCrossMidnightShift === 'boolean' ? item.isCrossMidnightShift : null,
+
     workedMinutes: Number(item?.workedMinutes || 0),
     lateMinutes: Number(item?.lateMinutes || 0),
     earlyOutMinutes: Number(item?.earlyOutMinutes || 0),
@@ -378,8 +504,12 @@ function mapAttendanceRecord(item) {
     validationIssues: Array.isArray(item?.validationIssues) ? item.validationIssues : [],
 
     rawRowNo: Number(item?.rawRowNo || 0),
+
     createdAt: item?.createdAt || null,
+    createdAtDisplayHm: formatDateTimeToDmyHm(item?.createdAt),
+
     updatedAt: item?.updatedAt || null,
+    updatedAtDisplayHm: formatDateTimeToDmyHm(item?.updatedAt),
   }
 }
 
@@ -396,24 +526,16 @@ function isPendingReviewRecord(item) {
 function isShiftValidRecord(item) {
   const status = upper(item?.status)
   if (status === 'SHIFT_MISMATCH') return false
+
   return upper(item?.shiftMatchStatus) !== 'MISMATCH'
 }
 
 function isNormalAttendancePresentForApprovedOt(status) {
-  const normalized = upper(status)
-  return ['PRESENT', 'LATE'].includes(normalized)
+  return ['PRESENT', 'LATE'].includes(upper(status))
 }
 
 function isAttendanceBlockedForApprovedOt(status) {
-  const normalized = upper(status)
-
-  return [
-    'ABSENT',
-    'LEAVE',
-    'OFF',
-    'SHIFT_MISMATCH',
-    'UNKNOWN',
-  ].includes(normalized)
+  return ['ABSENT', 'LEAVE', 'OFF', 'SHIFT_MISMATCH', 'UNKNOWN'].includes(upper(status))
 }
 
 function buildRequestedIndex(requestedEmployees = []) {
@@ -422,7 +544,7 @@ function buildRequestedIndex(requestedEmployees = []) {
 
   for (const item of requestedEmployees.map(mapEmployeeSnapshot)) {
     const keyById = s(item.employeeId)
-    const keyByCode = upper(item.employeeCode)
+    const keyByCode = upper(item.employeeCode || item.employeeNo)
 
     if (keyById) byEmployeeId.set(keyById, item)
     if (keyByCode) byEmployeeCode.set(keyByCode, item)
@@ -437,7 +559,7 @@ function getRequestedEmployeeKey(record, requestedIndex) {
     return employeeId
   }
 
-  const employeeCode = upper(record?.employeeNo)
+  const employeeCode = upper(record?.employeeNo || record?.employeeCode)
   if (employeeCode && requestedIndex.byEmployeeCode.has(employeeCode)) {
     const requested = requestedIndex.byEmployeeCode.get(employeeCode)
     return s(requested.employeeId) || employeeCode
@@ -451,8 +573,10 @@ function normalizePolicySnapshot(snapshot = {}) {
     calculationPolicyId: snapshot?.calculationPolicyId
       ? String(snapshot.calculationPolicyId)
       : null,
+
     code: upper(snapshot?.code),
     name: s(snapshot?.name),
+
     minEligibleMinutes: safeNonNegativeInt(snapshot?.minEligibleMinutes, 0),
     roundUnitMinutes: safeNonNegativeInt(snapshot?.roundUnitMinutes, 30) || 30,
     roundMethod: upper(snapshot?.roundMethod || 'CEIL'),
@@ -505,6 +629,7 @@ function chooseNearestMinute(rawMinutes, anchorMinutes) {
 function normalizeOtRequestContext(otRequest = {}) {
   const policy = normalizePolicySnapshot(otRequest?.otCalculationPolicySnapshot || {})
 
+  const otDate = s(otRequest?.otDate)
   const shiftStartTime = s(otRequest?.shiftStartTime)
   const shiftEndTime = s(otRequest?.shiftEndTime)
 
@@ -526,10 +651,7 @@ function normalizeOtRequestContext(otRequest = {}) {
   )
 
   const breakMinutes = safeNonNegativeInt(otRequest?.breakMinutes, 0)
-  const totalRequestPaidMinutes = resolvePaidRequestMinutes(
-    otRequest,
-    requestedMinutes,
-  )
+  const totalRequestPaidMinutes = resolvePaidRequestMinutes(otRequest, requestedMinutes)
 
   const shiftStartMinutesRaw = toMinutes(shiftStartTime)
   const shiftEndMinutesRaw = toMinutes(shiftEndTime)
@@ -597,6 +719,10 @@ function normalizeOtRequestContext(otRequest = {}) {
   return {
     id: otRequest?.id ? String(otRequest.id) : null,
     requestNo: s(otRequest?.requestNo),
+
+    otDate,
+    otDateDisplay: formatYmdToDmy(otDate),
+
     status: upper(otRequest?.status),
     dayType: upper(otRequest?.dayType),
 
@@ -625,10 +751,12 @@ function normalizeOtRequestContext(otRequest = {}) {
     totalRequestPaidMinutes,
     approvedPaidMinutes: totalRequestPaidMinutes,
     payableCapMinutes: totalRequestPaidMinutes,
+
     requestStartTime:
       requestStartTime || (requestStartMinutes != null ? minutesToHHmm(requestStartMinutes) : ''),
     requestEndTime:
       requestEndTime || (requestEndMinutes != null ? minutesToHHmm(requestEndMinutes) : ''),
+
     requestStartMinutes,
     requestEndMinutes,
 
@@ -672,14 +800,27 @@ function buildAttendanceWindow(attendanceRecord, anchorMinutes) {
 }
 
 function buildMismatchResponse(base, reason, overrides = {}) {
+  const result = upper(overrides.otResult || 'MISMATCH')
+  const reasonKey = s(overrides.otResultReasonKey || overrides.messageKey)
+
   return {
     ...base,
     actualOtMinutes: Number(overrides.actualOtMinutes || 0),
     eligibleOtMinutes: Number(overrides.eligibleOtMinutes || 0),
     roundedOtMinutes: Number(overrides.roundedOtMinutes || 0),
-    rawOtDecision: upper(overrides.rawOtDecision || 'MISMATCH'),
-    otResult: 'MISMATCH',
+
+    rawOtDecision: upper(overrides.rawOtDecision || result),
+    rawOtDecisionKey: s(overrides.rawOtDecisionKey || reasonKey),
+
+    otResult: result,
+    otResultLabelKey:
+      result === 'PENDING_REVIEW'
+        ? MESSAGE_KEYS.VERIFICATION.PENDING_REVIEW
+        : MESSAGE_KEYS.VERIFICATION.MISMATCH,
+
     otResultReason: s(reason),
+    otResultReasonKey: reasonKey || MESSAGE_KEYS.VERIFICATION.POLICY_EXCEED,
+    messageKey: reasonKey || MESSAGE_KEYS.VERIFICATION.POLICY_EXCEED,
   }
 }
 
@@ -691,26 +832,48 @@ function buildApprovedOtWithoutExactOutResponse(base, normalizedOtRequest, atten
       requestedMinutes ||
       0,
   )
-  const timingMode = upper(normalizedOtRequest.shiftOtOptionTimingMode)
 
+  const timingMode = upper(normalizedOtRequest.shiftOtOptionTimingMode)
   const isFixedTime = timingMode === 'FIXED_TIME'
+  const isLate = upper(attendanceStatus) === 'LATE'
+
+  let reason = ''
+  let reasonKey = ''
+
+  if (isFixedTime && isLate) {
+    reason =
+      'Fixed OT credited by policy. Employee was late but attended normal shift. Exact OT end scan is not required.'
+    reasonKey = MESSAGE_KEYS.VERIFICATION.FIXED_OT_APPROVED_WITHOUT_EXACT_CLOCK_OUT_LATE
+  } else if (isFixedTime) {
+    reason =
+      'Fixed OT credited by policy. Employee attended normal shift. Exact OT end scan is not required.'
+    reasonKey = MESSAGE_KEYS.VERIFICATION.FIXED_OT_APPROVED_WITHOUT_EXACT_CLOCK_OUT
+  } else if (isLate) {
+    reason =
+      'Approved OT credited by policy. Employee was late but attended normal shift. Exact OT end scan is not required.'
+    reasonKey = MESSAGE_KEYS.VERIFICATION.APPROVED_WITHOUT_EXACT_CLOCK_OUT_LATE
+  } else {
+    reason =
+      'Approved OT credited by policy. Employee attended normal shift. Exact OT end scan is not required.'
+    reasonKey = MESSAGE_KEYS.VERIFICATION.APPROVED_WITHOUT_EXACT_CLOCK_OUT
+  }
 
   return {
     ...base,
     actualOtMinutes: paidRequestMinutes,
     eligibleOtMinutes: paidRequestMinutes,
     roundedOtMinutes: paidRequestMinutes,
+
     rawOtDecision: isFixedTime
       ? 'FIXED_OT_APPROVED_WITHOUT_EXACT_CLOCK_OUT'
       : 'APPROVED_WITHOUT_EXACT_CLOCK_OUT',
+    rawOtDecisionKey: reasonKey,
+
     otResult: 'MATCH',
-    otResultReason: isFixedTime
-      ? attendanceStatus === 'LATE'
-        ? 'Fixed OT credited by policy. Employee was late but attended normal shift. Exact OT end scan is not required.'
-        : 'Fixed OT credited by policy. Employee attended normal shift. Exact OT end scan is not required.'
-      : attendanceStatus === 'LATE'
-        ? 'Approved OT credited by policy. Employee was late but attended normal shift. Exact OT end scan is not required.'
-        : 'Approved OT credited by policy. Employee attended normal shift. Exact OT end scan is not required.',
+    otResultLabelKey: MESSAGE_KEYS.VERIFICATION.MATCH,
+    otResultReason: reason,
+    otResultReasonKey: reasonKey,
+    messageKey: reasonKey,
   }
 }
 
@@ -729,7 +892,9 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
   const base = {
     requestedMinutes: normalizedOtRequest.requestedMinutes,
     requestedOtMinutes: normalizedOtRequest.requestedMinutes,
+
     breakMinutes: normalizedOtRequest.breakMinutes,
+
     totalRequestPaidMinutes: paidRequestMinutes,
     requestPaidMinutes: paidRequestMinutes,
     approvedMinutes: paidRequestMinutes,
@@ -744,8 +909,13 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
     roundedOtMinutes: 0,
 
     rawOtDecision: 'MISMATCH',
+    rawOtDecisionKey: '',
+
     otResult: 'MISMATCH',
+    otResultLabelKey: MESSAGE_KEYS.VERIFICATION.MISMATCH,
     otResultReason: '',
+    otResultReasonKey: '',
+    messageKey: '',
 
     shiftOtOptionTimingMode: normalizedOtRequest.shiftOtOptionTimingMode,
     isFixedTimeOt: normalizedOtRequest.shiftOtOptionTimingMode === 'FIXED_TIME',
@@ -760,65 +930,35 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
     policyGraceAfterShiftEndMinutes: Number(policy.graceAfterShiftEndMinutes || 0),
   }
 
-  console.log('[OT_VERIFY_POLICY_DEBUG]', {
-    requestNo: normalizedOtRequest.requestNo,
-    dayType: normalizedOtRequest.dayType,
-    timingMode: normalizedOtRequest.shiftOtOptionTimingMode,
-    policyCode: policy.code,
-    allowNoExactOut: policy.allowApprovedOtWithoutExactClockOut,
-    attendanceStatus,
-    requestedMinutes: normalizedOtRequest.requestedMinutes,
-    breakMinutes: normalizedOtRequest.breakMinutes,
-    totalRequestPaidMinutes: paidRequestMinutes,
-    expectedStart: normalizedOtRequest.requestStartTime,
-    expectedEnd: normalizedOtRequest.requestEndTime,
-  })
-
   if (paidRequestMinutes <= 0) {
     return buildMismatchResponse(base, 'No paid OT minutes found on approved OT request', {
       rawOtDecision: 'NO_OT_REQUEST',
+      otResultReasonKey: MESSAGE_KEYS.VERIFICATION.NO_PAID_OT_MINUTES,
     })
   }
 
-  /*
-    Company rule:
-    Working-day OT can be credited without exact OT end clock-out
-    only when the policy allows it.
-
-    This supports both:
-    - AFTER_SHIFT_END OT
-    - FIXED_TIME OT, for example 18:00 - 20:00
-
-    Sunday/Holiday remains strict scan verification below.
-  */
   if (
     upper(normalizedOtRequest.dayType) === 'WORKING_DAY' &&
     policy.allowApprovedOtWithoutExactClockOut === true
   ) {
-    if (
-      attendanceStatus === 'FORGET_SCAN_IN' &&
-      policy.treatForgetScanInAsPending
-    ) {
+    if (attendanceStatus === 'FORGET_SCAN_IN' && policy.treatForgetScanInAsPending) {
       return buildMismatchResponse(base, 'Forget scan in is pending review by OT policy', {
         rawOtDecision: 'PENDING_REVIEW',
+        otResult: 'PENDING_REVIEW',
+        otResultReasonKey: MESSAGE_KEYS.VERIFICATION.FORGET_SCAN_IN_PENDING,
       })
     }
 
-    if (
-      attendanceStatus === 'FORGET_SCAN_OUT' &&
-      policy.treatForgetScanOutAsPending
-    ) {
+    if (attendanceStatus === 'FORGET_SCAN_OUT' && policy.treatForgetScanOutAsPending) {
       return buildMismatchResponse(base, 'Forget scan out is pending review by OT policy', {
         rawOtDecision: 'PENDING_REVIEW',
+        otResult: 'PENDING_REVIEW',
+        otResultReasonKey: MESSAGE_KEYS.VERIFICATION.FORGET_SCAN_OUT_PENDING,
       })
     }
 
     if (isNormalAttendancePresentForApprovedOt(attendanceStatus)) {
-      return buildApprovedOtWithoutExactOutResponse(
-        base,
-        normalizedOtRequest,
-        attendanceStatus,
-      )
+      return buildApprovedOtWithoutExactOutResponse(base, normalizedOtRequest, attendanceStatus)
     }
 
     if (isAttendanceBlockedForApprovedOt(attendanceStatus)) {
@@ -827,6 +967,7 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
         `Approved OT not credited because attendance status is ${attendanceStatus || 'UNKNOWN'}`,
         {
           rawOtDecision: 'ATTENDANCE_NOT_PRESENT',
+          otResultReasonKey: MESSAGE_KEYS.VERIFICATION.ATTENDANCE_NOT_PRESENT,
         },
       )
     }
@@ -836,30 +977,25 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
       `Approved OT requires manual review because attendance status is ${attendanceStatus || 'UNKNOWN'}`,
       {
         rawOtDecision: 'PENDING_REVIEW',
+        otResult: 'PENDING_REVIEW',
+        otResultReasonKey: MESSAGE_KEYS.VERIFICATION.STATUS_REQUIRES_MANUAL_REVIEW,
       },
     )
   }
 
-  /*
-    Strict scan logic:
-    - Sunday/Holiday OT
-    - Working-day OT when policy does not allow no-exact-clock-out
-  */
-  if (
-    attendanceStatus === 'FORGET_SCAN_IN' &&
-    policy.treatForgetScanInAsPending
-  ) {
+  if (attendanceStatus === 'FORGET_SCAN_IN' && policy.treatForgetScanInAsPending) {
     return buildMismatchResponse(base, 'Forget scan in is pending review by OT policy', {
       rawOtDecision: 'PENDING_REVIEW',
+      otResult: 'PENDING_REVIEW',
+      otResultReasonKey: MESSAGE_KEYS.VERIFICATION.FORGET_SCAN_IN_PENDING,
     })
   }
 
-  if (
-    attendanceStatus === 'FORGET_SCAN_OUT' &&
-    policy.treatForgetScanOutAsPending
-  ) {
+  if (attendanceStatus === 'FORGET_SCAN_OUT' && policy.treatForgetScanOutAsPending) {
     return buildMismatchResponse(base, 'Forget scan out is pending review by OT policy', {
       rawOtDecision: 'PENDING_REVIEW',
+      otResult: 'PENDING_REVIEW',
+      otResultReasonKey: MESSAGE_KEYS.VERIFICATION.FORGET_SCAN_OUT_PENDING,
     })
   }
 
@@ -869,6 +1005,7 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
   ) {
     return buildMismatchResponse(base, 'OT request time window is missing or invalid', {
       rawOtDecision: 'NO_REQUEST_WINDOW',
+      otResultReasonKey: MESSAGE_KEYS.VERIFICATION.NO_REQUEST_WINDOW,
     })
   }
 
@@ -880,6 +1017,7 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
   if (!attendanceWindow.isValid) {
     return buildMismatchResponse(base, 'Clock in/out window is missing or invalid', {
       rawOtDecision: 'NO_ATTENDANCE_WINDOW',
+      otResultReasonKey: MESSAGE_KEYS.VERIFICATION.NO_ATTENDANCE_WINDOW,
     })
   }
 
@@ -891,65 +1029,123 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
   )
 
   if (['SUNDAY', 'HOLIDAY'].includes(upper(normalizedOtRequest.dayType))) {
-    const eligibleOtMinutes = actualOtMinutesWithinRequest
+    return calculateSundayHolidayOt({
+      base,
+      policy,
+      paidRequestMinutes,
+      actualOtMinutesWithinRequest,
+    })
+  }
 
-    if (eligibleOtMinutes <= 0) {
-      return buildMismatchResponse(base, 'No attendance time overlaps approved Sunday/Holiday OT window', {
+  return calculateWorkingDayOt({
+    base,
+    policy,
+    normalizedOtRequest,
+    paidRequestMinutes,
+    actualOtMinutesWithinRequest,
+    attendanceWindow,
+  })
+}
+
+function calculateSundayHolidayOt({
+  base,
+  policy,
+  paidRequestMinutes,
+  actualOtMinutesWithinRequest,
+}) {
+  const eligibleOtMinutes = actualOtMinutesWithinRequest
+
+  if (eligibleOtMinutes <= 0) {
+    return buildMismatchResponse(
+      base,
+      'No attendance time overlaps approved Sunday/Holiday OT window',
+      {
         rawOtDecision: 'NOT_ELIGIBLE',
         actualOtMinutes: actualOtMinutesWithinRequest,
         eligibleOtMinutes: 0,
         roundedOtMinutes: 0,
-      })
-    }
+        otResultReasonKey: MESSAGE_KEYS.VERIFICATION.SUNDAY_HOLIDAY_NO_OVERLAP,
+      },
+    )
+  }
 
-    if (eligibleOtMinutes < safeNonNegativeInt(policy.minEligibleMinutes, 0)) {
-      return buildMismatchResponse(base, 'Eligible Sunday/Holiday OT is below minimum OT policy threshold', {
+  if (eligibleOtMinutes < safeNonNegativeInt(policy.minEligibleMinutes, 0)) {
+    return buildMismatchResponse(
+      base,
+      'Eligible Sunday/Holiday OT is below minimum OT policy threshold',
+      {
         rawOtDecision: 'BELOW_MIN',
         actualOtMinutes: actualOtMinutesWithinRequest,
         eligibleOtMinutes,
         roundedOtMinutes: 0,
-      })
-    }
-
-    let roundedOtMinutes = roundMinutesByPolicy(
-      eligibleOtMinutes,
-      policy.roundUnitMinutes,
-      policy.roundMethod,
+        otResultReasonKey: MESSAGE_KEYS.VERIFICATION.SUNDAY_HOLIDAY_BELOW_MIN,
+      },
     )
+  }
 
-    if (policy.capByRequestedMinutes && paidRequestMinutes > 0) {
-      roundedOtMinutes = Math.min(roundedOtMinutes, paidRequestMinutes)
+  let roundedOtMinutes = roundMinutesByPolicy(
+    eligibleOtMinutes,
+    policy.roundUnitMinutes,
+    policy.roundMethod,
+  )
+
+  if (policy.capByRequestedMinutes && paidRequestMinutes > 0) {
+    roundedOtMinutes = Math.min(roundedOtMinutes, paidRequestMinutes)
+  }
+
+  if (roundedOtMinutes === paidRequestMinutes) {
+    return {
+      ...base,
+      actualOtMinutes: actualOtMinutesWithinRequest,
+      eligibleOtMinutes,
+      roundedOtMinutes,
+
+      rawOtDecision: 'MATCH',
+      rawOtDecisionKey: MESSAGE_KEYS.VERIFICATION.SUNDAY_HOLIDAY_MATCH,
+
+      otResult: 'MATCH',
+      otResultLabelKey: MESSAGE_KEYS.VERIFICATION.MATCH,
+      otResultReason: 'Sunday/Holiday actual attendance matches approved OT request by policy',
+      otResultReasonKey: MESSAGE_KEYS.VERIFICATION.SUNDAY_HOLIDAY_MATCH,
+      messageKey: MESSAGE_KEYS.VERIFICATION.SUNDAY_HOLIDAY_MATCH,
     }
+  }
 
-    if (roundedOtMinutes === paidRequestMinutes) {
-      return {
-        ...base,
-        actualOtMinutes: actualOtMinutesWithinRequest,
-        eligibleOtMinutes,
-        roundedOtMinutes,
-        rawOtDecision: 'MATCH',
-        otResult: 'MATCH',
-        otResultReason: 'Sunday/Holiday actual attendance matches approved OT request by policy',
-      }
-    }
-
-    if (roundedOtMinutes < paidRequestMinutes) {
-      return buildMismatchResponse(base, 'Sunday/Holiday actual OT is shorter than approved OT request', {
+  if (roundedOtMinutes < paidRequestMinutes) {
+    return buildMismatchResponse(
+      base,
+      'Sunday/Holiday actual OT is shorter than approved OT request',
+      {
         rawOtDecision: 'SHORT',
         actualOtMinutes: actualOtMinutesWithinRequest,
         eligibleOtMinutes,
         roundedOtMinutes,
-      })
-    }
+        otResultReasonKey: MESSAGE_KEYS.VERIFICATION.SUNDAY_HOLIDAY_SHORT,
+      },
+    )
+  }
 
-    return buildMismatchResponse(base, 'Sunday/Holiday actual OT does not match approved OT request', {
+  return buildMismatchResponse(
+    base,
+    'Sunday/Holiday actual OT does not match approved OT request',
+    {
       rawOtDecision: 'EXCEED',
       actualOtMinutes: actualOtMinutesWithinRequest,
       eligibleOtMinutes,
       roundedOtMinutes,
-    })
-  }
+      otResultReasonKey: MESSAGE_KEYS.VERIFICATION.SUNDAY_HOLIDAY_EXCEED,
+    },
+  )
+}
 
+function calculateWorkingDayOt({
+  base,
+  policy,
+  normalizedOtRequest,
+  paidRequestMinutes,
+  actualOtMinutesWithinRequest,
+  attendanceWindow,
+}) {
   let eligibleOtMinutes = 0
 
   const shiftStartMinutes = normalizedOtRequest.shiftStartMinutes
@@ -1001,6 +1197,7 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
       actualOtMinutes: actualOtMinutesWithinRequest,
       eligibleOtMinutes: 0,
       roundedOtMinutes: 0,
+      otResultReasonKey: MESSAGE_KEYS.VERIFICATION.POLICY_NOT_ELIGIBLE,
     })
   }
 
@@ -1010,6 +1207,7 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
       actualOtMinutes: actualOtMinutesWithinRequest,
       eligibleOtMinutes,
       roundedOtMinutes: 0,
+      otResultReasonKey: MESSAGE_KEYS.VERIFICATION.POLICY_BELOW_MIN,
     })
   }
 
@@ -1019,8 +1217,9 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
     policy.roundMethod,
   )
 
-  if (policy.capByRequestedMinutes && normalizedOtRequest.requestedMinutes > 0) {
-    roundedOtMinutes = Math.min(roundedOtMinutes, normalizedOtRequest.requestedMinutes)
+  // Important: cap by PAID request minutes, not full raw requested minutes.
+  if (policy.capByRequestedMinutes && paidRequestMinutes > 0) {
+    roundedOtMinutes = Math.min(roundedOtMinutes, paidRequestMinutes)
   }
 
   if (roundedOtMinutes === paidRequestMinutes) {
@@ -1029,9 +1228,15 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
       actualOtMinutes: actualOtMinutesWithinRequest,
       eligibleOtMinutes,
       roundedOtMinutes,
+
       rawOtDecision: 'MATCH',
+      rawOtDecisionKey: MESSAGE_KEYS.VERIFICATION.POLICY_MATCH,
+
       otResult: 'MATCH',
+      otResultLabelKey: MESSAGE_KEYS.VERIFICATION.MATCH,
       otResultReason: 'Actual eligible OT matches approved OT request by policy',
+      otResultReasonKey: MESSAGE_KEYS.VERIFICATION.POLICY_MATCH,
+      messageKey: MESSAGE_KEYS.VERIFICATION.POLICY_MATCH,
     }
   }
 
@@ -1041,6 +1246,7 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
       actualOtMinutes: actualOtMinutesWithinRequest,
       eligibleOtMinutes,
       roundedOtMinutes,
+      otResultReasonKey: MESSAGE_KEYS.VERIFICATION.POLICY_SHORT,
     })
   }
 
@@ -1049,11 +1255,13 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
     actualOtMinutes: actualOtMinutesWithinRequest,
     eligibleOtMinutes,
     roundedOtMinutes,
+    otResultReasonKey: MESSAGE_KEYS.VERIFICATION.POLICY_EXCEED,
   })
 }
 
 function buildVerificationItem(requested, attendanceRecord, otRequest) {
   const normalizedOtRequest = normalizeOtRequestContext(otRequest)
+
   const metrics = calculatePolicyDrivenOtMetrics({
     otRequest: normalizedOtRequest,
     attendanceRecord,
@@ -1061,14 +1269,26 @@ function buildVerificationItem(requested, attendanceRecord, otRequest) {
 
   return {
     ...requested,
+
+    otDate: normalizedOtRequest.otDate,
+    otDateDisplay: normalizedOtRequest.otDateDisplay,
+
     attendanceRecordId: attendanceRecord.id,
     importId: attendanceRecord.importId,
 
+    attendanceDate: attendanceRecord.attendanceDate,
+    attendanceDateDisplay: attendanceRecord.attendanceDateDisplay,
+
     clockIn: attendanceRecord.clockIn,
     clockOut: attendanceRecord.clockOut,
+
     attendanceStatus: attendanceRecord.status,
+    attendanceStatusKey: resolveDerivedStatusReasonKey(attendanceRecord.status),
     importedStatus: attendanceRecord.importedStatus,
+
     derivedStatusReason: attendanceRecord.derivedStatusReason,
+    derivedStatusReasonKey: attendanceRecord.derivedStatusReasonKey,
+    attendanceMessageKey: attendanceRecord.messageKey,
     attendanceDayType: attendanceRecord.dayType,
 
     shiftId: normalizedOtRequest.shiftId || attendanceRecord.shiftId,
@@ -1077,9 +1297,11 @@ function buildVerificationItem(requested, attendanceRecord, otRequest) {
     shiftType: normalizedOtRequest.shiftType || attendanceRecord.shiftType,
     shiftStartTime: normalizedOtRequest.shiftStartTime || attendanceRecord.shiftStartTime,
     shiftEndTime: normalizedOtRequest.shiftEndTime || attendanceRecord.shiftEndTime,
+
     shiftMatched: attendanceRecord.shiftMatched,
     shiftTimeMatched: attendanceRecord.shiftTimeMatched,
     shiftMatchStatus: attendanceRecord.shiftMatchStatus,
+
     hasClockIn: attendanceRecord.hasClockIn,
     hasClockOut: attendanceRecord.hasClockOut,
     isCrossMidnightShift:
@@ -1100,6 +1322,7 @@ function buildVerificationItem(requested, attendanceRecord, otRequest) {
     requestedMinutes: metrics.requestedMinutes,
     requestedOtMinutes: metrics.requestedOtMinutes,
     breakMinutes: metrics.breakMinutes,
+
     totalRequestPaidMinutes: metrics.totalRequestPaidMinutes,
     requestPaidMinutes: metrics.requestPaidMinutes,
     approvedMinutes: metrics.approvedMinutes,
@@ -1114,8 +1337,13 @@ function buildVerificationItem(requested, attendanceRecord, otRequest) {
     roundedOtMinutes: metrics.roundedOtMinutes,
 
     rawOtDecision: metrics.rawOtDecision,
+    rawOtDecisionKey: metrics.rawOtDecisionKey,
+
     otResult: metrics.otResult,
+    otResultLabelKey: metrics.otResultLabelKey,
     otResultReason: metrics.otResultReason,
+    otResultReasonKey: metrics.otResultReasonKey,
+    messageKey: metrics.messageKey,
 
     policyCode: metrics.policyCode,
     policyName: metrics.policyName,
@@ -1162,15 +1390,25 @@ function verifyAttendanceAgainstOT({
   const pendingReviewEmployees = []
   const notEligibleEmployees = []
 
+  const otMatchEmployees = []
+  const otMismatchEmployees = []
+  const otPendingReviewEmployees = []
+
   for (const requested of requestedList) {
     const requestedKey = s(requested.employeeId) || upper(requested.employeeCode)
     const attendanceRecord = requestedAttendanceMap.get(requestedKey)
 
-    if (!attendanceRecord) {
-      continue
-    }
+    if (!attendanceRecord) continue
 
     const item = buildVerificationItem(requested, attendanceRecord, normalizedOtRequest)
+
+    if (upper(item.otResult) === 'MATCH') {
+      otMatchEmployees.push(item)
+    } else if (upper(item.otResult) === 'PENDING_REVIEW') {
+      otPendingReviewEmployees.push(item)
+    } else {
+      otMismatchEmployees.push(item)
+    }
 
     if (!isShiftValidRecord(attendanceRecord)) {
       shiftMismatchEmployees.push(item)
@@ -1200,15 +1438,21 @@ function verifyAttendanceAgainstOT({
   )
 
   const pendingReviewKeySet = new Set(
-    pendingReviewEmployees.map((item) => s(item.employeeId) || upper(item.employeeCode)).filter(Boolean),
+    pendingReviewEmployees
+      .map((item) => s(item.employeeId) || upper(item.employeeCode))
+      .filter(Boolean),
   )
 
   const shiftMismatchKeySet = new Set(
-    shiftMismatchEmployees.map((item) => s(item.employeeId) || upper(item.employeeCode)).filter(Boolean),
+    shiftMismatchEmployees
+      .map((item) => s(item.employeeId) || upper(item.employeeCode))
+      .filter(Boolean),
   )
 
   const notEligibleKeySet = new Set(
-    notEligibleEmployees.map((item) => s(item.employeeId) || upper(item.employeeCode)).filter(Boolean),
+    notEligibleEmployees
+      .map((item) => s(item.employeeId) || upper(item.employeeCode))
+      .filter(Boolean),
   )
 
   for (const approved of approvedList) {
@@ -1223,23 +1467,57 @@ function verifyAttendanceAgainstOT({
       continue
     }
 
-    absentFromApproved.push(approved)
+    const missingItem = {
+      ...approved,
+
+      otDate: normalizedOtRequest.otDate,
+      otDateDisplay: normalizedOtRequest.otDateDisplay,
+
+      attendanceDate: normalizedOtRequest.otDate,
+      attendanceDateDisplay: normalizedOtRequest.otDateDisplay,
+
+      attendanceStatus: 'ABSENT',
+      attendanceStatusKey: MESSAGE_KEYS.ATTENDANCE.ABSENT,
+      attendanceMessageKey: MESSAGE_KEYS.ATTENDANCE.ABSENT,
+
+      otResult: 'MISMATCH',
+      otResultLabelKey: MESSAGE_KEYS.VERIFICATION.MISMATCH,
+      otResultReason: 'No attendance record found for approved employee',
+      otResultReasonKey: MESSAGE_KEYS.ATTENDANCE.ABSENT,
+      messageKey: MESSAGE_KEYS.ATTENDANCE.ABSENT,
+    }
+
+    absentFromApproved.push(missingItem)
+    otMismatchEmployees.push(missingItem)
   }
 
   return {
+    otDate: normalizedOtRequest.otDate,
+    otDateDisplay: normalizedOtRequest.otDateDisplay,
+
     requestedMinutes: normalizedOtRequest.requestedMinutes,
     breakMinutes: normalizedOtRequest.breakMinutes,
     totalRequestPaidMinutes: normalizedOtRequest.totalRequestPaidMinutes,
     requestPaidMinutes: normalizedOtRequest.totalRequestPaidMinutes,
+
     expectedOtStartTime: normalizedOtRequest.requestStartTime,
     expectedOtEndTime: normalizedOtRequest.requestEndTime,
+
     shiftOtOptionTimingMode: normalizedOtRequest.shiftOtOptionTimingMode,
     isFixedTimeOt: normalizedOtRequest.shiftOtOptionTimingMode === 'FIXED_TIME',
+
     policyCode: normalizedOtRequest.otCalculationPolicySnapshot.code,
     policyName: normalizedOtRequest.otCalculationPolicySnapshot.name,
 
+    resultLabelKeys: {
+      match: MESSAGE_KEYS.VERIFICATION.MATCH,
+      mismatch: MESSAGE_KEYS.VERIFICATION.MISMATCH,
+      pendingReview: MESSAGE_KEYS.VERIFICATION.PENDING_REVIEW,
+    },
+
     requestedEmployeeCount: requestedList.length,
     approvedEmployeeCount: approvedList.length,
+
     actualAttendedCount: attendedEmployees.length,
     absentFromApprovedCount: absentFromApproved.length,
     attendedButNotApprovedCount: attendedButNotApproved.length,
@@ -1247,16 +1525,25 @@ function verifyAttendanceAgainstOT({
     pendingReviewCount: pendingReviewEmployees.length,
     notEligibleCount: notEligibleEmployees.length,
 
+    otMatchCount: otMatchEmployees.length,
+    otMismatchCount: otMismatchEmployees.length,
+    otPendingReviewCount: otPendingReviewEmployees.length,
+
     attendedEmployees,
     absentFromApproved,
     attendedButNotApproved,
     shiftMismatchEmployees,
     pendingReviewEmployees,
     notEligibleEmployees,
+
+    otMatchEmployees,
+    otMismatchEmployees,
+    otPendingReviewEmployees,
   }
 }
 
 module.exports = {
+  MESSAGE_KEYS,
   deriveAttendanceResult,
   verifyAttendanceAgainstOT,
 }

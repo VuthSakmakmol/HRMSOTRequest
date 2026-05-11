@@ -1,4 +1,5 @@
 // backend/src/modules/ot/models/OTCalculationPolicy.js
+
 const mongoose = require('mongoose')
 
 function s(value) {
@@ -7,7 +8,7 @@ function s(value) {
 
 const ROUND_METHODS = ['FLOOR', 'CEIL', 'NEAREST']
 
-const OTCalculationPolicySchema = new mongoose.Schema(
+const otCalculationPolicySchema = new mongoose.Schema(
   {
     code: {
       type: String,
@@ -55,6 +56,7 @@ const OTCalculationPolicySchema = new mongoose.Schema(
       default: 'CEIL',
       uppercase: true,
       trim: true,
+      index: true,
     },
 
     graceAfterShiftEndMinutes: {
@@ -64,10 +66,6 @@ const OTCalculationPolicySchema = new mongoose.Schema(
       default: 0,
     },
 
-    // ✅ SPECIAL COMPANY RULE
-    // Only useful for working-day post-shift OT.
-    // If true, approved OT can be credited when employee is PRESENT/LATE,
-    // even if exact OT end clock-out is not available.
     allowApprovedOtWithoutExactClockOut: {
       type: Boolean,
       required: true,
@@ -130,7 +128,7 @@ const OTCalculationPolicySchema = new mongoose.Schema(
   },
 )
 
-OTCalculationPolicySchema.pre('validate', function preValidate(next) {
+otCalculationPolicySchema.pre('validate', function normalize(next) {
   this.code = s(this.code).toUpperCase()
   this.name = s(this.name)
   this.description = s(this.description)
@@ -140,29 +138,31 @@ OTCalculationPolicySchema.pre('validate', function preValidate(next) {
   this.roundUnitMinutes = Number(this.roundUnitMinutes || 0)
   this.graceAfterShiftEndMinutes = Number(this.graceAfterShiftEndMinutes || 0)
 
-  this.allowApprovedOtWithoutExactClockOut =
-    this.allowApprovedOtWithoutExactClockOut === true
-
   if (!Number.isInteger(this.minEligibleMinutes) || this.minEligibleMinutes < 0) {
-    return next(new Error('minEligibleMinutes must be a non-negative integer'))
+    return next(new Error('ot.policy.validation.minEligibleMinutesInvalid'))
   }
 
   if (!Number.isInteger(this.roundUnitMinutes) || this.roundUnitMinutes < 1) {
-    return next(new Error('roundUnitMinutes must be a positive integer'))
+    return next(new Error('ot.policy.validation.roundUnitMinutesInvalid'))
   }
 
   if (
     !Number.isInteger(this.graceAfterShiftEndMinutes) ||
     this.graceAfterShiftEndMinutes < 0
   ) {
-    return next(new Error('graceAfterShiftEndMinutes must be a non-negative integer'))
+    return next(new Error('ot.policy.validation.graceAfterShiftEndMinutesInvalid'))
   }
 
   next()
 })
 
-OTCalculationPolicySchema.index({ isActive: 1, name: 1 })
-OTCalculationPolicySchema.index({ allowApprovedOtWithoutExactClockOut: 1, isActive: 1 })
-OTCalculationPolicySchema.index({ createdAt: -1 })
+otCalculationPolicySchema.index({ isActive: 1, name: 1 })
+otCalculationPolicySchema.index({ roundMethod: 1, isActive: 1 })
+otCalculationPolicySchema.index({ allowApprovedOtWithoutExactClockOut: 1, isActive: 1 })
+otCalculationPolicySchema.index({ createdAt: -1 })
 
-module.exports = mongoose.model('OTCalculationPolicy', OTCalculationPolicySchema)
+module.exports =
+  mongoose.models.OTCalculationPolicy ||
+  mongoose.model('OTCalculationPolicy', otCalculationPolicySchema)
+
+module.exports.ROUND_METHODS = ROUND_METHODS

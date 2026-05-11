@@ -1,0 +1,25 @@
+// backend/src/shared/errors/AppError.js
+
+class AppError extends Error {
+  constructor({
+    statusCode = 500,
+    code = 'INTERNAL_SERVER_ERROR',
+    messageKey = 'common.error.internalServerError',
+    message = 'Internal server error',
+    field = null,
+    params = {},
+    issues = undefined,
+  } = {}) {
+    super(message)
+
+    this.name = 'AppError'
+    this.statusCode = Number(statusCode || 500)
+    this.code = String(code || 'INTERNAL_SERVER_ERROR').trim().toUpperCase()
+    this.messageKey = String(messageKey || 'common.error.internalServerError').trim()
+    this.field = field || null
+    this.params = params && typeof params === 'object' ? params : {}
+    this.issues = issues
+  }
+}
+
+module.exports = AppError

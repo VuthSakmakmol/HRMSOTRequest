@@ -1,4 +1,5 @@
 // backend/src/modules/ot/routes/otPolicy.routes.js
+
 const express = require('express')
 
 const otPolicyController = require('../controllers/otPolicy.controller')
@@ -9,8 +10,7 @@ const router = express.Router()
 
 router.use(requireAuth)
 
-// Use OT_POLICY_VIEW for lookup so it works with your current permission seed.
-// Later, if you want stricter permission, we can add OT_POLICY_LOOKUP.
+// Fixed route must stay before '/:id'
 router.get(
   '/lookup',
   requirePermission('OT_POLICY_VIEW'),

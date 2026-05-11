@@ -1,88 +1,89 @@
 // backend/src/modules/org/controllers/position.controller.js
+
 const positionService = require('../services/position.service')
+const { successResponse } = require('../../../shared/utils/apiResponse')
+
 const {
   createPositionSchema,
   updatePositionSchema,
   normalizeListQuery,
+  normalizeLookupQuery,
 } = require('../validators/position.validation')
 
-function parseBody(schema, data) {
-  const result = schema.safeParse(data)
+function parse(schema, data) {
+  return schema.parse(data)
+}
 
-  if (!result.success) {
-    const err = new Error(result.error.issues[0]?.message || 'Validation error')
-    err.status = 400
-    throw err
-  }
+function setExcelHeaders(res, filename) {
+  res.setHeader(
+    'Content-Type',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  )
 
-  return result.data
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
 }
 
 async function lookup(req, res, next) {
   try {
-    const data = await positionService.lookup(req.query || {})
+    const query = normalizeLookupQuery(req.query || {})
+    const result = await positionService.lookup(query)
 
-    res.json({
-      ok: true,
-      data,
-    })
+    return successResponse(res, result)
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function list(req, res, next) {
   try {
     const query = normalizeListQuery(req.query || {})
-    const data = await positionService.list(query)
+    const result = await positionService.list(query)
 
-    res.json({
-      ok: true,
-      data,
-    })
+    return successResponse(res, result)
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function getOne(req, res, next) {
   try {
-    const data = await positionService.getById(req.params.id)
+    const item = await positionService.getById(req.params.id)
 
-    res.json({
-      ok: true,
-      data,
+    return successResponse(res, {
+      item,
     })
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function create(req, res, next) {
   try {
-    const payload = parseBody(createPositionSchema, req.body || {})
-    const data = await positionService.create(payload)
+    const payload = parse(createPositionSchema, req.body || {})
+    const item = await positionService.create(payload)
 
-    res.status(201).json({
-      ok: true,
-      data,
-    })
+    return successResponse(
+      res,
+      {
+        item,
+      },
+      201,
+    )
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function update(req, res, next) {
   try {
-    const payload = parseBody(updatePositionSchema, req.body || {})
-    const data = await positionService.update(req.params.id, payload)
+    const payload = parse(updatePositionSchema, req.body || {})
+    const item = await positionService.update(req.params.id, payload)
 
-    res.json({
-      ok: true,
-      data,
+    return successResponse(res, {
+      item,
     })
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
@@ -90,58 +91,45 @@ async function downloadSample(req, res, next) {
   try {
     const result = await positionService.downloadSample()
 
-    res.setHeader(
-      'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    )
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="${result.filename}"`
-    )
+    setExcelHeaders(res, result.filename)
 
-    res.send(result.buffer)
+    return res.send(result.buffer)
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function exportExcel(req, res, next) {
   try {
-    const query = normalizeListQuery(req.query || {})
+    const query = normalizeListQuery({
+      ...(req.query || {}),
+      page: 1,
+      limit: 10,
+    })
+
     const result = await positionService.exportExcel(query)
 
-    res.setHeader(
-      'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    )
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="${result.filename}"`
-    )
+    setExcelHeaders(res, result.filename)
 
-    res.send(result.buffer)
+    return res.send(result.buffer)
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function importExcel(req, res, next) {
   try {
-    if (!req.file?.buffer) {
-      const err = new Error('Excel file is required')
-      err.status = 400
-      throw err
-    }
+    const item = await positionService.importExcel(req.file)
 
-    const data = await positionService.importExcel(req.file)
-
-    res.json({
-      ok: true,
-      data,
-      message: 'Position import completed',
-    })
+    return successResponse(
+      res,
+      {
+        item,
+      },
+      201,
+    )
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 

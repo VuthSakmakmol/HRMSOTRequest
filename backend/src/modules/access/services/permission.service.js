@@ -1,51 +1,74 @@
 // backend/src/modules/access/services/permission.service.js
+
+const mongoose = require('mongoose')
 const Permission = require('../models/Permission')
+const AppError = require('../../../shared/errors/AppError')
 
-function s(v) {
-  return String(v ?? '').trim()
+function s(value) {
+  return String(value ?? '').trim()
 }
 
-function up(v) {
-  return s(v).toUpperCase()
+function up(value) {
+  return s(value).toUpperCase()
 }
 
-function toObjectIdString(v) {
-  return s(v)
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-function buildSort(sortField = 'module', sortOrder = 1) {
-  const allowedFields = new Set([
-    'module',
-    'code',
-    'name',
-    'createdAt',
-    'updatedAt',
-  ])
+function ensureObjectId(id, field = 'id') {
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    throw new AppError({
+      statusCode: 400,
+      code: 'INVALID_ID',
+      messageKey: 'common.error.invalidId',
+      message: 'Invalid id',
+      field,
+      params: {
+        value: id,
+      },
+    })
+  }
+}
 
-  const field = allowedFields.has(sortField) ? sortField : 'module'
-  const order = Number(sortOrder) === -1 ? -1 : 1
+function permissionNotFoundError() {
+  return new AppError({
+    statusCode: 404,
+    code: 'PERMISSION_NOT_FOUND',
+    messageKey: 'access.permission.error.notFound',
+    message: 'Permission not found',
+  })
+}
 
-  const sort = { [field]: order }
+function mapPermission(doc) {
+  if (!doc) return null
 
-  if (field !== 'module') sort.module = 1
-  if (field !== 'code') sort.code = 1
-  if (field !== '_id') sort._id = 1
-
-  return sort
+  return {
+    id: String(doc._id),
+    code: doc.code || '',
+    name: doc.name || '',
+    module: doc.module || '',
+    description: doc.description || '',
+    isActive: !!doc.isActive,
+    createdAt: doc.createdAt || null,
+    updatedAt: doc.updatedAt || null,
+  }
 }
 
 function buildFilter(query = {}) {
   const filter = {}
 
-  const q = s(query.q)
+  const keyword = s(query.search || query.q)
   const moduleValue = up(query.module)
 
-  if (q) {
+  if (keyword) {
+    const regex = new RegExp(escapeRegex(keyword), 'i')
+
     filter.$or = [
-      { code: { $regex: q, $options: 'i' } },
-      { name: { $regex: q, $options: 'i' } },
-      { module: { $regex: q, $options: 'i' } },
-      { description: { $regex: q, $options: 'i' } },
+      { code: regex },
+      { name: regex },
+      { module: regex },
+      { description: regex },
     ]
   }
 
@@ -53,16 +76,36 @@ function buildFilter(query = {}) {
     filter.module = moduleValue
   }
 
-  if (typeof query.isActive === 'boolean') {
-    filter.isActive = query.isActive
-  }
+  if (query.isActive === 'true') filter.isActive = true
+  if (query.isActive === 'false') filter.isActive = false
 
   return filter
 }
 
+function buildSort(sortField = 'module', sortOrder = 1) {
+  const allowedFields = new Set([
+    'module',
+    'code',
+    'name',
+    'isActive',
+    'createdAt',
+    'updatedAt',
+  ])
+
+  const field = allowedFields.has(sortField) ? sortField : 'module'
+  const order = Number(sortOrder) === -1 ? -1 : 1
+
+  return {
+    [field]: order,
+    module: 1,
+    code: 1,
+    _id: 1,
+  }
+}
+
 async function list(query = {}) {
-  const page = Number(query.page) > 0 ? Number(query.page) : 1
-  const limit = Number(query.limit) > 0 ? Math.min(Number(query.limit), 100) : 10
+  const page = Number(query.page || 1)
+  const limit = Number(query.limit || 10)
   const skip = (page - 1) * limit
 
   const filter = buildFilter(query)
@@ -74,28 +117,29 @@ async function list(query = {}) {
       .skip(skip)
       .limit(limit)
       .lean(),
+
     Permission.countDocuments(filter),
+
     Permission.distinct('module', {}),
   ])
 
   return {
-    items: items.map((item) => ({
-      id: toObjectIdString(item._id),
-      code: item.code || '',
-      name: item.name || '',
-      module: item.module || '',
-      description: item.description || '',
-      isActive: Boolean(item.isActive),
-      createdAt: item.createdAt || null,
-      updatedAt: item.updatedAt || null,
-    })),
+    items: items.map(mapPermission),
+
     pagination: {
       page,
       limit,
       total,
-      pages: Math.max(1, Math.ceil(total / limit)),
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+      hasMore: page * limit < total,
     },
+
     filters: {
+      search: s(query.search || query.q),
+      module: up(query.module),
+      isActive: query.isActive || '',
+      sortField: query.sortField || 'module',
+      sortOrder: Number(query.sortOrder) === -1 ? -1 : 1,
       modules: [...modules]
         .map((item) => up(item))
         .filter(Boolean)
@@ -105,24 +149,15 @@ async function list(query = {}) {
 }
 
 async function getById(id) {
-  const item = await Permission.findById(id).lean()
+  ensureObjectId(id)
 
-  if (!item) {
-    const error = new Error('Permission not found.')
-    error.status = 404
-    throw error
+  const doc = await Permission.findById(id).lean()
+
+  if (!doc) {
+    throw permissionNotFoundError()
   }
 
-  return {
-    id: toObjectIdString(item._id),
-    code: item.code || '',
-    name: item.name || '',
-    module: item.module || '',
-    description: item.description || '',
-    isActive: Boolean(item.isActive),
-    createdAt: item.createdAt || null,
-    updatedAt: item.updatedAt || null,
-  }
+  return mapPermission(doc)
 }
 
 module.exports = {

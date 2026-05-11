@@ -1,5 +1,4 @@
 // backend/src/modules/org/routes/productionLine.routes.js
-// backend/src/modules/org/routes/productionLine.routes.js
 
 const express = require('express')
 const multer = require('multer')
@@ -13,13 +12,11 @@ const router = express.Router()
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 10 * 1024 * 1024,
+    fileSize: 5 * 1024 * 1024,
   },
 })
 
 router.use(requireAuth)
-
-// Important: fixed routes must stay before '/:id'
 
 router.get(
   '/lookup',

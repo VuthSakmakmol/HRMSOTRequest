@@ -1,5 +1,11 @@
 // backend/src/modules/access/validators/systemRole.validation.js
+
 const { z } = require('zod')
+
+const objectIdSchema = z
+  .string()
+  .trim()
+  .regex(/^[a-f\d]{24}$/i, 'common.validation.invalidId')
 
 function toBooleanString(value) {
   if (value === '' || value === undefined || value === null) return ''
@@ -8,22 +14,22 @@ function toBooleanString(value) {
   return ''
 }
 
-const objectIdSchema = z
-  .string()
-  .trim()
-  .regex(/^[a-f\d]{24}$/i, 'Invalid id')
-
-const listQuerySchema = z.object({
+const listSystemRoleQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(10),
-  search: z.string().trim().default(''),
+
+  search: z.string().trim().optional().default(''),
+
   isActive: z
     .union([z.string(), z.boolean()])
     .optional()
     .transform(toBooleanString),
+
   sortField: z
     .enum(['code', 'displayName', 'isActive', 'createdAt', 'updatedAt'])
+    .optional()
     .default('createdAt'),
+
   sortOrder: z
     .union([z.string(), z.number()])
     .optional()
@@ -38,14 +44,17 @@ const createSystemRoleSchema = z.object({
   code: z
     .string()
     .trim()
-    .min(1, 'Role code is required')
-    .max(50, 'Role code is too long'),
+    .min(1, 'access.role.validation.codeRequired')
+    .max(50, 'access.role.validation.codeTooLong'),
+
   displayName: z
     .string()
     .trim()
-    .min(1, 'Display name is required')
-    .max(100, 'Display name is too long'),
-  permissionIds: z.array(objectIdSchema).default([]),
+    .min(1, 'access.role.validation.displayNameRequired')
+    .max(100, 'access.role.validation.displayNameTooLong'),
+
+  permissionIds: z.array(objectIdSchema).optional().default([]),
+
   isActive: z.boolean().optional().default(true),
 })
 
@@ -54,16 +63,19 @@ const updateSystemRoleSchema = z
     code: z
       .string()
       .trim()
-      .min(1, 'Role code is required')
-      .max(50, 'Role code is too long')
+      .min(1, 'access.role.validation.codeRequired')
+      .max(50, 'access.role.validation.codeTooLong')
       .optional(),
+
     displayName: z
       .string()
       .trim()
-      .min(1, 'Display name is required')
-      .max(100, 'Display name is too long')
+      .min(1, 'access.role.validation.displayNameRequired')
+      .max(100, 'access.role.validation.displayNameTooLong')
       .optional(),
+
     permissionIds: z.array(objectIdSchema).optional(),
+
     isActive: z.boolean().optional(),
   })
   .refine(
@@ -73,16 +85,12 @@ const updateSystemRoleSchema = z
       value.permissionIds !== undefined ||
       value.isActive !== undefined,
     {
-      message: 'At least one field is required to update role',
+      message: 'access.role.validation.updatePayloadRequired',
     },
   )
 
-function normalizeListQuery(raw = {}) {
-  return listQuerySchema.parse(raw)
-}
-
 module.exports = {
+  listSystemRoleQuerySchema,
   createSystemRoleSchema,
   updateSystemRoleSchema,
-  normalizeListQuery,
 }

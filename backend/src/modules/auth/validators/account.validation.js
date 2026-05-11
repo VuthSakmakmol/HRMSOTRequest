@@ -1,49 +1,77 @@
 // backend/src/modules/auth/validators/account.validation.js
+
 const { z } = require('zod')
 
 const objectIdSchema = z
   .string()
   .trim()
-  .regex(/^[a-fA-F0-9]{24}$/, 'Invalid ObjectId')
+  .regex(/^[a-f\d]{24}$/i, 'common.validation.invalidId')
 
-const permissionCodeSchema = z.string().trim().min(1).transform(v => v.toUpperCase())
+const pageQuerySchema = z.coerce.number().int().min(1).default(1)
+const limitQuerySchema = z.coerce.number().int().min(1).max(100).default(10)
+
+const optionalBooleanQuerySchema = z
+  .enum(['true', 'false', ''])
+  .optional()
+  .default('')
+
+const listAccountsQuerySchema = z.object({
+  page: pageQuerySchema,
+  limit: limitQuerySchema,
+  search: z.string().trim().optional().default(''),
+  isActive: optionalBooleanQuerySchema,
+})
 
 const createAccountSchema = z.object({
-  loginId: z.string().trim().min(3, 'Login ID must be at least 3 characters'),
-  password: z.string().min(6, 'Password must be at least 6 characters'),
-  displayName: z.string().trim().min(1, 'Display name is required'),
-  employeeId: objectIdSchema.nullable().optional(),
+  loginId: z.string().trim().min(1, 'auth.account.validation.loginIdRequired'),
+  displayName: z.string().trim().min(1, 'auth.account.validation.displayNameRequired'),
+
+  password: z
+    .string()
+    .min(6, 'auth.account.validation.passwordMinLength')
+    .max(100, 'auth.account.validation.passwordMaxLength'),
+
+  employeeId: objectIdSchema.nullish(),
+
   roleIds: z.array(objectIdSchema).optional().default([]),
-  directPermissionCodes: z.array(permissionCodeSchema).optional().default([]),
-  mustChangePassword: z.boolean().optional(),
-  isActive: z.boolean().optional(),
+
+  directPermissionCodes: z
+    .array(z.string().trim().min(1))
+    .optional()
+    .default([]),
+
+  mustChangePassword: z.boolean().optional().default(false),
+  isActive: z.boolean().optional().default(true),
 })
 
 const updateAccountSchema = z.object({
-  loginId: z.string().trim().min(3, 'Login ID must be at least 3 characters').optional(),
-  displayName: z.string().trim().min(1, 'Display name is required').optional(),
+  loginId: z.string().trim().min(1, 'auth.account.validation.loginIdRequired').optional(),
+  displayName: z.string().trim().min(1, 'auth.account.validation.displayNameRequired').optional(),
+
   employeeId: objectIdSchema.nullable().optional(),
+
   roleIds: z.array(objectIdSchema).optional(),
-  directPermissionCodes: z.array(permissionCodeSchema).optional(),
+
+  directPermissionCodes: z
+    .array(z.string().trim().min(1))
+    .optional(),
+
   mustChangePassword: z.boolean().optional(),
   isActive: z.boolean().optional(),
 })
 
 const resetPasswordSchema = z.object({
-  newPassword: z.string().min(6, 'New password must be at least 6 characters'),
-  mustChangePassword: z.boolean().optional(),
-})
+  newPassword: z
+    .string()
+    .min(6, 'auth.account.validation.passwordMinLength')
+    .max(100, 'auth.account.validation.passwordMaxLength'),
 
-const listAccountsQuerySchema = z.object({
-  page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce.number().int().min(1).max(100).default(10),
-  search: z.string().trim().default(''),
-  isActive: z.enum(['true', 'false', '']).optional().default(''),
+  mustChangePassword: z.boolean().optional().default(true),
 })
 
 module.exports = {
+  listAccountsQuerySchema,
   createAccountSchema,
   updateAccountSchema,
   resetPasswordSchema,
-  listAccountsQuerySchema,
 }

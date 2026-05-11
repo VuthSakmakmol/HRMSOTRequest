@@ -4,21 +4,42 @@ const mongoose = require('mongoose')
 
 const { Schema } = mongoose
 
-function cleanString(v) {
-  return String(v || '').trim()
+function s(value) {
+  return String(value ?? '').trim()
 }
 
 function sameId(a, b) {
-  return String(a || '') !== '' && String(a) === String(b || '')
+  const aa = s(a)
+  const bb = s(b)
+
+  return aa !== '' && aa === bb
+}
+
+function uniqueObjectIdStrings(values = []) {
+  if (!Array.isArray(values)) return []
+
+  return [
+    ...new Set(
+      values
+        .map((value) => s(value))
+        .filter(Boolean),
+    ),
+  ]
 }
 
 const employeeSchema = new Schema(
   {
-    employeeNo: {
+    // Optional company-visible ID/code.
+    // Example: TRX001, EMP001, A123.
+    // This is for display/search/export only.
+    // It must not be used as the real relational key.
+    employeeCode: {
       type: String,
-      required: true,
+      default: '',
       trim: true,
+      uppercase: true,
       maxlength: 50,
+      index: true,
     },
 
     displayName: {
@@ -72,10 +93,6 @@ const employeeSchema = new Schema(
       },
     ],
 
-    // OT workflow role for automatic OT approval chain
-    // NONE = skip in OT workflow
-    // APPROVER = must approve
-    // ACKNOWLEDGE = only informed / visible, no approve button
     otWorkflowRole: {
       type: String,
       enum: ['NONE', 'APPROVER', 'ACKNOWLEDGE'],
@@ -96,8 +113,8 @@ const employeeSchema = new Schema(
       type: String,
       default: '',
       trim: true,
-      maxlength: 150,
       lowercase: true,
+      maxlength: 150,
     },
 
     joinDate: {
@@ -117,12 +134,12 @@ const employeeSchema = new Schema(
   },
 )
 
-employeeSchema.pre('validate', function preValidate(next) {
-  this.employeeNo = cleanString(this.employeeNo).toUpperCase()
-  this.displayName = cleanString(this.displayName)
-  this.phone = cleanString(this.phone)
-  this.email = cleanString(this.email).toLowerCase()
-  this.otWorkflowRole = cleanString(this.otWorkflowRole || 'NONE').toUpperCase()
+employeeSchema.pre('validate', function normalize(next) {
+  this.employeeCode = s(this.employeeCode).toUpperCase()
+  this.displayName = s(this.displayName)
+  this.phone = s(this.phone)
+  this.email = s(this.email).toLowerCase()
+  this.otWorkflowRole = s(this.otWorkflowRole || 'NONE').toUpperCase()
 
   if (!this.lineId) {
     this.lineId = null
@@ -133,33 +150,29 @@ employeeSchema.pre('validate', function preValidate(next) {
   }
 
   if (this.reportsToEmployeeId && sameId(this._id, this.reportsToEmployeeId)) {
-    const err = new Error('Employee cannot report to self')
-    err.status = 400
-    return next(err)
+    const error = new Error('org.employee.error.reportToSelf')
+    error.statusCode = 400
+    error.code = 'EMPLOYEE_REPORT_TO_SELF'
+    error.messageKey = 'org.employee.error.reportToSelf'
+    return next(error)
   }
 
-  if (!Array.isArray(this.lineManagerIds)) {
-    this.lineManagerIds = []
-  }
-
-  this.lineManagerIds = [
-    ...new Set(
-      this.lineManagerIds
-        .map((item) => String(item || '').trim())
-        .filter(Boolean)
-        .filter((item) => !sameId(this._id, item)),
-    ),
-  ]
+  this.lineManagerIds = uniqueObjectIdStrings(this.lineManagerIds).filter(
+    (employeeId) => !sameId(this._id, employeeId),
+  )
 
   next()
 })
 
 employeeSchema.index(
-  { employeeNo: 1 },
+  { employeeCode: 1 },
   {
     unique: true,
     partialFilterExpression: {
-      employeeNo: { $type: 'string' },
+      employeeCode: {
+        $type: 'string',
+        $ne: '',
+      },
     },
   },
 )
@@ -169,13 +182,15 @@ employeeSchema.index(
   {
     unique: true,
     partialFilterExpression: {
-      email: { $type: 'string', $ne: '' },
+      email: {
+        $type: 'string',
+        $ne: '',
+      },
     },
   },
 )
 
-employeeSchema.index({ displayName: 'text', employeeNo: 'text', email: 'text' })
-
+employeeSchema.index({ displayName: 'text', employeeCode: 'text', email: 'text' })
 employeeSchema.index({ departmentId: 1, positionId: 1, isActive: 1 })
 employeeSchema.index({ departmentId: 1, lineId: 1, positionId: 1, isActive: 1 })
 employeeSchema.index({ lineId: 1, positionId: 1, isActive: 1 })

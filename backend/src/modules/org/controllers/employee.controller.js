@@ -1,82 +1,61 @@
 // backend/src/modules/org/controllers/employee.controller.js
-// backend/src/modules/org/controllers/employee.controller.js
+
 const employeeService = require('../services/employee.service')
+const { successResponse } = require('../../../shared/utils/apiResponse')
+
 const {
   createEmployeeSchema,
   updateEmployeeSchema,
   normalizeListQuery,
   normalizeExportQuery,
+  normalizeLookupQuery,
 } = require('../validators/employee.validation')
 
-function parseBody(schema, data) {
-  const result = schema.safeParse(data)
-
-  if (!result.success) {
-    const err = new Error(result.error.issues[0]?.message || 'Validation error')
-    err.status = 400
-    throw err
-  }
-
-  return result.data
+function parse(schema, data) {
+  return schema.parse(data)
 }
 
-function parseQuery(normalizer, data) {
-  try {
-    return normalizer(data)
-  } catch (error) {
-    if (error?.name === 'ZodError') {
-      const err = new Error(error.issues?.[0]?.message || 'Validation error')
-      err.status = 400
-      throw err
-    }
-    throw error
-  }
+function setExcelHeaders(res, filename) {
+  res.setHeader(
+    'Content-Type',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  )
+
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
 }
 
 async function lookup(req, res, next) {
   try {
-    const data = await employeeService.lookup(req.query || {}, req.user)
+    const query = normalizeLookupQuery(req.query || {})
+    const result = await employeeService.lookup(query, req.user)
 
-    res.json({
-      ok: true,
-      data,
-    })
+    return successResponse(res, result)
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function list(req, res, next) {
   try {
-    const query = parseQuery(normalizeListQuery, req.query || {})
-    const data = await employeeService.list(query, req.user)
+    const query = normalizeListQuery(req.query || {})
+    const result = await employeeService.list(query, req.user)
 
-    res.json({
-      ok: true,
-      data,
-    })
+    return successResponse(res, result)
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function exportExcel(req, res, next) {
   try {
-    const query = parseQuery(normalizeExportQuery, req.query || {})
+    const query = normalizeExportQuery(req.query || {})
     const result = await employeeService.exportExcel(query, req.user)
 
-    res.setHeader(
-      'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    )
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="${result.filename}"`,
-    )
+    setExcelHeaders(res, result.filename)
 
-    res.send(result.buffer)
+    return res.send(result.buffer)
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
@@ -84,30 +63,25 @@ async function downloadImportSample(req, res, next) {
   try {
     const result = await employeeService.downloadImportSample()
 
-    res.setHeader(
-      'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    )
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="${result.filename}"`,
-    )
+    setExcelHeaders(res, result.filename)
 
-    res.send(result.buffer)
+    return res.send(result.buffer)
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function importExcel(req, res, next) {
   try {
     if (!req.file?.buffer) {
-      const err = new Error('Excel file is required')
-      err.status = 400
-      throw err
+      const error = new Error('org.employee.error.excelFileRequired')
+      error.statusCode = 400
+      error.code = 'EMPLOYEE_EXCEL_FILE_REQUIRED'
+      error.messageKey = 'org.employee.error.excelFileRequired'
+      throw error
     }
 
-    const data = await employeeService.importExcel(
+    const item = await employeeService.importExcel(
       {
         fileName: req.file.originalname || 'employee-import.xlsx',
         buffer: req.file.buffer,
@@ -115,44 +89,45 @@ async function importExcel(req, res, next) {
       req.user,
     )
 
-    res.status(201).json({
-      ok: true,
-      data,
-    })
+    return successResponse(
+      res,
+      {
+        item,
+      },
+      201,
+    )
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function getById(req, res, next) {
   try {
-    const data = await employeeService.getById(req.params.id)
+    const item = await employeeService.getById(req.params.id, req.user)
 
-    res.json({
-      ok: true,
-      data,
+    return successResponse(res, {
+      item,
     })
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function getOrgChart(req, res, next) {
   try {
-    const data = await employeeService.getOrgChart(req.params.id)
+    const item = await employeeService.getOrgChart(req.params.id, req.user)
 
-    res.json({
-      ok: true,
-      data,
+    return successResponse(res, {
+      item,
     })
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function getOrgTree(req, res, next) {
   try {
-    const data = await employeeService.getOrgTree(
+    const item = await employeeService.getOrgTree(
       {
         rootEmployeeId: req.query.rootEmployeeId || '',
         search: req.query.search || '',
@@ -161,40 +136,41 @@ async function getOrgTree(req, res, next) {
       req.user,
     )
 
-    res.json({
-      ok: true,
-      data,
+    return successResponse(res, {
+      item,
     })
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function create(req, res, next) {
   try {
-    const payload = parseBody(createEmployeeSchema, req.body || {})
-    const data = await employeeService.create(payload)
+    const payload = parse(createEmployeeSchema, req.body || {})
+    const item = await employeeService.create(payload, req.user)
 
-    res.status(201).json({
-      ok: true,
-      data,
-    })
+    return successResponse(
+      res,
+      {
+        item,
+      },
+      201,
+    )
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function update(req, res, next) {
   try {
-    const payload = parseBody(updateEmployeeSchema, req.body || {})
-    const data = await employeeService.update(req.params.id, payload)
+    const payload = parse(updateEmployeeSchema, req.body || {})
+    const item = await employeeService.update(req.params.id, payload, req.user)
 
-    res.json({
-      ok: true,
-      data,
+    return successResponse(res, {
+      item,
     })
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 

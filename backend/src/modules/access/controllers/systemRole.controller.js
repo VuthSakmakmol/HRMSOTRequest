@@ -1,88 +1,68 @@
 // backend/src/modules/access/controllers/systemRole.controller.js
+
 const systemRoleService = require('../services/systemRole.service')
+const { successResponse } = require('../../../shared/utils/apiResponse')
+
 const {
+  listSystemRoleQuerySchema,
   createSystemRoleSchema,
   updateSystemRoleSchema,
-  normalizeListQuery,
 } = require('../validators/systemRole.validation')
 
-function parseBody(schema, data) {
-  const result = schema.safeParse(data)
-
-  if (!result.success) {
-    const err = new Error(result.error.issues[0]?.message || 'Validation error')
-    err.status = 400
-    throw err
-  }
-
-  return result.data
-}
-
-function parseQuery(normalizer, data) {
-  try {
-    return normalizer(data)
-  } catch (error) {
-    if (error?.name === 'ZodError') {
-      const err = new Error(error.issues?.[0]?.message || 'Validation error')
-      err.status = 400
-      throw err
-    }
-    throw error
-  }
+function parse(schema, data) {
+  return schema.parse(data)
 }
 
 async function list(req, res, next) {
   try {
-    const query = parseQuery(normalizeListQuery, req.query || {})
-    const data = await systemRoleService.list(query)
+    const query = parse(listSystemRoleQuerySchema, req.query || {})
+    const result = await systemRoleService.list(query)
 
-    res.json({
-      ok: true,
-      data,
-    })
+    return successResponse(res, result)
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function getOne(req, res, next) {
   try {
-    const data = await systemRoleService.getById(req.params.id)
+    const item = await systemRoleService.getById(req.params.id)
 
-    res.json({
-      ok: true,
-      data,
+    return successResponse(res, {
+      item,
     })
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function create(req, res, next) {
   try {
-    const payload = parseBody(createSystemRoleSchema, req.body || {})
-    const data = await systemRoleService.create(payload)
+    const payload = parse(createSystemRoleSchema, req.body || {})
+    const item = await systemRoleService.create(payload)
 
-    res.status(201).json({
-      ok: true,
-      data,
-    })
+    return successResponse(
+      res,
+      {
+        item,
+      },
+      201,
+    )
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function update(req, res, next) {
   try {
-    const payload = parseBody(updateSystemRoleSchema, req.body || {})
-    const data = await systemRoleService.update(req.params.id, payload)
+    const payload = parse(updateSystemRoleSchema, req.body || {})
+    const item = await systemRoleService.update(req.params.id, payload)
 
-    res.json({
-      ok: true,
-      data,
+    return successResponse(res, {
+      item,
     })
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 

@@ -1,5 +1,6 @@
 // backend/src/middlewares/requirePermission.middleware.js
 
+const AppError = require('../shared/errors/AppError')
 const { resolveEffectiveAccess } = require('../modules/auth/utils/resolveEffectiveAccess')
 
 function normalizeCode(value) {
@@ -14,31 +15,31 @@ function normalizeCodeList(values) {
     .filter(Boolean)
 }
 
-function buildMissingPermissionMessage(permissionCode) {
-  return `Missing required permission: ${permissionCode}`
-}
-
 function requirePermission(requiredCode) {
   const target = normalizeCode(requiredCode)
 
   return async function permissionGuard(req, res, next) {
     try {
       if (!target) {
-        return res.status(500).json({
-          ok: false,
-          message: 'Permission middleware misconfigured: missing required permission code.',
-          error: 'PERMISSION_MIDDLEWARE_CONFIG_ERROR',
-          statusCode: 500,
-        })
+        return next(
+          new AppError({
+            statusCode: 500,
+            code: 'PERMISSION_MIDDLEWARE_CONFIG_ERROR',
+            messageKey: 'access.error.permissionMiddlewareConfigError',
+            message: 'Permission middleware misconfigured: missing required permission code.',
+          }),
+        )
       }
 
       if (!req.user || !req.user.accountId) {
-        return res.status(401).json({
-          ok: false,
-          message: 'Unauthorized',
-          error: 'UNAUTHORIZED',
-          statusCode: 401,
-        })
+        return next(
+          new AppError({
+            statusCode: 401,
+            code: 'AUTH_UNAUTHORIZED',
+            messageKey: 'auth.error.unauthorized',
+            message: 'Unauthorized',
+          }),
+        )
       }
 
       const effectiveAccess = await resolveEffectiveAccess(req.user)
@@ -48,6 +49,7 @@ function requirePermission(requiredCode) {
       const isRootAdmin = effectiveAccess.isRootAdmin === true
 
       req.user.roleCodes = roleCodes
+      req.user.roles = roleCodes
       req.user.effectivePermissionCodes = permissionCodes
       req.user.isRootAdmin = isRootAdmin
 
@@ -59,14 +61,18 @@ function requirePermission(requiredCode) {
         return next()
       }
 
-      return res.status(403).json({
-        ok: false,
-        message: buildMissingPermissionMessage(target),
-        error: 'MISSING_PERMISSION',
-        requiredPermission: target,
-        requiredPermissionCode: target,
-        statusCode: 403,
-      })
+      return next(
+        new AppError({
+          statusCode: 403,
+          code: 'MISSING_PERMISSION',
+          messageKey: 'access.error.missingPermission',
+          message: `Missing required permission: ${target}`,
+          params: {
+            requiredPermission: target,
+            requiredPermissionCode: target,
+          },
+        }),
+      )
     } catch (error) {
       return next(error)
     }

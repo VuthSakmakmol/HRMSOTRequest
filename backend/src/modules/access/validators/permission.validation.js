@@ -1,64 +1,43 @@
 // backend/src/modules/access/validators/permission.validation.js
+
 const { z } = require('zod')
 
-function toPositiveInt(value, fallback) {
-  const num = Number.parseInt(value, 10)
-  return Number.isFinite(num) && num > 0 ? num : fallback
+function toBooleanString(value) {
+  if (value === '' || value === undefined || value === null) return ''
+  if (value === true || value === 'true') return 'true'
+  if (value === false || value === 'false') return 'false'
+  return ''
 }
 
-function toBooleanOrUndefined(value) {
-  if (value === true || value === 'true') return true
-  if (value === false || value === 'false') return false
-  if (value === '' || value == null) return undefined
-  return undefined
-}
+const listPermissionQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(10),
 
-const listQuerySchema = z
-  .object({
-    page: z.any().optional(),
-    limit: z.any().optional(),
-    q: z.any().optional(),
-    module: z.any().optional(),
-    isActive: z.any().optional(),
-    sortField: z.any().optional(),
-    sortOrder: z.any().optional(),
-  })
-  .transform((value) => {
-    const page = toPositiveInt(value.page, 1)
-    const limit = Math.min(toPositiveInt(value.limit, 10), 100)
+  search: z.string().trim().optional().default(''),
+  q: z.string().trim().optional().default(''),
 
-    const allowedSortFields = [
-      'module',
-      'code',
-      'name',
-      'createdAt',
-      'updatedAt',
-    ]
+  module: z.string().trim().optional().default(''),
 
-    const rawSortField = String(value.sortField || '').trim()
-    const sortField = allowedSortFields.includes(rawSortField)
-      ? rawSortField
-      : 'module'
+  isActive: z
+    .union([z.string(), z.boolean()])
+    .optional()
+    .transform(toBooleanString),
 
-    const rawSortOrder = Number(value.sortOrder)
-    const sortOrder = rawSortOrder === -1 ? -1 : 1
+  sortField: z
+    .enum(['module', 'code', 'name', 'isActive', 'createdAt', 'updatedAt'])
+    .optional()
+    .default('module'),
 
-    return {
-      page,
-      limit,
-      q: String(value.q || '').trim(),
-      module: String(value.module || '').trim().toUpperCase(),
-      isActive: toBooleanOrUndefined(value.isActive),
-      sortField,
-      sortOrder,
-    }
-  })
-
-function normalizeListQuery(data = {}) {
-  return listQuerySchema.parse(data)
-}
+  sortOrder: z
+    .union([z.string(), z.number()])
+    .optional()
+    .transform((value) => {
+      if (value === -1 || value === '-1' || value === 'desc') return -1
+      if (value === 1 || value === '1' || value === 'asc') return 1
+      return 1
+    }),
+})
 
 module.exports = {
-  listQuerySchema,
-  normalizeListQuery,
+  listPermissionQuerySchema,
 }

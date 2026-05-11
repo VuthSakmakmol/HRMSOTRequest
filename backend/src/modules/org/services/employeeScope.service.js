@@ -1,8 +1,8 @@
 // backend/src/modules/org/services/employeeScope.service.js
-// backend/src/modules/org/services/employeeScope.service.js
 
 const mongoose = require('mongoose')
 
+const AppError = require('../../../shared/errors/AppError')
 const Employee = require('../models/Employee')
 const Position = require('../models/Position')
 const Account = require('../../auth/models/Account')
@@ -16,11 +16,42 @@ function upper(value) {
 }
 
 function id(value) {
-  return value ? String(value) : ''
+  return value ? String(value?._id || value?.id || value) : ''
 }
 
 function sameId(a, b) {
-  return id(a) !== '' && id(a) === id(b)
+  const aa = id(a)
+  const bb = id(b)
+
+  return aa !== '' && aa === bb
+}
+
+function uniqueIds(values = []) {
+  return [
+    ...new Set(
+      (Array.isArray(values) ? values : [])
+        .map((value) => id(value))
+        .filter(Boolean),
+    ),
+  ]
+}
+
+function appError({
+  statusCode = 400,
+  code,
+  messageKey,
+  message,
+  field = null,
+  params = {},
+}) {
+  return new AppError({
+    statusCode,
+    code,
+    messageKey,
+    message,
+    field,
+    params,
+  })
 }
 
 function getPermissionCodes(user) {
@@ -31,6 +62,7 @@ function getPermissionCodes(user) {
 
 function hasAnyPermission(user, codes = []) {
   const set = new Set(getPermissionCodes(user))
+
   return codes.some((code) => set.has(upper(code)))
 }
 
@@ -41,7 +73,6 @@ function canViewAllEmployees(user) {
       'EMPLOYEE_VIEW_ALL',
       'ORG_EMPLOYEE_VIEW_ALL',
       'ORG.EMPLOYEE_VIEW_ALL',
-      'ROOT_ADMIN',
     ])
   )
 }
@@ -55,7 +86,6 @@ function canLookupAllEmployees(user) {
       'ORG_EMPLOYEE_VIEW_ALL',
       'ORG.EMPLOYEE_VIEW_ALL',
       'OT_ADD_OTHER_LINE_EMPLOYEE',
-      'OT_SELECT_OTHER_EMPLOYEE',
     ])
   )
 }
@@ -88,6 +118,26 @@ async function resolveCurrentUserEmployeeId(currentUser) {
   return null
 }
 
+function buildEmployeeMap(employees = []) {
+  const map = new Map()
+
+  for (const employee of employees) {
+    map.set(id(employee._id), employee)
+  }
+
+  return map
+}
+
+function buildPositionMap(positions = []) {
+  const map = new Map()
+
+  for (const position of positions) {
+    map.set(id(position._id), position)
+  }
+
+  return map
+}
+
 function buildFixedChildrenMap(employees = []) {
   const map = new Map()
 
@@ -106,40 +156,41 @@ function buildFixedChildrenMap(employees = []) {
   return map
 }
 
-function buildPositionMap(positions = []) {
-  const map = new Map()
-
-  for (const position of positions) {
-    map.set(id(position._id), position)
-  }
-
-  return map
-}
-
-function buildEmployeeMap(employees = []) {
+function buildLineManagerChildrenMap(employees = []) {
   const map = new Map()
 
   for (const employee of employees) {
-    map.set(id(employee._id), employee)
+    const managerIds = uniqueIds(employee.lineManagerIds || [])
+
+    for (const managerId of managerIds) {
+      if (!managerId || sameId(managerId, employee._id)) continue
+
+      if (!map.has(managerId)) {
+        map.set(managerId, [])
+      }
+
+      map.get(managerId).push(id(employee._id))
+    }
   }
 
   return map
 }
 
-function buildSameLineChildrenMap(employees = [], positionById = new Map()) {
+function buildDynamicSameLineChildrenMap(employees = [], positionById = new Map()) {
   const map = new Map()
 
   for (const employee of employees) {
     const employeePosition = positionById.get(id(employee.positionId))
     const parentPositionId = id(employeePosition?.reportsToPositionId)
     const managerScope = upper(employeePosition?.managerScope || 'SAME_LINE')
+    const departmentId = id(employee.departmentId)
     const lineId = id(employee.lineId)
 
     if (!parentPositionId) continue
     if (managerScope !== 'SAME_LINE') continue
-    if (!lineId) continue
+    if (!departmentId || !lineId) continue
 
-    const key = `${parentPositionId}:${lineId}`
+    const key = `${parentPositionId}:${departmentId}:${lineId}`
 
     if (!map.has(key)) {
       map.set(key, [])
@@ -172,14 +223,10 @@ function shouldAcceptFixedReport(manager, child, positionById) {
 
   const childPosition = positionById.get(id(child.positionId))
 
-  // If this child position is SAME_LINE under this manager position,
-  // the fixed reportsToEmployeeId is only valid when both are still in the same current line.
-  // This removes old Line 1 employees from Sup A after Sup A moves to Line 2.
   if (isSameLinePositionChild(manager, child, childPosition)) {
     return sameId(manager.lineId, child.lineId)
   }
 
-  // GLOBAL/manual hierarchy can still use fixed reportsToEmployeeId.
   return true
 }
 
@@ -189,13 +236,14 @@ async function loadActiveEmployeesAndPositions() {
       { isActive: true },
       {
         _id: 1,
-        employeeNo: 1,
+        employeeCode: 1,
         displayName: 1,
         departmentId: 1,
         positionId: 1,
         lineId: 1,
         shiftId: 1,
         reportsToEmployeeId: 1,
+        lineManagerIds: 1,
         isActive: 1,
       },
     ).lean(),
@@ -233,7 +281,11 @@ async function getScopedEmployeeIds(currentUser, options = {}) {
   const employeeById = buildEmployeeMap(employees)
   const positionById = buildPositionMap(positions)
   const fixedChildrenByManagerId = buildFixedChildrenMap(employees)
-  const sameLineChildrenByPositionAndLine = buildSameLineChildrenMap(employees, positionById)
+  const lineManagerChildrenByManagerId = buildLineManagerChildrenMap(employees)
+  const dynamicSameLineChildrenMap = buildDynamicSameLineChildrenMap(
+    employees,
+    positionById,
+  )
 
   const rootEmployee = employeeById.get(myEmployeeId)
 
@@ -250,8 +302,6 @@ async function getScopedEmployeeIds(currentUser, options = {}) {
 
     if (!manager) continue
 
-    // 1. Keep GLOBAL/manual fixed reportsTo hierarchy,
-    // but reject stale SAME_LINE fixed children when line no longer matches.
     const fixedChildIds = fixedChildrenByManagerId.get(managerId) || []
 
     for (const childId of fixedChildIds) {
@@ -265,14 +315,22 @@ async function getScopedEmployeeIds(currentUser, options = {}) {
       queue.push(childId)
     }
 
-    // 2. Dynamic line ownership:
-    // supervisor current line + supervisor position = children whose position reports to that supervisor position.
+    const lineManagerChildIds = lineManagerChildrenByManagerId.get(managerId) || []
+
+    for (const childId of lineManagerChildIds) {
+      if (result.has(childId)) continue
+
+      result.add(childId)
+      queue.push(childId)
+    }
+
     const managerPositionId = id(manager.positionId)
+    const managerDepartmentId = id(manager.departmentId)
     const managerLineId = id(manager.lineId)
 
-    if (managerPositionId && managerLineId) {
-      const key = `${managerPositionId}:${managerLineId}`
-      const dynamicChildIds = sameLineChildrenByPositionAndLine.get(key) || []
+    if (managerPositionId && managerDepartmentId && managerLineId) {
+      const key = `${managerPositionId}:${managerDepartmentId}:${managerLineId}`
+      const dynamicChildIds = dynamicSameLineChildrenMap.get(key) || []
 
       for (const childId of dynamicChildIds) {
         if (result.has(childId)) continue
@@ -290,7 +348,11 @@ async function buildEmployeeScopeFilter(currentUser, options = {}) {
   const scopedIds = await getScopedEmployeeIds(currentUser, options)
 
   if (!scopedIds.size) {
-    return { _id: { $in: [] } }
+    return {
+      _id: {
+        $in: [],
+      },
+    }
   }
 
   return {
@@ -303,13 +365,7 @@ async function buildEmployeeScopeFilter(currentUser, options = {}) {
 }
 
 async function assertEmployeesInsideManagedScope(currentUser, employeeIds = []) {
-  const uniqueEmployeeIds = Array.from(
-    new Set(
-      (Array.isArray(employeeIds) ? employeeIds : [])
-        .map((employeeId) => s(employeeId))
-        .filter(Boolean),
-    ),
-  )
+  const uniqueEmployeeIds = uniqueIds(employeeIds)
 
   if (!uniqueEmployeeIds.length) return
 
@@ -331,9 +387,13 @@ async function assertEmployeesInsideManagedScope(currentUser, employeeIds = []) 
 
   const outsideEmployees = outsideObjectIds.length
     ? await Employee.find(
-        { _id: { $in: outsideObjectIds } },
         {
-          employeeNo: 1,
+          _id: {
+            $in: outsideObjectIds,
+          },
+        },
+        {
+          employeeCode: 1,
           displayName: 1,
           lineId: 1,
           positionId: 1,
@@ -353,7 +413,7 @@ async function assertEmployeesInsideManagedScope(currentUser, employeeIds = []) 
 
     return {
       employeeId,
-      employeeNo: s(employee?.employeeNo),
+      employeeCode: s(employee?.employeeCode),
       displayName: s(employee?.displayName),
       lineId: employee?.lineId?._id ? id(employee.lineId._id) : id(employee?.lineId),
       lineCode: s(employee?.lineId?.code),
@@ -366,37 +426,16 @@ async function assertEmployeesInsideManagedScope(currentUser, employeeIds = []) 
     }
   })
 
-  const preview = details
-    .slice(0, 5)
-    .map((item) => {
-      const employeeLabel =
-        [item.employeeNo, item.displayName].filter(Boolean).join(' - ') ||
-        item.employeeId
-
-      const lineLabel =
-        [item.lineCode, item.lineName].filter(Boolean).join(' · ') ||
-        'No line'
-
-      return `${employeeLabel} (${lineLabel})`
-    })
-    .join(', ')
-
-  const moreText = details.length > 5 ? ` and ${details.length - 5} more` : ''
-
-  const err = new Error(
-    `Some selected employees are outside your current line/team scope: ${preview}${moreText}. Please refresh employee list and select again.`,
-  )
-
-  err.status = 403
-  err.code = 'OT_EMPLOYEE_OUTSIDE_SCOPE'
-  err.error = 'OT_EMPLOYEE_OUTSIDE_SCOPE'
-  err.outsideEmployeeIds = outsideEmployeeIds
-  err.details = {
-    outsideEmployeeIds,
-    outsideEmployees: details,
-  }
-
-  throw err
+  throw appError({
+    statusCode: 403,
+    code: 'EMPLOYEE_OUTSIDE_MANAGED_SCOPE',
+    messageKey: 'org.employee.error.outsideManagedScope',
+    message: 'Some selected employees are outside your managed scope.',
+    params: {
+      outsideEmployeeIds,
+      outsideEmployees: details,
+    },
+  })
 }
 
 module.exports = {

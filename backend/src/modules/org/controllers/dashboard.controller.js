@@ -1,51 +1,72 @@
 // backend/src/modules/org/controllers/dashboard.controller.js
-// backend/src/modules/org/controllers/dashboard.controller.js
 
-const departmentDashboardService = require('../services/departmentDashboard.service')
-const positionDashboardService = require('../services/positionDashboard.service')
-const employeeDashboardService = require('../services/employeeDashboard.service')
+const dashboardService = require('../services/dashboard.service')
+const { successResponse } = require('../../../shared/utils/apiResponse')
+
+async function getOrgDashboardSummary(req, res, next) {
+  try {
+    const item = await dashboardService.getOrgDashboardSummary()
+
+    return successResponse(res, {
+      item,
+    })
+  } catch (error) {
+    return next(error)
+  }
+}
 
 async function getDepartmentDashboardSummary(req, res, next) {
   try {
-    const data = await departmentDashboardService.getDepartmentDashboardSummary()
+    const item = await dashboardService.getDepartmentDashboardSummary()
 
-    res.json({
-      ok: true,
-      data,
+    return successResponse(res, {
+      item,
     })
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function getPositionDashboardSummary(req, res, next) {
   try {
-    const data = await positionDashboardService.getPositionDashboardSummary()
+    const item = await dashboardService.getPositionDashboardSummary()
 
-    res.json({
-      ok: true,
-      data,
+    return successResponse(res, {
+      item,
     })
   } catch (error) {
-    next(error)
+    return next(error)
+  }
+}
+
+async function getLineDashboardSummary(req, res, next) {
+  try {
+    const item = await dashboardService.getLineDashboardSummary()
+
+    return successResponse(res, {
+      item,
+    })
+  } catch (error) {
+    return next(error)
   }
 }
 
 async function getEmployeeDashboardSummary(req, res, next) {
   try {
-    const data = await employeeDashboardService.getEmployeeDashboardSummary()
+    const item = await dashboardService.getEmployeeDashboardSummary()
 
-    res.json({
-      ok: true,
-      data,
+    return successResponse(res, {
+      item,
     })
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 module.exports = {
+  getOrgDashboardSummary,
   getDepartmentDashboardSummary,
   getPositionDashboardSummary,
+  getLineDashboardSummary,
   getEmployeeDashboardSummary,
 }

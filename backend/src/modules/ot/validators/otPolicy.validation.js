@@ -1,4 +1,6 @@
 // backend/src/modules/ot/validators/otPolicy.validation.js
+
+const mongoose = require('mongoose')
 const { z } = require('zod')
 
 const ROUND_METHODS = ['FLOOR', 'CEIL', 'NEAREST']
@@ -7,203 +9,287 @@ function s(value) {
   return String(value ?? '').trim()
 }
 
-function toBool(value) {
+function upper(value) {
+  return s(value).toUpperCase()
+}
+
+function isObjectId(value) {
+  return mongoose.Types.ObjectId.isValid(String(value || ''))
+}
+
+function toBoolean(value, defaultValue = undefined) {
+  if (value === undefined || value === null || value === '') return defaultValue
   if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value === 1
 
-  const text = s(value).toLowerCase()
+  const text = String(value).trim().toLowerCase()
 
-  if (text === 'true') return true
-  if (text === 'false') return false
-  if (text === '1') return true
-  if (text === '0') return false
-  if (text === 'yes') return true
-  if (text === 'no') return false
+  if (['true', '1', 'yes', 'y', 'active'].includes(text)) return true
+  if (['false', '0', 'no', 'n', 'inactive'].includes(text)) return false
 
-  return value
+  return defaultValue
 }
 
-function toInt(value, fallback) {
-  if (value === '' || value === null || value === undefined) return fallback
-
-  const number = Number(value)
-
-  return Number.isFinite(number) ? number : fallback
-}
-
-function normalizeSortOrder(value) {
-  if (value === 1 || value === '1' || value === 'asc') return 1
-  return -1
-}
+const booleanLike = z.union([z.boolean(), z.string(), z.number()]).optional()
 
 const objectIdSchema = z
   .string()
   .trim()
-  .regex(/^[a-fA-F0-9]{24}$/, 'Invalid id')
+  .refine((value) => isObjectId(value), 'common.validation.invalidId')
 
-const roundMethodSchema = z.preprocess(
-  (value) => s(value || 'CEIL').toUpperCase(),
-  z.enum(ROUND_METHODS),
-)
+const roundMethodField = z
+  .union([z.string(), z.null(), z.undefined()])
+  .transform((value) => upper(value || 'CEIL'))
+  .refine((value) => ROUND_METHODS.includes(value), 'ot.policy.validation.roundMethodInvalid')
 
-const optionalRoundMethodSchema = z.preprocess(
-  (value) => {
-    const text = s(value)
-    if (!text) return undefined
-    return text.toUpperCase()
-  },
-  z.enum(ROUND_METHODS).optional(),
-)
+const optionalRoundMethodField = z
+  .union([z.string(), z.null(), z.undefined()])
+  .transform((value) => {
+    const text = upper(value)
+    return text || undefined
+  })
+  .refine(
+    (value) => value === undefined || ROUND_METHODS.includes(value),
+    'ot.policy.validation.roundMethodInvalid',
+  )
+  .optional()
 
 const createOTCalculationPolicySchema = z.object({
   code: z
     .string()
     .trim()
-    .min(1, 'Code is required')
-    .max(50, 'Code must not exceed 50 characters')
-    .transform((value) => value.toUpperCase()),
+    .min(1, 'ot.policy.validation.codeRequired')
+    .max(50, 'ot.policy.validation.codeTooLong')
+    .transform((value) => upper(value)),
 
   name: z
     .string()
     .trim()
-    .min(1, 'Name is required')
-    .max(150, 'Name must not exceed 150 characters'),
+    .min(1, 'ot.policy.validation.nameRequired')
+    .max(150, 'ot.policy.validation.nameTooLong'),
 
   description: z
     .string()
     .trim()
-    .max(1000, 'Description must not exceed 1000 characters')
+    .max(1000, 'ot.policy.validation.descriptionTooLong')
     .optional()
     .default(''),
 
   minEligibleMinutes: z.coerce
     .number()
-    .int('Min eligible minutes must be an integer')
-    .min(0, 'Min eligible minutes must be at least 0')
+    .int('ot.policy.validation.minEligibleMinutesInvalid')
+    .min(0, 'ot.policy.validation.minEligibleMinutesInvalid')
     .default(0),
 
   roundUnitMinutes: z.coerce
     .number()
-    .int('Round unit minutes must be an integer')
-    .min(1, 'Round unit minutes must be at least 1')
+    .int('ot.policy.validation.roundUnitMinutesInvalid')
+    .min(1, 'ot.policy.validation.roundUnitMinutesInvalid')
     .default(30),
 
-  roundMethod: roundMethodSchema.default('CEIL'),
+  roundMethod: roundMethodField.default('CEIL'),
 
   graceAfterShiftEndMinutes: z.coerce
     .number()
-    .int('Grace after shift end minutes must be an integer')
-    .min(0, 'Grace after shift end minutes must be at least 0')
+    .int('ot.policy.validation.graceAfterShiftEndMinutesInvalid')
+    .min(0, 'ot.policy.validation.graceAfterShiftEndMinutesInvalid')
     .default(0),
 
-  // ✅ SPECIAL COMPANY RULE
-  allowApprovedOtWithoutExactClockOut: z
-    .preprocess(toBool, z.boolean().optional())
+  allowApprovedOtWithoutExactClockOut: booleanLike
+    .transform((value) => toBoolean(value, false))
     .default(false),
 
-  allowPreShiftOT: z.preprocess(toBool, z.boolean().optional()).default(false),
-  allowPostShiftOT: z.preprocess(toBool, z.boolean().optional()).default(true),
-  capByRequestedMinutes: z.preprocess(toBool, z.boolean().optional()).default(true),
-  treatForgetScanInAsPending: z.preprocess(toBool, z.boolean().optional()).default(true),
-  treatForgetScanOutAsPending: z.preprocess(toBool, z.boolean().optional()).default(true),
-  isActive: z.preprocess(toBool, z.boolean().optional()).default(true),
+  allowPreShiftOT: booleanLike.transform((value) => toBoolean(value, false)).default(false),
+
+  allowPostShiftOT: booleanLike.transform((value) => toBoolean(value, true)).default(true),
+
+  capByRequestedMinutes: booleanLike.transform((value) => toBoolean(value, true)).default(true),
+
+  treatForgetScanInAsPending: booleanLike
+    .transform((value) => toBoolean(value, true))
+    .default(true),
+
+  treatForgetScanOutAsPending: booleanLike
+    .transform((value) => toBoolean(value, true))
+    .default(true),
+
+  isActive: booleanLike.transform((value) => toBoolean(value, true)).default(true),
 })
 
-const updateOTCalculationPolicySchema = createOTCalculationPolicySchema
-  .partial()
-  .refine((value) => Object.keys(value || {}).length > 0, {
-    message: 'At least one field is required',
-  })
-
-const listOTCalculationPoliciesQuerySchema = z
+const updateOTCalculationPolicySchema = z
   .object({
-    page: z.preprocess(
-      (value) => toInt(value, 1),
-      z.number().int().min(1).default(1),
-    ),
-
-    limit: z.preprocess(
-      (value) => toInt(value, 10),
-      z.number().int().min(1).max(100).default(10),
-    ),
-
-    search: z.string().trim().optional().default(''),
-
-    isActive: z.preprocess(
-      (value) => {
-        if (value === '' || value === null || value === undefined) return undefined
-        return toBool(value)
-      },
-      z.boolean().optional(),
-    ),
-
-    roundMethod: optionalRoundMethodSchema,
-
-    sortField: z
-      .enum([
-        'createdAt',
-        'updatedAt',
-        'code',
-        'name',
-        'roundMethod',
-        'roundUnitMinutes',
-        'minEligibleMinutes',
-        'graceAfterShiftEndMinutes',
-        'isActive',
-      ])
+    code: z
+      .string()
+      .trim()
+      .min(1, 'ot.policy.validation.codeRequired')
+      .max(50, 'ot.policy.validation.codeTooLong')
+      .transform((value) => upper(value))
       .optional(),
 
-    sortBy: z
-      .enum([
-        'createdAt',
-        'updatedAt',
-        'code',
-        'name',
-        'roundMethod',
-        'roundUnitMinutes',
-        'minEligibleMinutes',
-        'graceAfterShiftEndMinutes',
-        'isActive',
-      ])
+    name: z
+      .string()
+      .trim()
+      .min(1, 'ot.policy.validation.nameRequired')
+      .max(150, 'ot.policy.validation.nameTooLong')
       .optional(),
 
-    sortOrder: z.preprocess(
-      normalizeSortOrder,
-      z.union([z.literal(1), z.literal(-1)]).default(-1),
-    ),
+    description: z
+      .string()
+      .trim()
+      .max(1000, 'ot.policy.validation.descriptionTooLong')
+      .optional(),
+
+    minEligibleMinutes: z.coerce
+      .number()
+      .int('ot.policy.validation.minEligibleMinutesInvalid')
+      .min(0, 'ot.policy.validation.minEligibleMinutesInvalid')
+      .optional(),
+
+    roundUnitMinutes: z.coerce
+      .number()
+      .int('ot.policy.validation.roundUnitMinutesInvalid')
+      .min(1, 'ot.policy.validation.roundUnitMinutesInvalid')
+      .optional(),
+
+    roundMethod: optionalRoundMethodField,
+
+    graceAfterShiftEndMinutes: z.coerce
+      .number()
+      .int('ot.policy.validation.graceAfterShiftEndMinutesInvalid')
+      .min(0, 'ot.policy.validation.graceAfterShiftEndMinutesInvalid')
+      .optional(),
+
+    allowApprovedOtWithoutExactClockOut: booleanLike
+      .transform((value) => toBoolean(value))
+      .optional(),
+
+    allowPreShiftOT: booleanLike.transform((value) => toBoolean(value)).optional(),
+
+    allowPostShiftOT: booleanLike.transform((value) => toBoolean(value)).optional(),
+
+    capByRequestedMinutes: booleanLike.transform((value) => toBoolean(value)).optional(),
+
+    treatForgetScanInAsPending: booleanLike.transform((value) => toBoolean(value)).optional(),
+
+    treatForgetScanOutAsPending: booleanLike.transform((value) => toBoolean(value)).optional(),
+
+    isActive: booleanLike.transform((value) => toBoolean(value)).optional(),
   })
-  .transform((value) => ({
-    ...value,
-    sortField: value.sortField || value.sortBy || 'createdAt',
-  }))
+  .refine(
+    (value) =>
+      value.code !== undefined ||
+      value.name !== undefined ||
+      value.description !== undefined ||
+      value.minEligibleMinutes !== undefined ||
+      value.roundUnitMinutes !== undefined ||
+      value.roundMethod !== undefined ||
+      value.graceAfterShiftEndMinutes !== undefined ||
+      value.allowApprovedOtWithoutExactClockOut !== undefined ||
+      value.allowPreShiftOT !== undefined ||
+      value.allowPostShiftOT !== undefined ||
+      value.capByRequestedMinutes !== undefined ||
+      value.treatForgetScanInAsPending !== undefined ||
+      value.treatForgetScanOutAsPending !== undefined ||
+      value.isActive !== undefined,
+    {
+      message: 'ot.policy.validation.updatePayloadRequired',
+    },
+  )
+
+const listOTCalculationPoliciesQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(10),
+
+  search: z.string().trim().optional().default(''),
+
+  isActive: booleanLike.transform((value) => toBoolean(value)).optional(),
+
+  roundMethod: optionalRoundMethodField,
+
+  sortField: z
+    .enum([
+      'createdAt',
+      'updatedAt',
+      'code',
+      'name',
+      'roundMethod',
+      'roundUnitMinutes',
+      'minEligibleMinutes',
+      'graceAfterShiftEndMinutes',
+      'isActive',
+    ])
+    .optional()
+    .default('createdAt'),
+
+  sortBy: z
+    .enum([
+      'createdAt',
+      'updatedAt',
+      'code',
+      'name',
+      'roundMethod',
+      'roundUnitMinutes',
+      'minEligibleMinutes',
+      'graceAfterShiftEndMinutes',
+      'isActive',
+    ])
+    .optional(),
+
+  sortOrder: z
+    .union([z.string(), z.number()])
+    .optional()
+    .transform((value) => {
+      if (value === 1 || value === '1' || value === 'asc') return 1
+      if (value === -1 || value === '-1' || value === 'desc') return -1
+      return -1
+    }),
+})
 
 const lookupOTCalculationPoliciesQuerySchema = z.object({
   search: z.string().trim().optional().default(''),
 
-  limit: z.preprocess(
-    (value) => toInt(value, 20),
-    z.number().int().min(1).max(50).default(20),
-  ),
+  isActive: booleanLike.transform((value) => toBoolean(value, true)).optional(),
 
-  isActive: z.preprocess(
-    (value) => {
-      if (value === '' || value === null || value === undefined) return true
-      return toBool(value)
-    },
-    z.boolean().optional().default(true),
-  ),
+  roundMethod: optionalRoundMethodField,
 
-  roundMethod: optionalRoundMethodSchema,
+  limit: z.coerce.number().int().min(1).max(100).default(50),
 })
 
 const otCalculationPolicyIdParamSchema = z.object({
   id: objectIdSchema,
 })
 
+function normalizeListQuery(raw = {}) {
+  const parsed = listOTCalculationPoliciesQuerySchema.parse(raw)
+
+  return {
+    page: parsed.page,
+    limit: parsed.limit,
+    search: parsed.search,
+    isActive: parsed.isActive,
+    roundMethod: parsed.roundMethod,
+    sortField: parsed.sortBy || parsed.sortField || 'createdAt',
+    sortOrder: parsed.sortOrder,
+  }
+}
+
+function normalizeLookupQuery(raw = {}) {
+  const parsed = lookupOTCalculationPoliciesQuerySchema.parse(raw)
+
+  return {
+    search: parsed.search,
+    isActive: parsed.isActive,
+    roundMethod: parsed.roundMethod,
+    limit: parsed.limit,
+  }
+}
+
 module.exports = {
+  ROUND_METHODS,
   objectIdSchema,
   createOTCalculationPolicySchema,
   updateOTCalculationPolicySchema,
-  listOTCalculationPoliciesQuerySchema,
-  lookupOTCalculationPoliciesQuerySchema,
+  normalizeListQuery,
+  normalizeLookupQuery,
   otCalculationPolicyIdParamSchema,
 }

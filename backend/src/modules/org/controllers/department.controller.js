@@ -1,13 +1,56 @@
 // backend/src/modules/org/controllers/department.controller.js
+
 const departmentService = require('../services/department.service')
+const { successResponse } = require('../../../shared/utils/apiResponse')
+
+const {
+  createDepartmentSchema,
+  updateDepartmentSchema,
+  listDepartmentQuerySchema,
+  departmentLookupQuerySchema,
+} = require('../validators/department.validator')
+
+function parse(schema, data) {
+  return schema.parse(data)
+}
+
+function setExcelHeaders(res, filename) {
+  res.setHeader(
+    'Content-Type',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  )
+
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
+}
 
 async function lookup(req, res, next) {
   try {
-    const result = await departmentService.lookupDepartments(req.query)
+    const query = parse(departmentLookupQuerySchema, req.query || {})
+    const result = await departmentService.lookupDepartments(query)
 
-    return res.json({
-      ok: true,
-      data: result,
+    return successResponse(res, result)
+  } catch (error) {
+    return next(error)
+  }
+}
+
+async function list(req, res, next) {
+  try {
+    const query = parse(listDepartmentQuerySchema, req.query || {})
+    const result = await departmentService.listDepartments(query)
+
+    return successResponse(res, result)
+  } catch (error) {
+    return next(error)
+  }
+}
+
+async function getById(req, res, next) {
+  try {
+    const item = await departmentService.getDepartmentById(req.params.id)
+
+    return successResponse(res, {
+      item,
     })
   } catch (error) {
     return next(error)
@@ -16,33 +59,16 @@ async function lookup(req, res, next) {
 
 async function create(req, res, next) {
   try {
-    const result = await departmentService.createDepartment(req.body)
-    return res.status(201).json({
-      ok: true,
-      message: 'Department created successfully',
-      item: result,
-    })
-  } catch (error) {
-    return next(error)
-  }
-}
+    const payload = parse(createDepartmentSchema, req.body || {})
+    const item = await departmentService.createDepartment(payload)
 
-async function list(req, res, next) {
-  try {
-    const result = await departmentService.listDepartments(req.query)
-    return res.json(result)
-  } catch (error) {
-    return next(error)
-  }
-}
-
-async function getById(req, res, next) {
-  try {
-    const result = await departmentService.getDepartmentById(req.params.id)
-    return res.json({
-      ok: true,
-      item: result,
-    })
+    return successResponse(
+      res,
+      {
+        item,
+      },
+      201,
+    )
   } catch (error) {
     return next(error)
   }
@@ -50,11 +76,11 @@ async function getById(req, res, next) {
 
 async function update(req, res, next) {
   try {
-    const result = await departmentService.updateDepartment(req.params.id, req.body)
-    return res.json({
-      ok: true,
-      message: 'Department updated successfully',
-      item: result,
+    const payload = parse(updateDepartmentSchema, req.body || {})
+    const item = await departmentService.updateDepartment(req.params.id, payload)
+
+    return successResponse(res, {
+      item,
     })
   } catch (error) {
     return next(error)
@@ -63,18 +89,17 @@ async function update(req, res, next) {
 
 async function exportExcel(req, res, next) {
   try {
-    const buffer = await departmentService.exportDepartmentsExcel(req.query)
+    const query = parse(listDepartmentQuerySchema, {
+      ...(req.query || {}),
+      page: 1,
+      limit: 10,
+    })
 
-    res.setHeader(
-      'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    )
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="departments-${Date.now()}.xlsx"`,
-    )
+    const result = await departmentService.exportDepartmentsExcel(query)
 
-    return res.send(buffer)
+    setExcelHeaders(res, result.filename)
+
+    return res.send(result.buffer)
   } catch (error) {
     return next(error)
   }
@@ -82,18 +107,11 @@ async function exportExcel(req, res, next) {
 
 async function downloadImportSample(req, res, next) {
   try {
-    const buffer = await departmentService.downloadDepartmentImportSample()
+    const result = await departmentService.downloadDepartmentImportSample()
 
-    res.setHeader(
-      'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    )
-    res.setHeader(
-      'Content-Disposition',
-      'attachment; filename="department-import-sample.xlsx"',
-    )
+    setExcelHeaders(res, result.filename)
 
-    return res.send(buffer)
+    return res.send(result.buffer)
   } catch (error) {
     return next(error)
   }
@@ -101,13 +119,15 @@ async function downloadImportSample(req, res, next) {
 
 async function importExcel(req, res, next) {
   try {
-    const result = await departmentService.importDepartmentsExcel(req.file?.buffer)
+    const item = await departmentService.importDepartmentsExcel(req.file?.buffer)
 
-    return res.json({
-      ok: true,
-      message: 'Department excel imported successfully',
-      ...result,
-    })
+    return successResponse(
+      res,
+      {
+        item,
+      },
+      201,
+    )
   } catch (error) {
     return next(error)
   }

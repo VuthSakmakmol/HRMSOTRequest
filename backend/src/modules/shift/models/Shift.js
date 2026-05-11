@@ -1,21 +1,26 @@
 // backend/src/modules/shift/models/Shift.js
+
 const mongoose = require('mongoose')
 
-function s(v) {
-  return String(v ?? '').trim()
+function s(value) {
+  return String(value ?? '').trim()
 }
 
+const HHMM_REGEX = /^([01]\d|2[0-3]):([0-5]\d)$/
+
 function isValidHHmm(value) {
-  return /^([01]\d|2[0-3]):([0-5]\d)$/.test(String(value || ''))
+  return HHMM_REGEX.test(String(value || ''))
 }
 
 function toMinutes(value) {
   if (!isValidHHmm(value)) return null
-  const [h, m] = String(value).split(':').map(Number)
-  return h * 60 + m
+
+  const [hours, minutes] = String(value).split(':').map(Number)
+
+  return hours * 60 + minutes
 }
 
-const ShiftSchema = new mongoose.Schema(
+const shiftSchema = new mongoose.Schema(
   {
     code: {
       type: String,
@@ -24,7 +29,9 @@ const ShiftSchema = new mongoose.Schema(
       uppercase: true,
       maxlength: 30,
       unique: true,
+      index: true,
     },
+
     name: {
       type: String,
       required: true,
@@ -32,6 +39,7 @@ const ShiftSchema = new mongoose.Schema(
       maxlength: 120,
       index: true,
     },
+
     type: {
       type: String,
       required: true,
@@ -40,32 +48,38 @@ const ShiftSchema = new mongoose.Schema(
       trim: true,
       index: true,
     },
+
     startTime: {
       type: String,
       required: true,
       trim: true,
     },
+
     breakStartTime: {
       type: String,
       required: true,
       trim: true,
     },
+
     breakEndTime: {
       type: String,
       required: true,
       trim: true,
     },
+
     endTime: {
       type: String,
       required: true,
       trim: true,
     },
+
     crossMidnight: {
       type: Boolean,
       required: true,
       default: false,
       index: true,
     },
+
     isActive: {
       type: Boolean,
       required: true,
@@ -75,10 +89,14 @@ const ShiftSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
+    versionKey: false,
   },
 )
 
-ShiftSchema.pre('validate', function shiftPreValidate(next) {
+shiftSchema.index({ type: 1, isActive: 1 })
+shiftSchema.index({ name: 'text', code: 'text' })
+
+shiftSchema.pre('validate', function normalize(next) {
   this.code = s(this.code).toUpperCase()
   this.name = s(this.name)
   this.type = s(this.type).toUpperCase()
@@ -87,28 +105,17 @@ ShiftSchema.pre('validate', function shiftPreValidate(next) {
   this.breakEndTime = s(this.breakEndTime)
   this.endTime = s(this.endTime)
 
-  if (!isValidHHmm(this.startTime)) {
-    return next(new Error('Invalid startTime. Expected HH:mm'))
+  if (
+    isValidHHmm(this.startTime) &&
+    isValidHHmm(this.endTime)
+  ) {
+    const startMinutes = toMinutes(this.startTime)
+    const endMinutes = toMinutes(this.endTime)
+
+    this.crossMidnight = endMinutes <= startMinutes
   }
 
-  if (!isValidHHmm(this.breakStartTime)) {
-    return next(new Error('Invalid breakStartTime. Expected HH:mm'))
-  }
-
-  if (!isValidHHmm(this.breakEndTime)) {
-    return next(new Error('Invalid breakEndTime. Expected HH:mm'))
-  }
-
-  if (!isValidHHmm(this.endTime)) {
-    return next(new Error('Invalid endTime. Expected HH:mm'))
-  }
-
-  const start = toMinutes(this.startTime)
-  const end = toMinutes(this.endTime)
-
-  this.crossMidnight = end <= start
-
-  return next()
+  next()
 })
 
-module.exports = mongoose.model('Shift', ShiftSchema)
+module.exports = mongoose.model('Shift', shiftSchema)

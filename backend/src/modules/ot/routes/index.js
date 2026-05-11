@@ -1,4 +1,5 @@
 // backend/src/modules/ot/routes/index.js
+
 const express = require('express')
 
 const otController = require('../controllers/ot.controller')
@@ -14,23 +15,32 @@ const router = express.Router()
 router.use(requireAuth)
 
 router.use('/dashboard', dashboardRoutes)
+router.use('/policies', otPolicyRoutes)
+router.use('/shift-options', shiftOtOptionRoutes)
+
+// Fixed request routes must stay before '/requests/:id'
+router.get(
+  '/requests/export',
+  requirePermission('OT_REQUEST_VIEW'),
+  otController.exportOTRequestsExcel,
+)
+
+router.get(
+  '/requests/allowed-approvers/:employeeId',
+  requirePermission('OT_REQUEST_CREATE'),
+  otController.getAllowedApproverChain,
+)
+
+router.get(
+  '/requests/unavailable-employees',
+  requirePermission('OT_REQUEST_CREATE'),
+  otController.listUnavailableOTEmployees,
+)
 
 router.post(
   '/requests',
   requirePermission('OT_REQUEST_CREATE'),
   otController.createOTRequest,
-)
-
-router.patch(
-  '/requests/:id',
-  requirePermission('OT_REQUEST_UPDATE'),
-  otController.updateOTRequest,
-)
-
-router.get(
-  '/requests/export',
-  requirePermission('OT_REQUEST_VIEW'),
-  otController.exportOTRequestsExcel,
 )
 
 router.get(
@@ -39,6 +49,25 @@ router.get(
   otController.listOTRequests,
 )
 
+router.get(
+  '/requests/:id',
+  requirePermission('OT_REQUEST_VIEW'),
+  otController.getOTRequestDetail,
+)
+
+router.patch(
+  '/requests/:id',
+  requirePermission('OT_REQUEST_UPDATE'),
+  otController.updateOTRequest,
+)
+
+router.post(
+  '/requests/:id/requester-confirmation',
+  requirePermission('OT_REQUEST_CREATE'),
+  otController.requesterConfirmOTRequest,
+)
+
+// Approval routes
 router.get(
   '/approvals/export',
   requirePermission('OT_REQUEST_APPROVE'),
@@ -57,37 +86,19 @@ router.post(
   otController.decideOTRequest,
 )
 
+// Acknowledgement routes
 router.get(
   '/acknowledgements',
   requirePermission('OT_REQUEST_ACKNOWLEDGE'),
   otController.listMyAcknowledgementInbox,
 )
 
-router.get(
-  '/requests/allowed-approvers/:employeeId',
-  requirePermission('OT_REQUEST_CREATE'),
-  otController.getAllowedApproverChain,
-)
-
-router.get(
-  '/requests/unavailable-employees',
-  requirePermission('OT_REQUEST_CREATE'),
-  otController.listUnavailableOTEmployees,
-)
-
+// Backward-compatible route for current frontend.
+// Later frontend should call: /ot/shift-options/lookup?shiftId=&otDate=
 router.get(
   '/shift-options/by-shift/:shiftId',
   requirePermission('OT_REQUEST_CREATE'),
   otController.getShiftOTOptionsByShift,
 )
-
-router.get(
-  '/requests/:id',
-  requirePermission('OT_REQUEST_VIEW'),
-  otController.getOTRequestDetail,
-)
-
-router.use('/policies', otPolicyRoutes)
-router.use('/shift-options', shiftOtOptionRoutes)
 
 module.exports = router

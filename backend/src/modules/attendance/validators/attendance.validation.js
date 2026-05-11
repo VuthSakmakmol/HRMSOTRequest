@@ -1,4 +1,5 @@
 // backend/src/modules/attendance/validators/attendance.validation.js
+
 const { z } = require('zod')
 
 const ATTENDANCE_STATUS = [
@@ -20,12 +21,30 @@ const SHIFT_MATCH_STATUS = ['MATCHED', 'MISMATCH', 'UNKNOWN']
 const IMPORT_STATUS = ['PROCESSING', 'SUCCESS', 'PARTIAL_SUCCESS', 'FAILED']
 const SOURCE_TYPE = ['EXCEL', 'CSV', 'MANUAL']
 
-const IMPORT_SORT_FIELDS = ['createdAt', 'importNo', 'periodFrom', 'periodTo', 'status', 'rowCount']
+const IMPORT_SORT_FIELDS = [
+  'createdAt',
+  'updatedAt',
+  'importedAt',
+  'importNo',
+  'periodFrom',
+  'periodTo',
+  'status',
+  'rowCount',
+  'successRowCount',
+  'failedRowCount',
+  'duplicateRowCount',
+  'overriddenRowCount',
+]
+
 const RECORD_SORT_FIELDS = [
   'createdAt',
+  'updatedAt',
   'attendanceDate',
   'employeeNo',
   'employeeName',
+  'departmentName',
+  'positionName',
+  'shiftName',
   'status',
   'importedStatus',
   'dayType',
@@ -33,6 +52,7 @@ const RECORD_SORT_FIELDS = [
   'workedMinutes',
   'lateMinutes',
   'earlyOutMinutes',
+  'rawRowNo',
 ]
 
 function s(value) {
@@ -51,26 +71,52 @@ const ymdSchema = z
 
 const pageSchema = z.coerce.number().int().min(1).default(1)
 const limitSchema = z.coerce.number().int().min(1).max(200).default(10)
-
 const sortOrderSchema = z.enum(['asc', 'desc']).default('desc')
 
-const optionalUpperEnum = (values, label) =>
-  z.preprocess(
-    (value) => {
-      const raw = s(value)
-      return raw ? raw.toUpperCase() : undefined
-    },
-    z.enum(values, `${label} is invalid`).optional(),
-  )
-
-const optionalTrimmedString = (max = 500) =>
-  z.preprocess(
+function optionalTrimmedString(max = 500) {
+  return z.preprocess(
     (value) => {
       const raw = s(value)
       return raw || undefined
     },
     z.string().max(max).optional(),
   )
+}
+
+function optionalUpperString(max = 100) {
+  return z.preprocess(
+    (value) => {
+      const raw = s(value)
+      return raw ? raw.toUpperCase() : undefined
+    },
+    z.string().max(max).optional(),
+  )
+}
+
+function optionalUpperEnum(values) {
+  return z.preprocess(
+    (value) => {
+      const raw = s(value)
+      return raw ? raw.toUpperCase() : undefined
+    },
+    z.enum(values).optional(),
+  )
+}
+
+function optionalBoolean() {
+  return z.preprocess(
+    (value) => {
+      const raw = s(value).toLowerCase()
+
+      if (!raw) return undefined
+      if (raw === 'true' || raw === '1' || raw === 'yes') return true
+      if (raw === 'false' || raw === '0' || raw === 'no') return false
+
+      return value
+    },
+    z.boolean().optional(),
+  )
+}
 
 const optionalYmdSchema = z.preprocess(
   (value) => {
@@ -89,13 +135,12 @@ const optionalObjectIdSchema = z.preprocess(
 )
 
 const createAttendanceImportSchema = z.object({
-  sourceType: optionalUpperEnum(SOURCE_TYPE, 'sourceType').default('EXCEL'),
+  sourceType: optionalUpperEnum(SOURCE_TYPE).default('EXCEL'),
 
-  // ✅ REQUIRED: selected once from import dialog
-  // Excel rows no longer need Attendance Date column.
+  // Selected once from import dialog.
+  // Excel rows only need Employee ID, Clock In, Clock Out.
   attendanceDate: ymdSchema,
 
-  // Kept optional for backend compatibility, but frontend will not send it.
   remark: optionalTrimmedString(1000),
 })
 
@@ -103,11 +148,14 @@ const listAttendanceImportsQuerySchema = z
   .object({
     page: pageSchema,
     limit: limitSchema,
+
     search: optionalTrimmedString(200),
-    status: optionalUpperEnum(IMPORT_STATUS, 'status'),
-    sourceType: optionalUpperEnum(SOURCE_TYPE, 'sourceType'),
+    status: optionalUpperEnum(IMPORT_STATUS),
+    sourceType: optionalUpperEnum(SOURCE_TYPE),
+
     periodFrom: optionalYmdSchema,
     periodTo: optionalYmdSchema,
+
     sortBy: z.preprocess(
       (value) => {
         const raw = s(value)
@@ -115,6 +163,7 @@ const listAttendanceImportsQuerySchema = z
       },
       z.enum(IMPORT_SORT_FIELDS).optional(),
     ),
+
     sortOrder: sortOrderSchema,
   })
   .superRefine((data, ctx) => {
@@ -131,23 +180,31 @@ const listAttendanceRecordsQuerySchema = z
   .object({
     page: pageSchema,
     limit: limitSchema,
+
     search: optionalTrimmedString(200),
 
     importId: optionalObjectIdSchema,
     employeeId: optionalObjectIdSchema,
-    employeeNo: z.preprocess(
-      (value) => {
-        const raw = s(value)
-        return raw ? raw.toUpperCase() : undefined
-      },
-      z.string().max(50).optional(),
-    ),
+    departmentId: optionalObjectIdSchema,
+    positionId: optionalObjectIdSchema,
+    shiftId: optionalObjectIdSchema,
+    lineId: optionalObjectIdSchema,
 
-    status: optionalUpperEnum(ATTENDANCE_STATUS, 'status'),
-    importedStatus: optionalUpperEnum(ATTENDANCE_IMPORTED_STATUS, 'importedStatus'),
-    dayType: optionalUpperEnum(ATTENDANCE_DAY_TYPE, 'dayType'),
-    matchedBy: optionalUpperEnum(ATTENDANCE_MATCHED_BY, 'matchedBy'),
-    shiftMatchStatus: optionalUpperEnum(SHIFT_MATCH_STATUS, 'shiftMatchStatus'),
+    // Display/search snapshot only. Real identity remains employeeId.
+    employeeNo: optionalUpperString(50),
+
+    status: optionalUpperEnum(ATTENDANCE_STATUS),
+    importedStatus: optionalUpperEnum(ATTENDANCE_IMPORTED_STATUS),
+    dayType: optionalUpperEnum(ATTENDANCE_DAY_TYPE),
+    matchedBy: optionalUpperEnum(ATTENDANCE_MATCHED_BY),
+    shiftMatchStatus: optionalUpperEnum(SHIFT_MATCH_STATUS),
+
+    employeeMatched: optionalBoolean(),
+    nameMatched: optionalBoolean(),
+    departmentMatched: optionalBoolean(),
+    positionMatched: optionalBoolean(),
+    shiftMatched: optionalBoolean(),
+    shiftTimeMatched: optionalBoolean(),
 
     attendanceDateFrom: optionalYmdSchema,
     attendanceDateTo: optionalYmdSchema,
@@ -159,6 +216,7 @@ const listAttendanceRecordsQuerySchema = z
       },
       z.enum(RECORD_SORT_FIELDS).optional(),
     ),
+
     sortOrder: sortOrderSchema,
   })
   .superRefine((data, ctx) => {
@@ -171,6 +229,29 @@ const listAttendanceRecordsQuerySchema = z
         code: z.ZodIssueCode.custom,
         path: ['attendanceDateTo'],
         message: 'attendanceDateTo must be greater than or equal to attendanceDateFrom',
+      })
+    }
+  })
+
+const searchOTVerificationQuerySchema = z
+  .object({
+    page: pageSchema,
+    limit: limitSchema,
+
+    search: optionalTrimmedString(200),
+
+    // Keep flexible because OT request status can grow later.
+    status: optionalUpperString(50),
+
+    otDateFrom: optionalYmdSchema,
+    otDateTo: optionalYmdSchema,
+  })
+  .superRefine((data, ctx) => {
+    if (data.otDateFrom && data.otDateTo && data.otDateFrom > data.otDateTo) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['otDateTo'],
+        message: 'otDateTo must be greater than or equal to otDateFrom',
       })
     }
   })
@@ -191,6 +272,7 @@ module.exports = {
   createAttendanceImportSchema,
   listAttendanceImportsQuerySchema,
   listAttendanceRecordsQuerySchema,
+  searchOTVerificationQuerySchema,
   attendanceImportIdParamSchema,
   attendanceRecordIdParamSchema,
   verifyOTAttendanceParamSchema,
@@ -202,4 +284,6 @@ module.exports = {
   SHIFT_MATCH_STATUS,
   IMPORT_STATUS,
   SOURCE_TYPE,
+  IMPORT_SORT_FIELDS,
+  RECORD_SORT_FIELDS,
 }

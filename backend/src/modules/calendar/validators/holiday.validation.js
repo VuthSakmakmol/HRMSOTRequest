@@ -1,108 +1,227 @@
 // backend/src/modules/calendar/validators/holiday.validation.js
+
+const mongoose = require('mongoose')
 const { z } = require('zod')
 
-const objectIdSchema = z
-  .string()
-  .trim()
-  .regex(/^[a-f\d]{24}$/i, 'Invalid id')
+function s(value) {
+  return String(value ?? '').trim()
+}
+
+function isObjectId(value) {
+  return mongoose.Types.ObjectId.isValid(String(value || ''))
+}
+
+function toBoolean(value, defaultValue = undefined) {
+  if (value === undefined || value === null || value === '') return defaultValue
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value === 1
+
+  const text = String(value).trim().toLowerCase()
+
+  if (['true', '1', 'yes', 'y', 'active'].includes(text)) return true
+  if (['false', '0', 'no', 'n', 'inactive'].includes(text)) return false
+
+  return defaultValue
+}
 
 function parseDateOnly(value) {
-  const raw = String(value ?? '').trim()
+  const raw = s(value)
+
   if (!raw) return null
 
   const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+
   if (!match) return null
 
   const year = Number(match[1])
   const month = Number(match[2])
   const day = Number(match[3])
 
-  const dt = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0))
-  if (Number.isNaN(dt.getTime())) return null
+  const date = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0))
+
+  if (Number.isNaN(date.getTime())) return null
 
   if (
-    dt.getUTCFullYear() !== year ||
-    dt.getUTCMonth() !== month - 1 ||
-    dt.getUTCDate() !== day
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() + 1 !== month ||
+    date.getUTCDate() !== day
   ) {
     return null
   }
 
-  return dt
+  return date
 }
+
+const booleanLike = z.union([z.boolean(), z.string(), z.number()]).optional()
+
+const objectIdSchema = z
+  .string()
+  .trim()
+  .refine((value) => isObjectId(value), 'common.validation.invalidId')
 
 const dateOnlySchema = z
   .string()
   .trim()
-  .refine((value) => !!parseDateOnly(value), 'Invalid date')
+  .refine((value) => !!parseDateOnly(value), 'calendar.holiday.validation.dateInvalid')
   .transform((value) => parseDateOnly(value))
-
-const booleanLikeOptionalSchema = z
-  .union([z.boolean(), z.string(), z.number()])
-  .optional()
-  .transform((value) => {
-    if (value === undefined) return undefined
-    if (typeof value === 'boolean') return value
-    if (typeof value === 'number') return value === 1
-
-    const v = String(value).trim().toLowerCase()
-    if (['true', '1', 'yes', 'y'].includes(v)) return true
-    if (['false', '0', 'no', 'n'].includes(v)) return false
-
-    return undefined
-  })
 
 const createHolidaySchema = z.object({
   date: dateOnlySchema,
-  code: z.string().trim().max(50).optional().default(''),
-  name: z.string().trim().min(1, 'Name is required').max(150),
-  description: z.string().trim().max(1000).optional().default(''),
-  isPaidHoliday: booleanLikeOptionalSchema.default(true),
-  isActive: booleanLikeOptionalSchema.default(true),
+
+  code: z
+    .string()
+    .trim()
+    .max(50, 'calendar.holiday.validation.codeTooLong')
+    .optional()
+    .default('')
+    .transform((value) => s(value).toUpperCase()),
+
+  name: z
+    .string()
+    .trim()
+    .min(1, 'calendar.holiday.validation.nameRequired')
+    .max(150, 'calendar.holiday.validation.nameTooLong'),
+
+  description: z
+    .string()
+    .trim()
+    .max(1000, 'calendar.holiday.validation.descriptionTooLong')
+    .optional()
+    .default(''),
+
+  isPaidHoliday: booleanLike.transform((value) => toBoolean(value, true)).default(true),
+
+  isActive: booleanLike.transform((value) => toBoolean(value, true)).default(true),
 })
 
 const updateHolidaySchema = z
   .object({
     date: dateOnlySchema.optional(),
-    code: z.string().trim().max(50).optional(),
-    name: z.string().trim().min(1, 'Name is required').max(150).optional(),
-    description: z.string().trim().max(1000).optional(),
-    isPaidHoliday: booleanLikeOptionalSchema,
-    isActive: booleanLikeOptionalSchema,
+
+    code: z
+      .string()
+      .trim()
+      .max(50, 'calendar.holiday.validation.codeTooLong')
+      .transform((value) => s(value).toUpperCase())
+      .optional(),
+
+    name: z
+      .string()
+      .trim()
+      .min(1, 'calendar.holiday.validation.nameRequired')
+      .max(150, 'calendar.holiday.validation.nameTooLong')
+      .optional(),
+
+    description: z
+      .string()
+      .trim()
+      .max(1000, 'calendar.holiday.validation.descriptionTooLong')
+      .optional(),
+
+    isPaidHoliday: booleanLike.transform((value) => toBoolean(value)).optional(),
+
+    isActive: booleanLike.transform((value) => toBoolean(value)).optional(),
   })
-  .refine((data) => Object.keys(data).length > 0, 'No fields to update')
+  .refine(
+    (value) =>
+      value.date !== undefined ||
+      value.code !== undefined ||
+      value.name !== undefined ||
+      value.description !== undefined ||
+      value.isPaidHoliday !== undefined ||
+      value.isActive !== undefined,
+    {
+      message: 'calendar.holiday.validation.updatePayloadRequired',
+    },
+  )
 
 const listHolidayQuerySchema = z.object({
-  page: z.coerce.number().int().min(1).optional().default(1),
-  limit: z.coerce.number().int().min(1).max(100).optional().default(10),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(10),
+
   search: z.string().trim().optional().default(''),
-  isActive: z
-    .union([z.string(), z.boolean(), z.number()])
+
+  isActive: booleanLike.transform((value) => toBoolean(value)).optional(),
+
+  year: z.coerce.number().int().min(2000).max(2100).optional(),
+
+  month: z.coerce.number().int().min(1).max(12).optional(),
+
+  sortField: z
+    .enum(['date', 'name', 'code', 'isActive', 'createdAt', 'updatedAt'])
+    .optional()
+    .default('date'),
+
+  sortBy: z
+    .enum(['date', 'name', 'code', 'isActive', 'createdAt', 'updatedAt'])
+    .optional(),
+
+  sortOrder: z
+    .union([z.string(), z.number()])
     .optional()
     .transform((value) => {
-      if (value === undefined || value === null || value === '') return undefined
-      if (typeof value === 'boolean') return value
-      if (typeof value === 'number') return value === 1
-
-      const v = String(value).trim().toLowerCase()
-      if (['true', '1', 'yes', 'y'].includes(v)) return true
-      if (['false', '0', 'no', 'n'].includes(v)) return false
-
-      return undefined
+      if (value === 1 || value === '1' || value === 'asc') return 1
+      if (value === -1 || value === '-1' || value === 'desc') return -1
+      return -1
     }),
+})
+
+const holidayLookupQuerySchema = z.object({
+  search: z.string().trim().optional().default(''),
+
+  isActive: booleanLike.transform((value) => toBoolean(value, true)).optional(),
+
   year: z.coerce.number().int().min(2000).max(2100).optional(),
+
   month: z.coerce.number().int().min(1).max(12).optional(),
-  sortBy: z.enum(['date', 'name', 'createdAt']).optional().default('date'),
-  sortOrder: z.enum(['asc', 'desc']).optional().default('desc'),
+
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+})
+
+const resolveDayTypeQuerySchema = z.object({
+  date: z
+    .string()
+    .trim()
+    .refine((value) => !!parseDateOnly(value), 'calendar.holiday.validation.dateInvalid'),
 })
 
 const holidayIdParamSchema = z.object({
   id: objectIdSchema,
 })
 
+function normalizeListQuery(raw = {}) {
+  const parsed = listHolidayQuerySchema.parse(raw)
+
+  return {
+    page: parsed.page,
+    limit: parsed.limit,
+    search: parsed.search,
+    isActive: parsed.isActive,
+    year: parsed.year,
+    month: parsed.month,
+    sortField: parsed.sortBy || parsed.sortField || 'date',
+    sortOrder: parsed.sortOrder,
+  }
+}
+
+function normalizeLookupQuery(raw = {}) {
+  const parsed = holidayLookupQuerySchema.parse(raw)
+
+  return {
+    search: parsed.search,
+    isActive: parsed.isActive,
+    year: parsed.year,
+    month: parsed.month,
+    limit: parsed.limit,
+  }
+}
+
 module.exports = {
+  parseDateOnly,
   createHolidaySchema,
   updateHolidaySchema,
-  listHolidayQuerySchema,
+  normalizeListQuery,
+  normalizeLookupQuery,
+  resolveDayTypeQuerySchema,
   holidayIdParamSchema,
 }

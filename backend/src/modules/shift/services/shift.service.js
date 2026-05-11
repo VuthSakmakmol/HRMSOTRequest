@@ -1,32 +1,59 @@
 // backend/src/modules/shift/services/shift.service.js
+
+const mongoose = require('mongoose')
 const XLSX = require('xlsx')
 
+const AppError = require('../../../shared/errors/AppError')
 const Shift = require('../models/Shift')
+
 const {
   objectIdSchema,
-  createShiftSchema,
-  updateShiftSchema,
-  listShiftQuerySchema,
+  importShiftRowSchema,
 } = require('../validators/shift.validation')
 
 const DAY_MINUTES = 24 * 60
-
-function createHttpError(message, status = 400) {
-  const err = new Error(message)
-  err.status = status
-  return err
-}
 
 function s(value) {
   return String(value ?? '').trim()
 }
 
+function upper(value) {
+  return s(value).toUpperCase()
+}
+
+function id(value) {
+  return value ? String(value?._id || value?.id || value) : ''
+}
+
+function isObjectId(value) {
+  return mongoose.Types.ObjectId.isValid(String(value || ''))
+}
+
+function appError({
+  statusCode = 400,
+  code,
+  messageKey,
+  message,
+  field = null,
+  params = {},
+}) {
+  return new AppError({
+    statusCode,
+    code,
+    messageKey,
+    message,
+    field,
+    params,
+  })
+}
+
 function escapeRegex(value) {
-  return s(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 function toMinutes(value) {
   const [hours, minutes] = String(value || '00:00').split(':').map(Number)
+
   return hours * 60 + minutes
 }
 
@@ -43,6 +70,7 @@ function normalizeExcelTime(value) {
     const totalMinutes = Math.round(value * DAY_MINUTES) % DAY_MINUTES
     const hours = Math.floor(totalMinutes / 60)
     const minutes = totalMinutes % 60
+
     return `${pad2(hours)}:${pad2(minutes)}`
   }
 
@@ -52,10 +80,6 @@ function normalizeExcelTime(value) {
   if (!match) return text
 
   return `${pad2(Number(match[1]))}:${match[2]}`
-}
-
-function isCrossMidnight(startTime, endTime) {
-  return toMinutes(endTime) <= toMinutes(startTime)
 }
 
 function buildShiftTimeline(payload) {
@@ -88,109 +112,132 @@ function buildShiftTimeline(payload) {
 }
 
 function validateShiftBusinessRules(payload) {
-  const start = payload.startTime
-  const breakStart = payload.breakStartTime
-  const breakEnd = payload.breakEndTime
-  const end = payload.endTime
-  const type = payload.type
-
-  if (breakStart === breakEnd) {
-    throw createHttpError('Break start time and break end time cannot be the same', 400)
-  }
-
   const timeline = buildShiftTimeline(payload)
 
-  if (type === 'DAY' && timeline.crossMidnight) {
-    throw createHttpError('DAY shift cannot cross midnight', 400)
+  if (payload.startTime === payload.endTime) {
+    throw appError({
+      statusCode: 400,
+      code: 'SHIFT_START_END_SAME',
+      messageKey: 'shift.error.startEndSame',
+      message: 'Shift start time and end time cannot be the same',
+      field: 'endTime',
+    })
   }
 
-  if (type === 'NIGHT' && !timeline.crossMidnight) {
-    throw createHttpError('NIGHT shift must cross midnight', 400)
+  if (payload.breakStartTime === payload.breakEndTime) {
+    throw appError({
+      statusCode: 400,
+      code: 'SHIFT_BREAK_START_END_SAME',
+      messageKey: 'shift.error.breakStartEndSame',
+      message: 'Break start time and break end time cannot be the same',
+      field: 'breakEndTime',
+    })
+  }
+
+  if (payload.type === 'DAY' && timeline.crossMidnight) {
+    throw appError({
+      statusCode: 400,
+      code: 'DAY_SHIFT_CANNOT_CROSS_MIDNIGHT',
+      messageKey: 'shift.error.dayCannotCrossMidnight',
+      message: 'DAY shift cannot cross midnight',
+      field: 'type',
+    })
+  }
+
+  if (payload.type === 'NIGHT' && !timeline.crossMidnight) {
+    throw appError({
+      statusCode: 400,
+      code: 'NIGHT_SHIFT_MUST_CROSS_MIDNIGHT',
+      messageKey: 'shift.error.nightMustCrossMidnight',
+      message: 'NIGHT shift must cross midnight',
+      field: 'type',
+    })
   }
 
   if (timeline.breakEndMin <= timeline.breakStartMin) {
-    throw createHttpError('Break end time must be later than break start time', 400)
+    throw appError({
+      statusCode: 400,
+      code: 'SHIFT_BREAK_END_BEFORE_START',
+      messageKey: 'shift.error.breakEndBeforeStart',
+      message: 'Break end time must be later than break start time',
+      field: 'breakEndTime',
+    })
   }
 
   if (
     timeline.breakStartMin < timeline.startMin ||
     timeline.breakEndMin > timeline.endMin
   ) {
-    throw createHttpError('Break time must be inside shift working time', 400)
-  }
-
-  if (start === end) {
-    throw createHttpError('Shift start time and end time cannot be the same', 400)
-  }
-}
-
-function calculateBreakMinutes(doc) {
-  try {
-    const timeline = buildShiftTimeline(doc)
-    return Math.max(0, timeline.breakEndMin - timeline.breakStartMin)
-  } catch {
-    return 0
+    throw appError({
+      statusCode: 400,
+      code: 'SHIFT_BREAK_OUTSIDE_SHIFT',
+      messageKey: 'shift.error.breakOutsideShift',
+      message: 'Break time must be inside shift working time',
+      field: 'breakStartTime',
+    })
   }
 }
 
-function calculateGrossMinutes(doc) {
-  try {
-    const timeline = buildShiftTimeline(doc)
-    return Math.max(0, timeline.endMin - timeline.startMin)
-  } catch {
-    return 0
-  }
+function calculateGrossMinutes(payload) {
+  const timeline = buildShiftTimeline(payload)
+
+  return Math.max(0, timeline.endMin - timeline.startMin)
 }
 
-function calculateWorkingMinutes(doc) {
-  try {
-    const grossMinutes = calculateGrossMinutes(doc)
-    const breakMinutes = calculateBreakMinutes(doc)
+function calculateBreakMinutes(payload) {
+  const timeline = buildShiftTimeline(payload)
 
-    return Math.max(0, grossMinutes - breakMinutes)
-  } catch {
-    return 0
-  }
+  return Math.max(0, timeline.breakEndMin - timeline.breakStartMin)
 }
 
-function buildListQuery(query = {}) {
+function calculateWorkingMinutes(payload) {
+  return Math.max(0, calculateGrossMinutes(payload) - calculateBreakMinutes(payload))
+}
+
+function buildFilter(query = {}) {
   const filter = {}
 
-  const search = s(query.search)
-  if (search) {
-    const keyword = escapeRegex(search)
-    filter.$or = [
-      { code: { $regex: keyword, $options: 'i' } },
-      { name: { $regex: keyword, $options: 'i' } },
-    ]
+  const keyword = s(query.search)
+
+  if (keyword) {
+    const regex = new RegExp(escapeRegex(keyword), 'i')
+
+    filter.$or = [{ code: regex }, { name: regex }]
   }
 
   if (query.type) {
-    filter.type = query.type
+    filter.type = upper(query.type)
   }
 
-  if (query.isActive !== undefined && query.isActive !== '') {
-    filter.isActive = Boolean(query.isActive)
+  if (typeof query.isActive === 'boolean') {
+    filter.isActive = query.isActive
   }
 
   return filter
 }
 
 function buildSort(sortField = 'createdAt', sortOrder = -1) {
+  const allowedFields = new Set([
+    'createdAt',
+    'updatedAt',
+    'code',
+    'name',
+    'type',
+    'startTime',
+    'endTime',
+    'isActive',
+  ])
+
+  const field = allowedFields.has(sortField) ? sortField : 'createdAt'
   const direction = Number(sortOrder) === 1 ? 1 : -1
 
-  if (sortField === 'code') return { code: direction, _id: -1 }
-  if (sortField === 'name') return { name: direction, _id: -1 }
-  if (sortField === 'type') return { type: direction, code: 1, _id: -1 }
-  if (sortField === 'startTime') return { startTime: direction, code: 1, _id: -1 }
-  if (sortField === 'endTime') return { endTime: direction, code: 1, _id: -1 }
-  if (sortField === 'isActive') return { isActive: direction, code: 1, _id: -1 }
-  if (sortField === 'updatedAt') return { updatedAt: direction, _id: -1 }
-
-  return { createdAt: direction, _id: -1 }
+  return {
+    [field]: direction,
+    _id: -1,
+  }
 }
 
-function normalizeShift(doc) {
+function mapShift(doc) {
   if (!doc) return null
 
   const startTime = doc.startTime || ''
@@ -198,24 +245,35 @@ function normalizeShift(doc) {
   const breakEndTime = doc.breakEndTime || ''
   const endTime = doc.endTime || ''
 
-  const breakMinutes = calculateBreakMinutes(doc)
-  const grossMinutes = calculateGrossMinutes(doc)
-  const workingMinutes = calculateWorkingMinutes(doc)
+  const source = {
+    startTime,
+    breakStartTime,
+    breakEndTime,
+    endTime,
+  }
+
+  const timeline = buildShiftTimeline(source)
+  const grossMinutes = calculateGrossMinutes(source)
+  const breakMinutes = calculateBreakMinutes(source)
+  const workingMinutes = calculateWorkingMinutes(source)
 
   return {
-    id: String(doc._id),
-    _id: String(doc._id),
+    id: id(doc._id),
+    _id: id(doc._id),
 
     code: doc.code || '',
     name: doc.name || '',
+    label: [doc.code, doc.name].filter(Boolean).join(' - '),
+
     type: doc.type || 'DAY',
+    typeKey: doc.type === 'NIGHT' ? 'shift.type.night' : 'shift.type.day',
 
     startTime,
     breakStartTime,
     breakEndTime,
     endTime,
 
-    crossMidnight: startTime && endTime ? isCrossMidnight(startTime, endTime) : false,
+    crossMidnight: timeline.crossMidnight,
 
     grossMinutes,
     breakMinutes,
@@ -223,15 +281,17 @@ function normalizeShift(doc) {
     workingMinutes,
 
     isActive: !!doc.isActive,
+    statusCode: doc.isActive ? 'ACTIVE' : 'INACTIVE',
+    statusKey: doc.isActive ? 'common.status.active' : 'common.status.inactive',
+    statusSeverity: doc.isActive ? 'success' : 'danger',
+
     createdAt: doc.createdAt || null,
     updatedAt: doc.updatedAt || null,
   }
 }
 
-function normalizeShiftLookupItem(doc) {
-  if (!doc) return null
-
-  const item = normalizeShift(doc)
+function mapLookupItem(doc) {
+  const item = mapShift(doc)
 
   return {
     id: item.id,
@@ -239,7 +299,10 @@ function normalizeShiftLookupItem(doc) {
 
     code: item.code,
     name: item.name,
+    label: item.label,
+
     type: item.type,
+    typeKey: item.typeKey,
 
     startTime: item.startTime,
     breakStartTime: item.breakStartTime,
@@ -253,46 +316,65 @@ function normalizeShiftLookupItem(doc) {
     breakTimeMinutes: item.breakTimeMinutes,
     workingMinutes: item.workingMinutes,
 
-    label: [item.code, item.name].filter(Boolean).join(' - '),
     isActive: item.isActive,
   }
 }
 
-async function ensureUniqueCode(code, excludeId = null) {
-  const filter = { code: s(code).toUpperCase() }
+async function ensureObjectId(value, field = 'shiftId') {
+  if (!isObjectId(value)) {
+    throw appError({
+      statusCode: 400,
+      code: 'INVALID_ID',
+      messageKey: 'common.error.invalidId',
+      message: 'Invalid id',
+      field,
+      params: {
+        value,
+      },
+    })
+  }
+}
 
-  if (excludeId) {
-    filter._id = { $ne: excludeId }
+async function ensureUniqueCode(code, excludeId = null) {
+  const normalizedCode = upper(code)
+
+  const filter = {
+    code: normalizedCode,
   }
 
-  const existing = await Shift.findOne(filter).lean()
+  if (excludeId) {
+    filter._id = {
+      $ne: excludeId,
+    }
+  }
 
-  if (existing) {
-    throw createHttpError('Shift code already exists', 409)
+  const exists = await Shift.exists(filter)
+
+  if (exists) {
+    throw appError({
+      statusCode: 409,
+      code: 'SHIFT_CODE_EXISTS',
+      messageKey: 'shift.error.codeExists',
+      message: 'Shift code already exists',
+      field: 'code',
+      params: {
+        code: normalizedCode,
+      },
+    })
   }
 }
 
 async function lookupShifts(query = {}) {
-  const search = s(query.search)
-  const limit = Math.min(Math.max(Number(query.limit || 20), 1), 50)
-
-  let isActive = true
-  if (String(query.isActive ?? '').trim().toLowerCase() === 'false') {
-    isActive = false
-  }
-
-  const filter = buildListQuery({
-    search,
-    isActive,
-  })
+  const limit = Number(query.limit || 50)
+  const filter = buildFilter(query)
 
   const items = await Shift.find(filter)
-    .sort({ code: 1, name: 1, _id: -1 })
+    .sort({ code: 1, name: 1, _id: 1 })
     .limit(limit)
     .lean()
 
   return {
-    items: items.map(normalizeShiftLookupItem),
+    items: items.map(mapLookupItem),
     meta: {
       limit,
       count: items.length,
@@ -301,14 +383,12 @@ async function lookupShifts(query = {}) {
 }
 
 async function listShifts(query = {}) {
-  const parsed = listShiftQuerySchema.parse(query)
-
-  const page = parsed.page
-  const limit = parsed.limit
+  const page = Number(query.page || 1)
+  const limit = Number(query.limit || 10)
   const skip = (page - 1) * limit
 
-  const filter = buildListQuery(parsed)
-  const sort = buildSort(parsed.sortField, parsed.sortOrder)
+  const filter = buildFilter(query)
+  const sort = buildSort(query.sortField, query.sortOrder)
 
   const [items, total] = await Promise.all([
     Shift.find(filter).sort(sort).skip(skip).limit(limit).lean(),
@@ -316,140 +396,216 @@ async function listShifts(query = {}) {
   ])
 
   return {
-    ok: true,
-    data: {
-      items: items.map(normalizeShift),
-      pagination: {
-        page,
-        limit,
-        total,
-        hasMore: skip + items.length < total,
-      },
+    items: items.map(mapShift),
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+      hasMore: page * limit < total,
     },
   }
 }
 
-async function getShiftById(id) {
-  const shiftId = objectIdSchema.parse(id)
+async function getShiftById(shiftId) {
+  const idValue = objectIdSchema.parse(shiftId)
 
-  const doc = await Shift.findById(shiftId).lean()
+  const doc = await Shift.findById(idValue).lean()
 
   if (!doc) {
-    throw createHttpError('Shift not found', 404)
+    throw appError({
+      statusCode: 404,
+      code: 'SHIFT_NOT_FOUND',
+      messageKey: 'shift.error.notFound',
+      message: 'Shift not found',
+      field: 'shiftId',
+    })
   }
 
-  return normalizeShift(doc)
+  return mapShift(doc)
 }
 
 async function createShift(payload) {
-  const data = createShiftSchema.parse(payload)
+  const data = {
+    ...payload,
+    code: upper(payload.code),
+    type: upper(payload.type),
+  }
 
   validateShiftBusinessRules(data)
   await ensureUniqueCode(data.code)
 
-  const doc = await Shift.create(data)
+  const doc = await Shift.create({
+    code: data.code,
+    name: s(data.name),
+    type: data.type,
+    startTime: data.startTime,
+    breakStartTime: data.breakStartTime,
+    breakEndTime: data.breakEndTime,
+    endTime: data.endTime,
+    isActive: data.isActive ?? true,
+  })
 
-  return normalizeShift(doc.toObject())
+  return getShiftById(doc._id)
 }
 
-async function updateShift(id, payload) {
-  const shiftId = objectIdSchema.parse(id)
-  const data = updateShiftSchema.parse(payload)
+async function updateShift(shiftId, payload) {
+  await ensureObjectId(shiftId, 'shiftId')
 
   const existing = await Shift.findById(shiftId)
 
   if (!existing) {
-    throw createHttpError('Shift not found', 404)
+    throw appError({
+      statusCode: 404,
+      code: 'SHIFT_NOT_FOUND',
+      messageKey: 'shift.error.notFound',
+      message: 'Shift not found',
+      field: 'shiftId',
+    })
   }
 
   const merged = {
-    code: data.code ?? existing.code,
-    name: data.name ?? existing.name,
-    type: data.type ?? existing.type,
-    startTime: data.startTime ?? existing.startTime,
-    breakStartTime: data.breakStartTime ?? existing.breakStartTime,
-    breakEndTime: data.breakEndTime ?? existing.breakEndTime,
-    endTime: data.endTime ?? existing.endTime,
-    isActive: data.isActive ?? existing.isActive,
+    code: payload.code !== undefined ? upper(payload.code) : existing.code,
+    name: payload.name !== undefined ? s(payload.name) : existing.name,
+    type: payload.type !== undefined ? upper(payload.type) : existing.type,
+    startTime: payload.startTime !== undefined ? payload.startTime : existing.startTime,
+    breakStartTime:
+      payload.breakStartTime !== undefined
+        ? payload.breakStartTime
+        : existing.breakStartTime,
+    breakEndTime:
+      payload.breakEndTime !== undefined ? payload.breakEndTime : existing.breakEndTime,
+    endTime: payload.endTime !== undefined ? payload.endTime : existing.endTime,
+    isActive: payload.isActive !== undefined ? payload.isActive : existing.isActive,
   }
 
   validateShiftBusinessRules(merged)
 
-  if (data.code && data.code !== existing.code) {
-    await ensureUniqueCode(data.code, shiftId)
+  if (payload.code !== undefined && upper(payload.code) !== existing.code) {
+    await ensureUniqueCode(payload.code, existing._id)
   }
 
-  Object.assign(existing, data)
+  existing.code = merged.code
+  existing.name = merged.name
+  existing.type = merged.type
+  existing.startTime = merged.startTime
+  existing.breakStartTime = merged.breakStartTime
+  existing.breakEndTime = merged.breakEndTime
+  existing.endTime = merged.endTime
+  existing.isActive = !!merged.isActive
+
   await existing.save()
 
-  return normalizeShift(existing.toObject())
+  return getShiftById(existing._id)
 }
 
-async function exportShiftsExcel(query = {}) {
-  const parsed = listShiftQuerySchema.parse({
-    ...query,
-    page: 1,
-    limit: 100,
+function autoFitColumns(rows = []) {
+  const widths = []
+
+  rows.forEach((row) => {
+    Object.keys(row || {}).forEach((key, index) => {
+      const raw = row[key]
+      const value = raw === null || raw === undefined ? '' : String(raw)
+      const current = widths[index] || { wch: String(key).length + 2 }
+
+      current.wch = Math.min(Math.max(current.wch, value.length + 2), 45)
+      widths[index] = current
+    })
   })
 
-  const filter = buildListQuery(parsed)
-  const sort = buildSort(parsed.sortField, parsed.sortOrder)
+  return widths
+}
 
-  const items = await Shift.find(filter).sort(sort).lean()
-
-  const rows = items.map((item, index) => {
-    const normalized = normalizeShift(item)
-
-    return {
-      No: index + 1,
-      Code: normalized.code,
-      Name: normalized.name,
-      Type: normalized.type,
-      StartTime: normalized.startTime,
-      BreakStartTime: normalized.breakStartTime,
-      BreakEndTime: normalized.breakEndTime,
-      EndTime: normalized.endTime,
-      CrossMidnight: normalized.crossMidnight ? 'Yes' : 'No',
-      GrossMinutes: normalized.grossMinutes,
-      BreakMinutes: normalized.breakMinutes,
-      WorkingMinutes: normalized.workingMinutes,
-      Status: normalized.isActive ? 'Active' : 'Inactive',
-      CreatedAt: normalized.createdAt ? new Date(normalized.createdAt).toLocaleString() : '',
-      UpdatedAt: normalized.updatedAt ? new Date(normalized.updatedAt).toLocaleString() : '',
-    }
-  })
-
-  const workbook = XLSX.utils.book_new()
-  const worksheet = XLSX.utils.json_to_sheet(rows)
-
-  worksheet['!cols'] = [
-    { wch: 8 },
-    { wch: 16 },
-    { wch: 28 },
-    { wch: 12 },
-    { wch: 12 },
-    { wch: 16 },
-    { wch: 16 },
-    { wch: 12 },
-    { wch: 16 },
-    { wch: 16 },
-    { wch: 16 },
-    { wch: 12 },
-    { wch: 22 },
-    { wch: 22 },
-  ]
-
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Shifts')
-
+function workbookToBuffer(workbook) {
   return XLSX.write(workbook, {
     type: 'buffer',
     bookType: 'xlsx',
   })
 }
 
+function formatExcelDate(value) {
+  if (!value) return ''
+
+  const date = value instanceof Date ? value : new Date(value)
+
+  if (Number.isNaN(date.getTime())) return ''
+
+  const day = String(date.getDate()).padStart(2, '0')
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const year = date.getFullYear()
+
+  return `${day}/${month}/${year}`
+}
+
+async function exportShiftsExcel(query = {}) {
+  const filter = buildFilter(query)
+  const sort = buildSort(query.sortField, query.sortOrder)
+
+  const items = await Shift.find(filter).sort(sort).lean()
+
+  const rows = items.map((doc, index) => {
+    const item = mapShift(doc)
+
+    return {
+      No: index + 1,
+      'Shift ID': item.id,
+      Code: item.code,
+      Name: item.name,
+      Type: item.type,
+      StartTime: item.startTime,
+      BreakStartTime: item.breakStartTime,
+      BreakEndTime: item.breakEndTime,
+      EndTime: item.endTime,
+      CrossMidnight: item.crossMidnight ? 'Yes' : 'No',
+      GrossMinutes: item.grossMinutes,
+      BreakMinutes: item.breakMinutes,
+      WorkingMinutes: item.workingMinutes,
+      Status: item.isActive ? 'Active' : 'Inactive',
+      CreatedAt: formatExcelDate(item.createdAt),
+      UpdatedAt: formatExcelDate(item.updatedAt),
+    }
+  })
+
+  const fallbackRows = rows.length
+    ? rows
+    : [
+        {
+          No: '',
+          'Shift ID': '',
+          Code: '',
+          Name: '',
+          Type: '',
+          StartTime: '',
+          BreakStartTime: '',
+          BreakEndTime: '',
+          EndTime: '',
+          CrossMidnight: '',
+          GrossMinutes: '',
+          BreakMinutes: '',
+          WorkingMinutes: '',
+          Status: '',
+          CreatedAt: '',
+          UpdatedAt: '',
+        },
+      ]
+
+  const workbook = XLSX.utils.book_new()
+  const worksheet = XLSX.utils.json_to_sheet(fallbackRows)
+
+  worksheet['!cols'] = autoFitColumns(fallbackRows)
+
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Shifts')
+
+  return {
+    filename: `shifts-${new Date().toISOString().slice(0, 10)}.xlsx`,
+    buffer: workbookToBuffer(workbook),
+  }
+}
+
 async function downloadShiftImportSample() {
   const sampleRows = [
     {
+      'Shift ID': '',
       Code: 'DAY-0700',
       Name: 'Day Shift 07:00 - 16:00',
       Type: 'DAY',
@@ -460,6 +616,7 @@ async function downloadShiftImportSample() {
       Status: 'Active',
     },
     {
+      'Shift ID': '',
       Code: 'NIGHT-1800',
       Name: 'Night Shift 18:00 - 03:00',
       Type: 'NIGHT',
@@ -472,166 +629,263 @@ async function downloadShiftImportSample() {
   ]
 
   const guideRows = [
-    { Field: 'Code', Required: 'Yes', Note: 'Unique shift code. Example: DAY-0700' },
-    { Field: 'Name', Required: 'Yes', Note: 'Shift display name' },
-    { Field: 'Type', Required: 'Yes', Note: 'Use DAY or NIGHT' },
-    { Field: 'StartTime', Required: 'Yes', Note: 'Use HH:mm format. Example: 07:00' },
-    { Field: 'BreakStartTime', Required: 'Yes', Note: 'Use HH:mm format. Example: 12:00' },
-    { Field: 'BreakEndTime', Required: 'Yes', Note: 'Use HH:mm format. Example: 13:00' },
-    { Field: 'EndTime', Required: 'Yes', Note: 'Use HH:mm format. Example: 16:00' },
-    { Field: 'Status', Required: 'No', Note: 'Use Active or Inactive. Default is Active' },
+    ['Shift Import Guide', ''],
+    ['', ''],
+    ['Field', 'Rule'],
+    ['Shift ID', 'Leave blank to create. Fill Mongo Shift ID to update existing shift.'],
+    ['Code', 'Required. Unique shift code. Display/search only.'],
+    ['Name', 'Required.'],
+    ['Type', 'DAY or NIGHT. DAY cannot cross midnight. NIGHT must cross midnight.'],
+    ['StartTime', 'Required. HH:mm format.'],
+    ['BreakStartTime', 'Required. HH:mm format. Must be inside shift time.'],
+    ['BreakEndTime', 'Required. HH:mm format. Must be inside shift time.'],
+    ['EndTime', 'Required. HH:mm format.'],
+    ['Status', 'Active or Inactive. Blank = Active.'],
   ]
 
   const workbook = XLSX.utils.book_new()
-
   const sampleSheet = XLSX.utils.json_to_sheet(sampleRows)
-  const guideSheet = XLSX.utils.json_to_sheet(guideRows)
+  const guideSheet = XLSX.utils.aoa_to_sheet(guideRows)
 
-  sampleSheet['!cols'] = [
-    { wch: 16 },
-    { wch: 30 },
-    { wch: 12 },
-    { wch: 12 },
-    { wch: 16 },
-    { wch: 16 },
-    { wch: 12 },
-    { wch: 12 },
-  ]
-
-  guideSheet['!cols'] = [
-    { wch: 18 },
-    { wch: 12 },
-    { wch: 60 },
-  ]
+  sampleSheet['!cols'] = autoFitColumns(sampleRows)
+  guideSheet['!cols'] = [{ wch: 24 }, { wch: 90 }]
 
   XLSX.utils.book_append_sheet(workbook, sampleSheet, 'Sample')
   XLSX.utils.book_append_sheet(workbook, guideSheet, 'Guide')
 
-  return XLSX.write(workbook, {
-    type: 'buffer',
-    bookType: 'xlsx',
-  })
+  return {
+    filename: 'shift-import-sample.xlsx',
+    buffer: workbookToBuffer(workbook),
+  }
 }
 
-function pick(row, keys) {
+function getCell(row, keys = []) {
   for (const key of keys) {
-    if (row[key] !== undefined && row[key] !== null && s(row[key]) !== '') {
+    if (Object.prototype.hasOwnProperty.call(row, key)) {
       return row[key]
     }
+  }
+
+  const normalized = Object.entries(row || {}).reduce((acc, [key, value]) => {
+    acc[upper(key)] = value
+    return acc
+  }, {})
+
+  for (const key of keys) {
+    const value = normalized[upper(key)]
+
+    if (value !== undefined) return value
   }
 
   return ''
 }
 
-function parseImportStatus(value) {
+function normalizeImportStatus(value) {
   const text = s(value).toLowerCase()
 
   if (!text) return true
-  if (['inactive', 'false', 'no', '0'].includes(text)) return false
+  if (['active', 'true', 'yes', 'y', '1'].includes(text)) return true
+  if (['inactive', 'false', 'no', 'n', '0'].includes(text)) return false
 
-  return true
+  return 'INVALID_BOOLEAN'
 }
 
-async function importShiftsExcel(fileBuffer) {
-  if (!fileBuffer) {
-    throw createHttpError('Excel file is required', 400)
-  }
+function normalizeImportRow(row = {}, index = 0) {
+  const rowNo = index + 2
 
-  const workbook = XLSX.read(fileBuffer, {
+  return {
+    rowNo,
+    shiftId: s(getCell(row, ['Shift ID', 'shiftId'])),
+    code: upper(getCell(row, ['Code', 'Shift Code', 'code'])),
+    name: s(getCell(row, ['Name', 'Shift Name', 'name'])),
+    type: upper(getCell(row, ['Type', 'type'])),
+    startTime: normalizeExcelTime(getCell(row, ['StartTime', 'Start Time', 'startTime'])),
+    breakStartTime: normalizeExcelTime(
+      getCell(row, ['BreakStartTime', 'Break Start Time', 'Break Start', 'breakStartTime']),
+    ),
+    breakEndTime: normalizeExcelTime(
+      getCell(row, ['BreakEndTime', 'Break End Time', 'Break End', 'breakEndTime']),
+    ),
+    endTime: normalizeExcelTime(getCell(row, ['EndTime', 'End Time', 'endTime'])),
+    isActive: normalizeImportStatus(getCell(row, ['Status', 'Active', 'IsActive', 'isActive'])),
+  }
+}
+
+function readWorkbookRows(buffer) {
+  const workbook = XLSX.read(buffer, {
     type: 'buffer',
     cellDates: true,
   })
 
-  const firstSheetName = workbook.SheetNames[0]
+  const preferredSheetName = workbook.SheetNames.includes('Sample')
+    ? 'Sample'
+    : workbook.SheetNames[0]
 
-  if (!firstSheetName) {
-    throw createHttpError('Excel sheet is empty', 400)
+  if (!preferredSheetName) return []
+
+  const worksheet = workbook.Sheets[preferredSheetName]
+
+  if (!worksheet) return []
+
+  return XLSX.utils.sheet_to_json(worksheet, {
+    defval: '',
+    raw: true,
+  })
+}
+
+async function importShiftsExcel(fileBuffer) {
+  if (!fileBuffer) {
+    throw appError({
+      statusCode: 400,
+      code: 'SHIFT_EXCEL_FILE_REQUIRED',
+      messageKey: 'shift.error.excelFileRequired',
+      message: 'Excel file is required',
+    })
   }
 
-  const worksheet = workbook.Sheets[firstSheetName]
-  const rows = XLSX.utils.sheet_to_json(worksheet, { defval: '' })
+  const rows = readWorkbookRows(fileBuffer)
 
   if (!rows.length) {
-    throw createHttpError('Excel file has no rows', 400)
+    throw appError({
+      statusCode: 400,
+      code: 'SHIFT_EXCEL_NO_ROWS',
+      messageKey: 'shift.error.excelNoRows',
+      message: 'Excel file has no rows',
+    })
   }
 
-  const preparedMap = new Map()
-
-  rows.forEach((row, index) => {
-    const rowNumber = index + 2
-
-    const rawCode = s(pick(row, ['Code', 'code', 'Shift Code', 'ShiftCode'])).toUpperCase()
-    const rawName = s(pick(row, ['Name', 'name', 'Shift Name', 'ShiftName']))
-    const rawType = s(pick(row, ['Type', 'type'])).toUpperCase()
-
-    const rawStartTime = normalizeExcelTime(pick(row, ['StartTime', 'Start Time', 'startTime']))
-    const rawBreakStartTime = normalizeExcelTime(
-      pick(row, ['BreakStartTime', 'Break Start Time', 'Break Start', 'breakStartTime']),
+  const parsedRows = rows
+    .map(normalizeImportRow)
+    .filter(
+      (row) =>
+        row.shiftId ||
+        row.code ||
+        row.name ||
+        row.type ||
+        row.startTime ||
+        row.breakStartTime ||
+        row.breakEndTime ||
+        row.endTime,
     )
-    const rawBreakEndTime = normalizeExcelTime(
-      pick(row, ['BreakEndTime', 'Break End Time', 'Break End', 'breakEndTime']),
-    )
-    const rawEndTime = normalizeExcelTime(pick(row, ['EndTime', 'End Time', 'endTime']))
 
-    const rawStatus = pick(row, ['Status', 'status', 'IsActive', 'isActive'])
+  const seenShiftIds = new Set()
+  const seenCodes = new Set()
 
-    const isBlankRow =
-      !rawCode &&
-      !rawName &&
-      !rawType &&
-      !rawStartTime &&
-      !rawBreakStartTime &&
-      !rawBreakEndTime &&
-      !rawEndTime
-
-    if (isBlankRow) return
-
-    try {
-      const payload = createShiftSchema.parse({
-        code: rawCode,
-        name: rawName,
-        type: rawType,
-        startTime: rawStartTime,
-        breakStartTime: rawBreakStartTime,
-        breakEndTime: rawBreakEndTime,
-        endTime: rawEndTime,
-        isActive: parseImportStatus(rawStatus),
+  for (const row of parsedRows) {
+    if (row.isActive === 'INVALID_BOOLEAN') {
+      throw appError({
+        statusCode: 400,
+        code: 'SHIFT_IMPORT_INVALID_STATUS',
+        messageKey: 'shift.import.error.invalidStatus',
+        message: `Row ${row.rowNo}: Invalid status`,
+        params: {
+          rowNo: row.rowNo,
+        },
       })
-
-      validateShiftBusinessRules(payload)
-
-      preparedMap.set(payload.code, payload)
-    } catch (error) {
-      const message = error?.issues?.[0]?.message || error?.message || 'Invalid row'
-      throw createHttpError(`Row ${rowNumber}: ${message}`, 400)
     }
-  })
 
-  const preparedRows = Array.from(preparedMap.values())
+    const result = importShiftRowSchema.safeParse(row)
 
-  if (!preparedRows.length) {
-    throw createHttpError('Excel file has no valid shift rows', 400)
+    if (!result.success) {
+      throw appError({
+        statusCode: 400,
+        code: 'SHIFT_IMPORT_ROW_INVALID',
+        messageKey: result.error.issues[0]?.message || 'shift.import.error.rowInvalid',
+        message: `Row ${row.rowNo}: ${result.error.issues[0]?.message || 'Invalid data'}`,
+        params: {
+          rowNo: row.rowNo,
+        },
+      })
+    }
+
+    validateShiftBusinessRules(result.data)
+
+    if (row.shiftId) {
+      if (seenShiftIds.has(row.shiftId)) {
+        throw appError({
+          statusCode: 400,
+          code: 'SHIFT_IMPORT_DUPLICATE_SHIFT_ID',
+          messageKey: 'shift.import.error.duplicateShiftId',
+          message: `Row ${row.rowNo}: Duplicate Shift ID in import file`,
+          params: {
+            rowNo: row.rowNo,
+            shiftId: row.shiftId,
+          },
+        })
+      }
+
+      seenShiftIds.add(row.shiftId)
+    }
+
+    if (seenCodes.has(row.code)) {
+      throw appError({
+        statusCode: 400,
+        code: 'SHIFT_IMPORT_DUPLICATE_CODE',
+        messageKey: 'shift.import.error.duplicateCode',
+        message: `Row ${row.rowNo}: Duplicate Code in import file`,
+        params: {
+          rowNo: row.rowNo,
+          code: row.code,
+        },
+      })
+    }
+
+    seenCodes.add(row.code)
   }
 
-  let createdCount = 0
-  let updatedCount = 0
+  let created = 0
+  let updated = 0
 
-  for (const payload of preparedRows) {
-    const existing = await Shift.findOne({ code: payload.code })
+  for (const row of parsedRows) {
+    const data = importShiftRowSchema.parse(row)
+    const existing = data.shiftId ? await Shift.findById(data.shiftId) : null
+
+    if (data.shiftId && !existing) {
+      throw appError({
+        statusCode: 404,
+        code: 'SHIFT_IMPORT_SHIFT_ID_NOT_FOUND',
+        messageKey: 'shift.import.error.shiftIdNotFound',
+        message: `Row ${row.rowNo}: Shift ID not found`,
+        params: {
+          rowNo: row.rowNo,
+          shiftId: data.shiftId,
+        },
+      })
+    }
+
+    await ensureUniqueCode(data.code, existing?._id || null)
+
+    const payload = {
+      code: upper(data.code),
+      name: s(data.name),
+      type: upper(data.type),
+      startTime: data.startTime,
+      breakStartTime: data.breakStartTime,
+      breakEndTime: data.breakEndTime,
+      endTime: data.endTime,
+      isActive: data.isActive,
+    }
+
+    validateShiftBusinessRules(payload)
 
     if (existing) {
       Object.assign(existing, payload)
       await existing.save()
-      updatedCount += 1
-    } else {
-      await Shift.create(payload)
-      createdCount += 1
+      updated += 1
+      continue
     }
+
+    await Shift.create(payload)
+    created += 1
   }
 
   return {
-    createdCount,
-    updatedCount,
+    summary: {
+      totalRows: parsedRows.length,
+      created,
+      updated,
+    },
+    messageKey: 'shift.import.success.completed',
   }
 }
 
@@ -644,4 +898,10 @@ module.exports = {
   exportShiftsExcel,
   downloadShiftImportSample,
   importShiftsExcel,
+
+  // Used by OT/Attendance/Payment modules later.
+  buildShiftTimeline,
+  calculateGrossMinutes,
+  calculateBreakMinutes,
+  calculateWorkingMinutes,
 }

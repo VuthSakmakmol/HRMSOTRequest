@@ -1,17 +1,64 @@
 // backend/src/modules/auth/services/account.service.js
-const Account = require('../models/Account')
 
-function s(v) {
-  return String(v ?? '').trim()
+const mongoose = require('mongoose')
+const Account = require('../models/Account')
+const AppError = require('../../../shared/errors/AppError')
+
+function s(value) {
+  return String(value ?? '').trim()
 }
 
-function escapeRegex(v) {
-  return String(v).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 function normalizePermissionCodes(values) {
   if (!Array.isArray(values)) return []
-  return [...new Set(values.map(v => s(v).toUpperCase()).filter(Boolean))]
+
+  return [
+    ...new Set(
+      values
+        .map((value) => s(value).toUpperCase())
+        .filter(Boolean),
+    ),
+  ]
+}
+
+function ensureObjectId(id, field = 'id') {
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    throw new AppError({
+      statusCode: 400,
+      code: 'INVALID_ID',
+      messageKey: 'common.error.invalidId',
+      message: 'Invalid id',
+      field,
+      params: {
+        value: id,
+      },
+    })
+  }
+}
+
+function accountNotFoundError() {
+  return new AppError({
+    statusCode: 404,
+    code: 'ACCOUNT_NOT_FOUND',
+    messageKey: 'auth.account.error.notFound',
+    message: 'Account not found',
+  })
+}
+
+function duplicateLoginIdError(loginId) {
+  return new AppError({
+    statusCode: 409,
+    code: 'ACCOUNT_LOGIN_ID_EXISTS',
+    messageKey: 'auth.account.error.loginIdExists',
+    message: 'Login ID already exists',
+    field: 'loginId',
+    params: {
+      loginId,
+    },
+  })
 }
 
 function sanitize(doc) {
@@ -23,8 +70,10 @@ function sanitize(doc) {
     displayName: doc.displayName,
     employeeId: doc.employeeId ? String(doc.employeeId) : null,
     roleIds: Array.isArray(doc.roleIds) ? doc.roleIds.map(String) : [],
-    directPermissionCodes: Array.isArray(doc.directPermissionCodes) ? doc.directPermissionCodes : [],
-    passwordVersion: doc.passwordVersion || 1,
+    directPermissionCodes: Array.isArray(doc.directPermissionCodes)
+      ? normalizePermissionCodes(doc.directPermissionCodes)
+      : [],
+    passwordVersion: Number(doc.passwordVersion || 1),
     mustChangePassword: !!doc.mustChangePassword,
     isActive: !!doc.isActive,
     createdAt: doc.createdAt,
@@ -32,15 +81,17 @@ function sanitize(doc) {
   }
 }
 
-async function list({ page, limit, search, isActive }) {
+async function list({ page = 1, limit = 10, search = '', isActive = '' }) {
   const filter = {}
 
   if (isActive === 'true') filter.isActive = true
   if (isActive === 'false') filter.isActive = false
 
   const keyword = s(search)
+
   if (keyword) {
     const regex = new RegExp(escapeRegex(keyword), 'i')
+
     filter.$or = [
       { loginId: regex },
       { displayName: regex },
@@ -48,31 +99,38 @@ async function list({ page, limit, search, isActive }) {
     ]
   }
 
-  const skip = (page - 1) * limit
+  const safePage = Number(page || 1)
+  const safeLimit = Number(limit || 10)
+  const skip = (safePage - 1) * safeLimit
 
   const [items, total] = await Promise.all([
-    Account.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+    Account.find(filter)
+      .sort({ createdAt: -1, _id: -1 })
+      .skip(skip)
+      .limit(safeLimit)
+      .lean(),
     Account.countDocuments(filter),
   ])
 
   return {
     items: items.map(sanitize),
     pagination: {
-      page,
-      limit,
+      page: safePage,
+      limit: safeLimit,
       total,
-      totalPages: Math.max(1, Math.ceil(total / limit)),
+      totalPages: Math.max(1, Math.ceil(total / safeLimit)),
+      hasMore: safePage * safeLimit < total,
     },
   }
 }
 
 async function getById(id) {
+  ensureObjectId(id)
+
   const doc = await Account.findById(id).lean()
 
   if (!doc) {
-    const err = new Error('Account not found')
-    err.status = 404
-    throw err
+    throw accountNotFoundError()
   }
 
   return sanitize(doc)
@@ -81,11 +139,12 @@ async function getById(id) {
 async function create(payload) {
   const normalizedLoginId = s(payload.loginId).toLowerCase()
 
-  const exists = await Account.findOne({ loginId: normalizedLoginId }).lean()
+  const exists = await Account.findOne({
+    loginId: normalizedLoginId,
+  }).lean()
+
   if (exists) {
-    const err = new Error('Login ID already exists')
-    err.status = 409
-    throw err
+    throw duplicateLoginIdError(normalizedLoginId)
   }
 
   const passwordHash = await Account.hashPassword(payload.password)
@@ -94,8 +153,8 @@ async function create(payload) {
     loginId: normalizedLoginId,
     passwordHash,
     displayName: s(payload.displayName),
-    employeeId: payload.employeeId ?? null,
-    roleIds: payload.roleIds ?? [],
+    employeeId: payload.employeeId || null,
+    roleIds: Array.isArray(payload.roleIds) ? payload.roleIds : [],
     directPermissionCodes: normalizePermissionCodes(payload.directPermissionCodes),
     passwordVersion: 1,
     mustChangePassword: payload.mustChangePassword ?? false,
@@ -106,12 +165,12 @@ async function create(payload) {
 }
 
 async function update(id, payload) {
+  ensureObjectId(id)
+
   const doc = await Account.findById(id)
 
   if (!doc) {
-    const err = new Error('Account not found')
-    err.status = 404
-    throw err
+    throw accountNotFoundError()
   }
 
   if (payload.loginId !== undefined) {
@@ -123,9 +182,7 @@ async function update(id, payload) {
     }).lean()
 
     if (exists) {
-      const err = new Error('Login ID already exists')
-      err.status = 409
-      throw err
+      throw duplicateLoginIdError(normalizedLoginId)
     }
 
     doc.loginId = normalizedLoginId
@@ -140,7 +197,7 @@ async function update(id, payload) {
   }
 
   if (payload.roleIds !== undefined) {
-    doc.roleIds = payload.roleIds
+    doc.roleIds = Array.isArray(payload.roleIds) ? payload.roleIds : []
   }
 
   if (payload.directPermissionCodes !== undefined) {
@@ -156,28 +213,31 @@ async function update(id, payload) {
   }
 
   await doc.save()
+
   return getById(doc._id)
 }
 
-async function resetPassword(id, { newPassword, mustChangePassword }) {
+async function resetPassword(id, { newPassword, mustChangePassword = true }) {
+  ensureObjectId(id)
+
   const doc = await Account.findById(id)
 
   if (!doc) {
-    const err = new Error('Account not found')
-    err.status = 404
-    throw err
+    throw accountNotFoundError()
   }
 
   doc.passwordHash = await Account.hashPassword(newPassword)
-  doc.passwordVersion = (doc.passwordVersion || 1) + 1
-  doc.mustChangePassword = mustChangePassword ?? true
+  doc.passwordVersion = Number(doc.passwordVersion || 1) + 1
+  doc.mustChangePassword = mustChangePassword
 
   await doc.save()
 
   return {
-    message: 'Password reset successfully',
+    id: String(doc._id),
+    loginId: doc.loginId,
     passwordVersion: doc.passwordVersion,
-    mustChangePassword: doc.mustChangePassword,
+    mustChangePassword: !!doc.mustChangePassword,
+    messageKey: 'auth.account.success.passwordReset',
   }
 }
 

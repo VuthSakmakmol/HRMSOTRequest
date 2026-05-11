@@ -1,5 +1,4 @@
 // backend/src/modules/attendance/controllers/dashboard.controller.js
-// backend/src/modules/attendance/controllers/dashboard.controller.js
 
 const attendanceDashboardService = require('../services/attendanceDashboard.service')
 
@@ -8,7 +7,7 @@ async function getAttendanceDashboardSummary(req, res, next) {
     const data = await attendanceDashboardService.getAttendanceDashboardSummary()
 
     res.json({
-      ok: true,
+      success: true,
       data,
     })
   } catch (error) {

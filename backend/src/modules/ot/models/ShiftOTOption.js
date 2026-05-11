@@ -1,4 +1,5 @@
 // backend/src/modules/ot/models/ShiftOTOption.js
+
 const mongoose = require('mongoose')
 
 function s(value) {
@@ -13,18 +14,18 @@ const HHMM_REGEX = /^([01]\d|2[0-3]):([0-5]\d)$/
 function normalizeApplicableDayTypes(value) {
   const source = Array.isArray(value) ? value : ['WORKING_DAY']
 
-  const normalized = Array.from(
-    new Set(
+  const normalized = [
+    ...new Set(
       source
         .map((item) => s(item).toUpperCase())
         .filter((item) => SHIFT_OT_OPTION_DAY_TYPES.includes(item)),
     ),
-  )
+  ]
 
   return normalized.length ? normalized : ['WORKING_DAY']
 }
 
-const ShiftOTOptionSchema = new mongoose.Schema(
+const shiftOTOptionSchema = new mongoose.Schema(
   {
     shiftId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -123,7 +124,7 @@ const ShiftOTOptionSchema = new mongoose.Schema(
   },
 )
 
-ShiftOTOptionSchema.pre('validate', function preValidate(next) {
+shiftOTOptionSchema.pre('validate', function normalize(next) {
   this.label = s(this.label)
   this.timingMode = s(this.timingMode || 'AFTER_SHIFT_END').toUpperCase()
   this.applicableDayTypes = normalizeApplicableDayTypes(this.applicableDayTypes)
@@ -131,39 +132,28 @@ ShiftOTOptionSchema.pre('validate', function preValidate(next) {
   this.fixedStartTime = s(this.fixedStartTime)
   this.fixedEndTime = s(this.fixedEndTime)
 
+  this.startAfterShiftEndMinutes = Number(this.startAfterShiftEndMinutes || 0)
   this.requestedMinutes = Number(this.requestedMinutes || 0)
   this.sequence = Number(this.sequence || 0)
-  this.startAfterShiftEndMinutes = Number(this.startAfterShiftEndMinutes || 0)
 
   if (!SHIFT_OT_OPTION_TIMING_MODES.includes(this.timingMode)) {
-    return next(new Error('timingMode must be AFTER_SHIFT_END or FIXED_TIME'))
+    return next(new Error('ot.shiftOption.validation.timingModeInvalid'))
   }
 
   if (!this.applicableDayTypes.length) {
-    return next(new Error('applicableDayTypes must contain at least one day type'))
+    return next(new Error('ot.shiftOption.validation.applicableDayTypesRequired'))
   }
 
-  for (const dayType of this.applicableDayTypes) {
-    if (!SHIFT_OT_OPTION_DAY_TYPES.includes(dayType)) {
-      return next(
-        new Error('applicableDayTypes must contain only WORKING_DAY, SUNDAY, or HOLIDAY'),
-      )
-    }
+  if (!Number.isInteger(this.startAfterShiftEndMinutes) || this.startAfterShiftEndMinutes < 0) {
+    return next(new Error('ot.shiftOption.validation.startAfterShiftEndMinutesInvalid'))
   }
 
   if (!Number.isInteger(this.requestedMinutes) || this.requestedMinutes < 1) {
-    return next(new Error('requestedMinutes must be a positive integer'))
+    return next(new Error('ot.shiftOption.validation.requestedMinutesInvalid'))
   }
 
   if (!Number.isInteger(this.sequence) || this.sequence < 1) {
-    return next(new Error('sequence must be a positive integer'))
-  }
-
-  if (
-    !Number.isInteger(this.startAfterShiftEndMinutes) ||
-    this.startAfterShiftEndMinutes < 0
-  ) {
-    return next(new Error('startAfterShiftEndMinutes must be a non-negative integer'))
+    return next(new Error('ot.shiftOption.validation.sequenceInvalid'))
   }
 
   if (this.timingMode === 'AFTER_SHIFT_END') {
@@ -172,48 +162,60 @@ ShiftOTOptionSchema.pre('validate', function preValidate(next) {
   }
 
   if (this.timingMode === 'FIXED_TIME') {
+    this.startAfterShiftEndMinutes = 0
+
     if (!HHMM_REGEX.test(this.fixedStartTime)) {
-      return next(new Error('fixedStartTime must be in HH:mm format'))
+      return next(new Error('ot.shiftOption.validation.fixedStartTimeInvalid'))
     }
 
     if (!HHMM_REGEX.test(this.fixedEndTime)) {
-      return next(new Error('fixedEndTime must be in HH:mm format'))
+      return next(new Error('ot.shiftOption.validation.fixedEndTimeInvalid'))
     }
 
     if (this.fixedStartTime === this.fixedEndTime) {
-      return next(new Error('fixedStartTime and fixedEndTime cannot be the same'))
+      return next(new Error('ot.shiftOption.validation.fixedTimeSame'))
     }
-
-    this.startAfterShiftEndMinutes = 0
   }
 
   next()
 })
 
-ShiftOTOptionSchema.index(
-  { shiftId: 1, label: 1 },
-  { unique: true, partialFilterExpression: { isActive: true } },
+shiftOTOptionSchema.index(
+  {
+    shiftId: 1,
+    label: 1,
+  },
+  {
+    unique: true,
+    partialFilterExpression: {
+      isActive: true,
+    },
+  },
 )
 
-ShiftOTOptionSchema.index(
-  { shiftId: 1, applicableDayTypes: 1, sequence: 1 },
-  { unique: true, partialFilterExpression: { isActive: true } },
+shiftOTOptionSchema.index(
+  {
+    shiftId: 1,
+    applicableDayTypes: 1,
+    sequence: 1,
+  },
+  {
+    unique: true,
+    partialFilterExpression: {
+      isActive: true,
+    },
+  },
 )
 
-ShiftOTOptionSchema.index({
-  shiftId: 1,
-  applicableDayTypes: 1,
-  isActive: 1,
-  sequence: 1,
-})
+shiftOTOptionSchema.index({ shiftId: 1, isActive: 1, sequence: 1 })
+shiftOTOptionSchema.index({ shiftId: 1, applicableDayTypes: 1, isActive: 1, sequence: 1 })
+shiftOTOptionSchema.index({ calculationPolicyId: 1, isActive: 1 })
+shiftOTOptionSchema.index({ timingMode: 1, isActive: 1 })
+shiftOTOptionSchema.index({ createdAt: -1 })
 
-ShiftOTOptionSchema.index({ shiftId: 1, isActive: 1, sequence: 1 })
-ShiftOTOptionSchema.index({ calculationPolicyId: 1, isActive: 1 })
-ShiftOTOptionSchema.index({ timingMode: 1, isActive: 1 })
-ShiftOTOptionSchema.index({ applicableDayTypes: 1, isActive: 1 })
-ShiftOTOptionSchema.index({ createdAt: -1 })
-
-const ShiftOTOption = mongoose.model('ShiftOTOption', ShiftOTOptionSchema)
+const ShiftOTOption =
+  mongoose.models.ShiftOTOption ||
+  mongoose.model('ShiftOTOption', shiftOTOptionSchema)
 
 module.exports = ShiftOTOption
 module.exports.SHIFT_OT_OPTION_TIMING_MODES = SHIFT_OT_OPTION_TIMING_MODES

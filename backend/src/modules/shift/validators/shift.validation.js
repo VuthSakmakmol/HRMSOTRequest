@@ -1,152 +1,245 @@
 // backend/src/modules/shift/validators/shift.validation.js
+
 const mongoose = require('mongoose')
 const { z } = require('zod')
 
 const HHMM_REGEX = /^([01]\d|2[0-3]):([0-5]\d)$/
 
-const SORT_FIELDS = [
-  'createdAt',
-  'updatedAt',
-  'code',
-  'name',
-  'type',
-  'startTime',
-  'endTime',
-  'isActive',
-]
+function s(value) {
+  return String(value ?? '').trim()
+}
 
-function toBool(value) {
+function isObjectId(value) {
+  return mongoose.Types.ObjectId.isValid(String(value || ''))
+}
+
+function toBoolean(value, defaultValue = undefined) {
+  if (value === undefined || value === null || value === '') return defaultValue
   if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value === 1
 
-  const text = String(value ?? '').trim().toLowerCase()
+  const text = String(value).trim().toLowerCase()
 
-  if (text === 'true') return true
-  if (text === 'false') return false
+  if (['true', '1', 'yes', 'y', 'active'].includes(text)) return true
+  if (['false', '0', 'no', 'n', 'inactive'].includes(text)) return false
 
-  return value
+  return defaultValue
 }
 
-function toInt(value, fallback) {
-  if (value === '' || value === null || value === undefined) return fallback
-
-  const n = Number(value)
-  return Number.isFinite(n) ? n : fallback
-}
-
-function normalizeSortOrder(value) {
-  if (value === 1 || value === '1' || value === 'asc') return 1
-  return -1
-}
+const booleanLike = z.union([z.boolean(), z.string(), z.number()]).optional()
 
 const objectIdSchema = z
   .string()
   .trim()
-  .refine((value) => mongoose.Types.ObjectId.isValid(value), {
-    message: 'Invalid shift id',
-  })
+  .refine((value) => isObjectId(value), 'common.validation.invalidId')
 
-const shiftTypeSchema = z
-  .string()
-  .trim()
-  .transform((value) => value.toUpperCase())
-  .refine((value) => ['DAY', 'NIGHT'].includes(value), {
-    message: 'Shift type must be DAY or NIGHT',
-  })
+const shiftTypeField = z
+  .union([z.string(), z.null(), z.undefined()])
+  .transform((value) => s(value).toUpperCase())
+  .refine((value) => ['DAY', 'NIGHT'].includes(value), 'shift.validation.typeInvalid')
+
+const timeField = (messageKey) =>
+  z
+    .string()
+    .trim()
+    .regex(HHMM_REGEX, messageKey)
 
 const createShiftSchema = z.object({
   code: z
     .string()
     .trim()
-    .min(1, 'Shift code is required')
-    .max(30, 'Shift code must be at most 30 characters')
-    .transform((value) => value.toUpperCase()),
+    .min(1, 'shift.validation.codeRequired')
+    .max(30, 'shift.validation.codeTooLong')
+    .transform((value) => s(value).toUpperCase()),
 
   name: z
     .string()
     .trim()
-    .min(1, 'Shift name is required')
-    .max(120, 'Shift name must be at most 120 characters'),
+    .min(1, 'shift.validation.nameRequired')
+    .max(120, 'shift.validation.nameTooLong'),
 
-  type: shiftTypeSchema,
+  type: shiftTypeField,
 
-  startTime: z
-    .string()
-    .trim()
-    .regex(HHMM_REGEX, 'Start time must be in HH:mm format'),
+  startTime: timeField('shift.validation.startTimeInvalid'),
+  breakStartTime: timeField('shift.validation.breakStartTimeInvalid'),
+  breakEndTime: timeField('shift.validation.breakEndTimeInvalid'),
+  endTime: timeField('shift.validation.endTimeInvalid'),
 
-  breakStartTime: z
-    .string()
-    .trim()
-    .regex(HHMM_REGEX, 'Break start time must be in HH:mm format'),
-
-  breakEndTime: z
-    .string()
-    .trim()
-    .regex(HHMM_REGEX, 'Break end time must be in HH:mm format'),
-
-  endTime: z
-    .string()
-    .trim()
-    .regex(HHMM_REGEX, 'End time must be in HH:mm format'),
-
-  isActive: z.preprocess(toBool, z.boolean().optional()).default(true),
+  isActive: z.boolean().optional().default(true),
 })
 
-const updateShiftSchema = createShiftSchema.partial().refine(
-  (value) => Object.keys(value || {}).length > 0,
-  {
-    message: 'At least one field is required',
-  },
-)
-
-const sortFieldSchema = z.enum(SORT_FIELDS)
-
-const listShiftQuerySchema = z
+const updateShiftSchema = z
   .object({
-    page: z.preprocess(
-      (value) => toInt(value, 1),
-      z.number().int().min(1).default(1),
-    ),
+    code: z
+      .string()
+      .trim()
+      .min(1, 'shift.validation.codeRequired')
+      .max(30, 'shift.validation.codeTooLong')
+      .transform((value) => s(value).toUpperCase())
+      .optional(),
 
-    limit: z.preprocess(
-      (value) => toInt(value, 10),
-      z.number().int().min(1).max(100).default(10),
-    ),
+    name: z
+      .string()
+      .trim()
+      .min(1, 'shift.validation.nameRequired')
+      .max(120, 'shift.validation.nameTooLong')
+      .optional(),
 
-    search: z.string().trim().optional().default(''),
+    type: shiftTypeField.optional(),
 
-    type: z.preprocess(
-      (value) => {
-        if (value === '' || value === null || value === undefined) return undefined
-        return String(value).trim().toUpperCase()
-      },
-      shiftTypeSchema.optional(),
-    ),
+    startTime: timeField('shift.validation.startTimeInvalid').optional(),
+    breakStartTime: timeField('shift.validation.breakStartTimeInvalid').optional(),
+    breakEndTime: timeField('shift.validation.breakEndTimeInvalid').optional(),
+    endTime: timeField('shift.validation.endTimeInvalid').optional(),
 
-    isActive: z.preprocess(
-      (value) => {
-        if (value === '' || value === null || value === undefined) return undefined
-        return toBool(value)
-      },
-      z.boolean().optional(),
-    ),
-
-    sortField: sortFieldSchema.optional(),
-    sortBy: sortFieldSchema.optional(),
-
-    sortOrder: z.preprocess(
-      normalizeSortOrder,
-      z.union([z.literal(1), z.literal(-1)]).default(-1),
-    ),
+    isActive: z.boolean().optional(),
   })
-  .transform((value) => ({
-    ...value,
-    sortField: value.sortField || value.sortBy || 'createdAt',
-  }))
+  .refine(
+    (value) =>
+      value.code !== undefined ||
+      value.name !== undefined ||
+      value.type !== undefined ||
+      value.startTime !== undefined ||
+      value.breakStartTime !== undefined ||
+      value.breakEndTime !== undefined ||
+      value.endTime !== undefined ||
+      value.isActive !== undefined,
+    {
+      message: 'shift.validation.updatePayloadRequired',
+    },
+  )
+
+const listShiftQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(10),
+
+  search: z.string().trim().optional().default(''),
+
+  type: z
+    .string()
+    .trim()
+    .optional()
+    .default('')
+    .transform((value) => s(value).toUpperCase())
+    .refine((value) => !value || ['DAY', 'NIGHT'].includes(value), 'shift.validation.typeInvalid'),
+
+  isActive: booleanLike,
+
+  sortField: z
+    .enum([
+      'createdAt',
+      'updatedAt',
+      'code',
+      'name',
+      'type',
+      'startTime',
+      'endTime',
+      'isActive',
+    ])
+    .optional()
+    .default('createdAt'),
+
+  sortBy: z
+    .enum([
+      'createdAt',
+      'updatedAt',
+      'code',
+      'name',
+      'type',
+      'startTime',
+      'endTime',
+      'isActive',
+    ])
+    .optional(),
+
+  sortOrder: z
+    .union([z.string(), z.number()])
+    .optional()
+    .transform((value) => {
+      if (value === 1 || value === '1' || value === 'asc') return 1
+      if (value === -1 || value === '-1' || value === 'desc') return -1
+      return -1
+    }),
+})
+
+const shiftLookupQuerySchema = z.object({
+  search: z.string().trim().optional().default(''),
+
+  type: z
+    .string()
+    .trim()
+    .optional()
+    .default('')
+    .transform((value) => s(value).toUpperCase())
+    .refine((value) => !value || ['DAY', 'NIGHT'].includes(value), 'shift.validation.typeInvalid'),
+
+  isActive: booleanLike,
+
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+})
+
+const importShiftRowSchema = z.object({
+  shiftId: z
+    .union([z.string(), z.null(), z.undefined()])
+    .transform((value) => s(value))
+    .refine((value) => !value || isObjectId(value), 'shift.validation.shiftIdInvalid'),
+
+  code: z
+    .string()
+    .trim()
+    .min(1, 'shift.validation.codeRequired')
+    .max(30, 'shift.validation.codeTooLong')
+    .transform((value) => s(value).toUpperCase()),
+
+  name: z
+    .string()
+    .trim()
+    .min(1, 'shift.validation.nameRequired')
+    .max(120, 'shift.validation.nameTooLong'),
+
+  type: shiftTypeField,
+
+  startTime: timeField('shift.validation.startTimeInvalid'),
+  breakStartTime: timeField('shift.validation.breakStartTimeInvalid'),
+  breakEndTime: timeField('shift.validation.breakEndTimeInvalid'),
+  endTime: timeField('shift.validation.endTimeInvalid'),
+
+  isActive: z
+    .union([z.boolean(), z.string(), z.number(), z.null(), z.undefined()])
+    .transform((value) => toBoolean(value, true))
+    .refine((value) => typeof value === 'boolean', 'shift.validation.isActiveInvalid'),
+})
+
+function normalizeListQuery(raw = {}) {
+  const parsed = listShiftQuerySchema.parse(raw)
+
+  return {
+    page: parsed.page,
+    limit: parsed.limit,
+    search: parsed.search,
+    type: parsed.type,
+    isActive: toBoolean(parsed.isActive),
+    sortField: parsed.sortBy || parsed.sortField || 'createdAt',
+    sortOrder: parsed.sortOrder,
+  }
+}
+
+function normalizeLookupQuery(raw = {}) {
+  const parsed = shiftLookupQuerySchema.parse(raw)
+
+  return {
+    search: parsed.search,
+    type: parsed.type,
+    isActive: toBoolean(parsed.isActive, true),
+    limit: parsed.limit,
+  }
+}
 
 module.exports = {
   objectIdSchema,
   createShiftSchema,
   updateShiftSchema,
-  listShiftQuerySchema,
+  importShiftRowSchema,
+  normalizeListQuery,
+  normalizeLookupQuery,
 }

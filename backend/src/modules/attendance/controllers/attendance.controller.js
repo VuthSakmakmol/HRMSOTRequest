@@ -1,5 +1,4 @@
 // backend/src/modules/attendance/controllers/attendance.controller.js
-const mongoose = require('mongoose')
 
 const attendanceService = require('../services/attendance.service')
 const {
@@ -8,6 +7,7 @@ const {
   listAttendanceRecordsQuerySchema,
   attendanceImportIdParamSchema,
   attendanceRecordIdParamSchema,
+  searchOTVerificationQuerySchema,
   verifyOTAttendanceParamSchema,
 } = require('../validators/attendance.validation')
 
@@ -15,30 +15,18 @@ function parse(schema, data) {
   const result = schema.safeParse(data)
 
   if (!result.success) {
-    const err = new Error(result.error.issues[0]?.message || 'Validation error')
+    const err = new Error(result.error.issues?.[0]?.message || 'Validation error')
     err.status = 400
+    err.statusCode = 400
     throw err
   }
 
   return result.data
 }
 
-function parseObjectIdParam(value, label = 'id') {
-  const id = String(value || '').trim()
-
-  if (!mongoose.isValidObjectId(id)) {
-    const err = new Error(`Invalid ${label}`)
-    err.status = 400
-    throw err
-  }
-
-  return id
-}
-
 async function importAttendanceExcel(req, res, next) {
   try {
     const payload = parse(createAttendanceImportSchema, req.body || {})
-
     const data = await attendanceService.importExcel(req.file, payload, req.user)
 
     res.status(201).json({
@@ -59,6 +47,7 @@ async function downloadAttendanceImportSample(req, res, next) {
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     )
+
     res.setHeader(
       'Content-Disposition',
       `attachment; filename="${result.filename}"`,
@@ -115,18 +104,7 @@ async function listAttendanceRecords(req, res, next) {
 async function getAttendanceRecordById(req, res, next) {
   try {
     const params = parse(attendanceRecordIdParamSchema, req.params || {})
-
-    const recordId = parseObjectIdParam(params.id, 'attendance record id')
-
-    const data = await attendanceService.getRecordById
-      ? await attendanceService.getRecordById(recordId)
-      : null
-
-    if (!data) {
-      const err = new Error('Attendance record detail endpoint is not implemented yet')
-      err.status = 501
-      throw err
-    }
+    const data = await attendanceService.getRecordById(params.id)
 
     res.json({
       success: true,
@@ -139,7 +117,8 @@ async function getAttendanceRecordById(req, res, next) {
 
 async function searchOTRequestsForVerification(req, res, next) {
   try {
-    const data = await attendanceService.searchOTRequestsForVerification(req.query || {})
+    const query = parse(searchOTVerificationQuerySchema, req.query || {})
+    const data = await attendanceService.searchOTRequestsForVerification(query)
 
     res.json({
       success: true,

@@ -1,68 +1,21 @@
 // backend/src/modules/attendance/routes/index.js
-const express = require('express')
-const multer = require('multer')
 
-const attendanceController = require('../controllers/attendance.controller')
+const express = require('express')
+
 const requireAuth = require('../../../middlewares/requireAuth')
-const requirePermission = require('../../../middlewares/requirePermission.middleware')
+
+const importRoutes = require('./import.routes')
+const recordRoutes = require('./record.routes')
+const verificationRoutes = require('./verification.routes')
 const dashboardRoutes = require('./dashboard.routes')
 
 const router = express.Router()
 
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: {
-    fileSize: 10 * 1024 * 1024,
-  },
-})
-
 router.use(requireAuth)
 
-
+router.use('/', importRoutes)
+router.use('/records', recordRoutes)
+router.use('/verification', verificationRoutes)
 router.use('/dashboard', dashboardRoutes)
-
-
-router.get(
-  '/import/sample',
-  requirePermission('ATTENDANCE_VIEW'),
-  attendanceController.downloadAttendanceImportSample,
-)
-
-router.post(
-  '/import',
-  requirePermission('ATTENDANCE_IMPORT'),
-  upload.single('file'),
-  attendanceController.importAttendanceExcel,
-)
-
-router.get(
-  '/imports',
-  requirePermission('ATTENDANCE_VIEW'),
-  attendanceController.listAttendanceImports,
-)
-
-router.get(
-  '/imports/:id',
-  requirePermission('ATTENDANCE_VIEW'),
-  attendanceController.getAttendanceImportById,
-)
-
-router.get(
-  '/records',
-  requirePermission('ATTENDANCE_VIEW'),
-  attendanceController.listAttendanceRecords,
-)
-
-router.get(
-  '/verification/ot/search',
-  requirePermission('ATTENDANCE_VERIFY'),
-  attendanceController.searchOTRequestsForVerification,
-)
-
-router.get(
-  '/verification/ot/:otRequestId',
-  requirePermission('ATTENDANCE_VERIFY'),
-  attendanceController.verifyOTAttendance,
-)
 
 module.exports = router

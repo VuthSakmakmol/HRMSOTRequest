@@ -1,51 +1,51 @@
 // backend/src/modules/org/services/department.service.js
+
+const mongoose = require('mongoose')
 const XLSX = require('xlsx')
+
+const AppError = require('../../../shared/errors/AppError')
 const Department = require('../models/Department')
-const {
-  objectIdSchema,
-  createDepartmentSchema,
-  updateDepartmentSchema,
-  listDepartmentQuerySchema,
-} = require('../validators/department.validator')
 
 function s(value) {
   return String(value ?? '').trim()
 }
 
-function buildListQuery(query = {}) {
-  const filter = {}
-
-  const search = s(query.search)
-  if (search) {
-    filter.$or = [
-      { code: { $regex: search, $options: 'i' } },
-      { name: { $regex: search, $options: 'i' } },
-      { description: { $regex: search, $options: 'i' } },
-    ]
-  }
-
-  if (query.isActive !== undefined && query.isActive !== '') {
-    filter.isActive = String(query.isActive) === 'true'
-  }
-
-  return filter
+function upper(value) {
+  return s(value).toUpperCase()
 }
 
-function buildSort(sortField = 'createdAt', sortOrder = -1) {
-  const direction = Number(sortOrder) === 1 ? 1 : -1
-
-  if (sortField === 'code') return { code: direction, _id: -1 }
-  if (sortField === 'name') return { name: direction, _id: -1 }
-  if (sortField === 'isActive') return { isActive: direction, name: 1, _id: -1 }
-
-  return { createdAt: direction, _id: -1 }
+function isObjectId(value) {
+  return mongoose.Types.ObjectId.isValid(String(value || ''))
 }
 
-function normalizeDepartment(doc) {
+function appError({
+  statusCode = 400,
+  code,
+  messageKey,
+  message,
+  field = null,
+  params = {},
+}) {
+  return new AppError({
+    statusCode,
+    code,
+    messageKey,
+    message,
+    field,
+    params,
+  })
+}
+
+function escapeRegex(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function mapDepartment(doc) {
   if (!doc) return null
 
   return {
     id: String(doc._id),
+    _id: String(doc._id),
     code: doc.code || '',
     name: doc.name || '',
     description: doc.description || '',
@@ -55,52 +55,101 @@ function normalizeDepartment(doc) {
   }
 }
 
-function normalizeDepartmentLookupItem(doc) {
-  if (!doc) return null
+function mapLookupItem(doc) {
+  const item = mapDepartment(doc)
 
   return {
-    id: String(doc._id),
-    code: doc.code || '',
-    name: doc.name || '',
-    description: doc.description || '',
-    label: [doc.code, doc.name].filter(Boolean).join(' - '),
-    isActive: !!doc.isActive,
+    id: item.id,
+    _id: item._id,
+    code: item.code,
+    name: item.name,
+    description: item.description,
+    label: [item.code, item.name].filter(Boolean).join(' - '),
+    isActive: item.isActive,
+  }
+}
+
+function buildFilter(query = {}) {
+  const filter = {}
+
+  const keyword = s(query.search)
+
+  if (keyword) {
+    const regex = new RegExp(escapeRegex(keyword), 'i')
+
+    filter.$or = [{ code: regex }, { name: regex }, { description: regex }]
+  }
+
+  if (query.isActive === 'true') filter.isActive = true
+  if (query.isActive === 'false') filter.isActive = false
+
+  return filter
+}
+
+function buildSort(sortField = 'createdAt', sortOrder = -1) {
+  const allowedFields = new Set(['code', 'name', 'isActive', 'createdAt', 'updatedAt'])
+  const field = allowedFields.has(sortField) ? sortField : 'createdAt'
+  const direction = Number(sortOrder) === 1 ? 1 : -1
+
+  return {
+    [field]: direction,
+    _id: -1,
+  }
+}
+
+async function ensureObjectId(id, field = 'id') {
+  if (!isObjectId(id)) {
+    throw appError({
+      statusCode: 400,
+      code: 'INVALID_ID',
+      messageKey: 'common.error.invalidId',
+      message: 'Invalid id',
+      field,
+      params: { value: id },
+    })
   }
 }
 
 async function ensureUniqueCode(code, excludeId = null) {
-  const filter = { code: s(code).toUpperCase() }
-  if (excludeId) filter._id = { $ne: excludeId }
+  const normalizedCode = upper(code)
 
-  const existing = await Department.findOne(filter).lean()
-  if (existing) {
-    const error = new Error('Department code already exists')
-    error.status = 409
-    throw error
+  const filter = {
+    code: normalizedCode,
+  }
+
+  if (excludeId) {
+    filter._id = {
+      $ne: excludeId,
+    }
+  }
+
+  const exists = await Department.exists(filter)
+
+  if (exists) {
+    throw appError({
+      statusCode: 409,
+      code: 'DEPARTMENT_CODE_EXISTS',
+      messageKey: 'org.department.error.codeExists',
+      message: 'Department code already exists',
+      field: 'code',
+      params: {
+        code: normalizedCode,
+      },
+    })
   }
 }
 
 async function lookupDepartments(query = {}) {
-  const search = s(query.search)
-  const limit = Math.min(Math.max(Number(query.limit || 20), 1), 50)
-
-  let isActive = true
-  if (String(query.isActive ?? '').trim().toLowerCase() === 'false') {
-    isActive = false
-  }
-
-  const filter = buildListQuery({
-    search,
-    isActive,
-  })
+  const filter = buildFilter(query)
+  const limit = Number(query.limit || 50)
 
   const items = await Department.find(filter)
-    .sort({ name: 1, code: 1, _id: -1 })
+    .sort({ name: 1, code: 1, _id: 1 })
     .limit(limit)
     .lean()
 
   return {
-    items: items.map(normalizeDepartmentLookupItem),
+    items: items.map(mapLookupItem),
     meta: {
       limit,
       count: items.length,
@@ -108,24 +157,13 @@ async function lookupDepartments(query = {}) {
   }
 }
 
-async function createDepartment(payload) {
-  const data = createDepartmentSchema.parse(payload)
-
-  await ensureUniqueCode(data.code)
-
-  const doc = await Department.create(data)
-  return normalizeDepartment(doc.toObject())
-}
-
 async function listDepartments(query = {}) {
-  const parsed = listDepartmentQuerySchema.parse(query)
-
-  const page = parsed.page
-  const limit = parsed.limit
+  const page = Number(query.page || 1)
+  const limit = Number(query.limit || 10)
   const skip = (page - 1) * limit
 
-  const filter = buildListQuery(parsed)
-  const sort = buildSort(parsed.sortField, parsed.sortOrder)
+  const filter = buildFilter(query)
+  const sort = buildSort(query.sortField, query.sortOrder)
 
   const [items, total] = await Promise.all([
     Department.find(filter).sort(sort).skip(skip).limit(limit).lean(),
@@ -133,62 +171,133 @@ async function listDepartments(query = {}) {
   ])
 
   return {
-    ok: true,
-    data: {
-      items: items.map(normalizeDepartment),
-      pagination: {
-        page,
-        limit,
-        total,
-        hasMore: skip + items.length < total,
-      },
+    items: items.map(mapDepartment),
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+      hasMore: page * limit < total,
     },
   }
 }
 
 async function getDepartmentById(id) {
-  const departmentId = objectIdSchema.parse(id)
+  await ensureObjectId(id, 'departmentId')
 
-  const doc = await Department.findById(departmentId).lean()
+  const doc = await Department.findById(id).lean()
+
   if (!doc) {
-    const error = new Error('Department not found')
-    error.status = 404
-    throw error
+    throw appError({
+      statusCode: 404,
+      code: 'DEPARTMENT_NOT_FOUND',
+      messageKey: 'org.department.error.notFound',
+      message: 'Department not found',
+      field: 'departmentId',
+    })
   }
 
-  return normalizeDepartment(doc)
+  return mapDepartment(doc)
+}
+
+async function createDepartment(payload) {
+  const code = upper(payload.code)
+
+  await ensureUniqueCode(code)
+
+  const doc = await Department.create({
+    code,
+    name: s(payload.name),
+    description: s(payload.description),
+    isActive: payload.isActive ?? true,
+  })
+
+  return getDepartmentById(doc._id)
 }
 
 async function updateDepartment(id, payload) {
-  const departmentId = objectIdSchema.parse(id)
-  const data = updateDepartmentSchema.parse(payload)
+  await ensureObjectId(id, 'departmentId')
 
-  const existing = await Department.findById(departmentId)
-  if (!existing) {
-    const error = new Error('Department not found')
-    error.status = 404
-    throw error
+  const doc = await Department.findById(id)
+
+  if (!doc) {
+    throw appError({
+      statusCode: 404,
+      code: 'DEPARTMENT_NOT_FOUND',
+      messageKey: 'org.department.error.notFound',
+      message: 'Department not found',
+      field: 'departmentId',
+    })
   }
 
-  if (data.code) {
-    await ensureUniqueCode(data.code, departmentId)
+  if (payload.code !== undefined) {
+    const code = upper(payload.code)
+
+    if (code !== doc.code) {
+      await ensureUniqueCode(code, doc._id)
+    }
+
+    doc.code = code
   }
 
-  Object.assign(existing, data)
-  await existing.save()
+  if (payload.name !== undefined) {
+    doc.name = s(payload.name)
+  }
 
-  return normalizeDepartment(existing.toObject())
+  if (payload.description !== undefined) {
+    doc.description = s(payload.description)
+  }
+
+  if (payload.isActive !== undefined) {
+    doc.isActive = !!payload.isActive
+  }
+
+  await doc.save()
+
+  return getDepartmentById(doc._id)
+}
+
+function formatExcelDate(value) {
+  if (!value) return ''
+
+  const date = value instanceof Date ? value : new Date(value)
+
+  if (Number.isNaN(date.getTime())) return ''
+
+  const day = String(date.getDate()).padStart(2, '0')
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const year = date.getFullYear()
+
+  return `${day}/${month}/${year}`
+}
+
+function workbookToBuffer(workbook) {
+  return XLSX.write(workbook, {
+    type: 'buffer',
+    bookType: 'xlsx',
+  })
+}
+
+function autoFitColumns(rows = []) {
+  const widths = []
+
+  rows.forEach((row) => {
+    Object.keys(row || {}).forEach((key, index) => {
+      const raw = row[key]
+      const value = raw === null || raw === undefined ? '' : String(raw)
+      const current = widths[index] || { wch: String(key).length + 2 }
+
+      current.wch = Math.min(Math.max(current.wch, value.length + 2), 45)
+      widths[index] = current
+    })
+  })
+
+  return widths
 }
 
 async function exportDepartmentsExcel(query = {}) {
-  const parsed = listDepartmentQuerySchema.parse({
-    ...query,
-    page: 1,
-    limit: 100,
-  })
-
-  const filter = buildListQuery(parsed)
-  const sort = buildSort(parsed.sortField, parsed.sortOrder)
+  const filter = buildFilter(query)
+  const sort = buildSort(query.sortField, query.sortOrder)
 
   const items = await Department.find(filter).sort(sort).lean()
 
@@ -198,18 +307,35 @@ async function exportDepartmentsExcel(query = {}) {
     Name: item.name || '',
     Description: item.description || '',
     Status: item.isActive ? 'Active' : 'Inactive',
-    CreatedAt: item.createdAt ? new Date(item.createdAt).toLocaleString() : '',
-    UpdatedAt: item.updatedAt ? new Date(item.updatedAt).toLocaleString() : '',
+    CreatedAt: formatExcelDate(item.createdAt),
+    UpdatedAt: formatExcelDate(item.updatedAt),
   }))
 
+  const fallbackRows = rows.length
+    ? rows
+    : [
+        {
+          No: '',
+          Code: '',
+          Name: '',
+          Description: '',
+          Status: '',
+          CreatedAt: '',
+          UpdatedAt: '',
+        },
+      ]
+
   const workbook = XLSX.utils.book_new()
-  const worksheet = XLSX.utils.json_to_sheet(rows)
+  const worksheet = XLSX.utils.json_to_sheet(fallbackRows)
+
+  worksheet['!cols'] = autoFitColumns(fallbackRows)
+
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Departments')
 
-  return XLSX.write(workbook, {
-    type: 'buffer',
-    bookType: 'xlsx',
-  })
+  return {
+    filename: `departments-${new Date().toISOString().slice(0, 10)}.xlsx`,
+    buffer: workbookToBuffer(workbook),
+  }
 }
 
 async function downloadDepartmentImportSample() {
@@ -226,105 +352,200 @@ async function downloadDepartmentImportSample() {
       Description: 'Manage accounting and finance operations',
       Status: 'Active',
     },
-    {
-      Code: 'IT',
-      Name: 'Information Technology',
-      Description: 'Manage systems and technical support',
-      Status: 'Inactive',
-    },
   ]
 
   const guideRows = [
-    { Field: 'Code', Required: 'Yes', Note: 'Unique department code. Example: HR' },
-    { Field: 'Name', Required: 'Yes', Note: 'Department display name' },
-    { Field: 'Description', Required: 'No', Note: 'Optional short description' },
-    { Field: 'Status', Required: 'No', Note: 'Use Active or Inactive. Default is Active' },
+    ['Department Import Guide', ''],
+    ['', ''],
+    ['Field', 'Rule'],
+    ['Code', 'Required. Unique department code. Example: HR'],
+    ['Name', 'Required. Department display name.'],
+    ['Description', 'Optional. Maximum 500 characters.'],
+    ['Status', 'Optional. Use Active or Inactive. Blank = Active.'],
   ]
 
   const workbook = XLSX.utils.book_new()
-
   const sampleSheet = XLSX.utils.json_to_sheet(sampleRows)
-  const guideSheet = XLSX.utils.json_to_sheet(guideRows)
+  const guideSheet = XLSX.utils.aoa_to_sheet(guideRows)
 
-  sampleSheet['!cols'] = [
-    { wch: 18 },
-    { wch: 28 },
-    { wch: 42 },
-    { wch: 14 },
-  ]
-
-  guideSheet['!cols'] = [
-    { wch: 18 },
-    { wch: 12 },
-    { wch: 55 },
-  ]
+  sampleSheet['!cols'] = autoFitColumns(sampleRows)
+  guideSheet['!cols'] = [{ wch: 24 }, { wch: 80 }]
 
   XLSX.utils.book_append_sheet(workbook, sampleSheet, 'Sample')
   XLSX.utils.book_append_sheet(workbook, guideSheet, 'Guide')
 
-  return XLSX.write(workbook, {
-    type: 'buffer',
-    bookType: 'xlsx',
+  return {
+    filename: 'department-import-sample.xlsx',
+    buffer: workbookToBuffer(workbook),
+  }
+}
+
+function readWorkbookRows(buffer) {
+  const workbook = XLSX.read(buffer, { type: 'buffer' })
+  const preferredSheetName = workbook.SheetNames.includes('Sample')
+    ? 'Sample'
+    : workbook.SheetNames[0]
+
+  if (!preferredSheetName) return []
+
+  const sheet = workbook.Sheets[preferredSheetName]
+
+  if (!sheet) return []
+
+  return XLSX.utils.sheet_to_json(sheet, {
+    defval: '',
+    raw: false,
   })
+}
+
+function normalizeImportStatus(value) {
+  const text = s(value).toLowerCase()
+
+  if (!text) return true
+  if (['active', 'true', 'yes', 'y', '1'].includes(text)) return true
+  if (['inactive', 'false', 'no', 'n', '0'].includes(text)) return false
+
+  return 'INVALID_STATUS'
+}
+
+function getCell(row, names = []) {
+  for (const name of names) {
+    if (Object.prototype.hasOwnProperty.call(row, name)) {
+      return row[name]
+    }
+  }
+
+  const normalized = Object.entries(row || {}).reduce((acc, [key, value]) => {
+    acc[upper(key)] = value
+    return acc
+  }, {})
+
+  for (const name of names) {
+    const value = normalized[upper(name)]
+
+    if (value !== undefined) return value
+  }
+
+  return ''
 }
 
 async function importDepartmentsExcel(fileBuffer) {
   if (!fileBuffer) {
-    const error = new Error('Excel file is required')
-    error.status = 400
-    throw error
+    throw appError({
+      statusCode: 400,
+      code: 'DEPARTMENT_EXCEL_FILE_REQUIRED',
+      messageKey: 'org.department.error.excelFileRequired',
+      message: 'Excel file is required',
+    })
   }
 
-  const workbook = XLSX.read(fileBuffer, { type: 'buffer' })
-  const firstSheetName = workbook.SheetNames[0]
-
-  if (!firstSheetName) {
-    const error = new Error('Excel sheet is empty')
-    error.status = 400
-    throw error
-  }
-
-  const worksheet = workbook.Sheets[firstSheetName]
-  const rows = XLSX.utils.sheet_to_json(worksheet, { defval: '' })
+  const rows = readWorkbookRows(fileBuffer)
 
   if (!rows.length) {
-    const error = new Error('Excel file has no rows')
-    error.status = 400
-    throw error
+    throw appError({
+      statusCode: 400,
+      code: 'DEPARTMENT_EXCEL_NO_ROWS',
+      messageKey: 'org.department.error.excelNoRows',
+      message: 'Excel file has no rows',
+    })
   }
 
-  let createdCount = 0
-  let updatedCount = 0
+  const seenCodes = new Set()
+  const normalizedRows = rows.map((row, index) => {
+    const rowNo = index + 2
+    const code = upper(getCell(row, ['Code', 'Department Code']))
+    const name = s(getCell(row, ['Name', 'Department Name']))
+    const description = s(getCell(row, ['Description']))
+    const isActive = normalizeImportStatus(getCell(row, ['Status', 'Active', 'Is Active']))
 
-  for (const row of rows) {
-    const rawCode = s(row.Code || row.code).toUpperCase()
-    const rawName = s(row.Name || row.name)
-    const rawDescription = s(row.Description || row.description)
-    const rawStatus = s(row.Status || row.status).toLowerCase()
-
-    if (!rawCode || !rawName) continue
-
-    const payload = {
-      code: rawCode,
-      name: rawName,
-      description: rawDescription,
-      isActive: rawStatus === 'inactive' ? false : true,
+    if (!code && !name && !description) {
+      return null
     }
 
-    const existing = await Department.findOne({ code: rawCode })
+    if (!code) {
+      throw appError({
+        statusCode: 400,
+        code: 'DEPARTMENT_IMPORT_CODE_REQUIRED',
+        messageKey: 'org.department.import.error.codeRequired',
+        message: `Row ${rowNo}: Code is required`,
+        params: { rowNo },
+      })
+    }
+
+    if (!name) {
+      throw appError({
+        statusCode: 400,
+        code: 'DEPARTMENT_IMPORT_NAME_REQUIRED',
+        messageKey: 'org.department.import.error.nameRequired',
+        message: `Row ${rowNo}: Name is required`,
+        params: { rowNo },
+      })
+    }
+
+    if (isActive === 'INVALID_STATUS') {
+      throw appError({
+        statusCode: 400,
+        code: 'DEPARTMENT_IMPORT_INVALID_STATUS',
+        messageKey: 'org.department.import.error.invalidStatus',
+        message: `Row ${rowNo}: Invalid status`,
+        params: { rowNo },
+      })
+    }
+
+    if (seenCodes.has(code)) {
+      throw appError({
+        statusCode: 400,
+        code: 'DEPARTMENT_IMPORT_DUPLICATE_CODE',
+        messageKey: 'org.department.import.error.duplicateCode',
+        message: `Row ${rowNo}: Duplicate code in import file`,
+        params: { rowNo, code },
+      })
+    }
+
+    seenCodes.add(code)
+
+    return {
+      rowNo,
+      code,
+      name,
+      description,
+      isActive,
+    }
+  }).filter(Boolean)
+
+  let created = 0
+  let updated = 0
+
+  for (const row of normalizedRows) {
+    const existing = await Department.findOne({ code: row.code })
+
     if (existing) {
-      Object.assign(existing, payload)
+      existing.name = row.name
+      existing.description = row.description
+      existing.isActive = row.isActive
+
       await existing.save()
-      updatedCount += 1
-    } else {
-      await Department.create(payload)
-      createdCount += 1
+      updated += 1
+      continue
     }
+
+    await Department.create({
+      code: row.code,
+      name: row.name,
+      description: row.description,
+      isActive: row.isActive,
+    })
+
+    created += 1
   }
 
   return {
-    createdCount,
-    updatedCount,
+    summary: {
+      totalRows: normalizedRows.length,
+      created,
+      updated,
+    },
+    messageKey: 'org.department.import.success.completed',
   }
 }
 

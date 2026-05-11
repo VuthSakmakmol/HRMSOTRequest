@@ -1,7 +1,12 @@
 // backend/src/modules/org/models/Department.js
+
 const mongoose = require('mongoose')
 
-const DepartmentSchema = new mongoose.Schema(
+function s(value) {
+  return String(value ?? '').trim()
+}
+
+const departmentSchema = new mongoose.Schema(
   {
     code: {
       type: String,
@@ -10,19 +15,25 @@ const DepartmentSchema = new mongoose.Schema(
       uppercase: true,
       minlength: 2,
       maxlength: 30,
+      unique: true,
+      index: true,
     },
+
     name: {
       type: String,
       required: true,
       trim: true,
       maxlength: 120,
+      index: true,
     },
+
     description: {
       type: String,
       trim: true,
       maxlength: 500,
       default: '',
     },
+
     isActive: {
       type: Boolean,
       default: true,
@@ -37,23 +48,22 @@ const DepartmentSchema = new mongoose.Schema(
   },
 )
 
-DepartmentSchema.pre('validate', function (next) {
-  if (this.code) this.code = String(this.code).trim().toUpperCase()
-  if (this.name) this.name = String(this.name).trim()
-  if (typeof this.description === 'string') {
-    this.description = this.description.trim()
-  }
+departmentSchema.pre('validate', function normalize(next) {
+  this.code = s(this.code).toUpperCase()
+  this.name = s(this.name)
+  this.description = s(this.description)
+
   next()
 })
 
-DepartmentSchema.index({ code: 1 }, { unique: true })
-DepartmentSchema.index({ name: 1 })
+departmentSchema.index({ name: 1 })
+departmentSchema.index({ isActive: 1, code: 1 })
 
-DepartmentSchema.virtual('positions', {
+departmentSchema.virtual('positions', {
   ref: 'Position',
   localField: '_id',
   foreignField: 'departmentId',
   justOne: false,
 })
 
-module.exports = mongoose.model('Department', DepartmentSchema)
+module.exports = mongoose.model('Department', departmentSchema)

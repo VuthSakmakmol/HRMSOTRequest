@@ -4,8 +4,11 @@ const mongoose = require('mongoose')
 
 const PaymentFormula = require('../models/PaymentFormula.model')
 const OTRequest = require('../../ot/models/OTRequest')
-const Employee = require('../../org/models/Employee')
-const attendanceService = require('../../attendance/services/attendance.service')
+const { parseSalaryExcel } = require('./salaryExcelParser.service')
+const {
+  formatYmdToDmy,
+  formatDateTimeToDmyHm,
+} = require('../../../shared/utils/dateFormat')
 
 function s(value) {
   return String(value ?? '').trim()
@@ -15,184 +18,174 @@ function upper(value) {
   return s(value).toUpperCase()
 }
 
-function isYMD(value) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(s(value))
-}
-
-function createError(message, status = 400) {
+function createHttpError(message, status = 400, messageKey = '') {
   const error = new Error(message)
   error.status = status
   error.statusCode = status
+  error.messageKey = messageKey
   return error
 }
 
-function round(value, decimals = 2) {
-  const precision = Number(decimals ?? 2)
-  const safeDecimals = Number.isInteger(precision) && precision >= 0 ? precision : 2
-  const factor = 10 ** safeDecimals
+function safeNumber(value, fallback = 0) {
+  const num = Number(value)
+  return Number.isFinite(num) ? num : fallback
+}
 
+function safeNonNegativeNumber(value, fallback = 0) {
+  const num = safeNumber(value, fallback)
+  return num < 0 ? fallback : num
+}
+
+function roundAmount(value, decimals = 2) {
+  const safeDecimals = Math.min(Math.max(Number(decimals || 0), 0), 6)
+  const factor = 10 ** safeDecimals
   return Math.round((Number(value || 0) + Number.EPSILON) * factor) / factor
 }
 
-function toNumber(value, fallback = 0) {
-  const number = Number(value)
-  return Number.isFinite(number) ? number : fallback
+function normalizeEmployeeNo(value) {
+  return upper(value)
 }
 
-function normalizeNameForWarning(value) {
-  return upper(value).replace(/\s+/g, ' ')
+function normalizeDayType(value) {
+  const dayType = upper(value)
+  if (['WORKING_DAY', 'SUNDAY', 'HOLIDAY'].includes(dayType)) return dayType
+  return 'WORKING_DAY'
 }
 
-function sameNameLoose(a, b) {
-  const left = normalizeNameForWarning(a)
-  const right = normalizeNameForWarning(b)
-
-  if (!left || !right) return true
-  return left === right
+function normalizeStatus(value) {
+  return upper(value)
 }
 
-function employeeKeyFromApprovedRow(row = {}) {
-  return s(row.employeeId)
+function getObjectIdString(value) {
+  return value ? String(value) : ''
 }
 
-function employeeCodeFromApprovedRow(row = {}) {
-  return upper(row.employeeCode)
+function getMultiplier(formula, dayType) {
+  const normalizedDayType = normalizeDayType(dayType)
+  return safeNonNegativeNumber(formula?.multipliers?.[normalizedDayType], 0)
 }
 
-function employeeNameFromMasterOrApproved(master = {}, approved = {}) {
-  return s(master.displayName || approved.employeeName)
+function getHourlyRate(monthlySalary, formula) {
+  const salary = safeNonNegativeNumber(monthlySalary, 0)
+  const monthlyWorkingDays = safeNonNegativeNumber(formula?.monthlyWorkingDays, 26)
+  const hoursPerDay = safeNonNegativeNumber(formula?.hoursPerDay, 8)
+
+  if (salary <= 0 || monthlyWorkingDays <= 0 || hoursPerDay <= 0) return 0
+
+  return salary / monthlyWorkingDays / hoursPerDay
 }
 
-function buildEmployeeMasterMap(employees = []) {
-  const map = new Map()
-
-  for (const employee of employees) {
-    map.set(String(employee._id), employee)
+function validateSalaryFile(file) {
+  if (!file) {
+    throw createHttpError(
+      'Salary Excel file is required',
+      400,
+      'payment.salary_file_required',
+    )
   }
 
-  return map
+  if (!file.buffer || !Buffer.isBuffer(file.buffer) || !file.buffer.length) {
+    throw createHttpError(
+      'Salary Excel file is empty or invalid',
+      400,
+      'payment.salary_file_invalid',
+    )
+  }
 }
 
-function buildApprovedEmployeeMap(approvedEmployees = []) {
-  const map = new Map()
+function mapFormula(doc = {}) {
+  return {
+    id: doc._id ? String(doc._id) : null,
+    code: upper(doc.code),
+    name: s(doc.name),
+    description: s(doc.description),
+    salaryBasis: upper(doc.salaryBasis || 'MONTHLY_SALARY'),
 
-  for (const item of Array.isArray(approvedEmployees) ? approvedEmployees : []) {
-    const employeeId = employeeKeyFromApprovedRow(item)
-    if (!employeeId) continue
+    monthlyWorkingDays: safeNonNegativeNumber(doc.monthlyWorkingDays, 26),
+    hoursPerDay: safeNonNegativeNumber(doc.hoursPerDay, 8),
 
-    map.set(employeeId, item)
+    multipliers: {
+      WORKING_DAY: safeNonNegativeNumber(doc.multipliers?.WORKING_DAY, 1.5),
+      SUNDAY: safeNonNegativeNumber(doc.multipliers?.SUNDAY, 2),
+      HOLIDAY: safeNonNegativeNumber(doc.multipliers?.HOLIDAY, 3),
+    },
+
+    roundingDecimals: Math.min(Math.max(Number(doc.roundingDecimals || 2), 0), 6),
+    currency: upper(doc.currency || 'USD'),
+    isActive: doc.isActive === true,
+  }
+}
+
+async function getFormulaOrThrow(formulaId) {
+  if (!mongoose.isValidObjectId(formulaId)) {
+    throw createHttpError(
+      'Invalid payment formula id',
+      400,
+      'payment.formula.invalid_id',
+    )
   }
 
-  return map
-}
+  const doc = await PaymentFormula.findById(formulaId).lean()
 
-function makeVerificationKey(row = {}) {
-  return s(row.employeeId) || upper(row.employeeCode || row.employeeNo)
-}
-
-function buildVerificationRowsMap(verification = {}) {
-  const map = new Map()
-
-  const groups = [
-    ...(Array.isArray(verification.attendedEmployees)
-      ? verification.attendedEmployees
-      : []),
-    ...(Array.isArray(verification.pendingReviewEmployees)
-      ? verification.pendingReviewEmployees
-      : []),
-    ...(Array.isArray(verification.shiftMismatchEmployees)
-      ? verification.shiftMismatchEmployees
-      : []),
-    ...(Array.isArray(verification.notEligibleEmployees)
-      ? verification.notEligibleEmployees
-      : []),
-  ]
-
-  for (const row of groups) {
-    const key = makeVerificationKey(row)
-    if (!key) continue
-
-    if (!map.has(key)) {
-      map.set(key, row)
-    }
+  if (!doc) {
+    throw createHttpError(
+      'Payment formula not found',
+      404,
+      'payment.formula.not_found',
+    )
   }
 
-  return map
+  if (doc.isActive !== true) {
+    throw createHttpError(
+      'Payment formula is inactive',
+      400,
+      'payment.formula.inactive',
+    )
+  }
+
+  return mapFormula(doc)
 }
 
-function addWarning(warningRows, data = {}) {
-  warningRows.push({
-    requestNo: s(data.requestNo),
-    otDate: s(data.otDate),
-    employeeNo: upper(data.employeeNo),
-    employeeName: s(data.employeeName),
-    reason: s(data.reason),
-  })
+function buildApprovedOTFilter(fromDate, toDate) {
+  return {
+    status: 'APPROVED',
+    otDate: {
+      $gte: s(fromDate),
+      $lte: s(toDate),
+    },
+  }
 }
 
-function addMissingSalary(missingSalaryRows, data = {}) {
-  missingSalaryRows.push({
-    requestNo: s(data.requestNo),
-    otDate: s(data.otDate),
-    employeeNo: upper(data.employeeNo),
-    employeeName: s(data.employeeName),
-    positionName: s(data.positionName),
-    lineName: s(data.lineName),
-    payableHours: toNumber(data.payableHours, 0),
-    reason: s(data.reason),
-  })
+async function fetchApprovedOTRequests(fromDate, toDate) {
+  return OTRequest.find(buildApprovedOTFilter(fromDate, toDate))
+    .sort({
+      otDate: 1,
+      requestNo: 1,
+      createdAt: 1,
+      _id: 1,
+    })
+    .lean()
 }
 
-function getRequestTime(request = {}) {
-  const start = s(request.requestStartTime || request.startTime)
-  const end = s(request.requestEndTime || request.endTime)
-
-  if (!start && !end) return ''
-  return `${start || '-'} - ${end || '-'}`
-}
-
-function getLineName(approved = {}) {
-  const lineCode = s(approved.lineCode)
-  const lineName = s(approved.lineName)
-  const lineLabel = s(approved.lineLabel)
-
-  if (lineLabel) return lineLabel
-  if (lineCode && lineName) return `${lineCode} · ${lineName}`
-  return lineName || lineCode
-}
-
-function getApprovedEmployees(request = {}) {
-  return Array.isArray(request.approvedEmployees) ? request.approvedEmployees : []
-}
-
-function getApprovedPaidCapMinutes(approved = {}, request = {}) {
-  const directPaid = toNumber(
-    approved.totalRequestPaidMinutes ?? approved.totalPaidMinutes,
+function resolveRequestPaidMinutes(otRequest = {}) {
+  const totalRequestPaidMinutes = safeNonNegativeNumber(
+    otRequest.totalRequestPaidMinutes ??
+      otRequest.totalPaidMinutes ??
+      otRequest.requestPaidMinutes,
     0,
   )
 
-  if (directPaid > 0) return directPaid
+  if (totalRequestPaidMinutes > 0) return totalRequestPaidMinutes
 
-  const employeeTotal = toNumber(approved.totalMinutes, 0)
-  if (employeeTotal > 0) return employeeTotal
+  const totalMinutes = safeNonNegativeNumber(otRequest.totalMinutes, 0)
+  if (totalMinutes > 0) return totalMinutes
 
-  const requestPaid = toNumber(
-    request.totalRequestPaidMinutes ?? request.totalPaidMinutes,
+  const requestedMinutes = safeNonNegativeNumber(
+    otRequest.requestedMinutes ?? otRequest.requestedOtMinutes,
     0,
   )
 
-  if (requestPaid > 0) return requestPaid
-
-  const requestTotal = toNumber(request.totalMinutes, 0)
-  if (requestTotal > 0) return requestTotal
-
-  const employeeRequested = toNumber(approved.requestedMinutes, 0)
-  const requestRequested = toNumber(request.requestedMinutes, 0)
-  const requestedMinutes = employeeRequested || requestRequested
-
-  const employeeBreak = toNumber(approved.breakMinutes, 0)
-  const requestBreak = toNumber(request.breakMinutes, 0)
-  const breakMinutes = employeeBreak || requestBreak
+  const breakMinutes = safeNonNegativeNumber(otRequest.breakMinutes, 0)
 
   if (requestedMinutes > 0 && breakMinutes > 0 && breakMinutes < requestedMinutes) {
     return requestedMinutes - breakMinutes
@@ -201,581 +194,320 @@ function getApprovedPaidCapMinutes(approved = {}, request = {}) {
   return requestedMinutes
 }
 
-function getApprovedBreakMinutes(approved = {}, request = {}) {
-  const employeeBreak = toNumber(approved.breakMinutes, 0)
-  if (employeeBreak > 0) return employeeBreak
+function resolveEmployeePaidMinutes(employee = {}, otRequest = {}) {
+  const employeePaidMinutes = safeNonNegativeNumber(
+    employee.approvedPaidMinutes ??
+      employee.payableMinutes ??
+      employee.paidMinutes ??
+      employee.totalRequestPaidMinutes ??
+      employee.requestPaidMinutes,
+    0,
+  )
 
-  return toNumber(request.breakMinutes, 0)
+  if (employeePaidMinutes > 0) return employeePaidMinutes
+
+  return resolveRequestPaidMinutes(otRequest)
 }
 
-function getApprovedRequestedMinutes(approved = {}, request = {}) {
-  const employeeRequested = toNumber(approved.requestedMinutes, 0)
-  if (employeeRequested > 0) return employeeRequested
+function resolveEmployeeSourceList(otRequest = {}) {
+  if (Array.isArray(otRequest.approvedEmployees) && otRequest.approvedEmployees.length) {
+    return otRequest.approvedEmployees
+  }
 
-  return toNumber(request.requestedMinutes || request.totalMinutes, 0)
+  if (Array.isArray(otRequest.requestedEmployees) && otRequest.requestedEmployees.length) {
+    return otRequest.requestedEmployees
+  }
+
+  return []
 }
 
-function getCappedPayableMinutes(verificationRow = {}, approved = {}, request = {}) {
-  const verificationPayableMinutes = toNumber(verificationRow.roundedOtMinutes, 0)
-  const approvedPaidCapMinutes = getApprovedPaidCapMinutes(approved, request)
+function buildSalaryInfo(salaryMap, employeeNo) {
+  const key = normalizeEmployeeNo(employeeNo)
+  const info = salaryMap.get(key)
 
-  if (approvedPaidCapMinutes > 0) {
-    return Math.min(verificationPayableMinutes, approvedPaidCapMinutes)
-  }
-
-  return verificationPayableMinutes
-}
-
-function getFormulaMultiplier(formula = {}, dayType = '') {
-  const normalizedDayType = upper(dayType)
-
-  if (!['WORKING_DAY', 'SUNDAY', 'HOLIDAY'].includes(normalizedDayType)) {
-    return null
-  }
-
-  const value = formula.multipliers?.[normalizedDayType]
-  const number = Number(value)
-
-  return Number.isFinite(number) && number >= 0 ? number : null
-}
-
-function buildApprovedOTFilter(fromDate, toDate) {
-  return {
-    status: 'APPROVED',
-    otDate: {
-      $gte: fromDate,
-      $lte: toDate,
-    },
-  }
-}
-
-function buildSalaryWarningRows(salaryMeta = {}) {
-  const rows = []
-
-  for (const row of Array.isArray(salaryMeta.invalidRows) ? salaryMeta.invalidRows : []) {
-    rows.push({
-      requestNo: '',
-      otDate: '',
-      employeeNo: upper(row.employeeNo),
-      employeeName: s(row.name || row.rawName),
-      reason: `Salary Excel row ${row.rowNo}: ${row.reason}`,
-    })
-  }
-
-  for (const row of Array.isArray(salaryMeta.duplicateRows) ? salaryMeta.duplicateRows : []) {
-    rows.push({
-      requestNo: '',
-      otDate: '',
-      employeeNo: upper(row.employeeNo),
-      employeeName: s(row.name),
-      reason: `Salary Excel row ${row.rowNo}: ${row.reason}`,
-    })
-  }
-
-  return rows
-}
-
-function isPayableVerificationRow(row = {}) {
-  return upper(row.otResult) === 'MATCH' && toNumber(row.roundedOtMinutes, 0) > 0
-}
-
-function buildNonPayableReason(row = {}) {
-  const otResult = upper(row.otResult)
-  const rawDecision = upper(row.rawOtDecision)
-  const attendanceStatus = upper(row.attendanceStatus || row.status)
-  const reason = s(row.otResultReason || row.derivedStatusReason)
-
-  if (reason) return reason
-
-  if (otResult && otResult !== 'MATCH') {
-    return `Attendance verification result is ${otResult}`
-  }
-
-  if (rawDecision) {
-    return `Attendance verification decision is ${rawDecision}`
-  }
-
-  if (attendanceStatus) {
-    return `Attendance status is ${attendanceStatus}`
-  }
-
-  return 'Attendance verification is not payable'
-}
-
-function pushVerificationGroupWarnings({
-  request,
-  verification,
-  warningRows,
-  approvedEmployeeMap,
-}) {
-  const requestNo = s(request.requestNo)
-  const otDate = s(request.otDate)
-
-  const groups = [
-    {
-      items: verification.absentFromApproved,
-      reason: 'Approved OT employee is absent or no attendance record was found',
-    },
-    {
-      items: verification.pendingReviewEmployees,
-      reason: 'Attendance is pending review because of forget scan',
-    },
-    {
-      items: verification.shiftMismatchEmployees,
-      reason: 'Attendance shift mismatch',
-    },
-    {
-      items: verification.notEligibleEmployees,
-      reason: 'Attendance is not eligible for OT payment',
-    },
-    {
-      items: verification.attendedButNotApproved,
-      reason: 'Employee attended but is not in final approved OT employee list',
-    },
-  ]
-
-  const seen = new Set()
-
-  for (const group of groups) {
-    for (const row of Array.isArray(group.items) ? group.items : []) {
-      const employeeId = s(row.employeeId)
-      const employeeNo = upper(row.employeeCode || row.employeeNo)
-      const key = employeeId || employeeNo
-
-      if (!key || seen.has(`${group.reason}|${key}`)) continue
-      seen.add(`${group.reason}|${key}`)
-
-      if (
-        group.reason === 'Employee attended but is not in final approved OT employee list' &&
-        employeeId &&
-        approvedEmployeeMap.has(employeeId)
-      ) {
-        continue
-      }
-
-      addWarning(warningRows, {
-        requestNo,
-        otDate,
-        employeeNo,
-        employeeName: row.employeeName,
-        reason: s(row.otResultReason) || group.reason,
-      })
+  if (!info) {
+    return {
+      hasSalary: false,
+      monthlySalary: 0,
+      salaryEmployeeName: '',
+      salaryRowNo: null,
     }
   }
-}
-
-async function loadEmployeeMasterMapForRequests(requests = []) {
-  const employeeIds = []
-
-  for (const request of requests) {
-    for (const employee of getApprovedEmployees(request)) {
-      const id = s(employee.employeeId)
-
-      if (id && mongoose.isValidObjectId(id)) {
-        employeeIds.push(id)
-      }
-    }
-  }
-
-  const uniqueIds = [...new Set(employeeIds)]
-
-  if (!uniqueIds.length) return new Map()
-
-  const employees = await Employee.find({
-    _id: {
-      $in: uniqueIds.map((id) => new mongoose.Types.ObjectId(id)),
-    },
-  })
-    .select({
-      _id: 1,
-      employeeNo: 1,
-      displayName: 1,
-      departmentId: 1,
-      positionId: 1,
-      lineId: 1,
-      shiftId: 1,
-      isActive: 1,
-    })
-    .populate({ path: 'departmentId', select: { _id: 1, code: 1, name: 1 } })
-    .populate({ path: 'positionId', select: { _id: 1, code: 1, name: 1 } })
-    .populate({ path: 'lineId', select: { _id: 1, code: 1, name: 1 } })
-    .lean()
-
-  return buildEmployeeMasterMap(employees)
-}
-
-async function calculatePaymentExport({
-  fromDate,
-  toDate,
-  formulaId,
-  salaryMap,
-  salaryMeta,
-}) {
-  const startDate = s(fromDate)
-  const endDate = s(toDate)
-
-  if (!isYMD(startDate)) {
-    throw createError('From date must be YYYY-MM-DD', 400)
-  }
-
-  if (!isYMD(endDate)) {
-    throw createError('To date must be YYYY-MM-DD', 400)
-  }
-
-  if (startDate > endDate) {
-    throw createError('From date cannot be after To date', 400)
-  }
-
-  if (!mongoose.Types.ObjectId.isValid(formulaId)) {
-    throw createError('Invalid formula ID', 400)
-  }
-
-  if (!(salaryMap instanceof Map)) {
-    throw createError('Salary data is invalid', 400)
-  }
-
-  const formula = await PaymentFormula.findById(formulaId).lean()
-
-  if (!formula) {
-    throw createError('Payment formula not found', 404)
-  }
-
-  if (!formula.isActive) {
-    throw createError('Selected payment formula is inactive', 400)
-  }
-
-  const monthlyWorkingDays = toNumber(formula.monthlyWorkingDays, 0)
-  const hoursPerDay = toNumber(formula.hoursPerDay, 0)
-
-  if (monthlyWorkingDays <= 0 || hoursPerDay <= 0) {
-    throw createError(
-      'Payment formula working days and hours per day must be greater than zero',
-      400,
-    )
-  }
-
-  const requests = await OTRequest.find(buildApprovedOTFilter(startDate, endDate))
-    .sort({ otDate: 1, requestNo: 1 })
-    .lean()
-
-  const employeeMasterMap = await loadEmployeeMasterMapForRequests(requests)
-
-  const detailRows = []
-  const missingSalaryRows = []
-  const warningRows = buildSalaryWarningRows(salaryMeta)
-  const summaryMap = new Map()
-
-  for (const request of requests) {
-    const requestNo = s(request.requestNo)
-    const otDate = s(request.otDate)
-    const storedDayType = upper(request.dayType)
-    const requestTime = getRequestTime(request)
-    const approvedEmployees = getApprovedEmployees(request)
-    const approvedEmployeeMap = buildApprovedEmployeeMap(approvedEmployees)
-
-    if (!approvedEmployees.length) {
-      addWarning(warningRows, {
-        requestNo,
-        otDate,
-        reason: 'Approved OT request has no approvedEmployees',
-      })
-      continue
-    }
-
-    let verificationPayload = null
-
-    try {
-      verificationPayload = await attendanceService.verifyOTRequest(request._id)
-    } catch (error) {
-      addWarning(warningRows, {
-        requestNo,
-        otDate,
-        reason: `Attendance verification failed: ${error.message}`,
-      })
-      continue
-    }
-
-    const verificationOtRequest = verificationPayload?.otRequest || {}
-
-    const internalCalendarDayType = upper(
-      verificationOtRequest.internalCalendarDayType ||
-        verificationOtRequest.dayType ||
-        storedDayType,
-    )
-
-    const dayType = internalCalendarDayType
-
-    if (storedDayType && internalCalendarDayType && storedDayType !== internalCalendarDayType) {
-      addWarning(warningRows, {
-        requestNo,
-        otDate,
-        reason: `Stored OT day type is ${storedDayType}, but internal calendar says ${internalCalendarDayType}. Payment used ${internalCalendarDayType}.`,
-      })
-    }
-
-    const multiplier = getFormulaMultiplier(formula, dayType)
-
-    if (multiplier === null) {
-      addWarning(warningRows, {
-        requestNo,
-        otDate,
-        reason: `Payment formula has no valid multiplier for internal calendar day type ${dayType}`,
-      })
-      continue
-    }
-
-    const verification = verificationPayload?.verification || {}
-    const verificationRowsMap = buildVerificationRowsMap(verification)
-
-    pushVerificationGroupWarnings({
-      request,
-      verification,
-      warningRows,
-      approvedEmployeeMap,
-    })
-
-    for (const approved of approvedEmployees) {
-      const employeeId = employeeKeyFromApprovedRow(approved)
-      const snapshotEmployeeCode = employeeCodeFromApprovedRow(approved)
-
-      if (!employeeId || !mongoose.isValidObjectId(employeeId)) {
-        addWarning(warningRows, {
-          requestNo,
-          otDate,
-          employeeNo: snapshotEmployeeCode,
-          employeeName: approved.employeeName,
-          reason: 'Approved employee row has invalid employeeId',
-        })
-        continue
-      }
-
-      const employeeMaster = employeeMasterMap.get(employeeId)
-
-      if (!employeeMaster) {
-        addWarning(warningRows, {
-          requestNo,
-          otDate,
-          employeeNo: snapshotEmployeeCode,
-          employeeName: approved.employeeName,
-          reason: 'Employee master record not found',
-        })
-        continue
-      }
-
-      const masterEmployeeNo = upper(employeeMaster.employeeNo)
-      const employeeName = employeeNameFromMasterOrApproved(employeeMaster, approved)
-
-      if (!masterEmployeeNo) {
-        addWarning(warningRows, {
-          requestNo,
-          otDate,
-          employeeName,
-          reason: 'Employee master has no employeeNo',
-        })
-        continue
-      }
-
-      if (snapshotEmployeeCode && snapshotEmployeeCode !== masterEmployeeNo) {
-        addWarning(warningRows, {
-          requestNo,
-          otDate,
-          employeeNo: masterEmployeeNo,
-          employeeName,
-          reason: `OT employeeCode ${snapshotEmployeeCode} does not match Employee master employeeNo ${masterEmployeeNo}`,
-        })
-      }
-
-      const verificationRow =
-        verificationRowsMap.get(employeeId) || verificationRowsMap.get(masterEmployeeNo)
-
-      if (!verificationRow) {
-        addWarning(warningRows, {
-          requestNo,
-          otDate,
-          employeeNo: masterEmployeeNo,
-          employeeName,
-          reason: 'No attendance verification row found for approved employee',
-        })
-        continue
-      }
-
-      if (!isPayableVerificationRow(verificationRow)) {
-        addWarning(warningRows, {
-          requestNo,
-          otDate,
-          employeeNo: masterEmployeeNo,
-          employeeName,
-          reason: buildNonPayableReason(verificationRow),
-        })
-        continue
-      }
-
-      const approvedRequestedMinutes = getApprovedRequestedMinutes(approved, request)
-      const approvedBreakMinutes = getApprovedBreakMinutes(approved, request)
-      const approvedPaidCapMinutes = getApprovedPaidCapMinutes(approved, request)
-
-      const verificationRoundedMinutes = toNumber(verificationRow.roundedOtMinutes, 0)
-      const payableMinutes = getCappedPayableMinutes(
-        verificationRow,
-        approved,
-        request,
-      )
-      const payableHours = payableMinutes / 60
-
-      const salaryInfo = salaryMap.get(masterEmployeeNo)
-
-      if (!salaryInfo) {
-        addMissingSalary(missingSalaryRows, {
-          requestNo,
-          otDate,
-          employeeNo: masterEmployeeNo,
-          employeeName,
-          positionName: approved.positionName || employeeMaster.positionId?.name,
-          lineName: getLineName(approved) || employeeMaster.lineId?.name,
-          payableHours: round(payableHours, 4),
-          reason: 'Salary not found in uploaded Excel by Employee ID',
-        })
-        continue
-      }
-
-      if (approvedPaidCapMinutes > 0 && verificationRoundedMinutes > approvedPaidCapMinutes) {
-        addWarning(warningRows, {
-          requestNo,
-          otDate,
-          employeeNo: masterEmployeeNo,
-          employeeName,
-          reason: `Payment capped by total request paid minutes: verification ${verificationRoundedMinutes} min, request paid ${approvedPaidCapMinutes} min`,
-        })
-      }
-
-      if (!sameNameLoose(salaryInfo.name, employeeName)) {
-        addWarning(warningRows, {
-          requestNo,
-          otDate,
-          employeeNo: masterEmployeeNo,
-          employeeName,
-          reason: `Salary Excel name "${salaryInfo.name}" does not match Employee master name "${employeeName}"`,
-        })
-      }
-
-      const monthlySalary = toNumber(salaryInfo.salary, 0)
-
-      if (monthlySalary < 0) {
-        addWarning(warningRows, {
-          requestNo,
-          otDate,
-          employeeNo: masterEmployeeNo,
-          employeeName,
-          reason: 'Salary is invalid',
-        })
-        continue
-      }
-
-      const hourlyRate = monthlySalary / monthlyWorkingDays / hoursPerDay
-      const amount = payableHours * hourlyRate * multiplier
-
-      const positionName = s(approved.positionName || employeeMaster.positionId?.name)
-      const lineName = s(getLineName(approved) || employeeMaster.lineId?.name)
-
-      const detail = {
-        otDate,
-        requestNo,
-        requestTime,
-
-        // ✅ Payment multiplier day type source
-        dayType,
-        storedDayType,
-        internalCalendarDayType,
-
-        employeeId,
-        employeeNo: masterEmployeeNo,
-        employeeName,
-        salaryExcelName: s(salaryInfo.name),
-
-        positionName,
-        lineName,
-
-        monthlySalary: round(monthlySalary, formula.roundingDecimals),
-        monthlyWorkingDays,
-        hoursPerDay,
-        hourlyRate: round(hourlyRate, 6),
-
-        shiftOtOptionId: request.shiftOtOptionId ? String(request.shiftOtOptionId) : null,
-        shiftOtOptionLabel: s(request.shiftOtOptionLabel),
-        requestStartTime: s(request.requestStartTime || request.startTime),
-        requestEndTime: s(request.requestEndTime || request.endTime),
-
-        requestedMinutes: approvedRequestedMinutes,
-        breakMinutes: approvedBreakMinutes,
-        totalRequestPaidMinutes: approvedPaidCapMinutes,
-        requestPaidMinutes: approvedPaidCapMinutes,
-
-        verificationRequestedMinutes: toNumber(verificationRow.requestedMinutes, 0),
-        actualOtMinutes: toNumber(verificationRow.actualOtMinutes, 0),
-        eligibleOtMinutes: toNumber(verificationRow.eligibleOtMinutes, 0),
-        verificationRoundedOtMinutes: verificationRoundedMinutes,
-        roundedOtMinutes: payableMinutes,
-        payableMinutes,
-        cappedByRequestPaidMinutes:
-          approvedPaidCapMinutes > 0 && verificationRoundedMinutes > approvedPaidCapMinutes,
-
-        payableHours: round(payableHours, 4),
-        multiplier,
-        amount: round(amount, formula.roundingDecimals),
-
-        currency: formula.currency || 'USD',
-
-        attendanceStatus: upper(verificationRow.attendanceStatus),
-        clockIn: s(verificationRow.clockIn),
-        clockOut: s(verificationRow.clockOut),
-        rawOtDecision: upper(verificationRow.rawOtDecision),
-        otResult: upper(verificationRow.otResult),
-        otResultReason: s(verificationRow.otResultReason),
-      }
-
-      detailRows.push(detail)
-
-      if (!summaryMap.has(masterEmployeeNo)) {
-        summaryMap.set(masterEmployeeNo, {
-          employeeNo: masterEmployeeNo,
-          employeeName,
-          salaryExcelName: s(salaryInfo.name),
-          positionName,
-          lineName,
-          monthlySalary: round(monthlySalary, formula.roundingDecimals),
-          totalPayableHours: 0,
-          totalAmount: 0,
-          currency: formula.currency || 'USD',
-        })
-      }
-
-      const summary = summaryMap.get(masterEmployeeNo)
-      summary.totalPayableHours += payableHours
-      summary.totalAmount += amount
-    }
-  }
-
-  const summaryRows = [...summaryMap.values()]
-    .map((row) => ({
-      ...row,
-      totalPayableHours: round(row.totalPayableHours, 4),
-      totalAmount: round(row.totalAmount, formula.roundingDecimals),
-    }))
-    .sort((a, b) => a.employeeNo.localeCompare(b.employeeNo))
 
   return {
+    hasSalary: true,
+    monthlySalary: safeNonNegativeNumber(info.salary, 0),
+    salaryEmployeeName: s(info.name),
+    salaryRowNo: Number(info.rowNo || 0) || null,
+  }
+}
+
+function buildPaymentItem({ otRequest, employee, formula, salaryInfo }) {
+  const employeeNo = normalizeEmployeeNo(employee.employeeNo || employee.employeeCode)
+  const employeeName = s(employee.employeeName || employee.name)
+
+  const dayType = normalizeDayType(otRequest.dayType)
+  const multiplier = getMultiplier(formula, dayType)
+
+  const monthlySalary = safeNonNegativeNumber(salaryInfo.monthlySalary, 0)
+  const hourlyRate = getHourlyRate(monthlySalary, formula)
+
+  const requestedMinutes = safeNonNegativeNumber(
+    otRequest.requestedMinutes ?? otRequest.requestedOtMinutes ?? otRequest.totalMinutes,
+    0,
+  )
+
+  const breakMinutes = safeNonNegativeNumber(otRequest.breakMinutes, 0)
+  const requestPaidMinutes = resolveRequestPaidMinutes(otRequest)
+  const payableMinutes = resolveEmployeePaidMinutes(employee, otRequest)
+
+  const payableHours = payableMinutes / 60
+  const rawAmount = hourlyRate * multiplier * payableHours
+  const amount = salaryInfo.hasSalary
+    ? roundAmount(rawAmount, formula.roundingDecimals)
+    : 0
+
+  return {
+    otRequestId: getObjectIdString(otRequest._id),
+    requestNo: s(otRequest.requestNo),
+
+    otDate: s(otRequest.otDate),
+    otDateDisplay: formatYmdToDmy(otRequest.otDate),
+
+    dayType,
+    status: normalizeStatus(otRequest.status),
+
+    requesterEmployeeId: getObjectIdString(otRequest.requesterEmployeeId),
+    requesterEmployeeNo: normalizeEmployeeNo(otRequest.requesterEmployeeNo),
+    requesterName: s(otRequest.requesterName),
+
+    employeeId: getObjectIdString(employee.employeeId),
+    employeeNo,
+    employeeName,
+
+    departmentId: getObjectIdString(employee.departmentId),
+    departmentCode: upper(employee.departmentCode),
+    departmentName: s(employee.departmentName),
+
+    positionId: getObjectIdString(employee.positionId),
+    positionCode: upper(employee.positionCode),
+    positionName: s(employee.positionName),
+
+    lineId: getObjectIdString(employee.lineId),
+    lineCode: upper(employee.lineCode),
+    lineName: s(employee.lineName),
+
+    shiftId: getObjectIdString(otRequest.shiftId || employee.shiftId),
+    shiftCode: upper(otRequest.shiftCode || employee.shiftCode),
+    shiftName: s(otRequest.shiftName || employee.shiftName),
+    shiftType: upper(otRequest.shiftType || employee.shiftType),
+
+    shiftOtOptionId: getObjectIdString(otRequest.shiftOtOptionId),
+    shiftOtOptionLabel: s(otRequest.shiftOtOptionLabel),
+    shiftOtOptionTimingMode: upper(otRequest.shiftOtOptionTimingMode),
+
+    requestStartTime: s(otRequest.requestStartTime || otRequest.startTime),
+    requestEndTime: s(otRequest.requestEndTime || otRequest.endTime),
+
+    requestedMinutes,
+    breakMinutes,
+    requestPaidMinutes,
+    payableMinutes,
+    payableHours: roundAmount(payableHours, 4),
+
+    monthlySalary,
+    hourlyRate: roundAmount(hourlyRate, formula.roundingDecimals + 4),
+    multiplier,
+
+    currency: formula.currency,
+    amount,
+
+    hasSalary: salaryInfo.hasSalary,
+    salaryEmployeeName: salaryInfo.salaryEmployeeName,
+    salaryRowNo: salaryInfo.salaryRowNo,
+
+    formulaId: formula.id,
+    formulaCode: formula.code,
+    formulaName: formula.name,
+  }
+}
+
+function buildPaymentItems({ otRequests, salaryMap, formula }) {
+  const items = []
+  const missingSalaryEmployeesMap = new Map()
+
+  for (const otRequest of otRequests) {
+    const employees = resolveEmployeeSourceList(otRequest)
+
+    for (const employee of employees) {
+      const employeeNo = normalizeEmployeeNo(employee.employeeNo || employee.employeeCode)
+      if (!employeeNo) continue
+
+      const salaryInfo = buildSalaryInfo(salaryMap, employeeNo)
+
+      const item = buildPaymentItem({
+        otRequest,
+        employee,
+        formula,
+        salaryInfo,
+      })
+
+      items.push(item)
+
+      if (!salaryInfo.hasSalary && !missingSalaryEmployeesMap.has(employeeNo)) {
+        missingSalaryEmployeesMap.set(employeeNo, {
+          employeeNo,
+          employeeName: item.employeeName,
+          departmentName: item.departmentName,
+          positionName: item.positionName,
+          lineName: item.lineName,
+          reason: 'Salary not found in uploaded salary Excel',
+        })
+      }
+    }
+  }
+
+  return {
+    items,
+    missingSalaryEmployees: Array.from(missingSalaryEmployeesMap.values()),
+  }
+}
+
+function summarizePaymentItems(items = []) {
+  const summaryByEmployeeMap = new Map()
+  const summaryByDayTypeMap = new Map()
+
+  let totalPayableMinutes = 0
+  let totalAmount = 0
+  let payableItemCount = 0
+  let missingSalaryItemCount = 0
+
+  for (const item of items) {
+    totalPayableMinutes += safeNonNegativeNumber(item.payableMinutes, 0)
+    totalAmount += safeNonNegativeNumber(item.amount, 0)
+
+    if (item.hasSalary) payableItemCount += 1
+    if (!item.hasSalary) missingSalaryItemCount += 1
+
+    const employeeKey = item.employeeId || item.employeeNo
+
+    if (employeeKey) {
+      const existing = summaryByEmployeeMap.get(employeeKey) || {
+        employeeId: item.employeeId,
+        employeeNo: item.employeeNo,
+        employeeName: item.employeeName,
+        departmentName: item.departmentName,
+        positionName: item.positionName,
+        lineName: item.lineName,
+        monthlySalary: item.monthlySalary,
+        currency: item.currency,
+        payableMinutes: 0,
+        payableHours: 0,
+        amount: 0,
+        requestCount: 0,
+      }
+
+      existing.payableMinutes += safeNonNegativeNumber(item.payableMinutes, 0)
+      existing.payableHours = roundAmount(existing.payableMinutes / 60, 4)
+      existing.amount = roundAmount(existing.amount + safeNonNegativeNumber(item.amount, 0), 2)
+      existing.requestCount += 1
+
+      summaryByEmployeeMap.set(employeeKey, existing)
+    }
+
+    const dayType = normalizeDayType(item.dayType)
+
+    const existingDayType = summaryByDayTypeMap.get(dayType) || {
+      dayType,
+      payableMinutes: 0,
+      payableHours: 0,
+      amount: 0,
+      requestCount: 0,
+    }
+
+    existingDayType.payableMinutes += safeNonNegativeNumber(item.payableMinutes, 0)
+    existingDayType.payableHours = roundAmount(existingDayType.payableMinutes / 60, 4)
+    existingDayType.amount = roundAmount(
+      existingDayType.amount + safeNonNegativeNumber(item.amount, 0),
+      2,
+    )
+    existingDayType.requestCount += 1
+
+    summaryByDayTypeMap.set(dayType, existingDayType)
+  }
+
+  return {
+    totalItemCount: items.length,
+    payableItemCount,
+    missingSalaryItemCount,
+
+    totalPayableMinutes,
+    totalPayableHours: roundAmount(totalPayableMinutes / 60, 4),
+    totalAmount: roundAmount(totalAmount, 2),
+
+    summaryByEmployee: Array.from(summaryByEmployeeMap.values()).sort((a, b) =>
+      String(a.employeeNo).localeCompare(String(b.employeeNo)),
+    ),
+
+    summaryByDayType: Array.from(summaryByDayTypeMap.values()).sort((a, b) =>
+      String(a.dayType).localeCompare(String(b.dayType)),
+    ),
+  }
+}
+
+async function buildPaymentPreview({ salaryFile, fromDate, toDate, formulaId }) {
+  validateSalaryFile(salaryFile)
+
+  const formula = await getFormulaOrThrow(formulaId)
+  const parsedSalary = parseSalaryExcel(salaryFile.buffer)
+  const otRequests = await fetchApprovedOTRequests(fromDate, toDate)
+
+  const { items, missingSalaryEmployees } = buildPaymentItems({
+    otRequests,
+    salaryMap: parsedSalary.salaryMap,
     formula,
-    fromDate: startDate,
-    toDate: endDate,
-    salaryMeta,
-    requestCount: requests.length,
-    summaryRows,
-    detailRows,
-    missingSalaryRows,
-    warningRows,
+  })
+
+  const summary = summarizePaymentItems(items)
+  const generatedAt = new Date()
+
+  return {
+    period: {
+      fromDate: s(fromDate),
+      fromDateDisplay: formatYmdToDmy(fromDate),
+      toDate: s(toDate),
+      toDateDisplay: formatYmdToDmy(toDate),
+    },
+
+    generatedAt,
+    generatedAtDisplayHm: formatDateTimeToDmyHm(generatedAt),
+
+    formula,
+
+    salaryFile: {
+      originalName: s(salaryFile.originalname),
+      mimeType: s(salaryFile.mimetype),
+      size: Number(salaryFile.size || salaryFile.buffer?.length || 0),
+      sheetName: s(parsedSalary.sheetName),
+      rowsCount: parsedSalary.rowsCount,
+      validCount: parsedSalary.validCount,
+      invalidRows: parsedSalary.invalidRows,
+      duplicateRows: parsedSalary.duplicateRows,
+    },
+
+    otRequestCount: otRequests.length,
+
+    summary,
+    items,
+
+    issues: {
+      invalidSalaryRows: parsedSalary.invalidRows,
+      duplicateSalaryRows: parsedSalary.duplicateRows,
+      missingSalaryEmployees,
+    },
   }
 }
 
 module.exports = {
-  calculatePaymentExport,
+  buildPaymentPreview,
 }

@@ -1,98 +1,120 @@
 // backend/src/modules/ot/services/otPolicy.service.js
+
+const mongoose = require('mongoose')
+
+const AppError = require('../../../shared/errors/AppError')
 const OTCalculationPolicy = require('../models/OTCalculationPolicy')
-const {
-  objectIdSchema,
-  createOTCalculationPolicySchema,
-  updateOTCalculationPolicySchema,
-  listOTCalculationPoliciesQuerySchema,
-  lookupOTCalculationPoliciesQuerySchema,
-} = require('../validators/otPolicy.validation')
 
 function s(value) {
   return String(value ?? '').trim()
 }
 
-function createHttpError(message, status = 400) {
-  const error = new Error(message)
-  error.status = status
-  return error
+function upper(value) {
+  return s(value).toUpperCase()
 }
 
-function parseSchema(schema, data) {
-  try {
-    return schema.parse(data)
-  } catch (error) {
-    if (error?.name === 'ZodError') {
-      throw createHttpError(error.issues?.[0]?.message || 'Validation error', 400)
-    }
+function id(value) {
+  return value ? String(value?._id || value?.id || value) : ''
+}
 
-    throw error
-  }
+function isObjectId(value) {
+  return mongoose.Types.ObjectId.isValid(String(value || ''))
+}
+
+function appError({
+  statusCode = 400,
+  code,
+  messageKey,
+  message,
+  field = null,
+  params = {},
+}) {
+  return new AppError({
+    statusCode,
+    code,
+    messageKey,
+    message,
+    field,
+    params,
+  })
 }
 
 function escapeRegex(value) {
-  return s(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-function buildListQuery(query = {}) {
+function actorAccountId(authUser) {
+  const actorId = authUser?.accountId || authUser?.id || authUser?._id
+
+  return isObjectId(actorId) ? actorId : null
+}
+
+function buildFilter(query = {}) {
   const filter = {}
 
-  const search = s(query.search)
-  if (search) {
-    const keyword = escapeRegex(search)
+  const keyword = s(query.search)
 
-    filter.$or = [
-      { code: { $regex: keyword, $options: 'i' } },
-      { name: { $regex: keyword, $options: 'i' } },
-      { description: { $regex: keyword, $options: 'i' } },
-    ]
+  if (keyword) {
+    const regex = new RegExp(escapeRegex(keyword), 'i')
+
+    filter.$or = [{ code: regex }, { name: regex }, { description: regex }]
   }
 
-  if (query.isActive !== undefined && query.isActive !== '') {
-    filter.isActive = Boolean(query.isActive)
+  if (typeof query.isActive === 'boolean') {
+    filter.isActive = query.isActive
   }
 
   if (query.roundMethod) {
-    filter.roundMethod = s(query.roundMethod).toUpperCase()
+    filter.roundMethod = upper(query.roundMethod)
   }
 
   return filter
 }
 
 function buildSort(sortField = 'createdAt', sortOrder = -1) {
+  const allowedFields = new Set([
+    'createdAt',
+    'updatedAt',
+    'code',
+    'name',
+    'roundMethod',
+    'roundUnitMinutes',
+    'minEligibleMinutes',
+    'graceAfterShiftEndMinutes',
+    'isActive',
+  ])
+
+  const field = allowedFields.has(sortField) ? sortField : 'createdAt'
   const direction = Number(sortOrder) === 1 ? 1 : -1
 
-  if (sortField === 'code') return { code: direction, _id: -1 }
-  if (sortField === 'name') return { name: direction, _id: -1 }
-  if (sortField === 'roundMethod') return { roundMethod: direction, code: 1, _id: -1 }
-  if (sortField === 'roundUnitMinutes') return { roundUnitMinutes: direction, code: 1, _id: -1 }
-  if (sortField === 'minEligibleMinutes') return { minEligibleMinutes: direction, code: 1, _id: -1 }
-  if (sortField === 'graceAfterShiftEndMinutes') {
-    return { graceAfterShiftEndMinutes: direction, code: 1, _id: -1 }
+  return {
+    [field]: direction,
+    _id: -1,
   }
-  if (sortField === 'isActive') return { isActive: direction, code: 1, _id: -1 }
-  if (sortField === 'updatedAt') return { updatedAt: direction, _id: -1 }
-
-  return { createdAt: direction, _id: -1 }
 }
 
-function normalizePolicy(doc) {
+function mapPolicy(doc) {
   if (!doc) return null
 
   return {
-    id: String(doc._id),
-    _id: String(doc._id),
+    id: id(doc._id),
+    _id: id(doc._id),
 
-    code: s(doc.code),
-    name: s(doc.name),
-    description: s(doc.description),
+    code: doc.code || '',
+    name: doc.name || '',
+    label: [doc.code, doc.name].filter(Boolean).join(' - '),
+
+    description: doc.description || '',
 
     minEligibleMinutes: Number(doc.minEligibleMinutes || 0),
     roundUnitMinutes: Number(doc.roundUnitMinutes || 0),
-    roundMethod: s(doc.roundMethod).toUpperCase(),
+    roundMethod: upper(doc.roundMethod || 'CEIL'),
+    roundMethodKey: `ot.policy.roundMethod.${upper(doc.roundMethod || 'CEIL').toLowerCase()}`,
+
     graceAfterShiftEndMinutes: Number(doc.graceAfterShiftEndMinutes || 0),
+
     allowApprovedOtWithoutExactClockOut:
-    doc.allowApprovedOtWithoutExactClockOut === true,
+      doc.allowApprovedOtWithoutExactClockOut === true,
 
     allowPreShiftOT: doc.allowPreShiftOT === true,
     allowPostShiftOT: doc.allowPostShiftOT !== false,
@@ -101,117 +123,115 @@ function normalizePolicy(doc) {
     treatForgetScanOutAsPending: doc.treatForgetScanOutAsPending !== false,
 
     isActive: doc.isActive !== false,
+    statusCode: doc.isActive !== false ? 'ACTIVE' : 'INACTIVE',
+    statusKey:
+      doc.isActive !== false ? 'common.status.active' : 'common.status.inactive',
+    statusSeverity: doc.isActive !== false ? 'success' : 'danger',
 
-    createdBy: doc.createdBy ? String(doc.createdBy) : null,
-    updatedBy: doc.updatedBy ? String(doc.updatedBy) : null,
+    createdBy: id(doc.createdBy) || null,
+    updatedBy: id(doc.updatedBy) || null,
     createdAt: doc.createdAt || null,
     updatedAt: doc.updatedAt || null,
   }
 }
 
-function normalizePolicyLookupItem(doc) {
-  if (!doc) return null
+function mapLookupItem(doc) {
+  const item = mapPolicy(doc)
 
   return {
-    id: String(doc._id),
-    _id: String(doc._id),
-    code: s(doc.code),
-    name: s(doc.name),
-    label: [s(doc.code), s(doc.name)].filter(Boolean).join(' - '),
-    roundMethod: s(doc.roundMethod).toUpperCase(),
-    roundUnitMinutes: Number(doc.roundUnitMinutes || 0),
-    minEligibleMinutes: Number(doc.minEligibleMinutes || 0),
-    graceAfterShiftEndMinutes: Number(doc.graceAfterShiftEndMinutes || 0),
-      allowApprovedOtWithoutExactClockOut:
-    doc.allowApprovedOtWithoutExactClockOut === true,
-    isActive: doc.isActive !== false,
+    id: item.id,
+    _id: item._id,
+
+    code: item.code,
+    name: item.name,
+    label: item.label,
+
+    minEligibleMinutes: item.minEligibleMinutes,
+    roundUnitMinutes: item.roundUnitMinutes,
+    roundMethod: item.roundMethod,
+    roundMethodKey: item.roundMethodKey,
+    graceAfterShiftEndMinutes: item.graceAfterShiftEndMinutes,
+
+    allowApprovedOtWithoutExactClockOut:
+      item.allowApprovedOtWithoutExactClockOut,
+
+    allowPreShiftOT: item.allowPreShiftOT,
+    allowPostShiftOT: item.allowPostShiftOT,
+    capByRequestedMinutes: item.capByRequestedMinutes,
+    treatForgetScanInAsPending: item.treatForgetScanInAsPending,
+    treatForgetScanOutAsPending: item.treatForgetScanOutAsPending,
+
+    isActive: item.isActive,
+  }
+}
+
+async function ensureObjectId(value, field = 'id') {
+  if (!isObjectId(value)) {
+    throw appError({
+      statusCode: 400,
+      code: 'INVALID_ID',
+      messageKey: 'common.error.invalidId',
+      message: 'Invalid id',
+      field,
+      params: { value },
+    })
   }
 }
 
 async function ensureUniqueCode(code, excludeId = null) {
+  const normalizedCode = upper(code)
+
   const filter = {
-    code: s(code).toUpperCase(),
+    code: normalizedCode,
   }
 
   if (excludeId) {
-    filter._id = { $ne: excludeId }
+    filter._id = {
+      $ne: excludeId,
+    }
   }
 
-  const existing = await OTCalculationPolicy.findOne(filter).lean()
+  const exists = await OTCalculationPolicy.exists(filter)
 
-  if (existing) {
-    throw createHttpError('OT calculation policy code already exists', 409)
+  if (exists) {
+    throw appError({
+      statusCode: 409,
+      code: 'OT_POLICY_CODE_EXISTS',
+      messageKey: 'ot.policy.error.codeExists',
+      message: 'OT calculation policy code already exists',
+      field: 'code',
+      params: {
+        code: normalizedCode,
+      },
+    })
   }
-}
-
-function actorAccountId(authUser) {
-  return authUser?.accountId || authUser?._id || null
 }
 
 async function lookupOTCalculationPolicies(query = {}) {
-  const parsed = parseSchema(lookupOTCalculationPoliciesQuerySchema, query)
-
-  const filter = buildListQuery(parsed)
+  const limit = Number(query.limit || 50)
+  const filter = buildFilter(query)
 
   const items = await OTCalculationPolicy.find(filter)
-    .sort({ name: 1, code: 1, _id: -1 })
-    .limit(parsed.limit)
+    .sort({ name: 1, code: 1, _id: 1 })
+    .limit(limit)
     .lean()
 
   return {
-    items: items.map(normalizePolicyLookupItem),
+    items: items.map(mapLookupItem),
     meta: {
-      limit: parsed.limit,
+      limit,
       count: items.length,
     },
   }
 }
 
-async function create(payload, authUser) {
-  const data = parseSchema(createOTCalculationPolicySchema, payload)
-
-  await ensureUniqueCode(data.code)
-
-  const doc = await OTCalculationPolicy.create({
-    ...data,
-    createdBy: actorAccountId(authUser),
-    updatedBy: actorAccountId(authUser),
-  })
-
-  return normalizePolicy(doc.toObject())
-}
-
-async function update(id, payload, authUser) {
-  const policyId = parseSchema(objectIdSchema, id)
-  const data = parseSchema(updateOTCalculationPolicySchema, payload)
-
-  const doc = await OTCalculationPolicy.findById(policyId)
-
-  if (!doc) {
-    throw createHttpError('OT calculation policy not found', 404)
-  }
-
-  if (data.code) {
-    await ensureUniqueCode(data.code, policyId)
-  }
-
-  Object.assign(doc, data)
-  doc.updatedBy = actorAccountId(authUser)
-
-  await doc.save()
-
-  return normalizePolicy(doc.toObject())
-}
-
 async function list(query = {}) {
-  const parsed = parseSchema(listOTCalculationPoliciesQuerySchema, query)
-
-  const page = parsed.page
-  const limit = parsed.limit
+  const page = Number(query.page || 1)
+  const limit = Number(query.limit || 10)
   const skip = (page - 1) * limit
 
-  const filter = buildListQuery(parsed)
-  const sort = buildSort(parsed.sortField, parsed.sortOrder)
+  const filter = buildFilter(query)
+  const sort = buildSort(query.sortField, query.sortOrder)
 
   const [items, total] = await Promise.all([
     OTCalculationPolicy.find(filter).sort(sort).skip(skip).limit(limit).lean(),
@@ -219,35 +239,187 @@ async function list(query = {}) {
   ])
 
   return {
-    ok: true,
-    data: {
-      items: items.map(normalizePolicy),
-      pagination: {
-        page,
-        limit,
-        total,
-        hasMore: skip + items.length < total,
-      },
+    items: items.map(mapPolicy),
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+      hasMore: page * limit < total,
     },
   }
 }
 
-async function getById(id) {
-  const policyId = parseSchema(objectIdSchema, id)
+async function getById(policyId) {
+  await ensureObjectId(policyId, 'policyId')
 
   const doc = await OTCalculationPolicy.findById(policyId).lean()
 
   if (!doc) {
-    throw createHttpError('OT calculation policy not found', 404)
+    throw appError({
+      statusCode: 404,
+      code: 'OT_POLICY_NOT_FOUND',
+      messageKey: 'ot.policy.error.notFound',
+      message: 'OT calculation policy not found',
+      field: 'policyId',
+    })
   }
 
-  return normalizePolicy(doc)
+  return mapPolicy(doc)
+}
+
+async function create(payload, authUser) {
+  const code = upper(payload.code)
+
+  await ensureUniqueCode(code)
+
+  try {
+    const doc = await OTCalculationPolicy.create({
+      code,
+      name: s(payload.name),
+      description: s(payload.description),
+
+      minEligibleMinutes: Number(payload.minEligibleMinutes || 0),
+      roundUnitMinutes: Number(payload.roundUnitMinutes || 30),
+      roundMethod: upper(payload.roundMethod || 'CEIL'),
+      graceAfterShiftEndMinutes: Number(payload.graceAfterShiftEndMinutes || 0),
+
+      allowApprovedOtWithoutExactClockOut:
+        payload.allowApprovedOtWithoutExactClockOut === true,
+
+      allowPreShiftOT: payload.allowPreShiftOT === true,
+      allowPostShiftOT: payload.allowPostShiftOT !== false,
+      capByRequestedMinutes: payload.capByRequestedMinutes !== false,
+      treatForgetScanInAsPending: payload.treatForgetScanInAsPending !== false,
+      treatForgetScanOutAsPending: payload.treatForgetScanOutAsPending !== false,
+
+      isActive: payload.isActive !== false,
+      createdBy: actorAccountId(authUser),
+      updatedBy: actorAccountId(authUser),
+    })
+
+    return getById(doc._id)
+  } catch (error) {
+    if (error?.code === 11000) {
+      throw appError({
+        statusCode: 409,
+        code: 'OT_POLICY_CODE_EXISTS',
+        messageKey: 'ot.policy.error.codeExists',
+        message: 'OT calculation policy code already exists',
+        field: 'code',
+      })
+    }
+
+    throw error
+  }
+}
+
+async function update(policyId, payload, authUser) {
+  await ensureObjectId(policyId, 'policyId')
+
+  const doc = await OTCalculationPolicy.findById(policyId)
+
+  if (!doc) {
+    throw appError({
+      statusCode: 404,
+      code: 'OT_POLICY_NOT_FOUND',
+      messageKey: 'ot.policy.error.notFound',
+      message: 'OT calculation policy not found',
+      field: 'policyId',
+    })
+  }
+
+  if (payload.code !== undefined) {
+    const nextCode = upper(payload.code)
+
+    if (nextCode !== doc.code) {
+      await ensureUniqueCode(nextCode, doc._id)
+    }
+
+    doc.code = nextCode
+  }
+
+  if (payload.name !== undefined) {
+    doc.name = s(payload.name)
+  }
+
+  if (payload.description !== undefined) {
+    doc.description = s(payload.description)
+  }
+
+  if (payload.minEligibleMinutes !== undefined) {
+    doc.minEligibleMinutes = Number(payload.minEligibleMinutes || 0)
+  }
+
+  if (payload.roundUnitMinutes !== undefined) {
+    doc.roundUnitMinutes = Number(payload.roundUnitMinutes || 30)
+  }
+
+  if (payload.roundMethod !== undefined) {
+    doc.roundMethod = upper(payload.roundMethod || 'CEIL')
+  }
+
+  if (payload.graceAfterShiftEndMinutes !== undefined) {
+    doc.graceAfterShiftEndMinutes = Number(payload.graceAfterShiftEndMinutes || 0)
+  }
+
+  if (payload.allowApprovedOtWithoutExactClockOut !== undefined) {
+    doc.allowApprovedOtWithoutExactClockOut =
+      payload.allowApprovedOtWithoutExactClockOut === true
+  }
+
+  if (payload.allowPreShiftOT !== undefined) {
+    doc.allowPreShiftOT = payload.allowPreShiftOT === true
+  }
+
+  if (payload.allowPostShiftOT !== undefined) {
+    doc.allowPostShiftOT = payload.allowPostShiftOT !== false
+  }
+
+  if (payload.capByRequestedMinutes !== undefined) {
+    doc.capByRequestedMinutes = payload.capByRequestedMinutes !== false
+  }
+
+  if (payload.treatForgetScanInAsPending !== undefined) {
+    doc.treatForgetScanInAsPending = payload.treatForgetScanInAsPending !== false
+  }
+
+  if (payload.treatForgetScanOutAsPending !== undefined) {
+    doc.treatForgetScanOutAsPending = payload.treatForgetScanOutAsPending !== false
+  }
+
+  if (payload.isActive !== undefined) {
+    doc.isActive = payload.isActive !== false
+  }
+
+  doc.updatedBy = actorAccountId(authUser)
+
+  try {
+    await doc.save()
+    return getById(doc._id)
+  } catch (error) {
+    if (error?.code === 11000) {
+      throw appError({
+        statusCode: 409,
+        code: 'OT_POLICY_CODE_EXISTS',
+        messageKey: 'ot.policy.error.codeExists',
+        message: 'OT calculation policy code already exists',
+        field: 'code',
+      })
+    }
+
+    throw error
+  }
 }
 
 module.exports = {
   lookupOTCalculationPolicies,
-  create,
-  update,
   list,
   getById,
+  create,
+  update,
+
+  // Used later by OT Request / Attendance / Payment.
+  mapPolicy,
+  mapLookupItem,
 }

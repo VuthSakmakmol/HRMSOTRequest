@@ -1,5 +1,10 @@
-// backend/src/modules/org/models/Permission.js
+// backend/src/modules/access/models/Permission.js
+
 const mongoose = require('mongoose')
+
+function s(value) {
+  return String(value ?? '').trim()
+}
 
 const permissionSchema = new mongoose.Schema(
   {
@@ -9,36 +14,45 @@ const permissionSchema = new mongoose.Schema(
       trim: true,
       uppercase: true,
       maxlength: 120,
+      unique: true,
+      index: true,
     },
+
     name: {
       type: String,
       required: true,
       trim: true,
       maxlength: 160,
     },
+
     module: {
       type: String,
       required: true,
       trim: true,
       uppercase: true,
       maxlength: 80,
+      index: true,
     },
+
     description: {
       type: String,
       trim: true,
       default: '',
       maxlength: 500,
     },
+
     isActive: {
       type: Boolean,
       default: true,
       index: true,
     },
+
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Account',
       default: null,
     },
+
     updatedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Account',
@@ -51,15 +65,15 @@ const permissionSchema = new mongoose.Schema(
   },
 )
 
-permissionSchema.index({ code: 1 }, { unique: true })
-permissionSchema.index({ module: 1, name: 1 })
+permissionSchema.index({ module: 1, code: 1 })
 permissionSchema.index({ module: 1, isActive: 1 })
 
 permissionSchema.pre('validate', function normalize(next) {
-  if (this.code) this.code = String(this.code).trim().toUpperCase()
-  if (this.module) this.module = String(this.module).trim().toUpperCase()
-  if (this.name) this.name = String(this.name).trim()
-  if (this.description != null) this.description = String(this.description).trim()
+  this.code = s(this.code).toUpperCase()
+  this.name = s(this.name)
+  this.module = s(this.module).toUpperCase()
+  this.description = s(this.description)
+
   next()
 })
 

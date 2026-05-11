@@ -1,5 +1,5 @@
 // backend/src/modules/org/routes/position.routes.js
-// backend/src/modules/org/routes/position.routes.js
+
 const express = require('express')
 const multer = require('multer')
 
@@ -20,8 +20,16 @@ router.use(requireAuth)
 
 router.get('/lookup', requirePermission('POSITION_LOOKUP'), controller.lookup)
 
-router.get('/sample', requirePermission('POSITION_VIEW'), controller.downloadSample)
 router.get('/export', requirePermission('POSITION_VIEW'), controller.exportExcel)
+
+router.get(
+  '/import-sample',
+  requirePermission('POSITION_VIEW'),
+  controller.downloadSample,
+)
+
+// Keep old route temporarily if your frontend still calls /sample.
+router.get('/sample', requirePermission('POSITION_VIEW'), controller.downloadSample)
 
 router.post(
   '/import',
@@ -31,8 +39,11 @@ router.post(
 )
 
 router.get('/', requirePermission('POSITION_VIEW'), controller.list)
+
 router.get('/:id', requirePermission('POSITION_VIEW'), controller.getOne)
+
 router.post('/', requirePermission('POSITION_CREATE'), controller.create)
+
 router.patch('/:id', requirePermission('POSITION_UPDATE'), controller.update)
 
 module.exports = router

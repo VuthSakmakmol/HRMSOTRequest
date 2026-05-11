@@ -1,5 +1,7 @@
 // backend/src/modules/auth/routes/index.js
+
 const express = require('express')
+
 const authController = require('../controllers/auth.controller')
 const requireAuth = require('../../../middlewares/requireAuth')
 const accountRoutes = require('./account.routes')

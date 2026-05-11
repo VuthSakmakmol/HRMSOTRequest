@@ -1,18 +1,17 @@
 // backend/src/modules/ot/controllers/dashboard.controller.js
-// backend/src/modules/ot/controllers/dashboard.controller.js
 
 const otDashboardService = require('../services/otDashboard.service')
+const { successResponse } = require('../../../shared/utils/apiResponse')
 
 async function getOTDashboardSummary(req, res, next) {
   try {
-    const data = await otDashboardService.getOTDashboardSummary()
+    const item = await otDashboardService.getOTDashboardSummary(req.user)
 
-    res.json({
-      ok: true,
-      data,
+    return successResponse(res, {
+      item,
     })
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 

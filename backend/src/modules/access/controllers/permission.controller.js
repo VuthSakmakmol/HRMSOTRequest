@@ -1,45 +1,33 @@
 // backend/src/modules/access/controllers/permission.controller.js
+
 const permissionService = require('../services/permission.service')
-const { normalizeListQuery } = require('../validators/permission.validation')
+const { listPermissionQuerySchema } = require('../validators/permission.validation')
+const { successResponse } = require('../../../shared/utils/apiResponse')
 
-function parseQuery(normalizer, data) {
-  try {
-    return normalizer(data)
-  } catch (error) {
-    if (error?.name === 'ZodError') {
-      const err = new Error(error.issues?.[0]?.message || 'Validation error')
-      err.status = 400
-      throw err
-    }
-
-    throw error
-  }
+function parse(schema, data) {
+  return schema.parse(data)
 }
 
 async function list(req, res, next) {
   try {
-    const query = parseQuery(normalizeListQuery, req.query || {})
-    const data = await permissionService.list(query)
+    const query = parse(listPermissionQuerySchema, req.query || {})
+    const result = await permissionService.list(query)
 
-    res.json({
-      ok: true,
-      data,
-    })
+    return successResponse(res, result)
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function getOne(req, res, next) {
   try {
-    const data = await permissionService.getById(req.params.id)
+    const item = await permissionService.getById(req.params.id)
 
-    res.json({
-      ok: true,
-      data,
+    return successResponse(res, {
+      item,
     })
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 

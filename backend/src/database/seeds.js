@@ -12,384 +12,278 @@ const Account = require('../modules/auth/models/Account')
 
 const ROOT_ADMIN_ROLE_CODE = 'ROOT_ADMIN'
 
+function permission(code, name, module, description = '') {
+  return {
+    code,
+    name,
+    module,
+    description,
+  }
+}
+
 const PERMISSIONS = [
-  // Accounts
-  {
-    code: 'ACCOUNT_VIEW',
-    name: 'View Accounts',
-    module: 'AUTH',
-    description: 'Allow viewing account records',
-  },
-  {
-    code: 'ACCOUNT_CREATE',
-    name: 'Create Accounts',
-    module: 'AUTH',
-    description: 'Allow creating account records',
-  },
-  {
-    code: 'ACCOUNT_UPDATE',
-    name: 'Update Accounts',
-    module: 'AUTH',
-    description: 'Allow updating account records',
-  },
-  {
-    code: 'ACCOUNT_RESET_PASSWORD',
-    name: 'Reset Account Password',
-    module: 'AUTH',
-    description: 'Allow resetting account passwords',
-  },
+  // =========================
+  // Auth / Accounts
+  // =========================
+  permission('ACCOUNT_VIEW', 'View Accounts', 'AUTH', 'Allow viewing account records'),
+  permission('ACCOUNT_CREATE', 'Create Accounts', 'AUTH', 'Allow creating account records'),
+  permission('ACCOUNT_UPDATE', 'Update Accounts', 'AUTH', 'Allow updating account records'),
+  permission(
+    'ACCOUNT_RESET_PASSWORD',
+    'Reset Account Password',
+    'AUTH',
+    'Allow resetting account passwords',
+  ),
 
-  // Permissions
-  {
-    code: 'PERMISSION_VIEW',
-    name: 'View Permissions',
-    module: 'ORG',
-    description: 'Allow viewing permission master records',
-  },
-  {
-    code: 'PERMISSION_CREATE',
-    name: 'Create Permissions',
-    module: 'ORG',
-    description: 'Allow creating permission master records',
-  },
-  {
-    code: 'PERMISSION_UPDATE',
-    name: 'Update Permissions',
-    module: 'ORG',
-    description: 'Allow updating permission master records',
-  },
+  // =========================
+  // Access / Permissions
+  // =========================
+  permission(
+    'PERMISSION_VIEW',
+    'View Permissions',
+    'ORG',
+    'Allow viewing permission master records',
+  ),
+  permission(
+    'PERMISSION_CREATE',
+    'Create Permissions',
+    'ORG',
+    'Allow creating permission master records',
+  ),
+  permission(
+    'PERMISSION_UPDATE',
+    'Update Permissions',
+    'ORG',
+    'Allow updating permission master records',
+  ),
 
-  // Roles
-  {
-    code: 'ROLE_VIEW',
-    name: 'View Roles',
-    module: 'ORG',
-    description: 'Allow viewing system roles',
-  },
-  {
-    code: 'ROLE_CREATE',
-    name: 'Create Roles',
-    module: 'ORG',
-    description: 'Allow creating system roles',
-  },
-  {
-    code: 'ROLE_UPDATE',
-    name: 'Update Roles',
-    module: 'ORG',
-    description: 'Allow updating system roles',
-  },
+  // =========================
+  // Access / Roles
+  // =========================
+  permission('ROLE_VIEW', 'View Roles', 'ORG', 'Allow viewing system roles'),
+  permission('ROLE_CREATE', 'Create Roles', 'ORG', 'Allow creating system roles'),
+  permission('ROLE_UPDATE', 'Update Roles', 'ORG', 'Allow updating system roles'),
 
-  // Departments
-  {
-    code: 'DEPARTMENT_VIEW',
-    name: 'View Departments',
-    module: 'ORG',
-    description: 'Allow viewing department records',
-  },
-  {
-    code: 'DEPARTMENT_CREATE',
-    name: 'Create Departments',
-    module: 'ORG',
-    description: 'Allow creating department records',
-  },
-  {
-    code: 'DEPARTMENT_UPDATE',
-    name: 'Update Departments',
-    module: 'ORG',
-    description: 'Allow updating department records',
-  },
-  {
-    code: 'DEPARTMENT_LOOKUP',
-    name: 'Lookup Departments',
-    module: 'ORG',
-    description: 'Allow reading department options for selectors and dropdowns only',
-  },
+  // =========================
+  // Organization / Departments
+  // =========================
+  permission('DEPARTMENT_VIEW', 'View Departments', 'ORG', 'Allow viewing department records'),
+  permission(
+    'DEPARTMENT_CREATE',
+    'Create Departments',
+    'ORG',
+    'Allow creating department records',
+  ),
+  permission(
+    'DEPARTMENT_UPDATE',
+    'Update Departments',
+    'ORG',
+    'Allow updating department records',
+  ),
+  permission(
+    'DEPARTMENT_LOOKUP',
+    'Lookup Departments',
+    'ORG',
+    'Allow reading department options for selectors and dropdowns only',
+  ),
 
-  // Positions
-  {
-    code: 'POSITION_VIEW',
-    name: 'View Positions',
-    module: 'ORG',
-    description: 'Allow viewing position records',
-  },
-  {
-    code: 'POSITION_CREATE',
-    name: 'Create Positions',
-    module: 'ORG',
-    description: 'Allow creating position records',
-  },
-  {
-    code: 'POSITION_UPDATE',
-    name: 'Update Positions',
-    module: 'ORG',
-    description: 'Allow updating position records',
-  },
-  {
-    code: 'POSITION_LOOKUP',
-    name: 'Lookup Positions',
-    module: 'ORG',
-    description: 'Allow reading position options for selectors and dropdowns only',
-  },
+  // =========================
+  // Organization / Positions
+  // =========================
+  permission('POSITION_VIEW', 'View Positions', 'ORG', 'Allow viewing position records'),
+  permission('POSITION_CREATE', 'Create Positions', 'ORG', 'Allow creating position records'),
+  permission('POSITION_UPDATE', 'Update Positions', 'ORG', 'Allow updating position records'),
+  permission(
+    'POSITION_LOOKUP',
+    'Lookup Positions',
+    'ORG',
+    'Allow reading position options for selectors and dropdowns only',
+  ),
 
-  // Employees
-  {
-    code: 'EMPLOYEE_VIEW',
-    name: 'View Employees',
-    module: 'ORG',
-    description: 'Allow viewing employee records',
-  },
-  {
-    code: 'EMPLOYEE_LOOKUP',
-    name: 'Lookup Employees',
-    module: 'ORG',
-    description: 'Allow reading employee options for selectors and dropdowns only',
-  },
-  {
-    code: 'EMPLOYEE_LOOKUP_ALL',
-    name: 'Lookup All Employees',
-    module: 'ORG',
-    description: 'Allow reading all employee options across managed scope limits',
-  },
-  {
-    code: 'EMPLOYEE_CREATE',
-    name: 'Create Employees',
-    module: 'ORG',
-    description: 'Allow creating employee records',
-  },
-  {
-    code: 'EMPLOYEE_UPDATE',
-    name: 'Update Employees',
-    module: 'ORG',
-    description: 'Allow updating employee records',
-  },
+  // =========================
+  // Organization / Employees
+  // =========================
+  permission('EMPLOYEE_VIEW', 'View Employees', 'ORG', 'Allow viewing employee records'),
+  permission(
+    'EMPLOYEE_LOOKUP',
+    'Lookup Employees',
+    'ORG',
+    'Allow reading employee options for selectors and dropdowns only',
+  ),
+  permission(
+    'EMPLOYEE_LOOKUP_ALL',
+    'Lookup All Employees',
+    'ORG',
+    'Allow reading all employee options across managed scope limits',
+  ),
+  permission('EMPLOYEE_CREATE', 'Create Employees', 'ORG', 'Allow creating employee records'),
+  permission('EMPLOYEE_UPDATE', 'Update Employees', 'ORG', 'Allow updating employee records'),
 
-  // Production Lines
-  {
-    code: 'LINE_VIEW',
-    name: 'View Lines',
-    module: 'ORG',
-    description: 'Allow viewing production line records',
-  },
-  {
-    code: 'LINE_LOOKUP',
-    name: 'Lookup Lines',
-    module: 'ORG',
-    description: 'Allow reading production line options for selectors and dropdowns only',
-  },
-  {
-    code: 'LINE_CREATE',
-    name: 'Create Lines',
-    module: 'ORG',
-    description: 'Allow creating production line records',
-  },
-  {
-    code: 'LINE_UPDATE',
-    name: 'Update Lines',
-    module: 'ORG',
-    description: 'Allow updating production line records',
-  },
-  {
-    code: 'LINE_IMPORT',
-    name: 'Import Lines',
-    module: 'ORG',
-    description: 'Allow importing production line records from Excel',
-  },
-  {
-    code: 'LINE_EXPORT',
-    name: 'Export Lines',
-    module: 'ORG',
-    description: 'Allow exporting production line records to Excel',
-  },
+  // =========================
+  // Organization / Production Lines
+  // =========================
+  permission('LINE_VIEW', 'View Lines', 'ORG', 'Allow viewing production line records'),
+  permission(
+    'LINE_LOOKUP',
+    'Lookup Lines',
+    'ORG',
+    'Allow reading production line options for selectors and dropdowns only',
+  ),
+  permission('LINE_CREATE', 'Create Lines', 'ORG', 'Allow creating production line records'),
+  permission('LINE_UPDATE', 'Update Lines', 'ORG', 'Allow updating production line records'),
+  permission('LINE_IMPORT', 'Import Lines', 'ORG', 'Allow importing production line records from Excel'),
+  permission('LINE_EXPORT', 'Export Lines', 'ORG', 'Allow exporting production line records to Excel'),
 
-  // Line Supervisor Assignment
-  {
-    code: 'LINE_SUPERVISOR_VIEW',
-    name: 'View Line Supervisors',
-    module: 'ORG',
-    description: 'Allow viewing supervisor assignments for production lines',
-  },
-  {
-    code: 'LINE_SUPERVISOR_ASSIGN',
-    name: 'Assign Line Supervisors',
-    module: 'ORG',
-    description: 'Allow assigning supervisors to production lines',
-  },
+  // =========================
+  // Organization / Line Supervisors
+  // =========================
+  permission(
+    'LINE_SUPERVISOR_VIEW',
+    'View Line Supervisors',
+    'ORG',
+    'Allow viewing supervisor assignments for production lines',
+  ),
+  permission(
+    'LINE_SUPERVISOR_ASSIGN',
+    'Assign Line Supervisors',
+    'ORG',
+    'Allow assigning supervisors to production lines',
+  ),
 
-  // Holidays
-  {
-    code: 'HOLIDAY_VIEW',
-    name: 'View Holidays',
-    module: 'CALENDAR',
-    description: 'Allow viewing holiday records',
-  },
-  {
-    code: 'HOLIDAY_CREATE',
-    name: 'Create Holidays',
-    module: 'CALENDAR',
-    description: 'Allow creating holiday records',
-  },
-  {
-    code: 'HOLIDAY_UPDATE',
-    name: 'Update Holidays',
-    module: 'CALENDAR',
-    description: 'Allow updating holiday records',
-  },
-  {
-    code: 'HOLIDAY_LOOKUP',
-    name: 'Lookup Holidays',
-    module: 'CALENDAR',
-    description: 'Allow reading holiday options for selectors and dropdowns only',
-  },
+  // =========================
+  // Calendar / Holidays
+  // =========================
+  permission('HOLIDAY_VIEW', 'View Holidays', 'CALENDAR', 'Allow viewing holiday records'),
+  permission('HOLIDAY_CREATE', 'Create Holidays', 'CALENDAR', 'Allow creating holiday records'),
+  permission('HOLIDAY_UPDATE', 'Update Holidays', 'CALENDAR', 'Allow updating holiday records'),
+  permission(
+    'HOLIDAY_LOOKUP',
+    'Lookup Holidays',
+    'CALENDAR',
+    'Allow reading holiday options for selectors and dropdowns only',
+  ),
 
-  // Shifts
-  {
-    code: 'SHIFT_VIEW',
-    name: 'View Shifts',
-    module: 'SHIFT',
-    description: 'Allow viewing shift records',
-  },
-  {
-    code: 'SHIFT_CREATE',
-    name: 'Create Shifts',
-    module: 'SHIFT',
-    description: 'Allow creating shift records',
-  },
-  {
-    code: 'SHIFT_UPDATE',
-    name: 'Update Shifts',
-    module: 'SHIFT',
-    description: 'Allow updating shift records',
-  },
-  {
-    code: 'SHIFT_LOOKUP',
-    name: 'Lookup Shifts',
-    module: 'SHIFT',
-    description: 'Allow reading shift options for selectors and dropdowns only',
-  },
+  // =========================
+  // Shift
+  // =========================
+  permission('SHIFT_VIEW', 'View Shifts', 'SHIFT', 'Allow viewing shift records'),
+  permission('SHIFT_CREATE', 'Create Shifts', 'SHIFT', 'Allow creating shift records'),
+  permission('SHIFT_UPDATE', 'Update Shifts', 'SHIFT', 'Allow updating shift records'),
+  permission(
+    'SHIFT_LOOKUP',
+    'Lookup Shifts',
+    'SHIFT',
+    'Allow reading shift options for selectors and dropdowns only',
+  ),
 
+  // =========================
   // OT Request Workflow
-  {
-    code: 'OT_REQUEST_VIEW',
-    name: 'View OT Requests',
-    module: 'OT',
-    description: 'Allow viewing OT requests',
-  },
-  {
-    code: 'OT_REQUEST_CREATE',
-    name: 'Create OT Requests',
-    module: 'OT',
-    description: 'Allow creating OT requests',
-  },
-  {
-    code: 'OT_REQUEST_UPDATE',
-    name: 'Update OT Requests',
-    module: 'OT',
-    description: 'Allow updating OT requests',
-  },
-  {
-    code: 'OT_REQUEST_APPROVE',
-    name: 'Approve OT Requests',
-    module: 'OT',
-    description: 'Allow approving OT requests',
-  },
-  {
-    code: 'OT_REQUEST_ACKNOWLEDGE',
-    name: 'Acknowledge OT Requests',
-    module: 'OT',
-    description: 'Allow viewing OT requests where the user is included as an acknowledge/FYI person',
-  },
-  {
-    code: 'OT_ADD_OTHER_LINE_EMPLOYEE',
-    name: 'Add Other Line Employee to OT',
-    module: 'OT',
-    description: 'Allow adding employees from other production lines to an OT request with a required reason',
-  },
+  // =========================
+  permission('OT_REQUEST_VIEW', 'View OT Requests', 'OT', 'Allow viewing OT requests'),
+  permission('OT_REQUEST_CREATE', 'Create OT Requests', 'OT', 'Allow creating OT requests'),
+  permission('OT_REQUEST_UPDATE', 'Update OT Requests', 'OT', 'Allow updating OT requests'),
+  permission('OT_REQUEST_APPROVE', 'Approve OT Requests', 'OT', 'Allow approving OT requests'),
+  permission(
+    'OT_REQUEST_ACKNOWLEDGE',
+    'Acknowledge OT Requests',
+    'OT',
+    'Allow viewing OT requests where the user is included as an acknowledge/FYI person',
+  ),
+  permission(
+    'OT_ADD_OTHER_LINE_EMPLOYEE',
+    'Add Other Line Employee to OT',
+    'OT',
+    'Allow adding employees from other production lines to an OT request with a required reason',
+  ),
 
+  // =========================
   // Attendance
-  {
-    code: 'ATTENDANCE_VIEW',
-    name: 'View Attendance',
-    module: 'ATTENDANCE',
-    description: 'Allow viewing attendance imports and attendance records',
-  },
-  {
-    code: 'ATTENDANCE_IMPORT',
-    name: 'Import Attendance',
-    module: 'ATTENDANCE',
-    description: 'Allow importing attendance files',
-  },
-  {
-    code: 'ATTENDANCE_VERIFY',
-    name: 'Verify Attendance',
-    module: 'ATTENDANCE',
-    description: 'Allow verifying OT requests against attendance records',
-  },
+  // =========================
+  permission(
+    'ATTENDANCE_VIEW',
+    'View Attendance',
+    'ATTENDANCE',
+    'Allow viewing attendance imports and attendance records',
+  ),
+  permission(
+    'ATTENDANCE_IMPORT',
+    'Import Attendance',
+    'ATTENDANCE',
+    'Allow importing attendance files',
+  ),
+  permission(
+    'ATTENDANCE_VERIFY',
+    'Verify Attendance',
+    'ATTENDANCE',
+    'Allow verifying OT requests against attendance records',
+  ),
 
+  // =========================
   // OT Policy Master
-  {
-    code: 'OT_POLICY_VIEW',
-    name: 'View OT Policies',
-    module: 'OT',
-    description: 'Allow viewing OT calculation policies',
-  },
-  {
-    code: 'OT_POLICY_CREATE',
-    name: 'Create OT Policies',
-    module: 'OT',
-    description: 'Allow creating OT calculation policies',
-  },
-  {
-    code: 'OT_POLICY_UPDATE',
-    name: 'Update OT Policies',
-    module: 'OT',
-    description: 'Allow updating OT calculation policies',
-  },
+  // =========================
+  permission('OT_POLICY_VIEW', 'View OT Policies', 'OT', 'Allow viewing OT calculation policies'),
+  permission(
+    'OT_POLICY_CREATE',
+    'Create OT Policies',
+    'OT',
+    'Allow creating OT calculation policies',
+  ),
+  permission(
+    'OT_POLICY_UPDATE',
+    'Update OT Policies',
+    'OT',
+    'Allow updating OT calculation policies',
+  ),
 
+  // =========================
   // Shift OT Option Master
-  {
-    code: 'SHIFT_OT_OPTION_VIEW',
-    name: 'View Shift OT Options',
-    module: 'OT',
-    description: 'Allow viewing shift OT options',
-  },
-  {
-    code: 'SHIFT_OT_OPTION_CREATE',
-    name: 'Create Shift OT Options',
-    module: 'OT',
-    description: 'Allow creating shift OT options',
-  },
-  {
-    code: 'SHIFT_OT_OPTION_UPDATE',
-    name: 'Update Shift OT Options',
-    module: 'OT',
-    description: 'Allow updating shift OT options',
-  },
-  // backend/src/modules/access/seeds/permission.seed.js
+  // =========================
+  permission(
+    'SHIFT_OT_OPTION_VIEW',
+    'View Shift OT Options',
+    'OT',
+    'Allow viewing shift OT options',
+  ),
+  permission(
+    'SHIFT_OT_OPTION_CREATE',
+    'Create Shift OT Options',
+    'OT',
+    'Allow creating shift OT options',
+  ),
+  permission(
+    'SHIFT_OT_OPTION_UPDATE',
+    'Update Shift OT Options',
+    'OT',
+    'Allow updating shift OT options',
+  ),
 
-  {
-    code: 'PAYMENT_FORMULA_VIEW',
-    name: 'View Payment Formula',
-    module: 'PAYMENT',
-    description: 'Can view payment formulas',
-  },
-  {
-    code: 'PAYMENT_FORMULA_CREATE',
-    name: 'Create Payment Formula',
-    module: 'PAYMENT',
-    description: 'Can create payment formulas',
-  },
-  {
-    code: 'PAYMENT_FORMULA_UPDATE',
-    name: 'Update Payment Formula',
-    module: 'PAYMENT',
-    description: 'Can update payment formulas',
-  },
-  {
-    code: 'PAYMENT_PROCESS',
-    name: 'Process Payment',
-    module: 'PAYMENT',
-    description: 'Can upload salary Excel and generate payment file',
-  },
+  // =========================
+  // Payment
+  // =========================
+  permission(
+    'PAYMENT_FORMULA_VIEW',
+    'View Payment Formula',
+    'PAYMENT',
+    'Allow viewing payment formulas',
+  ),
+  permission(
+    'PAYMENT_FORMULA_CREATE',
+    'Create Payment Formula',
+    'PAYMENT',
+    'Allow creating payment formulas',
+  ),
+  permission(
+    'PAYMENT_FORMULA_UPDATE',
+    'Update Payment Formula',
+    'PAYMENT',
+    'Allow updating payment formulas',
+  ),
+  permission(
+    'PAYMENT_PROCESS',
+    'Process Payment',
+    'PAYMENT',
+    'Allow uploading salary Excel, previewing payment, and exporting payment calculation files',
+  ),
 ]
 
 async function seedPermissions() {
@@ -449,7 +343,10 @@ async function seedRootAdminRole(allPermissions) {
 }
 
 async function seedSuperAccount(rootAdminRole) {
-  const loginId = String(process.env.SUPER_ADMIN_LOGIN_ID || 'root_admin').trim().toLowerCase()
+  const loginId = String(process.env.SUPER_ADMIN_LOGIN_ID || 'root_admin')
+    .trim()
+    .toLowerCase()
+
   const password = process.env.SUPER_ADMIN_PASSWORD || 'RootAdmin@123'
   const displayName = process.env.SUPER_ADMIN_DISPLAY_NAME || 'System Root Admin'
 
@@ -494,6 +391,7 @@ async function run() {
 
   const permissions = await seedPermissions()
   const rootAdminRole = await seedRootAdminRole(permissions)
+
   await seedSuperAccount(rootAdminRole)
 
   console.log('✅ Seed completed')

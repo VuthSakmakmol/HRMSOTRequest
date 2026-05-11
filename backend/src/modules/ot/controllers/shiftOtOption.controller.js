@@ -1,13 +1,49 @@
 // backend/src/modules/ot/controllers/shiftOtOption.controller.js
+
 const shiftOtOptionService = require('../services/shiftOtOption.service')
+const { successResponse } = require('../../../shared/utils/apiResponse')
+
+const {
+  createShiftOTOptionSchema,
+  updateShiftOTOptionSchema,
+  normalizeListQuery,
+  normalizeLookupQuery,
+  shiftOTOptionIdParamSchema,
+} = require('../validators/shiftOtOption.validation')
+
+function parse(schema, data) {
+  return schema.parse(data)
+}
 
 async function lookupShiftOTOptions(req, res, next) {
   try {
-    const result = await shiftOtOptionService.lookup(req.query || {})
+    const query = normalizeLookupQuery(req.query || {})
+    const result = await shiftOtOptionService.lookup(query)
 
-    return res.json({
-      ok: true,
-      data: result,
+    return successResponse(res, result)
+  } catch (error) {
+    return next(error)
+  }
+}
+
+async function listShiftOTOptions(req, res, next) {
+  try {
+    const query = normalizeListQuery(req.query || {})
+    const result = await shiftOtOptionService.list(query)
+
+    return successResponse(res, result)
+  } catch (error) {
+    return next(error)
+  }
+}
+
+async function getShiftOTOptionDetail(req, res, next) {
+  try {
+    const params = parse(shiftOTOptionIdParamSchema, req.params || {})
+    const item = await shiftOtOptionService.getById(params.id)
+
+    return successResponse(res, {
+      item,
     })
   } catch (error) {
     return next(error)
@@ -16,14 +52,16 @@ async function lookupShiftOTOptions(req, res, next) {
 
 async function createShiftOTOption(req, res, next) {
   try {
-    const result = await shiftOtOptionService.create(req.body || {}, req.user)
+    const payload = parse(createShiftOTOptionSchema, req.body || {})
+    const item = await shiftOtOptionService.create(payload, req.user)
 
-    return res.status(201).json({
-      ok: true,
-      message: 'Shift OT option created successfully',
-      item: result,
-      data: result,
-    })
+    return successResponse(
+      res,
+      {
+        item,
+      },
+      201,
+    )
   } catch (error) {
     return next(error)
   }
@@ -31,36 +69,12 @@ async function createShiftOTOption(req, res, next) {
 
 async function updateShiftOTOption(req, res, next) {
   try {
-    const result = await shiftOtOptionService.update(req.params.id, req.body || {}, req.user)
+    const params = parse(shiftOTOptionIdParamSchema, req.params || {})
+    const payload = parse(updateShiftOTOptionSchema, req.body || {})
+    const item = await shiftOtOptionService.update(params.id, payload, req.user)
 
-    return res.json({
-      ok: true,
-      message: 'Shift OT option updated successfully',
-      item: result,
-      data: result,
-    })
-  } catch (error) {
-    return next(error)
-  }
-}
-
-async function listShiftOTOptions(req, res, next) {
-  try {
-    const result = await shiftOtOptionService.list(req.query || {})
-    return res.json(result)
-  } catch (error) {
-    return next(error)
-  }
-}
-
-async function getShiftOTOptionDetail(req, res, next) {
-  try {
-    const result = await shiftOtOptionService.getById(req.params.id)
-
-    return res.json({
-      ok: true,
-      item: result,
-      data: result,
+    return successResponse(res, {
+      item,
     })
   } catch (error) {
     return next(error)
@@ -69,8 +83,8 @@ async function getShiftOTOptionDetail(req, res, next) {
 
 module.exports = {
   lookupShiftOTOptions,
-  createShiftOTOption,
-  updateShiftOTOption,
   listShiftOTOptions,
   getShiftOTOptionDetail,
+  createShiftOTOption,
+  updateShiftOTOption,
 }

@@ -1,5 +1,7 @@
 // backend/src/modules/ot/controllers/ot.controller.js
-const mongoose = require('mongoose')
+
+const AppError = require('../../../shared/errors/AppError')
+const { successResponse } = require('../../../shared/utils/apiResponse')
 
 const otService = require('../services/ot.service')
 const otAcknowledgementService = require('../services/otAcknowledgement.service')
@@ -11,7 +13,11 @@ const {
   listOTApprovalInboxQuerySchema,
   unavailableOTEmployeesQuerySchema,
   otRequestIdParamSchema,
+  allowedApproverChainParamSchema,
+  shiftOptionsByShiftParamSchema,
+  shiftOptionsByShiftQuerySchema,
   otApprovalDecisionSchema,
+  otRequesterConfirmationSchema,
 } = require('../validators/ot.validation')
 
 function parse(schema, data) {
@@ -22,45 +28,55 @@ function parse(schema, data) {
   }
 
   const firstIssue = result.error.issues?.[0]
+  const messageKey = firstIssue?.message || 'common.validation.invalidRequest'
 
-  const message = firstIssue?.path?.length
-    ? `${firstIssue.path.join('.')}: ${firstIssue.message}`
-    : firstIssue?.message || 'Validation failed'
+  const error = new AppError({
+    statusCode: 400,
+    code: 'VALIDATION_ERROR',
+    messageKey,
+    message: messageKey,
+    field: firstIssue?.path?.length ? firstIssue.path.join('.') : null,
+    params: {
+      issues: result.error.issues.map((issue) => ({
+        path: issue.path,
+        messageKey: issue.message,
+        code: issue.code,
+      })),
+    },
+  })
 
-  const error = new Error(message)
-  error.status = 400
-  error.details = result.error.issues.map((issue) => ({
+  error.issues = result.error.issues.map((issue) => ({
     path: issue.path,
-    message: issue.message,
+    messageKey: issue.message,
     code: issue.code,
   }))
 
   throw error
 }
 
-function parseObjectIdParam(value, label = 'id') {
-  const id = String(value || '').trim()
+function setExcelHeaders(res, filename) {
+  res.setHeader(
+    'Content-Type',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  )
 
-  if (!mongoose.isValidObjectId(id)) {
-    const err = new Error(`Invalid ${label}`)
-    err.status = 400
-    throw err
-  }
-
-  return id
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
 }
 
 async function createOTRequest(req, res, next) {
   try {
     const payload = parse(createOTRequestSchema, req.body || {})
-    const data = await otService.create(payload, req.user)
+    const item = await otService.create(payload, req.user)
 
-    res.status(201).json({
-      ok: true,
-      data,
-    })
+    return successResponse(
+      res,
+      {
+        item,
+      },
+      201,
+    )
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
@@ -68,104 +84,100 @@ async function updateOTRequest(req, res, next) {
   try {
     const params = parse(otRequestIdParamSchema, req.params || {})
     const payload = parse(updateOTRequestSchema, req.body || {})
-    const data = await otService.update(params.id, payload, req.user)
+    const item = await otService.update(params.id, payload, req.user)
 
-    res.json({
-      ok: true,
-      data,
+    return successResponse(res, {
+      item,
     })
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function listUnavailableOTEmployees(req, res, next) {
   try {
     const query = parse(unavailableOTEmployeesQuerySchema, req.query || {})
-    const data = await otService.listUnavailableEmployeesForDate(query)
+    const result = await otService.listUnavailableEmployeesForDate(query)
 
-    res.json({
-      ok: true,
-      data,
-    })
+    return successResponse(res, result)
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function listOTRequests(req, res, next) {
   try {
     const query = parse(listOTRequestsQuerySchema, req.query || {})
-    const data = await otService.list(query, req.user)
+    const result = await otService.list(query, req.user)
 
-    res.json({
-      ok: true,
-      data,
-    })
+    return successResponse(res, result)
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function exportOTRequestsExcel(req, res, next) {
   try {
     const query = parse(listOTRequestsQuerySchema, req.query || {})
-    const file = await otService.exportRequestsExcel(query)
+    const file = await otService.exportRequestsExcel(query, req.user)
 
-    res.setHeader(
-      'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    )
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="${file.filename}"`,
-    )
+    setExcelHeaders(res, file.filename)
 
-    res.send(file.buffer)
+    return res.send(file.buffer)
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function getOTRequestDetail(req, res, next) {
   try {
     const params = parse(otRequestIdParamSchema, req.params || {})
-    const data = await otService.getById(params.id, req.user)
+    const item = await otService.getById(params.id, req.user)
 
-    res.json({
-      ok: true,
-      data,
+    return successResponse(res, {
+      item,
     })
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function getAllowedApproverChain(req, res, next) {
   try {
-    const employeeId = parseObjectIdParam(req.params.employeeId, 'employeeId')
-    const data = await otService.getAllowedApproverChain(employeeId)
+    const params = parse(allowedApproverChainParamSchema, req.params || {})
+    const result = await otService.getAllowedApproverChain(params.employeeId)
 
-    res.json({
-      ok: true,
-      data,
+    return successResponse(res, {
+      items: result,
+      meta: {
+        count: Array.isArray(result) ? result.length : 0,
+      },
     })
   } catch (error) {
-    next(error)
+    return next(error)
+  }
+}
+
+async function getShiftOTOptionsByShift(req, res, next) {
+  try {
+    const params = parse(shiftOptionsByShiftParamSchema, req.params || {})
+    const query = parse(shiftOptionsByShiftQuerySchema, req.query || {})
+    const result = await otService.getShiftOTOptionsByShift(params.shiftId, query)
+
+    return successResponse(res, result)
+  } catch (error) {
+    return next(error)
   }
 }
 
 async function listMyApprovalInbox(req, res, next) {
   try {
     const query = parse(listOTApprovalInboxQuerySchema, req.query || {})
-    const data = await otService.listApprovalInbox(query, req.user)
+    const result = await otService.listApprovalInbox(query, req.user)
 
-    res.json({
-      ok: true,
-      data,
-    })
+    return successResponse(res, result)
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
@@ -174,32 +186,22 @@ async function exportOTApprovalInboxExcel(req, res, next) {
     const query = parse(listOTApprovalInboxQuerySchema, req.query || {})
     const file = await otService.exportApprovalInboxExcel(query, req.user)
 
-    res.setHeader(
-      'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    )
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="${file.filename}"`,
-    )
+    setExcelHeaders(res, file.filename)
 
-    res.send(file.buffer)
+    return res.send(file.buffer)
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function listMyAcknowledgementInbox(req, res, next) {
   try {
     const query = parse(listOTApprovalInboxQuerySchema, req.query || {})
-    const data = await otAcknowledgementService.list(query, req.user)
+    const result = await otAcknowledgementService.list(query, req.user)
 
-    res.json({
-      ok: true,
-      data,
-    })
+    return successResponse(res, result)
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
@@ -207,32 +209,27 @@ async function decideOTRequest(req, res, next) {
   try {
     const params = parse(otRequestIdParamSchema, req.params || {})
     const payload = parse(otApprovalDecisionSchema, req.body || {})
-    const data = await otService.decide(params.id, payload, req.user)
+    const item = await otService.decide(params.id, payload, req.user)
 
-    res.json({
-      ok: true,
-      data,
+    return successResponse(res, {
+      item,
     })
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
-async function getShiftOTOptionsByShift(req, res, next) {
+async function requesterConfirmOTRequest(req, res, next) {
   try {
-    const shiftId = parseObjectIdParam(req.params.shiftId, 'shiftId')
+    const params = parse(otRequestIdParamSchema, req.params || {})
+    const payload = parse(otRequesterConfirmationSchema, req.body || {})
+    const item = await otService.requesterConfirm(params.id, payload, req.user)
 
-    const data = await otService.getShiftOTOptionsByShift(
-      shiftId,
-      req.query || {},
-    )
-
-    res.json({
-      ok: true,
-      data,
+    return successResponse(res, {
+      item,
     })
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
@@ -249,4 +246,5 @@ module.exports = {
   exportOTApprovalInboxExcel,
   listMyAcknowledgementInbox,
   decideOTRequest,
+  requesterConfirmOTRequest,
 }

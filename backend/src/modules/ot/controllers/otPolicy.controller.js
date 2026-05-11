@@ -1,13 +1,49 @@
 // backend/src/modules/ot/controllers/otPolicy.controller.js
+
 const otPolicyService = require('../services/otPolicy.service')
+const { successResponse } = require('../../../shared/utils/apiResponse')
+
+const {
+  createOTCalculationPolicySchema,
+  updateOTCalculationPolicySchema,
+  normalizeListQuery,
+  normalizeLookupQuery,
+  otCalculationPolicyIdParamSchema,
+} = require('../validators/otPolicy.validation')
+
+function parse(schema, data) {
+  return schema.parse(data)
+}
 
 async function lookupOTCalculationPolicies(req, res, next) {
   try {
-    const result = await otPolicyService.lookupOTCalculationPolicies(req.query)
+    const query = normalizeLookupQuery(req.query || {})
+    const result = await otPolicyService.lookupOTCalculationPolicies(query)
 
-    return res.json({
-      ok: true,
-      data: result,
+    return successResponse(res, result)
+  } catch (error) {
+    return next(error)
+  }
+}
+
+async function listOTCalculationPolicies(req, res, next) {
+  try {
+    const query = normalizeListQuery(req.query || {})
+    const result = await otPolicyService.list(query)
+
+    return successResponse(res, result)
+  } catch (error) {
+    return next(error)
+  }
+}
+
+async function getOTCalculationPolicyDetail(req, res, next) {
+  try {
+    const params = parse(otCalculationPolicyIdParamSchema, req.params || {})
+    const item = await otPolicyService.getById(params.id)
+
+    return successResponse(res, {
+      item,
     })
   } catch (error) {
     return next(error)
@@ -16,14 +52,16 @@ async function lookupOTCalculationPolicies(req, res, next) {
 
 async function createOTCalculationPolicy(req, res, next) {
   try {
-    const result = await otPolicyService.create(req.body || {}, req.user)
+    const payload = parse(createOTCalculationPolicySchema, req.body || {})
+    const item = await otPolicyService.create(payload, req.user)
 
-    return res.status(201).json({
-      ok: true,
-      message: 'OT calculation policy created successfully',
-      item: result,
-      data: result,
-    })
+    return successResponse(
+      res,
+      {
+        item,
+      },
+      201,
+    )
   } catch (error) {
     return next(error)
   }
@@ -31,36 +69,12 @@ async function createOTCalculationPolicy(req, res, next) {
 
 async function updateOTCalculationPolicy(req, res, next) {
   try {
-    const result = await otPolicyService.update(req.params.id, req.body || {}, req.user)
+    const params = parse(otCalculationPolicyIdParamSchema, req.params || {})
+    const payload = parse(updateOTCalculationPolicySchema, req.body || {})
+    const item = await otPolicyService.update(params.id, payload, req.user)
 
-    return res.json({
-      ok: true,
-      message: 'OT calculation policy updated successfully',
-      item: result,
-      data: result,
-    })
-  } catch (error) {
-    return next(error)
-  }
-}
-
-async function listOTCalculationPolicies(req, res, next) {
-  try {
-    const result = await otPolicyService.list(req.query || {})
-    return res.json(result)
-  } catch (error) {
-    return next(error)
-  }
-}
-
-async function getOTCalculationPolicyDetail(req, res, next) {
-  try {
-    const result = await otPolicyService.getById(req.params.id)
-
-    return res.json({
-      ok: true,
-      item: result,
-      data: result,
+    return successResponse(res, {
+      item,
     })
   } catch (error) {
     return next(error)
@@ -69,8 +83,8 @@ async function getOTCalculationPolicyDetail(req, res, next) {
 
 module.exports = {
   lookupOTCalculationPolicies,
-  createOTCalculationPolicy,
-  updateOTCalculationPolicy,
   listOTCalculationPolicies,
   getOTCalculationPolicyDetail,
+  createOTCalculationPolicy,
+  updateOTCalculationPolicy,
 }

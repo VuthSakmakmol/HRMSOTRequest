@@ -1,4 +1,5 @@
 // backend/src/modules/ot/routes/shiftOtOption.routes.js
+
 const express = require('express')
 
 const shiftOtOptionController = require('../controllers/shiftOtOption.controller')
@@ -9,7 +10,7 @@ const router = express.Router()
 
 router.use(requireAuth)
 
-// Use SHIFT_OT_OPTION_VIEW for lookup to avoid needing a new permission seed now.
+// Fixed route must stay before '/:id'
 router.get(
   '/lookup',
   requirePermission('SHIFT_OT_OPTION_VIEW'),

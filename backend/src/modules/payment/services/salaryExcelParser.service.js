@@ -10,10 +10,18 @@ function upper(value) {
   return s(value).toUpperCase()
 }
 
+function createHttpError(message, status = 400) {
+  const error = new Error(message)
+  error.status = status
+  error.statusCode = status
+  return error
+}
+
 function normalizeHeader(value) {
   return upper(value)
     .replace(/\s+/g, '')
     .replace(/[_-]/g, '')
+    .replace(/[^\w]/g, '')
 }
 
 function toNumber(value) {
@@ -22,9 +30,13 @@ function toNumber(value) {
   const cleaned = String(value)
     .replace(/,/g, '')
     .replace(/\$/g, '')
+    .replace(/\s/g, '')
     .trim()
 
+  if (!cleaned) return null
+
   const number = Number(cleaned)
+
   return Number.isFinite(number) ? number : null
 }
 
@@ -37,6 +49,7 @@ function findValue(row, possibleHeaders = []) {
 
   for (const header of possibleHeaders) {
     const key = normalizeHeader(header)
+
     if (Object.prototype.hasOwnProperty.call(normalizedRow, key)) {
       return normalizedRow[key]
     }
@@ -45,23 +58,85 @@ function findValue(row, possibleHeaders = []) {
   return undefined
 }
 
+function normalizeEmployeeNo(value) {
+  return upper(value)
+}
+
+function parseSalaryRow(row = {}, index = 0) {
+  const excelRowNo = index + 2
+
+  const employeeNo = normalizeEmployeeNo(
+    findValue(row, [
+      'Employee ID',
+      'Employee No',
+      'EmployeeNo',
+      'Employee Code',
+      'EmployeeCode',
+      'Emp ID',
+      'EmpNo',
+      'Staff ID',
+      'Staff Code',
+      'ID',
+      'Code',
+    ]),
+  )
+
+  const name = s(
+    findValue(row, [
+      'Name',
+      'Employee Name',
+      'EmployeeName',
+      'Full Name',
+      'FullName',
+      'Staff Name',
+    ]),
+  )
+
+  const salary = toNumber(
+    findValue(row, [
+      'Salary',
+      'Monthly Salary',
+      'MonthlySalary',
+      'Base Salary',
+      'BaseSalary',
+      'Wage',
+      'Basic Salary',
+      'BasicSalary',
+    ]),
+  )
+
+  return {
+    excelRowNo,
+    employeeNo,
+    name,
+    salary,
+  }
+}
+
 function parseSalaryExcel(buffer) {
-  if (!buffer) {
-    const error = new Error('Salary Excel file is required')
-    error.statusCode = 400
-    throw error
+  if (!buffer || !Buffer.isBuffer(buffer) || !buffer.length) {
+    throw createHttpError('Salary Excel file is required', 400)
   }
 
-  const workbook = XLSX.read(buffer, { type: 'buffer' })
+  let workbook
+
+  try {
+    workbook = XLSX.read(buffer, {
+      type: 'buffer',
+      cellDates: true,
+    })
+  } catch (error) {
+    throw createHttpError('Unable to read salary Excel file', 400)
+  }
+
   const firstSheetName = workbook.SheetNames?.[0]
 
   if (!firstSheetName) {
-    const error = new Error('Salary Excel has no sheet')
-    error.statusCode = 400
-    throw error
+    throw createHttpError('Salary Excel has no sheet', 400)
   }
 
   const sheet = workbook.Sheets[firstSheetName]
+
   const rows = XLSX.utils.sheet_to_json(sheet, {
     defval: '',
     raw: false,
@@ -72,71 +147,43 @@ function parseSalaryExcel(buffer) {
   const duplicateRows = []
 
   rows.forEach((row, index) => {
-    const excelRowNo = index + 2
+    const parsed = parseSalaryRow(row, index)
 
-    const employeeNo = upper(
-      findValue(row, [
-        'Employee ID',
-        'Employee No',
-        'EmployeeNo',
-        'Emp ID',
-        'EmpNo',
-        'ID',
-        'Code',
-      ])
-    )
-
-    const name = s(
-      findValue(row, [
-        'Name',
-        'Employee Name',
-        'Full Name',
-      ])
-    )
-
-    const salary = toNumber(
-      findValue(row, [
-        'Salary',
-        'Monthly Salary',
-        'Base Salary',
-        'Wage',
-      ])
-    )
-
-    if (!employeeNo) {
+    if (!parsed.employeeNo) {
       invalidRows.push({
-        rowNo: excelRowNo,
+        rowNo: parsed.excelRowNo,
+        employeeNo: '',
+        name: parsed.name,
         reason: 'Missing Employee ID',
-        rawName: name,
       })
       return
     }
 
-    if (salary === null || salary < 0) {
+    if (parsed.salary === null || parsed.salary < 0) {
       invalidRows.push({
-        rowNo: excelRowNo,
-        employeeNo,
-        name,
+        rowNo: parsed.excelRowNo,
+        employeeNo: parsed.employeeNo,
+        name: parsed.name,
         reason: 'Invalid salary',
       })
       return
     }
 
-    if (salaryMap.has(employeeNo)) {
+    if (salaryMap.has(parsed.employeeNo)) {
       duplicateRows.push({
-        rowNo: excelRowNo,
-        employeeNo,
-        name,
+        rowNo: parsed.excelRowNo,
+        employeeNo: parsed.employeeNo,
+        name: parsed.name,
         reason: 'Duplicate employee ID in salary Excel',
       })
       return
     }
 
-    salaryMap.set(employeeNo, {
-      employeeNo,
-      name,
-      salary,
-      rowNo: excelRowNo,
+    salaryMap.set(parsed.employeeNo, {
+      employeeNo: parsed.employeeNo,
+      name: parsed.name,
+      salary: parsed.salary,
+      rowNo: parsed.excelRowNo,
     })
   })
 
@@ -146,9 +193,37 @@ function parseSalaryExcel(buffer) {
     validCount: salaryMap.size,
     invalidRows,
     duplicateRows,
+    sheetName: firstSheetName,
   }
+}
+
+function buildSalaryTemplateWorkbook() {
+  const workbook = XLSX.utils.book_new()
+
+  const rows = [
+    ['Employee ID', 'Employee Name', 'Monthly Salary'],
+    ['52520351', 'Sample Employee 1', 250],
+    ['52520352', 'Sample Employee 2', 300],
+    ['52520353', 'Sample Employee 3', 280],
+  ]
+
+  const sheet = XLSX.utils.aoa_to_sheet(rows)
+
+  sheet['!cols'] = [
+    { wch: 18 },
+    { wch: 28 },
+    { wch: 18 },
+  ]
+
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Salary Template')
+
+  return XLSX.write(workbook, {
+    type: 'buffer',
+    bookType: 'xlsx',
+  })
 }
 
 module.exports = {
   parseSalaryExcel,
+  buildSalaryTemplateWorkbook,
 }

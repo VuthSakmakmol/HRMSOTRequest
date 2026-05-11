@@ -1,5 +1,7 @@
 // backend/src/modules/calendar/routes/holiday.routes.js
+
 const express = require('express')
+
 const holidayController = require('../controllers/holiday.controller')
 const requireAuth = require('../../../middlewares/requireAuth')
 const requirePermission = require('../../../middlewares/requirePermission.middleware')
@@ -8,11 +10,41 @@ const router = express.Router()
 
 router.use(requireAuth)
 
-router.get('/lookup', requirePermission('HOLIDAY_LOOKUP'), holidayController.lookup)
+// Fixed routes must stay before '/:id'
+router.get(
+  '/lookup',
+  requirePermission('HOLIDAY_LOOKUP'),
+  holidayController.lookup,
+)
 
-router.get('/', requirePermission('HOLIDAY_VIEW'), holidayController.list)
-router.get('/:id', requirePermission('HOLIDAY_VIEW'), holidayController.getById)
-router.post('/', requirePermission('HOLIDAY_CREATE'), holidayController.create)
-router.patch('/:id', requirePermission('HOLIDAY_UPDATE'), holidayController.update)
+router.get(
+  '/resolve-day-type',
+  requirePermission('HOLIDAY_LOOKUP'),
+  holidayController.resolveDayType,
+)
+
+router.get(
+  '/',
+  requirePermission('HOLIDAY_VIEW'),
+  holidayController.list,
+)
+
+router.get(
+  '/:id',
+  requirePermission('HOLIDAY_VIEW'),
+  holidayController.getById,
+)
+
+router.post(
+  '/',
+  requirePermission('HOLIDAY_CREATE'),
+  holidayController.create,
+)
+
+router.patch(
+  '/:id',
+  requirePermission('HOLIDAY_UPDATE'),
+  holidayController.update,
+)
 
 module.exports = router

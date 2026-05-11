@@ -1,5 +1,8 @@
 // backend/src/modules/auth/controllers/account.controller.js
+
 const accountService = require('../services/account.service')
+const { successResponse } = require('../../../shared/utils/apiResponse')
+
 const {
   createAccountSchema,
   updateAccountSchema,
@@ -8,83 +11,72 @@ const {
 } = require('../validators/account.validation')
 
 function parse(schema, data) {
-  const result = schema.safeParse(data)
-
-  if (!result.success) {
-    const err = new Error(result.error.issues[0]?.message || 'Validation error')
-    err.status = 400
-    throw err
-  }
-
-  return result.data
+  return schema.parse(data)
 }
 
 async function list(req, res, next) {
   try {
     const query = parse(listAccountsQuerySchema, req.query || {})
-    const data = await accountService.list(query)
+    const result = await accountService.list(query)
 
-    res.json({
-      ok: true,
-      data,
-    })
+    return successResponse(res, result)
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function getOne(req, res, next) {
   try {
-    const data = await accountService.getById(req.params.id)
+    const item = await accountService.getById(req.params.id)
 
-    res.json({
-      ok: true,
-      data,
+    return successResponse(res, {
+      item,
     })
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function create(req, res, next) {
   try {
     const payload = parse(createAccountSchema, req.body || {})
-    const data = await accountService.create(payload)
+    const item = await accountService.create(payload)
 
-    res.status(201).json({
-      ok: true,
-      data,
-    })
+    return successResponse(
+      res,
+      {
+        item,
+      },
+      201,
+    )
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function update(req, res, next) {
   try {
     const payload = parse(updateAccountSchema, req.body || {})
-    const data = await accountService.update(req.params.id, payload)
+    const item = await accountService.update(req.params.id, payload)
 
-    res.json({
-      ok: true,
-      data,
+    return successResponse(res, {
+      item,
     })
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function resetPassword(req, res, next) {
   try {
     const payload = parse(resetPasswordSchema, req.body || {})
-    const data = await accountService.resetPassword(req.params.id, payload)
+    const item = await accountService.resetPassword(req.params.id, payload)
 
-    res.json({
-      ok: true,
-      data,
+    return successResponse(res, {
+      item,
     })
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 

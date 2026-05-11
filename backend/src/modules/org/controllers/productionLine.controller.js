@@ -1,24 +1,17 @@
 // backend/src/modules/org/controllers/productionLine.controller.js
-// backend/src/modules/org/controllers/productionLine.controller.js
 
 const productionLineService = require('../services/productionLine.service')
+const { successResponse } = require('../../../shared/utils/apiResponse')
+
 const {
   createProductionLineSchema,
   updateProductionLineSchema,
-  listProductionLineQuerySchema,
-  productionLineLookupQuerySchema,
+  normalizeListQuery,
+  normalizeLookupQuery,
 } = require('../validators/productionLine.validation')
 
 function parse(schema, data) {
-  const result = schema.safeParse(data)
-
-  if (!result.success) {
-    const err = new Error(result.error.issues[0]?.message || 'Validation error')
-    err.status = 400
-    throw err
-  }
-
-  return result.data
+  return schema.parse(data)
 }
 
 function setExcelHeaders(res, filename) {
@@ -27,95 +20,88 @@ function setExcelHeaders(res, filename) {
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   )
 
-  res.setHeader(
-    'Content-Disposition',
-    `attachment; filename="${filename}"`,
-  )
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
 }
 
 async function list(req, res, next) {
   try {
-    const query = parse(listProductionLineQuerySchema, req.query || {})
-    const data = await productionLineService.list(query)
+    const query = normalizeListQuery(req.query || {})
+    const result = await productionLineService.list(query)
 
-    res.json({
-      ok: true,
-      data,
-    })
+    return successResponse(res, result)
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function lookup(req, res, next) {
   try {
-    const query = parse(productionLineLookupQuerySchema, req.query || {})
-    const data = await productionLineService.lookup(query)
+    const query = normalizeLookupQuery(req.query || {})
+    const result = await productionLineService.lookup(query)
 
-    res.json({
-      ok: true,
-      data,
-    })
+    return successResponse(res, result)
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function getById(req, res, next) {
   try {
-    const data = await productionLineService.getById(req.params.id)
+    const item = await productionLineService.getById(req.params.id)
 
-    res.json({
-      ok: true,
-      data,
+    return successResponse(res, {
+      item,
     })
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function create(req, res, next) {
   try {
     const payload = parse(createProductionLineSchema, req.body || {})
-    const data = await productionLineService.create(payload, req.user)
+    const item = await productionLineService.create(payload, req.user)
 
-    res.status(201).json({
-      ok: true,
-      data,
-    })
+    return successResponse(
+      res,
+      {
+        item,
+      },
+      201,
+    )
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function update(req, res, next) {
   try {
     const payload = parse(updateProductionLineSchema, req.body || {})
-    const data = await productionLineService.update(req.params.id, payload, req.user)
+    const item = await productionLineService.update(req.params.id, payload, req.user)
 
-    res.json({
-      ok: true,
-      data,
+    return successResponse(res, {
+      item,
     })
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function exportExcel(req, res, next) {
   try {
-    const query = parse(listProductionLineQuerySchema, {
+    const query = normalizeListQuery({
       ...(req.query || {}),
       page: 1,
-      limit: 200,
+      limit: 10,
     })
 
     const result = await productionLineService.exportExcel(query)
 
     setExcelHeaders(res, result.filename)
-    res.send(result.buffer)
+
+    return res.send(result.buffer)
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
@@ -124,28 +110,26 @@ async function downloadImportSample(req, res, next) {
     const result = await productionLineService.downloadImportSample()
 
     setExcelHeaders(res, result.filename)
-    res.send(result.buffer)
+
+    return res.send(result.buffer)
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function importExcel(req, res, next) {
   try {
-    if (!req.file?.buffer) {
-      const err = new Error('Excel file is required')
-      err.status = 400
-      throw err
-    }
+    const item = await productionLineService.importExcel(req.file, req.user)
 
-    const data = await productionLineService.importExcel(req.file.buffer, req.user)
-
-    res.json({
-      ok: true,
-      data,
-    })
+    return successResponse(
+      res,
+      {
+        item,
+      },
+      201,
+    )
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 

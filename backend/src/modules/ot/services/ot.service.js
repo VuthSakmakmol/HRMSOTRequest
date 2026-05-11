@@ -1,22 +1,21 @@
 // backend/src/modules/ot/services/ot.service.js
+
 const mongoose = require('mongoose')
 const XLSX = require('xlsx')
 
+const AppError = require('../../../shared/errors/AppError')
+
 const OTRequest = require('../models/OTRequest')
-const Shift = require('../../shift/models/Shift')
-const ShiftOTOption = require('../models/ShiftOTOption')
-const OTCalculationPolicy = require('../models/OTCalculationPolicy')
 const AttendanceRecord = require('../../attendance/models/AttendanceRecord')
 
 const Employee = require('../../org/models/Employee')
 const Department = require('../../org/models/Department')
 const Position = require('../../org/models/Position')
+const ProductionLine = require('../../org/models/ProductionLine')
+const Shift = require('../../shift/models/Shift')
 
 const employeeScopeService = require('../../org/services/employeeScope.service')
 const otTimingService = require('./otTiming.service')
-
-const { getDayType } = require('../utils/dayClassifier')
-const Holiday = require('../../calendar/models/Holiday')
 
 const OT_DUPLICATE_BLOCKING_STATUSES = [
   'PENDING',
@@ -32,58 +31,49 @@ function upper(value) {
   return s(value).toUpperCase()
 }
 
-function toMinutes(hhmm) {
-  const raw = s(hhmm)
-  const match = raw.match(/^(\d{2}):(\d{2})$/)
-
-  if (!match) {
-    const err = new Error(`Invalid time format: ${raw}`)
-    err.status = 400
-    throw err
-  }
-
-  const hh = Number(match[1])
-  const mm = Number(match[2])
-
-  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) {
-    const err = new Error(`Invalid time format: ${raw}`)
-    err.status = 400
-    throw err
-  }
-
-  return hh * 60 + mm
+function id(value) {
+  return value ? String(value?._id || value?.id || value) : ''
 }
 
-function minutesToHHmm(totalMinutes) {
-  const normalized = ((Number(totalMinutes || 0) % 1440) + 1440) % 1440
-  const hh = Math.floor(normalized / 60)
-  const mm = normalized % 60
-
-  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
+function isObjectId(value) {
+  return mongoose.Types.ObjectId.isValid(String(value || ''))
 }
 
-function addMinutesToHHmm(hhmm, extraMinutes) {
-  return minutesToHHmm(toMinutes(hhmm) + Number(extraMinutes || 0))
+function appError({
+  statusCode = 400,
+  code,
+  messageKey,
+  message,
+  field = null,
+  params = {},
+}) {
+  return new AppError({
+    statusCode,
+    code,
+    messageKey,
+    message,
+    field,
+    params,
+  })
 }
 
-function parseYMDToUtcRange(ymd) {
-  const raw = s(ymd)
-  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+function escapeRegex(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
 
-  if (!match) {
-    const err = new Error(`Invalid date format: ${raw}`)
-    err.status = 400
-    throw err
-  }
+function normalizeIdArray(values = []) {
+  return [
+    ...new Set(
+      (Array.isArray(values) ? values : [])
+        .map((value) => s(value))
+        .filter(Boolean),
+    ),
+  ]
+}
 
-  const year = Number(match[1])
-  const month = Number(match[2])
-  const day = Number(match[3])
-
-  const start = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0))
-  const end = new Date(Date.UTC(year, month - 1, day + 1, 0, 0, 0, 0))
-
-  return { start, end }
+function actorAccountId(authUser) {
+  const actorId = authUser?.accountId || authUser?.id || authUser?._id
+  return isObjectId(actorId) ? actorId : null
 }
 
 function todayYMDInPhnomPenh() {
@@ -98,9 +88,7 @@ function todayYMDInPhnomPenh() {
   const map = {}
 
   for (const part of parts) {
-    if (part.type !== 'literal') {
-      map[part.type] = part.value
-    }
+    if (part.type !== 'literal') map[part.type] = part.value
   }
 
   return `${map.year}-${map.month}-${map.day}`
@@ -108,39 +96,6 @@ function todayYMDInPhnomPenh() {
 
 function isTodayInPhnomPenh(ymd) {
   return s(ymd) === todayYMDInPhnomPenh()
-}
-
-function escapeRegex(value) {
-  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-function normalizeIdArray(values = []) {
-  return Array.from(
-    new Set(
-      (Array.isArray(values) ? values : [])
-        .map((id) => s(id))
-        .filter(Boolean),
-    ),
-  )
-}
-
-function buildEmployeeLabel(item = {}) {
-  return (
-    [s(item.employeeCode), s(item.employeeName)].filter(Boolean).join(' - ') ||
-    [s(item.employeeNo), s(item.displayName)].filter(Boolean).join(' - ') ||
-    s(item.employeeId) ||
-    s(item._id)
-  )
-}
-
-function formatDateTime(value) {
-  if (!value) return ''
-
-  try {
-    return new Date(value).toLocaleString('en-CA')
-  } catch {
-    return String(value)
-  }
 }
 
 function firstText(...values) {
@@ -152,8 +107,112 @@ function firstText(...values) {
   return ''
 }
 
-function normalizeLineSnapshot(source = {}) {
-  if (!source || typeof source !== 'object') {
+function formatDateTime(value) {
+  if (!value) return ''
+
+  const date = value instanceof Date ? value : new Date(value)
+
+  if (Number.isNaN(date.getTime())) return ''
+
+  return date.toISOString().slice(0, 19).replace('T', ' ')
+}
+
+function employeeCode(employee = {}) {
+  return s(employee.employeeNo || employee.employeeCode || employee.code)
+}
+
+function employeeName(employee = {}) {
+  return s(employee.displayName || employee.employeeName || employee.name)
+}
+
+function buildEmployeeLabel(item = {}) {
+  return (
+    [s(item.employeeCode), s(item.employeeName)].filter(Boolean).join(' - ') ||
+    s(item.employeeId)
+  )
+}
+
+function statusKey(status) {
+  const value = upper(status)
+
+  const map = {
+    PENDING: 'ot.status.pending',
+    PENDING_REQUESTER_CONFIRMATION: 'ot.status.pendingRequesterConfirmation',
+    APPROVED: 'ot.status.approved',
+    REJECTED: 'ot.status.rejected',
+    REQUESTER_DISAGREED: 'ot.status.requesterDisagreed',
+    CANCELLED: 'ot.status.cancelled',
+  }
+
+  return map[value] || 'common.status.unknown'
+}
+
+function statusSeverity(status) {
+  const value = upper(status)
+
+  if (value === 'APPROVED') return 'success'
+  if (value === 'REJECTED') return 'danger'
+  if (value === 'REQUESTER_DISAGREED') return 'danger'
+  if (value === 'PENDING_REQUESTER_CONFIRMATION') return 'info'
+  if (value === 'CANCELLED') return 'secondary'
+
+  return 'warning'
+}
+
+function dayTypeKey(dayType) {
+  const value = upper(dayType)
+
+  if (value === 'HOLIDAY') return 'ot.dayType.holiday'
+  if (value === 'SUNDAY') return 'ot.dayType.sunday'
+
+  return 'ot.dayType.workingDay'
+}
+
+function dayTypeSeverity(dayType) {
+  const value = upper(dayType)
+
+  if (value === 'HOLIDAY') return 'danger'
+  if (value === 'SUNDAY') return 'warning'
+
+  return 'success'
+}
+
+function otUnavailableStatusLabel(status) {
+  const normalized = upper(status)
+
+  if (normalized === 'PENDING') return 'Pending for approval'
+  if (normalized === 'PENDING_REQUESTER_CONFIRMATION') return 'Waiting requester confirmation'
+  if (normalized === 'APPROVED') return 'Already approved'
+
+  return normalized || 'Unavailable'
+}
+
+async function generateRequestNo() {
+  const now = new Date()
+  const yyyy = now.getFullYear()
+  const mm = String(now.getMonth() + 1).padStart(2, '0')
+  const prefix = `OT-${yyyy}${mm}`
+
+  const latest = await OTRequest.findOne({
+    requestNo: { $regex: `^${prefix}-\\d{4}$` },
+  })
+    .sort({ requestNo: -1 })
+    .lean()
+
+  let nextNumber = 1
+
+  if (latest?.requestNo) {
+    const lastPart = Number(String(latest.requestNo).split('-').pop())
+    if (Number.isFinite(lastPart)) nextNumber = lastPart + 1
+  }
+
+  return `${prefix}-${String(nextNumber).padStart(4, '0')}`
+}
+
+async function resolveLineSnapshot(lineId) {
+  const cleanLineId = s(lineId)
+
+  if (!cleanLineId || !isObjectId(cleanLineId)) {
     return {
       lineId: null,
       lineCode: '',
@@ -162,332 +221,128 @@ function normalizeLineSnapshot(source = {}) {
     }
   }
 
-  const lineId = firstText(source._id, source.id, source.lineId, source.productionLineId)
+  const line = await ProductionLine.findById(cleanLineId).lean()
 
-  const lineCode = firstText(
-    source.code,
-    source.lineCode,
-    source.productionLineCode,
-    source.employeeLineCode,
-    source.assignedLineCode,
-  )
-
-  const lineName = firstText(
-    source.name,
-    source.lineName,
-    source.productionLineName,
-    source.employeeLineName,
-    source.assignedLineName,
-  )
-
-  const lineLabel = firstText(
-    source.lineLabel,
-    source.productionLineLabel,
-    source.employeeLineLabel,
-    source.assignedLineLabel,
-    source.displayName,
-    source.label,
-    lineCode && lineName ? `${lineCode} · ${lineName}` : '',
-    lineCode,
-    lineName,
-  )
-
-  return {
-    lineId: lineId && mongoose.isValidObjectId(lineId) ? lineId : null,
-    lineCode,
-    lineName,
-    lineLabel,
-  }
-}
-
-function getDirectLineSnapshotFromEmployee(employee = {}) {
-  const nestedLine =
-    employee.line ||
-    employee.productionLine ||
-    employee.lineId ||
-    employee.productionLineId ||
-    null
-
-  if (nestedLine && typeof nestedLine === 'object') {
-    const nestedSnapshot = normalizeLineSnapshot(nestedLine)
-
-    if (nestedSnapshot.lineCode || nestedSnapshot.lineName || nestedSnapshot.lineLabel) {
-      return nestedSnapshot
-    }
-  }
-
-  const directSnapshot = normalizeLineSnapshot({
-    lineId: firstText(employee.lineId, employee.productionLineId),
-    lineCode: firstText(
-      employee.lineCode,
-      employee.productionLineCode,
-      employee.employeeLineCode,
-      employee.assignedLineCode,
-    ),
-    lineName: firstText(
-      employee.lineName,
-      employee.productionLineName,
-      employee.employeeLineName,
-      employee.assignedLineName,
-    ),
-    lineLabel: firstText(
-      employee.lineLabel,
-      employee.productionLineLabel,
-      employee.employeeLineLabel,
-      employee.assignedLineLabel,
-    ),
-  })
-
-  if (directSnapshot.lineCode || directSnapshot.lineName || directSnapshot.lineLabel) {
-    return directSnapshot
-  }
-
-  return {
-    lineId: directSnapshot.lineId,
-    lineCode: '',
-    lineName: '',
-    lineLabel: '',
-  }
-}
-
-function collectLineCandidateIds(employee = {}) {
-  const values = [
-    employee.lineId,
-    employee.productionLineId,
-    employee.employeeLineId,
-    employee.assignedLineId,
-    employee.line?._id,
-    employee.line?.id,
-    employee.productionLine?._id,
-    employee.productionLine?.id,
-  ]
-
-  return Array.from(
-    new Set(
-      values
-        .map((value) => s(value))
-        .filter((value) => value && mongoose.isValidObjectId(value)),
-    ),
-  )
-}
-
-async function findLineDocumentById(lineId) {
-  if (!lineId || !mongoose.isValidObjectId(lineId)) return null
-
-  const objectId = new mongoose.Types.ObjectId(lineId)
-
-  const collectionNames = [
-    'productionlines',
-    'production_lines',
-    'lines',
-    'orglines',
-    'production_line',
-  ]
-
-  for (const collectionName of collectionNames) {
-    try {
-      const doc = await mongoose.connection.collection(collectionName).findOne(
-        { _id: objectId },
-        {
-          projection: {
-            _id: 1,
-            code: 1,
-            name: 1,
-            lineCode: 1,
-            lineName: 1,
-            productionLineCode: 1,
-            productionLineName: 1,
-            displayName: 1,
-            label: 1,
-            isActive: 1,
-          },
-        },
-      )
-
-      if (doc) return doc
-    } catch {
-      // Try next possible collection name.
-    }
-  }
-
-  return null
-}
-
-async function resolveLineSnapshotFromEmployee(employee = {}) {
-  const directSnapshot = getDirectLineSnapshotFromEmployee(employee)
-
-  if (directSnapshot.lineCode || directSnapshot.lineName || directSnapshot.lineLabel) {
-    return directSnapshot
-  }
-
-  const candidateIds = collectLineCandidateIds(employee)
-
-  for (const lineId of candidateIds) {
-    const lineDoc = await findLineDocumentById(lineId)
-
-    if (lineDoc) {
-      return normalizeLineSnapshot(lineDoc)
-    }
-  }
-
-  return directSnapshot
-}
-
-function collectEmployeeIdsFromSnapshots(items = [], idSet = new Set()) {
-  for (const item of Array.isArray(items) ? items : []) {
-    const employeeId = s(item?.employeeId)
-
-    if (employeeId && mongoose.isValidObjectId(employeeId)) {
-      idSet.add(employeeId)
-    }
-  }
-
-  return idSet
-}
-
-function collectEmployeeIdsFromOTDocs(docs = []) {
-  const idSet = new Set()
-
-  for (const doc of Array.isArray(docs) ? docs : []) {
-    collectEmployeeIdsFromSnapshots(doc?.requestedEmployees, idSet)
-    collectEmployeeIdsFromSnapshots(doc?.approvedEmployees, idSet)
-    collectEmployeeIdsFromSnapshots(doc?.proposedApprovedEmployees, idSet)
-  }
-
-  return Array.from(idSet)
-}
-
-async function buildEmployeeMasterMapForOTDocs(docs = []) {
-  const employeeIds = collectEmployeeIdsFromOTDocs(docs)
-
-  if (!employeeIds.length) return new Map()
-
-  const objectIds = employeeIds.map((id) => new mongoose.Types.ObjectId(id))
-  const employees = await Employee.find({ _id: { $in: objectIds } }).lean()
-  const map = new Map()
-
-  for (const employee of employees) {
-    const line = await resolveLineSnapshotFromEmployee(employee)
-
-    map.set(String(employee._id), {
-      employeeId: String(employee._id),
-      employeeCode: s(employee.employeeNo || employee.employeeCode || employee.code),
-      employeeName: s(employee.displayName || employee.employeeName || employee.name),
-      lineId: line.lineId,
-      lineCode: line.lineCode,
-      lineName: line.lineName,
-      lineLabel: line.lineLabel,
-    })
-  }
-
-  return map
-}
-
-function enrichEmployeeSnapshotWithMaster(item = {}, employeeMasterMap = new Map()) {
-  const employeeId = s(item?.employeeId)
-  const master = employeeMasterMap.get(employeeId) || {}
-
-  const lineId = firstText(item?.lineId, master.lineId)
-  const lineCode = firstText(item?.lineCode, master.lineCode)
-  const lineName = firstText(item?.lineName, master.lineName)
-
-  const lineLabel = firstText(
-    item?.lineLabel,
-    master.lineLabel,
-    lineCode && lineName ? `${lineCode} · ${lineName}` : '',
-    lineCode,
-    lineName,
-  )
-
-  return {
-    ...item,
-    employeeCode: firstText(item?.employeeCode, master.employeeCode),
-    employeeName: firstText(item?.employeeName, master.employeeName),
-    lineId: lineId && mongoose.isValidObjectId(lineId) ? lineId : null,
-    lineCode,
-    lineName,
-    lineLabel,
-  }
-}
-
-function enrichOTDocEmployeeSnapshots(doc = {}, employeeMasterMap = new Map()) {
-  return {
-    ...doc,
-    requestedEmployees: Array.isArray(doc.requestedEmployees)
-      ? doc.requestedEmployees.map((item) =>
-          enrichEmployeeSnapshotWithMaster(item, employeeMasterMap),
-        )
-      : [],
-    approvedEmployees: Array.isArray(doc.approvedEmployees)
-      ? doc.approvedEmployees.map((item) =>
-          enrichEmployeeSnapshotWithMaster(item, employeeMasterMap),
-        )
-      : [],
-    proposedApprovedEmployees: Array.isArray(doc.proposedApprovedEmployees)
-      ? doc.proposedApprovedEmployees.map((item) =>
-          enrichEmployeeSnapshotWithMaster(item, employeeMasterMap),
-        )
-      : [],
-  }
-}
-
-async function enrichOTDocsWithEmployeeMasterData(docs = []) {
-  const items = Array.isArray(docs) ? docs : []
-  const employeeMasterMap = await buildEmployeeMasterMapForOTDocs(items)
-
-  return items.map((doc) => enrichOTDocEmployeeSnapshots(doc, employeeMasterMap))
-}
-
-async function resolveHolidayDateStrings(dateStrings = []) {
-  const uniqueDates = Array.from(
-    new Set(
-      (Array.isArray(dateStrings) ? dateStrings : [])
-        .map((date) => s(date))
-        .filter(Boolean),
-    ),
-  )
-
-  if (!uniqueDates.length) return []
-
-  const orConditions = uniqueDates.map((ymd) => {
-    const { start, end } = parseYMDToUtcRange(ymd)
-
+  if (!line) {
     return {
-      date: {
-        $gte: start,
-        $lt: end,
-      },
+      lineId: cleanLineId,
+      lineCode: '',
+      lineName: '',
+      lineLabel: '',
     }
-  })
+  }
 
-  const docs = await Holiday.find({
-    isActive: true,
-    $or: orConditions,
-  })
-    .select({ date: 1 })
-    .lean()
+  const lineCode = s(line.code)
+  const lineName = s(line.name)
 
-  return docs
-    .map((doc) => {
-      if (!(doc?.date instanceof Date) || Number.isNaN(doc.date.getTime())) {
-        return ''
-      }
-
-      return doc.date.toISOString().slice(0, 10)
-    })
-    .filter(Boolean)
+  return {
+    lineId: String(line._id),
+    lineCode,
+    lineName,
+    lineLabel: [lineCode, lineName].filter(Boolean).join(' · '),
+  }
 }
 
-function otUnavailableStatusLabel(status) {
-  const normalized = upper(status)
+async function resolveEmployeeSnapshot(employeeId) {
+  const cleanEmployeeId = s(employeeId)
 
-  if (normalized === 'PENDING') return 'Pending for approval'
-  if (normalized === 'PENDING_REQUESTER_CONFIRMATION') {
-    return 'Waiting requester confirmation'
+  if (!isObjectId(cleanEmployeeId)) {
+    throw appError({
+      statusCode: 400,
+      code: 'INVALID_EMPLOYEE_ID',
+      messageKey: 'common.error.invalidId',
+      message: 'Invalid employee id',
+      field: 'employeeId',
+    })
   }
-  if (normalized === 'APPROVED') return 'Already approved'
 
-  return normalized || 'Unavailable'
+  const employee = await Employee.findById(cleanEmployeeId).lean()
+
+  if (!employee) {
+    throw appError({
+      statusCode: 404,
+      code: 'EMPLOYEE_NOT_FOUND',
+      messageKey: 'employee.error.notFound',
+      message: 'Employee not found',
+      field: 'employeeId',
+    })
+  }
+
+  if (employee.isActive === false) {
+    throw appError({
+      statusCode: 400,
+      code: 'EMPLOYEE_INACTIVE',
+      messageKey: 'employee.error.inactive',
+      message: 'Employee is inactive',
+      field: 'employeeId',
+    })
+  }
+
+  const [department, position, shift, line] = await Promise.all([
+    employee.departmentId ? Department.findById(employee.departmentId).lean() : null,
+    employee.positionId ? Position.findById(employee.positionId).lean() : null,
+    employee.shiftId ? Shift.findById(employee.shiftId).lean() : null,
+    resolveLineSnapshot(employee.lineId),
+  ])
+
+  return {
+    employee,
+    department,
+    position,
+    shift: shift
+      ? {
+          _id: shift._id,
+          code: s(shift.code),
+          name: s(shift.name),
+          type: upper(shift.type),
+          startTime: s(shift.startTime),
+          breakStartTime: s(shift.breakStartTime),
+          breakEndTime: s(shift.breakEndTime),
+          endTime: s(shift.endTime),
+          crossMidnight: shift.crossMidnight === true,
+          isActive: shift.isActive !== false,
+        }
+      : null,
+    line,
+  }
+}
+
+async function resolveEmployeesSnapshotsWithContext(employeeIds = []) {
+  const result = []
+
+  for (const employeeId of employeeIds) {
+    const { employee, department, position, shift, line } =
+      await resolveEmployeeSnapshot(employeeId)
+
+    result.push({
+      snapshot: {
+        employeeId: employee._id,
+
+        employeeCode: employeeCode(employee),
+        employeeName: employeeName(employee),
+
+        departmentId: department?._id || null,
+        departmentCode: s(department?.code),
+        departmentName: s(department?.name),
+
+        positionId: position?._id || null,
+        positionCode: s(position?.code),
+        positionName: s(position?.name),
+
+        lineId: line?.lineId || null,
+        lineCode: s(line?.lineCode),
+        lineName: s(line?.lineName),
+        lineLabel: s(line?.lineLabel),
+      },
+      shift,
+    })
+  }
+
+  return result
+}
+
+async function assertSelectedEmployeesInsideRequesterScope(authUser, employeeIds = []) {
+  await employeeScopeService.assertEmployeesInsideManagedScope(authUser, employeeIds)
 }
 
 function collectEmployeeSnapshotsFromRequest(doc) {
@@ -518,6 +373,7 @@ function collectDuplicateEmployeesFromRequest(doc, selectedIdSet, duplicateMap) 
       requestNo: s(doc?.requestNo),
       otDate: s(doc?.otDate),
       status: upper(doc?.status),
+      statusKey: statusKey(doc?.status),
       statusLabel: otUnavailableStatusLabel(doc?.status),
     })
   }
@@ -534,8 +390,8 @@ async function ensureNoDuplicateOTEmployeesForDate({
   if (!date || !uniqueEmployeeIds.length) return
 
   const employeeObjectIds = uniqueEmployeeIds
-    .filter((id) => mongoose.isValidObjectId(id))
-    .map((id) => new mongoose.Types.ObjectId(id))
+    .filter(isObjectId)
+    .map((item) => new mongoose.Types.ObjectId(item))
 
   if (!employeeObjectIds.length) return
 
@@ -549,7 +405,7 @@ async function ensureNoDuplicateOTEmployeesForDate({
     ],
   }
 
-  if (excludeRequestId && mongoose.isValidObjectId(excludeRequestId)) {
+  if (excludeRequestId && isObjectId(excludeRequestId)) {
     filter._id = {
       $ne: new mongoose.Types.ObjectId(excludeRequestId),
     }
@@ -580,33 +436,18 @@ async function ensureNoDuplicateOTEmployeesForDate({
 
   if (!duplicates.length) return
 
-  const preview = duplicates
-    .slice(0, 5)
-    .map((item) => {
-      const employeeLabel = item.employeeLabel || item.employeeId
-      const requestNo = item.requestNo ? ` (${item.requestNo})` : ''
-      return `${employeeLabel}${requestNo}`
-    })
-    .join(', ')
-
-  const moreText = duplicates.length > 5 ? ` and ${duplicates.length - 5} more` : ''
-
-  const err = new Error(
-    `Some employees already have OT request on ${date}. Please remove them before submit. ${preview}${moreText}`,
-  )
-
-  err.status = 409
-  err.code = 'OT_EMPLOYEE_DUPLICATE_DATE'
-  err.error = 'OT_EMPLOYEE_DUPLICATE_DATE'
-  err.duplicates = duplicates
-  err.duplicateEmployeeIds = duplicates.map((item) => item.employeeId)
-  err.details = {
-    otDate: date,
-    duplicates,
-    duplicateEmployeeIds: err.duplicateEmployeeIds,
-  }
-
-  throw err
+  throw appError({
+    statusCode: 409,
+    code: 'OT_EMPLOYEE_DUPLICATE_DATE',
+    messageKey: 'ot.request.error.employeeDuplicateDate',
+    message: 'Some employees already have OT request on this date',
+    field: 'employeeIds',
+    params: {
+      otDate: date,
+      duplicates,
+      duplicateEmployeeIds: duplicates.map((item) => item.employeeId),
+    },
+  })
 }
 
 async function ensureEmployeesHaveTodayClockIn({ otDate, employeeIds = [] }) {
@@ -614,28 +455,21 @@ async function ensureEmployeesHaveTodayClockIn({ otDate, employeeIds = [] }) {
   const uniqueEmployeeIds = normalizeIdArray(employeeIds)
 
   if (!date || !uniqueEmployeeIds.length) return
-
-  // Only check attendance when OT date is today in Cambodia timezone.
   if (!isTodayInPhnomPenh(date)) return
 
   const employeeObjectIds = uniqueEmployeeIds
-    .filter((id) => mongoose.isValidObjectId(id))
-    .map((id) => new mongoose.Types.ObjectId(id))
+    .filter(isObjectId)
+    .map((item) => new mongoose.Types.ObjectId(item))
 
   if (!employeeObjectIds.length) return
 
   const records = await AttendanceRecord.find({
     attendanceDate: date,
     employeeId: { $in: employeeObjectIds },
-    $or: [
-      { hasClockIn: true },
-      { clockIn: { $exists: true, $ne: '' } },
-    ],
+    $or: [{ hasClockIn: true }, { clockIn: { $exists: true, $ne: '' } }],
   })
     .select({
       employeeId: 1,
-      employeeNo: 1,
-      employeeName: 1,
       clockIn: 1,
       hasClockIn: 1,
     })
@@ -654,8 +488,8 @@ async function ensureEmployeesHaveTodayClockIn({ otDate, employeeIds = [] }) {
   const employees = await Employee.find({
     _id: {
       $in: missingEmployeeIds
-        .filter((id) => mongoose.isValidObjectId(id))
-        .map((id) => new mongoose.Types.ObjectId(id)),
+        .filter(isObjectId)
+        .map((item) => new mongoose.Types.ObjectId(item)),
     },
   })
     .select({
@@ -664,36 +498,27 @@ async function ensureEmployeesHaveTodayClockIn({ otDate, employeeIds = [] }) {
     })
     .lean()
 
-  const missing = employees.map((employee) => ({
+  const missingEmployees = employees.map((employee) => ({
     employeeId: String(employee._id),
-    employeeNo: s(employee.employeeNo),
-    employeeName: s(employee.displayName),
-    employeeLabel: [s(employee.employeeNo), s(employee.displayName)]
+    employeeCode: employeeCode(employee),
+    employeeName: employeeName(employee),
+    employeeLabel: [employeeCode(employee), employeeName(employee)]
       .filter(Boolean)
       .join(' - '),
   }))
 
-  const preview = missing
-    .slice(0, 5)
-    .map((item) => item.employeeLabel || item.employeeId)
-    .join(', ')
-
-  const moreText = missing.length > 5 ? ` and ${missing.length - 5} more` : ''
-
-  const err = new Error(
-    `Cannot create OT request for today. These employees do not have attendance time-in: ${preview}${moreText}`,
-  )
-
-  err.status = 400
-  err.code = 'OT_TODAY_ATTENDANCE_TIME_IN_REQUIRED'
-  err.error = 'OT_TODAY_ATTENDANCE_TIME_IN_REQUIRED'
-  err.details = {
-    otDate: date,
-    missingEmployees: missing,
-    missingEmployeeIds,
-  }
-
-  throw err
+  throw appError({
+    statusCode: 400,
+    code: 'OT_TODAY_ATTENDANCE_TIME_IN_REQUIRED',
+    messageKey: 'ot.request.error.todayAttendanceTimeInRequired',
+    message: 'Cannot create OT request for today because some employees do not have attendance time-in',
+    field: 'employeeIds',
+    params: {
+      otDate: date,
+      missingEmployees,
+      missingEmployeeIds,
+    },
+  })
 }
 
 function collectUnavailableEmployeesFromRequest(doc, map) {
@@ -701,6 +526,7 @@ function collectUnavailableEmployeesFromRequest(doc, map) {
 
   for (const item of collections) {
     const employeeId = s(item?.employeeId)
+
     if (!employeeId) continue
     if (map.has(employeeId)) continue
 
@@ -713,6 +539,7 @@ function collectUnavailableEmployeesFromRequest(doc, map) {
       requestNo: s(doc?.requestNo),
       otDate: s(doc?.otDate),
       status: upper(doc?.status),
+      statusKey: statusKey(doc?.status),
       statusLabel: otUnavailableStatusLabel(doc?.status),
     })
   }
@@ -720,12 +547,6 @@ function collectUnavailableEmployeesFromRequest(doc, map) {
 
 async function listUnavailableEmployeesForDate(query = {}) {
   const otDate = s(query.otDate)
-
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(otDate)) {
-    const err = new Error('otDate must be YYYY-MM-DD')
-    err.status = 400
-    throw err
-  }
 
   const docs = await OTRequest.find({
     otDate,
@@ -748,11 +569,11 @@ async function listUnavailableEmployeesForDate(query = {}) {
     collectUnavailableEmployeesFromRequest(doc, map)
   }
 
-  const items = Array.from(map.values()).sort((a, b) => {
-    return `${a.employeeCode} ${a.employeeName}`.localeCompare(
+  const items = Array.from(map.values()).sort((a, b) =>
+    `${a.employeeCode} ${a.employeeName}`.localeCompare(
       `${b.employeeCode} ${b.employeeName}`,
-    )
-  })
+    ),
+  )
 
   return {
     otDate,
@@ -762,327 +583,34 @@ async function listUnavailableEmployeesForDate(query = {}) {
   }
 }
 
-async function generateRequestNo() {
-  const now = new Date()
-  const yyyy = now.getFullYear()
-  const mm = String(now.getMonth() + 1).padStart(2, '0')
-  const prefix = `OT-${yyyy}${mm}`
+async function getUpwardApproverChain(employeeId, options = {}) {
+  const maxDepth = Number(options.maxDepth || 20)
+  const requesterId = s(employeeId)
 
-  const latest = await OTRequest.findOne({
-    requestNo: { $regex: `^${prefix}-\\d{4}$` },
-  })
-    .sort({ requestNo: -1 })
-    .lean()
-
-  let nextNumber = 1
-
-  if (latest?.requestNo) {
-    const lastPart = Number(String(latest.requestNo).split('-').pop())
-    if (Number.isFinite(lastPart)) nextNumber = lastPart + 1
-  }
-
-  return `${prefix}-${String(nextNumber).padStart(4, '0')}`
-}
-
-async function resolveEmployeeSnapshot(employeeId) {
-  if (!mongoose.isValidObjectId(employeeId)) {
-    const err = new Error('Invalid employee id')
-    err.status = 400
-    throw err
-  }
-
-  const employee = await Employee.findById(employeeId).lean()
-
-  if (!employee) {
-    const err = new Error('Employee not found')
-    err.status = 404
-    throw err
-  }
-
-  if (!employee.isActive) {
-    const err = new Error('Employee is inactive')
-    err.status = 400
-    throw err
-  }
-
-  const [department, position, shift, line] = await Promise.all([
-    employee.departmentId ? Department.findById(employee.departmentId).lean() : null,
-    employee.positionId ? Position.findById(employee.positionId).lean() : null,
-    employee.shiftId ? Shift.findById(employee.shiftId).lean() : null,
-    resolveLineSnapshotFromEmployee(employee),
-  ])
-
-  return {
-    employee,
-    department,
-    position,
-    shift,
-    line,
-  }
-}
-
-async function assertSelectedEmployeesInsideRequesterScope(authUser, employeeIds = []) {
-  await employeeScopeService.assertEmployeesInsideManagedScope(authUser, employeeIds)
-}
-
-async function resolveEmployeesSnapshotsWithContext(employeeIds = []) {
-  const result = []
-
-  for (const employeeId of employeeIds) {
-    const { employee, department, position, shift, line } =
-      await resolveEmployeeSnapshot(employeeId)
-
-    result.push({
-      snapshot: {
-        employeeId: employee._id,
-        employeeCode: s(employee.employeeNo || employee.employeeCode || employee.code),
-        employeeName: s(employee.displayName || employee.employeeName || employee.name),
-        departmentId: department?._id || null,
-        departmentCode: s(department?.code),
-        departmentName: s(department?.name),
-        positionId: position?._id || null,
-        positionCode: s(position?.code),
-        positionName: s(position?.name),
-        lineId: line?.lineId || null,
-        lineCode: s(line?.lineCode),
-        lineName: s(line?.lineName),
-        lineLabel: s(line?.lineLabel),
-      },
-      shift: shift
-        ? {
-            _id: shift._id,
-            code: s(shift.code),
-            name: s(shift.name),
-            type: s(shift.type),
-            startTime: s(shift.startTime),
-            breakStartTime: s(shift.breakStartTime),
-            breakEndTime: s(shift.breakEndTime),
-            endTime: s(shift.endTime),
-            crossMidnight: shift.crossMidnight === true,
-            isActive: shift.isActive !== false,
-          }
-        : null,
+  if (!isObjectId(requesterId)) {
+    throw appError({
+      statusCode: 400,
+      code: 'INVALID_EMPLOYEE_ID',
+      messageKey: 'common.error.invalidId',
+      message: 'Invalid employee id',
+      field: 'employeeId',
     })
   }
 
-  return result
-}
-
-function assertSharedShiftForOptionBasedOT(employeeContexts = []) {
-  if (!Array.isArray(employeeContexts) || !employeeContexts.length) {
-    const err = new Error('Please select at least 1 employee')
-    err.status = 400
-    throw err
-  }
-
-  const firstShift = employeeContexts[0]?.shift
-
-  if (!firstShift?._id) {
-    const err = new Error('All selected employees must have an assigned shift to use OT option')
-    err.status = 400
-    throw err
-  }
-
-  const firstShiftId = String(firstShift._id)
-
-  for (const item of employeeContexts) {
-    const shift = item?.shift
-
-    if (!shift?._id) {
-      const err = new Error('All selected employees must have an assigned shift to use OT option')
-      err.status = 400
-      throw err
-    }
-
-    if (String(shift._id) !== firstShiftId) {
-      const err = new Error(
-        'All selected employees must belong to the same shift when using OT option',
-      )
-      err.status = 400
-      throw err
-    }
-
-    if (shift.isActive === false) {
-      const err = new Error('Assigned shift is inactive')
-      err.status = 400
-      throw err
-    }
-  }
-
-  return firstShift
-}
-
-async function resolveShiftOtOptionSelection(shiftOtOptionId, sharedShift) {
-  if (!s(shiftOtOptionId) || !mongoose.isValidObjectId(shiftOtOptionId)) {
-    const err = new Error('Please select OT option')
-    err.status = 400
-    throw err
-  }
-
-  const shiftOtOption = await ShiftOTOption.findById(shiftOtOptionId).lean()
-
-  if (!shiftOtOption || shiftOtOption.isActive === false) {
-    const err = new Error('Selected OT option is not found or inactive')
-    err.status = 404
-    throw err
-  }
-
-  if (String(shiftOtOption.shiftId) !== String(sharedShift._id)) {
-    const err = new Error('Selected OT option does not belong to the employees assigned shift')
-    err.status = 400
-    throw err
-  }
-
-  const calculationPolicy = await OTCalculationPolicy.findById(
-    shiftOtOption.calculationPolicyId,
-  ).lean()
-
-  if (!calculationPolicy || calculationPolicy.isActive === false) {
-    const err = new Error('OT calculation policy is not found or inactive')
-    err.status = 404
-    throw err
-  }
-
-  return {
-    shiftOtOption,
-    calculationPolicy,
-  }
-}
-
-function buildPolicySnapshot(calculationPolicy) {
-  return {
-    calculationPolicyId: calculationPolicy?._id || null,
-    code: s(calculationPolicy?.code),
-    name: s(calculationPolicy?.name),
-    minEligibleMinutes: Number(calculationPolicy?.minEligibleMinutes || 0),
-    roundUnitMinutes: Number(calculationPolicy?.roundUnitMinutes || 0),
-    roundMethod: s(calculationPolicy?.roundMethod),
-    graceAfterShiftEndMinutes: Number(calculationPolicy?.graceAfterShiftEndMinutes || 0),
-
-    allowApprovedOtWithoutExactClockOut:
-      calculationPolicy?.allowApprovedOtWithoutExactClockOut === true,
-
-    allowPreShiftOT: calculationPolicy?.allowPreShiftOT === true,
-    allowPostShiftOT: calculationPolicy?.allowPostShiftOT !== false,
-    capByRequestedMinutes: calculationPolicy?.capByRequestedMinutes !== false,
-    treatForgetScanInAsPending: calculationPolicy?.treatForgetScanInAsPending !== false,
-    treatForgetScanOutAsPending: calculationPolicy?.treatForgetScanOutAsPending !== false,
-  }
-}
-
-function buildOptionBasedTiming({ sharedShift, shiftOtOption, calculationPolicy }) {
-  const requestedMinutes = Number(shiftOtOption?.requestedMinutes || 0)
-
-  if (!Number.isInteger(requestedMinutes) || requestedMinutes <= 0) {
-    const err = new Error('Selected OT option requestedMinutes must be greater than zero')
-    err.status = 400
-    throw err
-  }
-
-  const timingMode = upper(shiftOtOption?.timingMode || 'AFTER_SHIFT_END')
-  const startAfterShiftEndMinutes = Number(shiftOtOption?.startAfterShiftEndMinutes || 0)
-
-  let requestStartTime = ''
-  let requestEndTime = ''
-
-  if (timingMode === 'FIXED_TIME') {
-    requestStartTime = s(shiftOtOption?.fixedStartTime)
-    requestEndTime = s(shiftOtOption?.fixedEndTime)
-
-    if (!requestStartTime || !requestEndTime) {
-      const err = new Error('Selected fixed-time OT option must have fixed start and end time')
-      err.status = 400
-      throw err
-    }
-  } else {
-    const shiftEndTime = s(sharedShift?.endTime)
-
-    if (!shiftEndTime) {
-      const err = new Error('Selected shift has no end time')
-      err.status = 400
-      throw err
-    }
-
-    if (!Number.isInteger(startAfterShiftEndMinutes) || startAfterShiftEndMinutes < 0) {
-      const err = new Error('Selected OT option startAfterShiftEndMinutes is invalid')
-      err.status = 400
-      throw err
-    }
-
-    requestStartTime = addMinutesToHHmm(shiftEndTime, startAfterShiftEndMinutes)
-    requestEndTime = addMinutesToHHmm(requestStartTime, requestedMinutes)
-  }
-
-  return {
-    startTime: requestStartTime,
-    endTime: requestEndTime,
-    breakMinutes: 0,
-    totalMinutes: requestedMinutes,
-    totalHours: Number((requestedMinutes / 60).toFixed(2)),
-
-    shiftId: sharedShift?._id || null,
-    shiftCode: s(sharedShift?.code),
-    shiftName: s(sharedShift?.name),
-    shiftType: s(sharedShift?.type),
-    shiftStartTime: s(sharedShift?.startTime),
-    shiftEndTime: s(sharedShift?.endTime),
-    shiftCrossMidnight: sharedShift?.crossMidnight === true,
-
-    shiftOtOptionId: shiftOtOption?._id || null,
-    shiftOtOptionLabel: s(shiftOtOption?.label),
-    shiftOtOptionTimingMode: timingMode,
-    shiftOtOptionStartAfterShiftEndMinutes:
-      timingMode === 'AFTER_SHIFT_END' ? startAfterShiftEndMinutes : 0,
-    shiftOtOptionFixedStartTime:
-      timingMode === 'FIXED_TIME' ? requestStartTime : '',
-    shiftOtOptionFixedEndTime:
-      timingMode === 'FIXED_TIME' ? requestEndTime : '',
-
-    requestedMinutes,
-    requestStartTime,
-    requestEndTime,
-
-    otCalculationPolicyId: calculationPolicy?._id || null,
-    otCalculationPolicySnapshot: buildPolicySnapshot(calculationPolicy),
-  }
-}
-
-async function buildOTTimingContext(payload, employeeContexts = []) {
-  const shiftOtOptionId = s(payload.shiftOtOptionId)
-
-  if (!shiftOtOptionId) {
-    const err = new Error('Please select OT option')
-    err.status = 400
-    throw err
-  }
-
-  const sharedShift = assertSharedShiftForOptionBasedOT(employeeContexts)
-  const { shiftOtOption, calculationPolicy } = await resolveShiftOtOptionSelection(
-    shiftOtOptionId,
-    sharedShift,
-  )
-
-  return buildOptionBasedTiming({
-    sharedShift,
-    shiftOtOption,
-    calculationPolicy,
-  })
-}
-
-async function getUpwardApproverChain(employeeId, options = {}) {
-  const maxDepth = Number(options.maxDepth || 20)
-  const visited = new Set()
-  const chain = []
-
-  const current = await Employee.findById(employeeId).lean()
+  const current = await Employee.findById(requesterId).lean()
 
   if (!current) {
-    const err = new Error('Employee not found')
-    err.status = 404
-    throw err
+    throw appError({
+      statusCode: 404,
+      code: 'EMPLOYEE_NOT_FOUND',
+      messageKey: 'employee.error.notFound',
+      message: 'Employee not found',
+      field: 'employeeId',
+    })
   }
 
-  visited.add(String(current._id))
+  const visited = new Set([String(current._id)])
+  const chain = []
 
   let depth = 0
   let nextApproverId = current.reportsToEmployeeId
@@ -1091,9 +619,12 @@ async function getUpwardApproverChain(employeeId, options = {}) {
     const key = String(nextApproverId)
 
     if (visited.has(key)) {
-      const err = new Error('Organization chart contains a cycle')
-      err.status = 400
-      throw err
+      throw appError({
+        statusCode: 400,
+        code: 'ORG_CHART_CYCLE',
+        messageKey: 'org.error.chartCycle',
+        message: 'Organization chart contains a cycle',
+      })
     }
 
     visited.add(key)
@@ -1101,25 +632,39 @@ async function getUpwardApproverChain(employeeId, options = {}) {
     const approver = await Employee.findById(nextApproverId).lean()
 
     if (!approver) {
-      const err = new Error('Organization chart is broken: approver not found')
-      err.status = 400
-      throw err
+      throw appError({
+        statusCode: 400,
+        code: 'ORG_CHART_BROKEN',
+        messageKey: 'org.error.approverNotFound',
+        message: 'Organization chart is broken: approver not found',
+      })
     }
 
-    if (!approver.isActive) {
-      const err = new Error(`Approver is inactive: ${s(approver.displayName) || key}`)
-      err.status = 400
-      throw err
+    if (approver.isActive === false) {
+      throw appError({
+        statusCode: 400,
+        code: 'APPROVER_INACTIVE',
+        messageKey: 'ot.request.error.approverInactive',
+        message: 'Approver is inactive',
+        params: {
+          approverEmployeeId: String(approver._id),
+          approverName: employeeName(approver),
+        },
+      })
     }
 
     chain.push(approver)
     nextApproverId = approver.reportsToEmployeeId
 
     depth += 1
+
     if (depth > maxDepth) {
-      const err = new Error('Organization chart is too deep or cyclic')
-      err.status = 400
-      throw err
+      throw appError({
+        statusCode: 400,
+        code: 'ORG_CHART_TOO_DEEP',
+        messageKey: 'org.error.chartTooDeep',
+        message: 'Organization chart is too deep or cyclic',
+      })
     }
   }
 
@@ -1129,13 +674,17 @@ async function getUpwardApproverChain(employeeId, options = {}) {
 async function resolveApprovalFlow(requesterEmployeeId) {
   const requesterId = s(requesterEmployeeId)
 
-  if (!requesterId || !mongoose.isValidObjectId(requesterId)) {
-    const err = new Error('Requester employee profile is required')
-    err.status = 400
-    throw err
+  if (!isObjectId(requesterId)) {
+    throw appError({
+      statusCode: 400,
+      code: 'REQUESTER_EMPLOYEE_REQUIRED',
+      messageKey: 'ot.request.error.requesterEmployeeRequired',
+      message: 'Requester employee profile is required',
+      field: 'requesterEmployeeId',
+    })
   }
 
-  const upwardChain = await getUpwardApproverChain(requesterEmployeeId)
+  const upwardChain = await getUpwardApproverChain(requesterId)
 
   const workflowEmployees = upwardChain
     .map((employee) => ({
@@ -1149,11 +698,12 @@ async function resolveApprovalFlow(requesterEmployeeId) {
   )
 
   if (!approverEmployees.length) {
-    const err = new Error(
-      'No OT approver found in organization chart. Please set at least one manager as OT approver.',
-    )
-    err.status = 400
-    throw err
+    throw appError({
+      statusCode: 400,
+      code: 'OT_APPROVER_NOT_FOUND',
+      messageKey: 'ot.request.error.approverNotFound',
+      message: 'No OT approver found in organization chart',
+    })
   }
 
   const firstApproverIndex = workflowEmployees.findIndex(
@@ -1168,8 +718,8 @@ async function resolveApprovalFlow(requesterEmployeeId) {
       stepNo: index + 1,
       stepType: item.role,
       approverEmployeeId: employee._id,
-      approverCode: s(employee.employeeNo || employee.employeeCode || employee.code),
-      approverName: s(employee.displayName || employee.employeeName || employee.name),
+      approverCode: employeeCode(employee),
+      approverName: employeeName(employee),
       status: isApprover
         ? index === firstApproverIndex
           ? 'PENDING'
@@ -1197,157 +747,194 @@ async function resolveApprovalFlow(requesterEmployeeId) {
   }
 }
 
+function mapEmployeeOutput(item = {}) {
+  const lineCode = s(item.lineCode)
+  const lineName = s(item.lineName)
 
+  return {
+    employeeId: item.employeeId ? String(item.employeeId) : null,
+    employeeCode: s(item.employeeCode),
+    employeeName: s(item.employeeName),
+
+    departmentId: item.departmentId ? String(item.departmentId) : null,
+    departmentCode: s(item.departmentCode),
+    departmentName: s(item.departmentName),
+
+    positionId: item.positionId ? String(item.positionId) : null,
+    positionCode: s(item.positionCode),
+    positionName: s(item.positionName),
+
+    lineId: item.lineId ? String(item.lineId) : null,
+    lineCode,
+    lineName,
+    lineLabel: firstText(
+      item.lineLabel,
+      lineCode && lineName ? `${lineCode} · ${lineName}` : '',
+      lineCode,
+      lineName,
+    ),
+
+    otTimeMode: upper(item.otTimeMode || 'DEFAULT'),
+    startTime: s(item.startTime),
+    endTime: s(item.endTime),
+
+    breakMinutes: Number(item.breakMinutes || 0),
+    requestedMinutes: Number(item.requestedMinutes || 0),
+
+    totalRequestPaidMinutes: Number(
+      item.totalRequestPaidMinutes ?? item.totalMinutes ?? 0,
+    ),
+    totalMinutes: Number(item.totalRequestPaidMinutes ?? item.totalMinutes ?? 0),
+    totalHours: Number(item.totalHours || 0),
+  }
+}
+
+function mapApprovalStepOutput(step = {}) {
+  return {
+    stepNo: Number(step.stepNo || 0),
+    stepType: upper(step.stepType || 'APPROVER'),
+    approverEmployeeId: step.approverEmployeeId ? String(step.approverEmployeeId) : null,
+    approverCode: s(step.approverCode),
+    approverName: s(step.approverName),
+    status: upper(step.status),
+    actedAt: step.actedAt || null,
+    actedBy: step.actedBy ? String(step.actedBy) : null,
+    remark: s(step.remark),
+  }
+}
 
 function buildOtOptionOutput(doc = {}) {
   const requestedMinutes = Number(doc.requestedMinutes || 0)
   const breakMinutes = Number(doc.breakMinutes || 0)
-  const totalRequestPaidMinutes = Number(doc.totalMinutes || 0)
+  const totalRequestPaidMinutes = Number(
+    doc.totalRequestPaidMinutes ?? doc.totalMinutes ?? 0,
+  )
 
   return {
     id: doc.shiftOtOptionId ? String(doc.shiftOtOptionId) : null,
     label: s(doc.shiftOtOptionLabel),
     timingMode: s(doc.shiftOtOptionTimingMode),
     timingSource: upper(doc.otTimingSource || 'SHIFT_OPTION'),
+
+    requestStartTime: s(doc.requestStartTime || doc.startTime),
+    requestEndTime: s(doc.requestEndTime || doc.endTime),
+
     requestedMinutes,
     breakMinutes,
     totalRequestPaidMinutes,
     totalRequestPaidHours: Number((totalRequestPaidMinutes / 60).toFixed(2)),
-    requestStartTime: s(doc.requestStartTime || doc.startTime),
-    requestEndTime: s(doc.requestEndTime || doc.endTime),
+
     fixedStartTime: s(doc.shiftOtOptionFixedStartTime),
     fixedEndTime: s(doc.shiftOtOptionFixedEndTime),
     startAfterShiftEndMinutes: Number(doc.shiftOtOptionStartAfterShiftEndMinutes || 0),
   }
 }
 
-function mapEmployeeOutput(item) {
-  const lineCode = s(item?.lineCode)
-  const lineName = s(item?.lineName)
-
-  return {
-    employeeId: item?.employeeId ? String(item.employeeId) : null,
-    employeeCode: s(item?.employeeCode),
-    employeeName: s(item?.employeeName),
-
-    departmentId: item?.departmentId ? String(item.departmentId) : null,
-    departmentCode: s(item?.departmentCode),
-    departmentName: s(item?.departmentName),
-
-    positionId: item?.positionId ? String(item.positionId) : null,
-    positionCode: s(item?.positionCode),
-    positionName: s(item?.positionName),
-
-    lineId: item?.lineId ? String(item.lineId) : null,
-    lineCode,
-    lineName,
-    lineLabel: firstText(
-      item?.lineLabel,
-      lineCode && lineName ? `${lineCode} · ${lineName}` : '',
-      lineCode,
-      lineName,
-    ),
-
-    otTimeMode: upper(item?.otTimeMode || 'DEFAULT'),
-    startTime: s(item?.startTime),
-    endTime: s(item?.endTime),
-    breakMinutes: Number(item?.breakMinutes || 0),
-    requestedMinutes: Number(item?.requestedMinutes || 0),
-    totalMinutes: Number(item?.totalMinutes || item?.requestedMinutes || 0),
-    totalHours: Number(item?.totalHours || 0),
-  }
-}
-
-function mapApprovalStepOutput(step) {
-  return {
-    stepNo: Number(step?.stepNo || 0),
-    stepType: upper(step?.stepType || 'APPROVER'),
-    approverEmployeeId: step?.approverEmployeeId
-      ? String(step.approverEmployeeId)
-      : null,
-    approverCode: s(step?.approverCode),
-    approverName: s(step?.approverName),
-    status: upper(step?.status),
-    actedAt: step?.actedAt || null,
-    actedBy: step?.actedBy ? String(step.actedBy) : null,
-    remark: s(step?.remark),
-  }
-}
-
-function getCollectionIds(items = []) {
-  return (Array.isArray(items) ? items : [])
-    .map((item) => s(item?.employeeId))
-    .filter(Boolean)
-}
-
-function filterEmployeeSnapshotsByIds(sourceItems = [], allowedIds = []) {
-  const allowedIdSet = new Set(normalizeIdArray(allowedIds))
-
-  return (Array.isArray(sourceItems) ? sourceItems : []).filter((item) =>
-    allowedIdSet.has(s(item?.employeeId)),
-  )
-}
-
-function areSameEmployeeSelections(sourceItems = [], selectedIds = []) {
-  const sourceIds = getCollectionIds(sourceItems)
-  const nextIds = getCollectionIds(filterEmployeeSnapshotsByIds(sourceItems, selectedIds))
-
-  if (sourceIds.length !== nextIds.length) return false
-
-  return sourceIds.every((id, index) => id === nextIds[index])
-}
-
-function countRemoved(baseItems = [], compareItems = []) {
-  const compareIdSet = new Set(getCollectionIds(compareItems))
-
-  return getCollectionIds(baseItems).filter((id) => !compareIdSet.has(id)).length
-}
-
-function effectiveEmployeesForDoc(doc) {
+function effectiveEmployeesForDoc(doc = {}) {
   if (
-    upper(doc?.status) === 'PENDING_REQUESTER_CONFIRMATION' &&
-    Array.isArray(doc?.proposedApprovedEmployees) &&
+    upper(doc.status) === 'PENDING_REQUESTER_CONFIRMATION' &&
+    Array.isArray(doc.proposedApprovedEmployees) &&
     doc.proposedApprovedEmployees.length
   ) {
     return doc.proposedApprovedEmployees
   }
 
-  if (Array.isArray(doc?.approvedEmployees) && doc.approvedEmployees.length) {
+  if (Array.isArray(doc.approvedEmployees) && doc.approvedEmployees.length) {
     return doc.approvedEmployees
   }
 
-  return Array.isArray(doc?.requestedEmployees) ? doc.requestedEmployees : []
+  return Array.isArray(doc.requestedEmployees) ? doc.requestedEmployees : []
 }
 
-function effectiveEmployeeCountForDoc(doc) {
+function effectiveEmployeeCountForDoc(doc = {}) {
   return effectiveEmployeesForDoc(doc).length
 }
 
-function findCurrentApprovalStep(doc) {
-  const steps = Array.isArray(doc?.approvalSteps) ? doc.approvalSteps : []
-  const currentStepNo = Number(doc?.currentApprovalStep || 1)
+function sortApprovalSteps(steps = []) {
+  return [...(Array.isArray(steps) ? steps : [])].sort(
+    (a, b) => Number(a.stepNo || 0) - Number(b.stepNo || 0),
+  )
+}
+
+function findCurrentApprovalStep(doc = {}) {
+  const steps = Array.isArray(doc.approvalSteps) ? doc.approvalSteps : []
+  const currentStepNo = Number(doc.currentApprovalStep || 1)
 
   return (
-    steps.find((step) => Number(step?.stepNo || 0) === currentStepNo) ||
-    steps.find((step) => upper(step?.status) === 'PENDING') ||
+    steps.find((step) => Number(step.stepNo || 0) === currentStepNo) ||
+    steps.find((step) => upper(step.status) === 'PENDING') ||
     null
   )
 }
 
-function findMyApprovalStep(doc, authUser) {
-  const actorEmployeeId = s(authUser?.employeeId)
+function findMyApprovalStep(doc = {}, authUser = {}) {
+  const actorEmployeeId = s(authUser.employeeId)
 
   if (!actorEmployeeId) return null
 
-  const steps = Array.isArray(doc?.approvalSteps) ? doc.approvalSteps : []
+  const steps = Array.isArray(doc.approvalSteps) ? doc.approvalSteps : []
 
-  return steps.find((step) => s(step?.approverEmployeeId) === actorEmployeeId) || null
+  return steps.find((step) => s(step.approverEmployeeId) === actorEmployeeId) || null
 }
 
-function buildApprovalActionContext(doc, authUser) {
-  const requestStatus = upper(doc?.status)
-  const actorEmployeeId = s(authUser?.employeeId)
-  const currentApproverEmployeeId = s(doc?.currentApproverEmployeeId)
+function hasApprovedStep(doc = {}) {
+  const steps = Array.isArray(doc.approvalSteps) ? doc.approvalSteps : []
+  return steps.some((step) => upper(step.status) === 'APPROVED')
+}
+
+function canEditOTRequest(doc = {}, authUser = {}) {
+  const actorEmployeeId = s(authUser.employeeId)
+  const ownerEmployeeId = s(doc.requesterEmployeeId)
+  const status = upper(doc.status)
+
+  if (!actorEmployeeId || !ownerEmployeeId) return false
+  if (actorEmployeeId !== ownerEmployeeId) return false
+  if (status !== 'PENDING') return false
+  if (hasApprovedStep(doc)) return false
+
+  return true
+}
+
+function canRequesterConfirm(doc = {}, authUser = {}) {
+  const actorEmployeeId = s(authUser.employeeId)
+  const ownerEmployeeId = s(doc.requesterEmployeeId)
+  const status = upper(doc.status)
+  const confirmation = upper(doc.requesterConfirmationStatus)
+
+  if (!actorEmployeeId || !ownerEmployeeId) return false
+  if (actorEmployeeId !== ownerEmployeeId) return false
+  if (status !== 'PENDING_REQUESTER_CONFIRMATION') return false
+  if (confirmation !== 'PENDING') return false
+
+  return true
+}
+
+function assertCanEditOTRequest(doc = {}, authUser = {}) {
+  if (!canEditOTRequest(doc, authUser)) {
+    throw appError({
+      statusCode: 403,
+      code: 'OT_REQUEST_EDIT_NOT_ALLOWED',
+      messageKey: 'ot.request.error.editNotAllowed',
+      message: 'This OT request cannot be edited',
+    })
+  }
+}
+
+function assertCanRequesterConfirm(doc = {}, authUser = {}) {
+  if (!canRequesterConfirm(doc, authUser)) {
+    throw appError({
+      statusCode: 403,
+      code: 'OT_REQUEST_CONFIRM_NOT_ALLOWED',
+      messageKey: 'ot.request.error.confirmNotAllowed',
+      message: 'Requester confirmation is not available for this OT request',
+    })
+  }
+}
+
+function buildApprovalActionContext(doc = {}, authUser = {}) {
+  const requestStatus = upper(doc.status)
+  const actorEmployeeId = s(authUser.employeeId)
+  const currentApproverEmployeeId = s(doc.currentApproverEmployeeId)
 
   const currentStep = findCurrentApprovalStep(doc)
   const myStep = findMyApprovalStep(doc, authUser)
@@ -1378,190 +965,34 @@ function buildApprovalActionContext(doc, authUser) {
     currentApproverCode: s(currentStep?.approverCode),
 
     myApprovalStep: myStep ? mapApprovalStepOutput(myStep) : null,
-    myApprovalStepNo: myStep ? Number(myStep?.stepNo || 0) : null,
+    myApprovalStepNo: myStep ? Number(myStep.stepNo || 0) : null,
     myApprovalStatus: myApprovalStatus || (canDecide ? 'PENDING' : ''),
     isMyTurn,
     canDecide,
   }
 }
 
-function hasApprovedStep(doc) {
-  const steps = Array.isArray(doc?.approvalSteps) ? doc.approvalSteps : []
-
-  return steps.some((step) => upper(step?.status) === 'APPROVED')
-}
-
-function canEditOTRequest(doc, authUser) {
-  const actorEmployeeId = s(authUser?.employeeId)
-  const ownerEmployeeId = s(doc?.requesterEmployeeId)
-  const status = upper(doc?.status)
-
-  if (!actorEmployeeId || !ownerEmployeeId) return false
-  if (actorEmployeeId !== ownerEmployeeId) return false
-  if (status !== 'PENDING') return false
-  if (hasApprovedStep(doc)) return false
-
-  return true
-}
-
-function canRequesterConfirm(doc, authUser) {
-  const actorEmployeeId = s(authUser?.employeeId)
-  const ownerEmployeeId = s(doc?.requesterEmployeeId)
-  const status = upper(doc?.status)
-  const confirmation = upper(doc?.requesterConfirmationStatus)
-
-  if (!actorEmployeeId || !ownerEmployeeId) return false
-  if (actorEmployeeId !== ownerEmployeeId) return false
-  if (status !== 'PENDING_REQUESTER_CONFIRMATION') return false
-  if (confirmation !== 'PENDING') return false
-
-  return true
-}
-
-function assertCanEditOTRequest(doc, authUser) {
-  const actorEmployeeId = s(authUser?.employeeId)
-  const ownerEmployeeId = s(doc?.requesterEmployeeId)
-
-  if (!actorEmployeeId || !mongoose.isValidObjectId(actorEmployeeId)) {
-    const err = new Error('Your account is not linked to an employee profile')
-    err.status = 400
-    throw err
-  }
-
-  if (!ownerEmployeeId || actorEmployeeId !== ownerEmployeeId) {
-    const err = new Error('You can edit only your own OT request')
-    err.status = 403
-    throw err
-  }
-
-  if (upper(doc?.status) !== 'PENDING') {
-    const err = new Error('Only pending OT requests can be edited')
-    err.status = 400
-    throw err
-  }
-
-  if (hasApprovedStep(doc)) {
-    const err = new Error(
-      'This OT request can no longer be edited because it already has an approved step',
-    )
-    err.status = 400
-    throw err
-  }
-}
-
-function assertCanRequesterConfirm(doc, authUser) {
-  const actorEmployeeId = s(authUser?.employeeId)
-  const ownerEmployeeId = s(doc?.requesterEmployeeId)
-
-  if (!actorEmployeeId || !mongoose.isValidObjectId(actorEmployeeId)) {
-    const err = new Error('Your account is not linked to an employee profile')
-    err.status = 400
-    throw err
-  }
-
-  if (!ownerEmployeeId || actorEmployeeId !== ownerEmployeeId) {
-    const err = new Error('Only the request owner can confirm this OT request')
-    err.status = 403
-    throw err
-  }
-
-  if (upper(doc?.status) !== 'PENDING_REQUESTER_CONFIRMATION') {
-    const err = new Error('This OT request is not waiting for requester confirmation')
-    err.status = 400
-    throw err
-  }
-
-  if (upper(doc?.requesterConfirmationStatus) !== 'PENDING') {
-    const err = new Error('Requester confirmation is not available for this OT request')
-    err.status = 400
-    throw err
-  }
-}
-
-async function resolveActorIdentity(authUser, fallback = {}) {
-  const actorEmployeeId = s(authUser?.employeeId)
-
-  if (actorEmployeeId && mongoose.isValidObjectId(actorEmployeeId)) {
-    try {
-      const snapshot = await resolveEmployeeSnapshot(actorEmployeeId)
-
-      return {
-        employeeId: snapshot.employee._id,
-        employeeNo: s(
-          snapshot.employee.employeeNo ||
-            snapshot.employee.employeeCode ||
-            snapshot.employee.code,
-        ),
-        employeeName: s(
-          snapshot.employee.displayName ||
-            snapshot.employee.employeeName ||
-            snapshot.employee.name,
-        ),
-      }
-    } catch {
-      // fallback below
-    }
-  }
-
-  return {
-    employeeId: fallback.employeeId || null,
-    employeeNo: s(fallback.employeeNo || authUser?.loginId),
-    employeeName: s(fallback.employeeName || authUser?.displayName || authUser?.loginId),
-  }
-}
-
-function buildComparisonSummary(doc) {
-  const requestedEmployees = Array.isArray(doc?.requestedEmployees)
-    ? doc.requestedEmployees
-    : []
-  const approvedEmployees = Array.isArray(doc?.approvedEmployees)
-    ? doc.approvedEmployees
-    : []
-  const proposedApprovedEmployees = Array.isArray(doc?.proposedApprovedEmployees)
-    ? doc.proposedApprovedEmployees
-    : []
-
-  return {
-    requestedEmployeeCount: requestedEmployees.length,
-    approvedEmployeeCount: approvedEmployees.length,
-    proposedApprovedEmployeeCount: proposedApprovedEmployees.length,
-    removedFromOriginalCount: countRemoved(requestedEmployees, approvedEmployees),
-    pendingRemovedCount: proposedApprovedEmployees.length
-      ? countRemoved(approvedEmployees, proposedApprovedEmployees)
-      : 0,
-  }
-}
-
-function sortApprovalSteps(steps = []) {
-  return [...(Array.isArray(steps) ? steps : [])].sort((a, b) => {
-    return Number(a?.stepNo || 0) - Number(b?.stepNo || 0)
-  })
-}
-
-function approverDisplayName(step = {}) {
-  const name = s(step?.approverName)
-  return name || 'Unknown approver'
-}
-
 function findLastStepByStatus(steps = [], status) {
   const normalizedStatus = upper(status)
   const sorted = sortApprovalSteps(steps)
 
-  return (
-    [...sorted]
-      .reverse()
-      .find((step) => upper(step?.status) === normalizedStatus) || null
-  )
+  return [...sorted].reverse().find((step) => upper(step.status) === normalizedStatus) || null
 }
 
-function buildApprovalDisplay(doc) {
-  const status = upper(doc?.status)
-  const steps = sortApprovalSteps(doc?.approvalSteps)
-  const totalApproverSteps = steps.filter((step) => upper(step?.stepType) === 'APPROVER').length
+function approverDisplayName(step = {}) {
+  return s(step.approverName) || 'Unknown approver'
+}
+
+function buildApprovalDisplay(doc = {}) {
+  const status = upper(doc.status)
+  const steps = sortApprovalSteps(doc.approvalSteps)
+  const totalApproverSteps = steps.filter(
+    (step) => upper(step.stepType) === 'APPROVER',
+  ).length
 
   const currentStep =
     findCurrentApprovalStep(doc) ||
-    steps.find((step) => upper(step?.status) === 'PENDING') ||
+    steps.find((step) => upper(step.status) === 'PENDING') ||
     null
 
   const rejectedStep = findLastStepByStatus(steps, 'REJECTED')
@@ -1571,6 +1002,7 @@ function buildApprovalDisplay(doc) {
     return {
       type: 'APPROVED',
       severity: 'success',
+      labelKey: 'ot.approvalDisplay.approved',
       label: lastApprovedStep
         ? `Approved by ${approverDisplayName(lastApprovedStep)}`
         : 'Approved',
@@ -1588,6 +1020,7 @@ function buildApprovalDisplay(doc) {
     return {
       type: 'REJECTED',
       severity: 'danger',
+      labelKey: 'ot.approvalDisplay.rejected',
       label: rejectedStep
         ? `Rejected by ${approverDisplayName(rejectedStep)}`
         : 'Rejected',
@@ -1603,9 +1036,10 @@ function buildApprovalDisplay(doc) {
     return {
       type: 'REQUESTER_CONFIRMATION',
       severity: 'warning',
-      label: `Waiting for requester ${s(doc?.requesterName) || ''} to confirm`,
+      labelKey: 'ot.approvalDisplay.waitingRequesterConfirmation',
+      label: 'Waiting for requester confirmation',
       subLabel: 'Approver adjusted employee list',
-      stepNo: Number(doc?.currentApprovalStep || 0) || null,
+      stepNo: Number(doc.currentApprovalStep || 0) || null,
       approverName: '',
       approverCode: '',
       actedAt: null,
@@ -1616,12 +1050,13 @@ function buildApprovalDisplay(doc) {
     return {
       type: 'REQUESTER_DISAGREED',
       severity: 'danger',
-      label: `Requester ${s(doc?.requesterName) || ''} disagreed`,
+      labelKey: 'ot.approvalDisplay.requesterDisagreed',
+      label: 'Requester disagreed',
       subLabel: 'Adjusted employee list was not accepted',
-      stepNo: Number(doc?.currentApprovalStep || 0) || null,
+      stepNo: Number(doc.currentApprovalStep || 0) || null,
       approverName: '',
       approverCode: '',
-      actedAt: doc?.requesterConfirmedAt || null,
+      actedAt: doc.requesterConfirmedAt || null,
     }
   }
 
@@ -1629,6 +1064,7 @@ function buildApprovalDisplay(doc) {
     return {
       type: 'CANCELLED',
       severity: 'secondary',
+      labelKey: 'ot.approvalDisplay.cancelled',
       label: 'Cancelled',
       subLabel: '',
       stepNo: null,
@@ -1638,58 +1074,92 @@ function buildApprovalDisplay(doc) {
     }
   }
 
-  if (status === 'PENDING') {
-    return {
-      type: 'WAITING',
-      severity: 'warning',
-      label: currentStep
-        ? `Waiting for ${approverDisplayName(currentStep)} to approve`
-        : 'Waiting for approval',
-      subLabel: currentStep
-        ? `Approval step ${Number(currentStep.stepNo || 0)} / ${totalApproverSteps}`
-        : '',
-      stepNo: currentStep ? Number(currentStep.stepNo || 0) : null,
-      approverName: s(currentStep?.approverName),
-      approverCode: s(currentStep?.approverCode),
-      actedAt: null,
-    }
-  }
-
   return {
-    type: status || 'UNKNOWN',
-    severity: 'secondary',
-    label: status || '-',
-    subLabel: '',
-    stepNo: null,
-    approverName: '',
-    approverCode: '',
+    type: 'WAITING',
+    severity: 'warning',
+    labelKey: 'ot.approvalDisplay.waitingApproval',
+    label: currentStep
+      ? `Waiting for ${approverDisplayName(currentStep)} to approve`
+      : 'Waiting for approval',
+    subLabel: currentStep
+      ? `Approval step ${Number(currentStep.stepNo || 0)} / ${totalApproverSteps}`
+      : '',
+    stepNo: currentStep ? Number(currentStep.stepNo || 0) : null,
+    approverName: s(currentStep?.approverName),
+    approverCode: s(currentStep?.approverCode),
     actedAt: null,
   }
 }
 
-function mapListItem(doc, authUser) {
+function buildComparisonSummary(doc = {}) {
+  const requestedEmployees = Array.isArray(doc.requestedEmployees)
+    ? doc.requestedEmployees
+    : []
+  const approvedEmployees = Array.isArray(doc.approvedEmployees)
+    ? doc.approvedEmployees
+    : []
+  const proposedApprovedEmployees = Array.isArray(doc.proposedApprovedEmployees)
+    ? doc.proposedApprovedEmployees
+    : []
+
+  const approvedIdSet = new Set(approvedEmployees.map((item) => s(item.employeeId)))
+  const proposedIdSet = new Set(
+    proposedApprovedEmployees.map((item) => s(item.employeeId)),
+  )
+
+  return {
+    requestedEmployeeCount: requestedEmployees.length,
+    approvedEmployeeCount: approvedEmployees.length,
+    proposedApprovedEmployeeCount: proposedApprovedEmployees.length,
+
+    removedFromOriginalCount: requestedEmployees.filter(
+      (item) => !approvedIdSet.has(s(item.employeeId)),
+    ).length,
+
+    pendingRemovedCount: proposedApprovedEmployees.length
+      ? approvedEmployees.filter((item) => !proposedIdSet.has(s(item.employeeId))).length
+      : 0,
+  }
+}
+
+function mapListItem(doc = {}, authUser = {}) {
   const approvalSteps = Array.isArray(doc.approvalSteps) ? doc.approvalSteps : []
   const effectiveEmployees = effectiveEmployeesForDoc(doc)
   const approvalContext = buildApprovalActionContext(doc, authUser)
   const approvalDisplay = buildApprovalDisplay(doc)
+  const totalRequestPaidMinutes = Number(
+    doc.totalRequestPaidMinutes ?? doc.totalMinutes ?? 0,
+  )
 
   return {
     id: String(doc._id),
     _id: String(doc._id),
 
-    requestNo: doc.requestNo,
-    requesterEmployeeId: doc.requesterEmployeeId
-      ? String(doc.requesterEmployeeId)
-      : null,
-    requesterEmployeeNo: s(doc.requesterEmployeeNo),
+    requestNo: s(doc.requestNo),
+
+    requesterEmployeeId: doc.requesterEmployeeId ? String(doc.requesterEmployeeId) : null,
+    requesterEmployeeCode: s(doc.requesterEmployeeCode),
     requesterName: s(doc.requesterName),
 
     otDate: s(doc.otDate),
 
+    dayType: upper(doc.dayType),
+    dayTypeKey: s(doc.dayTypeKey || dayTypeKey(doc.dayType)),
+    dayTypeSeverity: s(doc.dayTypeSeverity || dayTypeSeverity(doc.dayType)),
+
+    status: upper(doc.status),
+    statusKey: statusKey(doc.status),
+    statusSeverity: statusSeverity(doc.status),
+
     startTime: s(doc.startTime),
     endTime: s(doc.endTime),
+    requestStartTime: s(doc.requestStartTime || doc.startTime),
+    requestEndTime: s(doc.requestEndTime || doc.endTime),
+
+    requestedMinutes: Number(doc.requestedMinutes || 0),
     breakMinutes: Number(doc.breakMinutes || 0),
-    totalMinutes: Number(doc.totalMinutes || 0),
+    totalRequestPaidMinutes,
+    totalMinutes: totalRequestPaidMinutes,
     totalHours: Number(doc.totalHours || 0),
 
     shiftId: doc.shiftId ? String(doc.shiftId) : null,
@@ -1711,10 +1181,6 @@ function mapListItem(doc, authUser) {
     shiftOtOptionFixedStartTime: s(doc.shiftOtOptionFixedStartTime),
     shiftOtOptionFixedEndTime: s(doc.shiftOtOptionFixedEndTime),
 
-    requestedMinutes: Number(doc.requestedMinutes || 0),
-    requestStartTime: s(doc.requestStartTime || doc.startTime),
-    requestEndTime: s(doc.requestEndTime || doc.endTime),
-
     otOption: buildOtOptionOutput(doc),
 
     otCalculationPolicyId: doc.otCalculationPolicyId
@@ -1722,26 +1188,13 @@ function mapListItem(doc, authUser) {
       : null,
     otCalculationPolicySnapshot: doc.otCalculationPolicySnapshot || {},
 
-    dayType: upper(doc.dayType),
     reason: s(doc.reason),
 
     employeeCount: effectiveEmployeeCountForDoc(doc),
-    requestedEmployeeCount: Number(
-      doc.requestedEmployeeCount ||
-        (Array.isArray(doc.requestedEmployees) ? doc.requestedEmployees.length : 0),
-    ),
-    approvedEmployeeCount: Number(
-      doc.approvedEmployeeCount ||
-        (Array.isArray(doc.approvedEmployees) ? doc.approvedEmployees.length : 0),
-    ),
-    proposedApprovedEmployeeCount: Number(
-      doc.proposedApprovedEmployeeCount ||
-        (Array.isArray(doc.proposedApprovedEmployees)
-          ? doc.proposedApprovedEmployees.length
-          : 0),
-    ),
+    requestedEmployeeCount: Number(doc.requestedEmployeeCount || 0),
+    approvedEmployeeCount: Number(doc.approvedEmployeeCount || 0),
+    proposedApprovedEmployeeCount: Number(doc.proposedApprovedEmployeeCount || 0),
 
-    status: upper(doc.status),
     requesterConfirmationStatus: upper(doc.requesterConfirmationStatus),
 
     currentApprovalStep: Number(doc.currentApprovalStep || 1),
@@ -1758,6 +1211,7 @@ function mapListItem(doc, authUser) {
     approvalDisplay,
     approvalDisplayType: approvalDisplay.type,
     approvalDisplayLabel: approvalDisplay.label,
+    approvalDisplayLabelKey: approvalDisplay.labelKey,
     approvalDisplaySubLabel: approvalDisplay.subLabel,
     approvalDisplaySeverity: approvalDisplay.severity,
     approvalDisplayStepNo: approvalDisplay.stepNo,
@@ -1787,112 +1241,33 @@ function mapListItem(doc, authUser) {
   }
 }
 
-function buildComparisonSummaryForDetail(doc) {
-  return buildComparisonSummary(doc)
-}
-
-function mapDetail(doc, authUser) {
-  const requestedEmployees = Array.isArray(doc.requestedEmployees) ? doc.requestedEmployees : []
-  const approvedEmployees = Array.isArray(doc.approvedEmployees) ? doc.approvedEmployees : []
+function mapDetail(doc = {}, authUser = {}) {
+  const requestedEmployees = Array.isArray(doc.requestedEmployees)
+    ? doc.requestedEmployees
+    : []
+  const approvedEmployees = Array.isArray(doc.approvedEmployees)
+    ? doc.approvedEmployees
+    : []
   const proposedApprovedEmployees = Array.isArray(doc.proposedApprovedEmployees)
     ? doc.proposedApprovedEmployees
     : []
-  const effectiveEmployees = effectiveEmployeesForDoc(doc)
-  const approvalDisplay = buildApprovalDisplay(doc)
 
   return {
-    id: String(doc._id),
-    requestNo: doc.requestNo,
-    requesterEmployeeId: doc.requesterEmployeeId ? String(doc.requesterEmployeeId) : null,
-    requesterEmployeeNo: s(doc.requesterEmployeeNo),
-    requesterName: s(doc.requesterName),
-
-    otDate: s(doc.otDate),
-
-    startTime: s(doc.startTime),
-    endTime: s(doc.endTime),
-    breakMinutes: Number(doc.breakMinutes || 0),
-    totalMinutes: Number(doc.totalMinutes || 0),
-    totalHours: Number(doc.totalHours || 0),
-
-    shiftId: doc.shiftId ? String(doc.shiftId) : null,
-    shiftCode: s(doc.shiftCode),
-    shiftName: s(doc.shiftName),
-    shiftType: s(doc.shiftType),
-    shiftStartTime: s(doc.shiftStartTime),
-    shiftEndTime: s(doc.shiftEndTime),
-    shiftCrossMidnight: doc.shiftCrossMidnight === true,
-
-    otTimingSource: upper(doc.otTimingSource || 'SHIFT_OPTION'),
-
-    shiftOtOptionId: doc.shiftOtOptionId ? String(doc.shiftOtOptionId) : null,
-    shiftOtOptionLabel: s(doc.shiftOtOptionLabel),
-    shiftOtOptionTimingMode: s(doc.shiftOtOptionTimingMode),
-    shiftOtOptionStartAfterShiftEndMinutes: Number(
-      doc.shiftOtOptionStartAfterShiftEndMinutes || 0,
-    ),
-    shiftOtOptionFixedStartTime: s(doc.shiftOtOptionFixedStartTime),
-    shiftOtOptionFixedEndTime: s(doc.shiftOtOptionFixedEndTime),
-
-    requestedMinutes: Number(doc.requestedMinutes || 0),
-    requestStartTime: s(doc.requestStartTime || doc.startTime),
-    requestEndTime: s(doc.requestEndTime || doc.endTime),
-
-    otOption: buildOtOptionOutput(doc),
-
-    otCalculationPolicyId: doc.otCalculationPolicyId
-      ? String(doc.otCalculationPolicyId)
-      : null,
-    otCalculationPolicySnapshot: doc.otCalculationPolicySnapshot || {},
-
-    dayType: s(doc.dayType),
-    reason: s(doc.reason),
+    ...mapListItem(doc, authUser),
 
     requestedEmployees: requestedEmployees.map(mapEmployeeOutput),
     approvedEmployees: approvedEmployees.map(mapEmployeeOutput),
     proposedApprovedEmployees: proposedApprovedEmployees.map(mapEmployeeOutput),
-    employees: effectiveEmployees.map(mapEmployeeOutput),
 
-    employeeCount: effectiveEmployees.length,
-    requestedEmployeeCount: Number(doc.requestedEmployeeCount || requestedEmployees.length),
-    approvedEmployeeCount: Number(doc.approvedEmployeeCount || approvedEmployees.length),
-    proposedApprovedEmployeeCount: Number(
-      doc.proposedApprovedEmployeeCount || proposedApprovedEmployees.length,
-    ),
+    comparisonSummary: buildComparisonSummary(doc),
 
-    comparisonSummary: buildComparisonSummaryForDetail(doc),
-
-    approvalSteps: Array.isArray(doc.approvalSteps)
-      ? doc.approvalSteps.map(mapApprovalStepOutput)
-      : [],
-
-    approvalDisplay,
-    approvalDisplayType: approvalDisplay.type,
-    approvalDisplayLabel: approvalDisplay.label,
-    approvalDisplaySubLabel: approvalDisplay.subLabel,
-    approvalDisplaySeverity: approvalDisplay.severity,
-    approvalDisplayStepNo: approvalDisplay.stepNo,
-    approvalDisplayApproverName: approvalDisplay.approverName,
-    approvalDisplayApproverCode: approvalDisplay.approverCode,
-    approvalDisplayActedAt: approvalDisplay.actedAt,
-
-    currentApprovalStep: Number(doc.currentApprovalStep || 1),
-    currentApproverEmployeeId: doc.currentApproverEmployeeId
-      ? String(doc.currentApproverEmployeeId)
-      : null,
-    finalApproverEmployeeId: doc.finalApproverEmployeeId
-      ? String(doc.finalApproverEmployeeId)
-      : null,
-
-    status: s(doc.status),
-    requesterConfirmationStatus: s(doc.requesterConfirmationStatus),
     requesterConfirmedAt: doc.requesterConfirmedAt || null,
     requesterConfirmationRemark: s(doc.requesterConfirmationRemark),
 
     lastAdjustmentByEmployeeId: doc.lastAdjustmentByEmployeeId
       ? String(doc.lastAdjustmentByEmployeeId)
       : null,
-    lastAdjustmentByEmployeeNo: s(doc.lastAdjustmentByEmployeeNo),
+    lastAdjustmentByEmployeeCode: s(doc.lastAdjustmentByEmployeeCode),
     lastAdjustmentByEmployeeName: s(doc.lastAdjustmentByEmployeeName),
     lastAdjustmentAt: doc.lastAdjustmentAt || null,
     lastAdjustmentRemark: s(doc.lastAdjustmentRemark),
@@ -1900,18 +1275,12 @@ function mapDetail(doc, authUser) {
 
     createdBy: doc.createdBy ? String(doc.createdBy) : null,
     updatedBy: doc.updatedBy ? String(doc.updatedBy) : null,
-
-    hasApprovedStep: hasApprovedStep(doc),
-    canEdit: canEditOTRequest(doc, authUser),
-    canRequesterConfirm: canRequesterConfirm(doc, authUser),
-
-    createdAt: doc.createdAt,
-    updatedAt: doc.updatedAt,
   }
 }
 
 function buildSearchFilter(search) {
   const keyword = s(search)
+
   if (!keyword) return null
 
   const regex = new RegExp(escapeRegex(keyword), 'i')
@@ -1919,7 +1288,7 @@ function buildSearchFilter(search) {
   return {
     $or: [
       { requestNo: regex },
-      { requesterEmployeeNo: regex },
+      { requesterEmployeeCode: regex },
       { requesterName: regex },
 
       { shiftCode: regex },
@@ -1933,6 +1302,8 @@ function buildSearchFilter(search) {
       { 'requestedEmployees.departmentName': regex },
       { 'requestedEmployees.positionCode': regex },
       { 'requestedEmployees.positionName': regex },
+      { 'requestedEmployees.lineCode': regex },
+      { 'requestedEmployees.lineName': regex },
 
       { 'approvedEmployees.employeeCode': regex },
       { 'approvedEmployees.employeeName': regex },
@@ -1940,6 +1311,8 @@ function buildSearchFilter(search) {
       { 'approvedEmployees.departmentName': regex },
       { 'approvedEmployees.positionCode': regex },
       { 'approvedEmployees.positionName': regex },
+      { 'approvedEmployees.lineCode': regex },
+      { 'approvedEmployees.lineName': regex },
 
       { 'proposedApprovedEmployees.employeeCode': regex },
       { 'proposedApprovedEmployees.employeeName': regex },
@@ -1953,6 +1326,7 @@ function buildSearchFilter(search) {
 
 function pushMembershipFilter(filter, fieldName, value) {
   filter.$and = filter.$and || []
+
   filter.$and.push({
     $or: [
       { [`requestedEmployees.${fieldName}`]: value },
@@ -1962,26 +1336,31 @@ function pushMembershipFilter(filter, fieldName, value) {
   })
 }
 
-function buildListFilter(query) {
+function buildListFilter(query = {}) {
   const filter = {}
 
   if (s(query.status)) filter.status = upper(query.status)
   if (s(query.dayType)) filter.dayType = upper(query.dayType)
 
-  if (s(query.employeeId) && mongoose.isValidObjectId(query.employeeId)) {
+  if (s(query.employeeId) && isObjectId(query.employeeId)) {
     pushMembershipFilter(filter, 'employeeId', query.employeeId)
   }
 
-  if (s(query.departmentId) && mongoose.isValidObjectId(query.departmentId)) {
+  if (s(query.departmentId) && isObjectId(query.departmentId)) {
     pushMembershipFilter(filter, 'departmentId', query.departmentId)
   }
 
-  if (s(query.positionId) && mongoose.isValidObjectId(query.positionId)) {
+  if (s(query.positionId) && isObjectId(query.positionId)) {
     pushMembershipFilter(filter, 'positionId', query.positionId)
+  }
+
+  if (s(query.lineId) && isObjectId(query.lineId)) {
+    pushMembershipFilter(filter, 'lineId', query.lineId)
   }
 
   if (s(query.otDateFrom) || s(query.otDateTo)) {
     filter.otDate = {}
+
     if (s(query.otDateFrom)) filter.otDate.$gte = s(query.otDateFrom)
     if (s(query.otDateTo)) filter.otDate.$lte = s(query.otDateTo)
   }
@@ -1996,22 +1375,23 @@ function buildListFilter(query) {
   return filter
 }
 
-function buildApprovalInboxFilter(query, authUser) {
+function buildApprovalInboxFilter(query = {}, authUser = {}) {
   const filter = {}
 
-  const normalizedStatus = upper(query.status)
-
-  if (normalizedStatus) {
-    filter.status = normalizedStatus
+  if (s(query.status)) {
+    filter.status = upper(query.status)
   }
 
-  if (!authUser?.isRootAdmin) {
-    const approverEmployeeId = s(authUser?.employeeId)
+  if (!authUser.isRootAdmin) {
+    const approverEmployeeId = s(authUser.employeeId)
 
-    if (!approverEmployeeId || !mongoose.isValidObjectId(approverEmployeeId)) {
-      const err = new Error('Your account is not linked to an employee profile')
-      err.status = 400
-      throw err
+    if (!approverEmployeeId || !isObjectId(approverEmployeeId)) {
+      throw appError({
+        statusCode: 400,
+        code: 'ACCOUNT_EMPLOYEE_LINK_REQUIRED',
+        messageKey: 'auth.error.employeeLinkRequired',
+        message: 'Your account is not linked to an employee profile',
+      })
     }
 
     filter.$or = [
@@ -2024,8 +1404,25 @@ function buildApprovalInboxFilter(query, authUser) {
     filter.dayType = upper(query.dayType)
   }
 
+  if (s(query.employeeId) && isObjectId(query.employeeId)) {
+    pushMembershipFilter(filter, 'employeeId', query.employeeId)
+  }
+
+  if (s(query.departmentId) && isObjectId(query.departmentId)) {
+    pushMembershipFilter(filter, 'departmentId', query.departmentId)
+  }
+
+  if (s(query.positionId) && isObjectId(query.positionId)) {
+    pushMembershipFilter(filter, 'positionId', query.positionId)
+  }
+
+  if (s(query.lineId) && isObjectId(query.lineId)) {
+    pushMembershipFilter(filter, 'lineId', query.lineId)
+  }
+
   if (s(query.otDateFrom) || s(query.otDateTo)) {
     filter.otDate = {}
+
     if (s(query.otDateFrom)) filter.otDate.$gte = s(query.otDateFrom)
     if (s(query.otDateTo)) filter.otDate.$lte = s(query.otDateTo)
   }
@@ -2040,7 +1437,7 @@ function buildApprovalInboxFilter(query, authUser) {
   return filter
 }
 
-function buildSort(query) {
+function buildSort(query = {}) {
   const direction = query.sortOrder === 'asc' ? 1 : -1
 
   const allowedSortMap = {
@@ -2058,6 +1455,7 @@ function buildSort(query) {
   return {
     [sortField]: direction,
     createdAt: -1,
+    _id: -1,
   }
 }
 
@@ -2087,30 +1485,44 @@ function appendEmployeeSection(rows, title, employees = []) {
   rows.push([title])
   rows.push([
     'No',
+    'Employee ID',
     'Employee Code',
     'Employee Name',
-    'Department Code',
-    'Department Name',
-    'Position Code',
-    'Position Name',
+    'Department',
+    'Position',
+    'Line',
+    'Start Time',
+    'End Time',
+    'Break Minutes',
+    'Requested Minutes',
+    'Paid Minutes',
+    'Paid Hours',
   ])
 
   for (const [index, item] of employees.entries()) {
+    const paidMinutes = Number(item.totalRequestPaidMinutes ?? item.totalMinutes ?? 0)
+
     rows.push([
       index + 1,
+      s(item.employeeId),
       s(item.employeeCode),
       s(item.employeeName),
-      s(item.departmentCode),
       s(item.departmentName),
-      s(item.positionCode),
       s(item.positionName),
+      firstText(item.lineLabel, item.lineName, item.lineCode),
+      s(item.startTime),
+      s(item.endTime),
+      Number(item.breakMinutes || 0),
+      Number(item.requestedMinutes || 0),
+      paidMinutes,
+      Number((paidMinutes / 60).toFixed(2)),
     ])
   }
 
   rows.push([])
 }
 
-function buildRequestSheetRows(doc) {
+function buildRequestSheetRows(doc = {}) {
   const requestedEmployees = Array.isArray(doc.requestedEmployees)
     ? doc.requestedEmployees
     : []
@@ -2121,48 +1533,54 @@ function buildRequestSheetRows(doc) {
     ? doc.proposedApprovedEmployees
     : []
   const approvalSteps = Array.isArray(doc.approvalSteps) ? doc.approvalSteps : []
+  const totalRequestPaidMinutes = Number(
+    doc.totalRequestPaidMinutes ?? doc.totalMinutes ?? 0,
+  )
 
   const rows = [
     ['OT REQUEST SUMMARY'],
     [],
     ['Request No', s(doc.requestNo)],
-    ['Request Owner', s(doc.requesterName)],
-    ['Requester Employee No', s(doc.requesterEmployeeNo)],
+    ['Requester Employee ID', s(doc.requesterEmployeeId)],
+    ['Requester Code', s(doc.requesterEmployeeCode)],
+    ['Requester Name', s(doc.requesterName)],
     ['OT Date', s(doc.otDate)],
     ['Day Type', s(doc.dayType)],
     ['Status', s(doc.status)],
     ['Current Step', Number(doc.currentApprovalStep || 1)],
     ['Reason', s(doc.reason)],
-
+    [],
     ['Shift Code', s(doc.shiftCode)],
     ['Shift Name', s(doc.shiftName)],
     ['Shift Type', s(doc.shiftType)],
     ['Shift Start Time', s(doc.shiftStartTime)],
     ['Shift End Time', s(doc.shiftEndTime)],
-    [
-      'Shift Cross Midnight',
-      doc.shiftCrossMidnight === true
-        ? 'YES'
-        : doc.shiftCrossMidnight === false
-          ? 'NO'
-          : '',
-    ],
-
+    ['Shift Cross Midnight', doc.shiftCrossMidnight === true ? 'YES' : 'NO'],
+    [],
     ['OT Option', s(doc.shiftOtOptionLabel)],
     ['Requested Minutes', Number(doc.requestedMinutes || 0)],
     ['Request Start Time', s(doc.requestStartTime || doc.startTime)],
     ['Request End Time', s(doc.requestEndTime || doc.endTime)],
     ['Break Minutes', Number(doc.breakMinutes || 0)],
-    ['Total Minutes', Number(doc.totalMinutes || 0)],
-    ['Total Hours', Number(doc.totalHours || 0)],
-
+    ['Paid Minutes', totalRequestPaidMinutes],
+    ['Paid Hours', Number((totalRequestPaidMinutes / 60).toFixed(2))],
+    [],
     ['Policy Code', s(doc.otCalculationPolicySnapshot?.code)],
     ['Policy Name', s(doc.otCalculationPolicySnapshot?.name)],
-    ['Policy Min Eligible Minutes', Number(doc.otCalculationPolicySnapshot?.minEligibleMinutes || 0)],
-    ['Policy Round Unit Minutes', Number(doc.otCalculationPolicySnapshot?.roundUnitMinutes || 0)],
+    [
+      'Policy Min Eligible Minutes',
+      Number(doc.otCalculationPolicySnapshot?.minEligibleMinutes || 0),
+    ],
+    [
+      'Policy Round Unit Minutes',
+      Number(doc.otCalculationPolicySnapshot?.roundUnitMinutes || 0),
+    ],
     ['Policy Round Method', s(doc.otCalculationPolicySnapshot?.roundMethod)],
-    ['Policy Grace After Shift End', Number(doc.otCalculationPolicySnapshot?.graceAfterShiftEndMinutes || 0)],
-
+    [
+      'Policy Grace After Shift End',
+      Number(doc.otCalculationPolicySnapshot?.graceAfterShiftEndMinutes || 0),
+    ],
+    [],
     ['Requested Staff', Number(doc.requestedEmployeeCount || requestedEmployees.length)],
     ['Approved Staff', Number(doc.approvedEmployeeCount || approvedEmployees.length)],
     ['Requester Confirmation', s(doc.requesterConfirmationStatus)],
@@ -2184,6 +1602,7 @@ function buildRequestSheetRows(doc) {
   rows.push([
     'Step No',
     'Step Type',
+    'Approver Employee ID',
     'Approver Code',
     'Approver Name',
     'Status',
@@ -2195,6 +1614,7 @@ function buildRequestSheetRows(doc) {
     rows.push([
       Number(step.stepNo || 0),
       upper(step.stepType || 'APPROVER'),
+      s(step.approverEmployeeId),
       s(step.approverCode),
       s(step.approverName),
       upper(step.status),
@@ -2209,31 +1629,44 @@ function buildRequestSheetRows(doc) {
 function applyRequestSheetLayout(worksheet) {
   worksheet['!cols'] = [
     { wch: 8 },
-    { wch: 16 },
-    { wch: 20 },
-    { wch: 30 },
+    { wch: 26 },
     { wch: 18 },
+    { wch: 26 },
     { wch: 24 },
     { wch: 24 },
+    { wch: 24 },
+    { wch: 14 },
+    { wch: 14 },
+    { wch: 16 },
+    { wch: 18 },
+    { wch: 16 },
+    { wch: 14 },
   ]
 }
 
-async function create(payload, authUser, options = {}) {
+async function create(payload, authUser) {
   const requesterEmployeeId = s(authUser?.employeeId)
 
-  if (!requesterEmployeeId || !mongoose.isValidObjectId(requesterEmployeeId)) {
-    const err = new Error('Your account is not linked to an employee profile')
-    err.status = 400
-    throw err
+  if (!requesterEmployeeId || !isObjectId(requesterEmployeeId)) {
+    throw appError({
+      statusCode: 400,
+      code: 'ACCOUNT_EMPLOYEE_LINK_REQUIRED',
+      messageKey: 'auth.error.employeeLinkRequired',
+      message: 'Your account is not linked to an employee profile',
+    })
   }
 
   const requesterSnapshot = await resolveEmployeeSnapshot(requesterEmployeeId)
   const uniqueEmployeeIds = normalizeIdArray(payload.employeeIds)
 
   if (!uniqueEmployeeIds.length) {
-    const err = new Error('Please select at least 1 employee')
-    err.status = 400
-    throw err
+    throw appError({
+      statusCode: 400,
+      code: 'OT_EMPLOYEE_REQUIRED',
+      messageKey: 'ot.request.validation.employeeRequired',
+      message: 'Please select at least 1 employee',
+      field: 'employeeIds',
+    })
   }
 
   await assertSelectedEmployeesInsideRequesterScope(authUser, uniqueEmployeeIds)
@@ -2250,24 +1683,17 @@ async function create(payload, authUser, options = {}) {
 
   const employeeContexts = await resolveEmployeesSnapshotsWithContext(uniqueEmployeeIds)
 
-  const holidayDates =
-    Array.isArray(options.holidays) && options.holidays.length
-      ? options.holidays
-      : await otTimingService.resolveHolidayDateStrings([payload.otDate])
-
-  const dayType = getDayType(payload.otDate, {
-    holidays: holidayDates,
-  })
+  const dayTypeInfo = await otTimingService.resolveOTDayType(payload.otDate)
 
   const timingContext = await otTimingService.buildOTTimingContext(
     payload,
     employeeContexts,
     {
-      ...options,
-      holidays: holidayDates,
-      dayType,
+      dayTypeInfo,
     },
   )
+
+  const dayType = upper(timingContext.dayType || dayTypeInfo.dayType)
 
   const requestedEmployees = otTimingService.buildTimedEmployeeSnapshots(
     employeeContexts,
@@ -2281,16 +1707,8 @@ async function create(payload, authUser, options = {}) {
     requestNo: await generateRequestNo(),
 
     requesterEmployeeId: requesterSnapshot.employee._id,
-    requesterEmployeeNo: s(
-      requesterSnapshot.employee.employeeNo ||
-        requesterSnapshot.employee.employeeCode ||
-        requesterSnapshot.employee.code,
-    ),
-    requesterName: s(
-      requesterSnapshot.employee.displayName ||
-        requesterSnapshot.employee.employeeName ||
-        requesterSnapshot.employee.name,
-    ),
+    requesterEmployeeCode: employeeCode(requesterSnapshot.employee),
+    requesterName: employeeName(requesterSnapshot.employee),
 
     requestedEmployees,
     requestedEmployeeCount: requestedEmployees.length,
@@ -2302,11 +1720,21 @@ async function create(payload, authUser, options = {}) {
     proposedApprovedEmployeeCount: 0,
 
     otDate: s(payload.otDate),
+    dayType,
+    dayTypeKey: dayTypeInfo.dayTypeKey,
+    dayTypeSeverity: dayTypeInfo.dayTypeSeverity,
+
+    otTimingSource: timingContext.otTimingSource,
 
     startTime: timingContext.startTime,
     endTime: timingContext.endTime,
+    requestStartTime: timingContext.requestStartTime,
+    requestEndTime: timingContext.requestEndTime,
+
+    requestedMinutes: timingContext.requestedMinutes,
     breakMinutes: timingContext.breakMinutes,
-    totalMinutes: timingContext.totalMinutes,
+    totalRequestPaidMinutes: timingContext.totalRequestPaidMinutes,
+    totalMinutes: timingContext.totalRequestPaidMinutes,
     totalHours: timingContext.totalHours,
 
     shiftId: timingContext.shiftId,
@@ -2317,8 +1745,6 @@ async function create(payload, authUser, options = {}) {
     shiftEndTime: timingContext.shiftEndTime,
     shiftCrossMidnight: timingContext.shiftCrossMidnight,
 
-    otTimingSource: timingContext.otTimingSource,
-
     shiftOtOptionId: timingContext.shiftOtOptionId,
     shiftOtOptionLabel: timingContext.shiftOtOptionLabel,
     shiftOtOptionTimingMode: timingContext.shiftOtOptionTimingMode,
@@ -2327,14 +1753,9 @@ async function create(payload, authUser, options = {}) {
     shiftOtOptionFixedStartTime: timingContext.shiftOtOptionFixedStartTime,
     shiftOtOptionFixedEndTime: timingContext.shiftOtOptionFixedEndTime,
 
-    requestedMinutes: timingContext.requestedMinutes,
-    requestStartTime: timingContext.requestStartTime,
-    requestEndTime: timingContext.requestEndTime,
-
     otCalculationPolicyId: timingContext.otCalculationPolicyId,
     otCalculationPolicySnapshot: timingContext.otCalculationPolicySnapshot,
 
-    dayType,
     reason: s(payload.reason),
 
     approvalSteps: approvalFlow.approvalSteps,
@@ -2347,38 +1768,49 @@ async function create(payload, authUser, options = {}) {
     requesterConfirmationRemark: '',
 
     status: 'PENDING',
-    createdBy: authUser?.accountId || authUser?._id || null,
-    updatedBy: authUser?.accountId || authUser?._id || null,
+    createdBy: actorAccountId(authUser),
+    updatedBy: actorAccountId(authUser),
   })
 
   return getById(doc._id, authUser)
 }
 
-async function update(id, payload, authUser, options = {}) {
-  if (!mongoose.isValidObjectId(id)) {
-    const err = new Error('Invalid OT request id')
-    err.status = 400
-    throw err
+async function update(requestId, payload, authUser) {
+  if (!isObjectId(requestId)) {
+    throw appError({
+      statusCode: 400,
+      code: 'INVALID_OT_REQUEST_ID',
+      messageKey: 'common.error.invalidId',
+      message: 'Invalid OT request id',
+      field: 'id',
+    })
   }
 
-  const doc = await OTRequest.findById(id)
+  const doc = await OTRequest.findById(requestId)
 
   if (!doc) {
-    const err = new Error('OT request not found')
-    err.status = 404
-    throw err
+    throw appError({
+      statusCode: 404,
+      code: 'OT_REQUEST_NOT_FOUND',
+      messageKey: 'ot.request.error.notFound',
+      message: 'OT request not found',
+    })
   }
 
   assertCanEditOTRequest(doc, authUser)
 
-  const requesterEmployeeId = s(doc.requesterEmployeeId || authUser?.employeeId)
+  const requesterEmployeeId = s(doc.requesterEmployeeId || authUser.employeeId)
   const requesterSnapshot = await resolveEmployeeSnapshot(requesterEmployeeId)
   const uniqueEmployeeIds = normalizeIdArray(payload.employeeIds)
 
   if (!uniqueEmployeeIds.length) {
-    const err = new Error('Please select at least 1 employee')
-    err.status = 400
-    throw err
+    throw appError({
+      statusCode: 400,
+      code: 'OT_EMPLOYEE_REQUIRED',
+      messageKey: 'ot.request.validation.employeeRequired',
+      message: 'Please select at least 1 employee',
+      field: 'employeeIds',
+    })
   }
 
   await assertSelectedEmployeesInsideRequesterScope(authUser, uniqueEmployeeIds)
@@ -2386,7 +1818,7 @@ async function update(id, payload, authUser, options = {}) {
   await ensureNoDuplicateOTEmployeesForDate({
     otDate: payload.otDate,
     employeeIds: uniqueEmployeeIds,
-    excludeRequestId: id,
+    excludeRequestId: requestId,
   })
 
   await ensureEmployeesHaveTodayClockIn({
@@ -2396,24 +1828,17 @@ async function update(id, payload, authUser, options = {}) {
 
   const employeeContexts = await resolveEmployeesSnapshotsWithContext(uniqueEmployeeIds)
 
-  const holidayDates =
-    Array.isArray(options.holidays) && options.holidays.length
-      ? options.holidays
-      : await otTimingService.resolveHolidayDateStrings([payload.otDate])
-
-  const dayType = getDayType(payload.otDate, {
-    holidays: holidayDates,
-  })
+  const dayTypeInfo = await otTimingService.resolveOTDayType(payload.otDate)
 
   const timingContext = await otTimingService.buildOTTimingContext(
     payload,
     employeeContexts,
     {
-      ...options,
-      holidays: holidayDates,
-      dayType,
+      dayTypeInfo,
     },
   )
+
+  const dayType = upper(timingContext.dayType || dayTypeInfo.dayType)
 
   const requestedEmployees = otTimingService.buildTimedEmployeeSnapshots(
     employeeContexts,
@@ -2424,16 +1849,8 @@ async function update(id, payload, authUser, options = {}) {
   const approvalFlow = await resolveApprovalFlow(requesterEmployeeId)
 
   doc.requesterEmployeeId = requesterSnapshot.employee._id
-  doc.requesterEmployeeNo = s(
-    requesterSnapshot.employee.employeeNo ||
-      requesterSnapshot.employee.employeeCode ||
-      requesterSnapshot.employee.code,
-  )
-  doc.requesterName = s(
-    requesterSnapshot.employee.displayName ||
-      requesterSnapshot.employee.employeeName ||
-      requesterSnapshot.employee.name,
-  )
+  doc.requesterEmployeeCode = employeeCode(requesterSnapshot.employee)
+  doc.requesterName = employeeName(requesterSnapshot.employee)
 
   doc.requestedEmployees = requestedEmployees
   doc.requestedEmployeeCount = requestedEmployees.length
@@ -2445,11 +1862,21 @@ async function update(id, payload, authUser, options = {}) {
   doc.proposedApprovedEmployeeCount = 0
 
   doc.otDate = s(payload.otDate)
+  doc.dayType = dayType
+  doc.dayTypeKey = dayTypeInfo.dayTypeKey
+  doc.dayTypeSeverity = dayTypeInfo.dayTypeSeverity
+
+  doc.otTimingSource = timingContext.otTimingSource
 
   doc.startTime = timingContext.startTime
   doc.endTime = timingContext.endTime
+  doc.requestStartTime = timingContext.requestStartTime
+  doc.requestEndTime = timingContext.requestEndTime
+
+  doc.requestedMinutes = timingContext.requestedMinutes
   doc.breakMinutes = timingContext.breakMinutes
-  doc.totalMinutes = timingContext.totalMinutes
+  doc.totalRequestPaidMinutes = timingContext.totalRequestPaidMinutes
+  doc.totalMinutes = timingContext.totalRequestPaidMinutes
   doc.totalHours = timingContext.totalHours
 
   doc.shiftId = timingContext.shiftId
@@ -2460,8 +1887,6 @@ async function update(id, payload, authUser, options = {}) {
   doc.shiftEndTime = timingContext.shiftEndTime
   doc.shiftCrossMidnight = timingContext.shiftCrossMidnight
 
-  doc.otTimingSource = timingContext.otTimingSource
-
   doc.shiftOtOptionId = timingContext.shiftOtOptionId
   doc.shiftOtOptionLabel = timingContext.shiftOtOptionLabel
   doc.shiftOtOptionTimingMode = timingContext.shiftOtOptionTimingMode
@@ -2470,14 +1895,9 @@ async function update(id, payload, authUser, options = {}) {
   doc.shiftOtOptionFixedStartTime = timingContext.shiftOtOptionFixedStartTime
   doc.shiftOtOptionFixedEndTime = timingContext.shiftOtOptionFixedEndTime
 
-  doc.requestedMinutes = timingContext.requestedMinutes
-  doc.requestStartTime = timingContext.requestStartTime
-  doc.requestEndTime = timingContext.requestEndTime
-
   doc.otCalculationPolicyId = timingContext.otCalculationPolicyId
   doc.otCalculationPolicySnapshot = timingContext.otCalculationPolicySnapshot
 
-  doc.dayType = dayType
   doc.reason = s(payload.reason)
 
   doc.approvalSteps = approvalFlow.approvalSteps
@@ -2490,7 +1910,7 @@ async function update(id, payload, authUser, options = {}) {
   doc.requesterConfirmationRemark = ''
 
   doc.lastAdjustmentByEmployeeId = null
-  doc.lastAdjustmentByEmployeeNo = ''
+  doc.lastAdjustmentByEmployeeCode = ''
   doc.lastAdjustmentByEmployeeName = ''
   doc.lastAdjustmentByAccountId = null
   doc.lastAdjustmentAt = null
@@ -2498,14 +1918,14 @@ async function update(id, payload, authUser, options = {}) {
   doc.lastAdjustmentStepNo = null
 
   doc.status = 'PENDING'
-  doc.updatedBy = authUser?.accountId || authUser?._id || null
+  doc.updatedBy = actorAccountId(authUser)
 
   await doc.save()
 
   return getById(doc._id, authUser)
 }
 
-async function list(query, authUser) {
+async function list(query = {}, authUser = {}) {
   const page = Number(query.page || 1)
   const limit = Number(query.limit || 10)
   const skip = (page - 1) * limit
@@ -2518,20 +1938,19 @@ async function list(query, authUser) {
     OTRequest.countDocuments(filter),
   ])
 
-  const enrichedItems = await enrichOTDocsWithEmployeeMasterData(items)
-
   return {
-    items: enrichedItems.map((doc) => mapListItem(doc, authUser)),
+    items: items.map((doc) => mapListItem(doc, authUser)),
     pagination: {
       page,
       limit,
       total,
-      totalPages: Math.ceil(total / limit) || 1,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+      hasMore: page * limit < total,
     },
   }
 }
 
-async function listApprovalInbox(query, authUser) {
+async function listApprovalInbox(query = {}, authUser = {}) {
   const page = Number(query.page || 1)
   const limit = Number(query.limit || 10)
   const skip = (page - 1) * limit
@@ -2544,20 +1963,44 @@ async function listApprovalInbox(query, authUser) {
     OTRequest.countDocuments(filter),
   ])
 
-  const enrichedItems = await enrichOTDocsWithEmployeeMasterData(items)
-
   return {
-    items: enrichedItems.map((doc) => mapListItem(doc, authUser)),
+    items: items.map((doc) => mapListItem(doc, authUser)),
     pagination: {
       page,
       limit,
       total,
-      totalPages: Math.ceil(total / limit) || 1,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+      hasMore: page * limit < total,
     },
   }
 }
 
-async function exportRequestsExcel(query) {
+async function getById(requestId, authUser = {}) {
+  if (!isObjectId(requestId)) {
+    throw appError({
+      statusCode: 400,
+      code: 'INVALID_OT_REQUEST_ID',
+      messageKey: 'common.error.invalidId',
+      message: 'Invalid OT request id',
+      field: 'id',
+    })
+  }
+
+  const doc = await OTRequest.findById(requestId).lean()
+
+  if (!doc) {
+    throw appError({
+      statusCode: 404,
+      code: 'OT_REQUEST_NOT_FOUND',
+      messageKey: 'ot.request.error.notFound',
+      message: 'OT request not found',
+    })
+  }
+
+  return mapDetail(doc, authUser)
+}
+
+async function exportRequestsExcel(query = {}) {
   const filter = buildListFilter(query)
   const sort = buildSort(query)
 
@@ -2583,20 +2026,16 @@ async function exportRequestsExcel(query) {
     }
   }
 
-  const buffer = XLSX.write(workbook, {
-    type: 'buffer',
-    bookType: 'xlsx',
-  })
-
-  const stamp = new Date().toISOString().slice(0, 10)
-
   return {
-    filename: `ot-requests-${stamp}.xlsx`,
-    buffer,
+    filename: `ot-requests-${new Date().toISOString().slice(0, 10)}.xlsx`,
+    buffer: XLSX.write(workbook, {
+      type: 'buffer',
+      bookType: 'xlsx',
+    }),
   }
 }
 
-async function exportApprovalInboxExcel(query, authUser) {
+async function exportApprovalInboxExcel(query = {}, authUser = {}) {
   const filter = buildApprovalInboxFilter(query, authUser)
   const sort = buildSort(query)
 
@@ -2622,74 +2061,21 @@ async function exportApprovalInboxExcel(query, authUser) {
     }
   }
 
-  const buffer = XLSX.write(workbook, {
-    type: 'buffer',
-    bookType: 'xlsx',
-  })
-
-  const stamp = new Date().toISOString().slice(0, 10)
-
   return {
-    filename: `ot-approval-inbox-${stamp}.xlsx`,
-    buffer,
+    filename: `ot-approval-inbox-${new Date().toISOString().slice(0, 10)}.xlsx`,
+    buffer: XLSX.write(workbook, {
+      type: 'buffer',
+      bookType: 'xlsx',
+    }),
   }
-}
-
-async function getById(id, authUser) {
-  if (!mongoose.isValidObjectId(id)) {
-    const err = new Error('Invalid OT request id')
-    err.status = 400
-    throw err
-  }
-
-  const doc = await OTRequest.findById(id).lean()
-
-  if (!doc) {
-    const err = new Error('OT request not found')
-    err.status = 404
-    throw err
-  }
-
-  const [enrichedDoc] = await enrichOTDocsWithEmployeeMasterData([doc])
-  const detail = mapDetail(enrichedDoc, authUser)
-
-  if (detail.requesterEmployeeId && mongoose.isValidObjectId(detail.requesterEmployeeId)) {
-    try {
-      const snapshot = await resolveEmployeeSnapshot(detail.requesterEmployeeId)
-
-      detail.departmentId = snapshot.department?._id ? String(snapshot.department._id) : null
-      detail.departmentName = s(snapshot.department?.name)
-
-      detail.positionId = snapshot.position?._id ? String(snapshot.position._id) : null
-      detail.positionName = s(snapshot.position?.name)
-    } catch {
-      detail.departmentId = null
-      detail.departmentName = ''
-      detail.positionId = null
-      detail.positionName = ''
-    }
-  } else {
-    detail.departmentId = null
-    detail.departmentName = ''
-    detail.positionId = null
-    detail.positionName = ''
-  }
-
-  detail.approvalStepCount = Array.isArray(detail.approvalSteps)
-    ? detail.approvalSteps.length
-    : 0
-  detail.hasApprovedStep = hasApprovedStep(doc)
-
-  return detail
 }
 
 function findNextApproverStepAfter(steps = [], currentIndex = -1) {
   for (let i = currentIndex + 1; i < steps.length; i += 1) {
     const step = steps[i]
 
-    if (upper(step?.stepType || 'APPROVER') !== 'APPROVER') continue
-    if (upper(step?.status) === 'APPROVED') continue
-    if (upper(step?.status) === 'REJECTED') continue
+    if (upper(step.stepType || 'APPROVER') !== 'APPROVER') continue
+    if (['APPROVED', 'REJECTED'].includes(upper(step.status))) continue
 
     return {
       step,
@@ -2715,25 +2101,35 @@ function moveToNextApproverOrApprove(doc, currentStepIndex) {
   doc.status = 'APPROVED'
 }
 
-async function decide(id, payload, authUser) {
-  if (!mongoose.isValidObjectId(id)) {
-    const err = new Error('Invalid OT request id')
-    err.status = 400
-    throw err
+async function decide(requestId, payload = {}, authUser = {}) {
+  if (!isObjectId(requestId)) {
+    throw appError({
+      statusCode: 400,
+      code: 'INVALID_OT_REQUEST_ID',
+      messageKey: 'common.error.invalidId',
+      message: 'Invalid OT request id',
+      field: 'id',
+    })
   }
 
-  const doc = await OTRequest.findById(id)
+  const doc = await OTRequest.findById(requestId)
 
   if (!doc) {
-    const err = new Error('OT request not found')
-    err.status = 404
-    throw err
+    throw appError({
+      statusCode: 404,
+      code: 'OT_REQUEST_NOT_FOUND',
+      messageKey: 'ot.request.error.notFound',
+      message: 'OT request not found',
+    })
   }
 
   if (upper(doc.status) !== 'PENDING') {
-    const err = new Error('Only pending OT requests can be decided')
-    err.status = 400
-    throw err
+    throw appError({
+      statusCode: 400,
+      code: 'OT_REQUEST_NOT_PENDING',
+      messageKey: 'ot.request.error.onlyPendingCanDecide',
+      message: 'Only pending OT requests can be decided',
+    })
   }
 
   const currentStepNo = Number(doc.currentApprovalStep || 1)
@@ -2742,32 +2138,41 @@ async function decide(id, payload, authUser) {
   )
 
   if (stepIndex === -1) {
-    const err = new Error('Current approval step not found')
-    err.status = 400
-    throw err
+    throw appError({
+      statusCode: 400,
+      code: 'CURRENT_APPROVAL_STEP_NOT_FOUND',
+      messageKey: 'ot.request.error.currentApprovalStepNotFound',
+      message: 'Current approval step not found',
+    })
   }
 
   const currentStep = doc.approvalSteps[stepIndex]
 
   if (upper(currentStep.stepType || 'APPROVER') !== 'APPROVER') {
-    const err = new Error('Current workflow step is not an approver step')
-    err.status = 400
-    throw err
+    throw appError({
+      statusCode: 400,
+      code: 'CURRENT_STEP_NOT_APPROVER',
+      messageKey: 'ot.request.error.currentStepNotApprover',
+      message: 'Current workflow step is not an approver step',
+    })
   }
 
-  const actorEmployeeId = s(authUser?.employeeId)
+  const actorEmployeeId = s(authUser.employeeId)
   const currentApproverEmployeeId = s(doc.currentApproverEmployeeId)
 
-  const canActAsRoot = !!authUser?.isRootAdmin
+  const canActAsRoot = authUser.isRootAdmin === true
   const canActAsAssignedApprover =
     actorEmployeeId &&
     currentApproverEmployeeId &&
     actorEmployeeId === currentApproverEmployeeId
 
   if (!canActAsRoot && !canActAsAssignedApprover) {
-    const err = new Error('This OT request is not waiting for your approval')
-    err.status = 403
-    throw err
+    throw appError({
+      statusCode: 403,
+      code: 'OT_REQUEST_NOT_WAITING_FOR_YOU',
+      messageKey: 'ot.request.error.notWaitingForYourApproval',
+      message: 'This OT request is not waiting for your approval',
+    })
   }
 
   const action = upper(payload.action)
@@ -2779,18 +2184,19 @@ async function decide(id, payload, authUser) {
       : []
 
     if (!requestedEmployees.length) {
-      const err = new Error('This OT request has no employee to approve')
-      err.status = 400
-      throw err
+      throw appError({
+        statusCode: 400,
+        code: 'OT_REQUEST_NO_EMPLOYEES',
+        messageKey: 'ot.request.error.noEmployeesToApprove',
+        message: 'This OT request has no employee to approve',
+      })
     }
 
     currentStep.status = 'APPROVED'
     currentStep.actedAt = new Date()
-    currentStep.actedBy = authUser?.accountId || authUser?._id || null
+    currentStep.actedBy = actorAccountId(authUser)
     currentStep.remark = remark
 
-    // New rule: approver cannot deduct/remove employees before approval.
-    // Approval always keeps all requested employees.
     doc.approvedEmployees = requestedEmployees
     doc.approvedEmployeeCount = requestedEmployees.length
 
@@ -2802,7 +2208,7 @@ async function decide(id, payload, authUser) {
     doc.requesterConfirmationRemark = ''
 
     doc.lastAdjustmentByEmployeeId = null
-    doc.lastAdjustmentByEmployeeNo = ''
+    doc.lastAdjustmentByEmployeeCode = ''
     doc.lastAdjustmentByEmployeeName = ''
     doc.lastAdjustmentByAccountId = null
     doc.lastAdjustmentAt = null
@@ -2812,14 +2218,18 @@ async function decide(id, payload, authUser) {
     moveToNextApproverOrApprove(doc, stepIndex)
   } else if (action === 'REJECT') {
     if (!remark) {
-      const err = new Error('Please enter rejection reason')
-      err.status = 400
-      throw err
+      throw appError({
+        statusCode: 400,
+        code: 'REJECTION_REASON_REQUIRED',
+        messageKey: 'ot.request.validation.rejectionReasonRequired',
+        message: 'Please enter rejection reason',
+        field: 'remark',
+      })
     }
 
     currentStep.status = 'REJECTED'
     currentStep.actedAt = new Date()
-    currentStep.actedBy = authUser?.accountId || authUser?._id || null
+    currentStep.actedBy = actorAccountId(authUser)
     currentStep.remark = remark
 
     doc.proposedApprovedEmployees = []
@@ -2832,31 +2242,42 @@ async function decide(id, payload, authUser) {
     doc.currentApproverEmployeeId = null
     doc.status = 'REJECTED'
   } else {
-    const err = new Error('Invalid action')
-    err.status = 400
-    throw err
+    throw appError({
+      statusCode: 400,
+      code: 'INVALID_APPROVAL_ACTION',
+      messageKey: 'ot.request.validation.approvalActionInvalid',
+      message: 'Invalid approval action',
+      field: 'action',
+    })
   }
 
-  doc.updatedBy = authUser?.accountId || authUser?._id || null
+  doc.updatedBy = actorAccountId(authUser)
 
   await doc.save()
 
   return getById(doc._id, authUser)
 }
 
-async function requesterConfirm(id, payload, authUser) {
-  if (!mongoose.isValidObjectId(id)) {
-    const err = new Error('Invalid OT request id')
-    err.status = 400
-    throw err
+async function requesterConfirm(requestId, payload = {}, authUser = {}) {
+  if (!isObjectId(requestId)) {
+    throw appError({
+      statusCode: 400,
+      code: 'INVALID_OT_REQUEST_ID',
+      messageKey: 'common.error.invalidId',
+      message: 'Invalid OT request id',
+      field: 'id',
+    })
   }
 
-  const doc = await OTRequest.findById(id)
+  const doc = await OTRequest.findById(requestId)
 
   if (!doc) {
-    const err = new Error('OT request not found')
-    err.status = 404
-    throw err
+    throw appError({
+      statusCode: 404,
+      code: 'OT_REQUEST_NOT_FOUND',
+      messageKey: 'ot.request.error.notFound',
+      message: 'OT request not found',
+    })
   }
 
   assertCanRequesterConfirm(doc, authUser)
@@ -2866,9 +2287,12 @@ async function requesterConfirm(id, payload, authUser) {
 
   if (action === 'AGREE') {
     if (!Array.isArray(doc.proposedApprovedEmployees) || !doc.proposedApprovedEmployees.length) {
-      const err = new Error('There is no adjusted employee list to confirm')
-      err.status = 400
-      throw err
+      throw appError({
+        statusCode: 400,
+        code: 'NO_ADJUSTED_EMPLOYEE_LIST',
+        messageKey: 'ot.request.error.noAdjustedEmployeeList',
+        message: 'There is no adjusted employee list to confirm',
+      })
     }
 
     doc.approvedEmployees = doc.proposedApprovedEmployees
@@ -2887,9 +2311,12 @@ async function requesterConfirm(id, payload, authUser) {
     )
 
     if (stepIndex === -1) {
-      const err = new Error('Current approval step not found')
-      err.status = 400
-      throw err
+      throw appError({
+        statusCode: 400,
+        code: 'CURRENT_APPROVAL_STEP_NOT_FOUND',
+        messageKey: 'ot.request.error.currentApprovalStepNotFound',
+        message: 'Current approval step not found',
+      })
     }
 
     moveToNextApproverOrApprove(doc, stepIndex)
@@ -2901,12 +2328,16 @@ async function requesterConfirm(id, payload, authUser) {
     doc.currentApproverEmployeeId = null
     doc.status = 'REQUESTER_DISAGREED'
   } else {
-    const err = new Error('Invalid requester confirmation action')
-    err.status = 400
-    throw err
+    throw appError({
+      statusCode: 400,
+      code: 'INVALID_REQUESTER_CONFIRMATION_ACTION',
+      messageKey: 'ot.request.validation.requesterConfirmationActionInvalid',
+      message: 'Invalid requester confirmation action',
+      field: 'action',
+    })
   }
 
-  doc.updatedBy = authUser?.accountId || authUser?._id || null
+  doc.updatedBy = actorAccountId(authUser)
 
   await doc.save()
 
@@ -2919,8 +2350,8 @@ async function getAllowedApproverChain(employeeId) {
   return chain.map((employee, index) => ({
     orderNo: index + 1,
     employeeId: String(employee._id),
-    employeeNo: s(employee.employeeNo || employee.employeeCode || employee.code),
-    displayName: s(employee.displayName || employee.employeeName || employee.name),
+    employeeCode: employeeCode(employee),
+    displayName: employeeName(employee),
     departmentId: employee.departmentId || null,
     positionId: employee.positionId || null,
     otWorkflowRole: upper(employee.otWorkflowRole || 'NONE'),
@@ -2943,6 +2374,7 @@ module.exports = {
   exportApprovalInboxExcel,
   getById,
   decide,
+  requesterConfirm,
   getAllowedApproverChain,
   getShiftOTOptionsByShift,
   listUnavailableEmployeesForDate,

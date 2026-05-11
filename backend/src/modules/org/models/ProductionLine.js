@@ -6,6 +6,18 @@ function s(value) {
   return String(value ?? '').trim()
 }
 
+function uniqueObjectIdStrings(values = []) {
+  if (!Array.isArray(values)) return []
+
+  return [
+    ...new Set(
+      values
+        .map((value) => s(value))
+        .filter(Boolean),
+    ),
+  ]
+}
+
 const productionLineSchema = new mongoose.Schema(
   {
     code: {
@@ -13,22 +25,29 @@ const productionLineSchema = new mongoose.Schema(
       required: true,
       trim: true,
       uppercase: true,
+      maxlength: 50,
+      unique: true,
+      index: true,
     },
 
     name: {
       type: String,
       required: true,
       trim: true,
+      maxlength: 120,
+      index: true,
     },
 
     departmentId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Department',
       required: true,
+      index: true,
     },
 
-    // Optional: restrict this line to some positions, example: Sewer.
-    // If empty, it means this line can be used by any position under the department.
+    // Optional restriction.
+    // Empty = all positions under selected department are allowed.
+    // Not empty = only these positions are allowed to use this line.
     positionIds: [
       {
         type: mongoose.Schema.Types.ObjectId,
@@ -40,11 +59,13 @@ const productionLineSchema = new mongoose.Schema(
       type: String,
       trim: true,
       default: '',
+      maxlength: 500,
     },
 
     isActive: {
       type: Boolean,
       default: true,
+      index: true,
     },
 
     createdBy: {
@@ -61,22 +82,20 @@ const productionLineSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
+    versionKey: false,
   },
 )
 
-productionLineSchema.index({ code: 1 }, { unique: true })
-productionLineSchema.index({ name: 1 })
 productionLineSchema.index({ departmentId: 1, isActive: 1 })
+productionLineSchema.index({ departmentId: 1, code: 1 })
 productionLineSchema.index({ positionIds: 1 })
+productionLineSchema.index({ name: 'text', code: 'text', description: 'text' })
 
 productionLineSchema.pre('validate', function normalize(next) {
   this.code = s(this.code).toUpperCase()
   this.name = s(this.name)
   this.description = s(this.description)
-
-  if (!Array.isArray(this.positionIds)) {
-    this.positionIds = []
-  }
+  this.positionIds = uniqueObjectIdStrings(this.positionIds)
 
   next()
 })

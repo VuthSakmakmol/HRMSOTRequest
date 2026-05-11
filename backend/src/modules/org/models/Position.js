@@ -4,8 +4,8 @@ const mongoose = require('mongoose')
 
 const { Schema } = mongoose
 
-function cleanString(v) {
-  return String(v || '').trim()
+function s(value) {
+  return String(value ?? '').trim()
 }
 
 const positionSchema = new Schema(
@@ -14,6 +14,7 @@ const positionSchema = new Schema(
       type: String,
       required: true,
       trim: true,
+      uppercase: true,
       maxlength: 50,
     },
 
@@ -31,10 +32,8 @@ const positionSchema = new Schema(
       index: true,
     },
 
-    // Defines position hierarchy.
-    // Example:
-    // SW - Sewer reports to SW-SUP - Sewer-Supervisor
-    // SW-SUP can report to HRSS or GM from another department.
+    // Real relationship key: Position _id.
+    // Cross-department reporting is allowed.
     reportsToPositionId: {
       type: Schema.Types.ObjectId,
       ref: 'Position',
@@ -43,16 +42,16 @@ const positionSchema = new Schema(
     },
 
     // SAME_LINE:
-    //   Find manager by parent position + same production line.
-    //   Example: Sewer -> Sewer-Supervisor in Line 01.
+    //   Employee manager is resolved by parent position + same department + same line.
     //
     // GLOBAL:
-    //   Find manager by parent position across departments / lines.
-    //   Example: Sewer-Supervisor -> HR, HR -> GM.
+    //   Employee manager is resolved by parent position across departments/lines.
     managerScope: {
       type: String,
       enum: ['SAME_LINE', 'GLOBAL'],
       default: 'SAME_LINE',
+      uppercase: true,
+      trim: true,
       index: true,
     },
 
@@ -75,11 +74,11 @@ const positionSchema = new Schema(
   },
 )
 
-positionSchema.pre('validate', function preValidate(next) {
-  this.code = cleanString(this.code).toUpperCase()
-  this.name = cleanString(this.name)
-  this.description = cleanString(this.description)
-  this.managerScope = cleanString(this.managerScope).toUpperCase() || 'SAME_LINE'
+positionSchema.pre('validate', function normalize(next) {
+  this.code = s(this.code).toUpperCase()
+  this.name = s(this.name)
+  this.description = s(this.description)
+  this.managerScope = s(this.managerScope || 'SAME_LINE').toUpperCase()
 
   if (!this.reportsToPositionId) {
     this.reportsToPositionId = null
@@ -89,17 +88,18 @@ positionSchema.pre('validate', function preValidate(next) {
 })
 
 positionSchema.index(
-  { departmentId: 1, code: 1 },
+  {
+    departmentId: 1,
+    code: 1,
+  },
   {
     unique: true,
-    partialFilterExpression: {
-      code: { $type: 'string' },
-    },
   },
 )
 
 positionSchema.index({ departmentId: 1, name: 1 })
 positionSchema.index({ reportsToPositionId: 1, isActive: 1 })
+positionSchema.index({ isActive: 1, code: 1 })
 positionSchema.index({ name: 'text', code: 'text', description: 'text' })
 
 module.exports = mongoose.model('Position', positionSchema)

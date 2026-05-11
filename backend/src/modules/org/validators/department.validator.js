@@ -1,63 +1,126 @@
 // backend/src/modules/org/validators/department.validator.js
+
 const { z } = require('zod')
+const mongoose = require('mongoose')
+
+function s(value) {
+  return String(value ?? '').trim()
+}
+
+function isObjectId(value) {
+  return mongoose.Types.ObjectId.isValid(String(value || ''))
+}
+
+function toBooleanString(value) {
+  if (value === '' || value === undefined || value === null) return ''
+  if (value === true || value === 'true') return 'true'
+  if (value === false || value === 'false') return 'false'
+  return ''
+}
 
 const objectIdSchema = z
   .string()
   .trim()
-  .regex(/^[a-f\d]{24}$/i, 'Invalid department id')
+  .refine((value) => isObjectId(value), 'common.validation.invalidId')
 
-const baseDepartmentSchema = {
+const createDepartmentSchema = z.object({
   code: z
     .string()
     .trim()
-    .min(2, 'Code must be at least 2 characters')
-    .max(30, 'Code must not exceed 30 characters')
-    .transform((v) => v.toUpperCase()),
+    .min(2, 'org.department.validation.codeMinLength')
+    .max(30, 'org.department.validation.codeTooLong')
+    .transform((value) => s(value).toUpperCase()),
+
   name: z
     .string()
     .trim()
-    .min(2, 'Name must be at least 2 characters')
-    .max(120, 'Name must not exceed 120 characters'),
+    .min(2, 'org.department.validation.nameMinLength')
+    .max(120, 'org.department.validation.nameTooLong'),
+
   description: z
     .string()
     .trim()
-    .max(500, 'Description must not exceed 500 characters')
+    .max(500, 'org.department.validation.descriptionTooLong')
     .optional()
     .default(''),
-  isActive: z.boolean().optional().default(true),
-}
 
-const createDepartmentSchema = z.object(baseDepartmentSchema)
+  isActive: z.boolean().optional().default(true),
+})
 
 const updateDepartmentSchema = z
   .object({
-    code: baseDepartmentSchema.code.optional(),
-    name: baseDepartmentSchema.name.optional(),
-    description: baseDepartmentSchema.description.optional(),
-    isActive: baseDepartmentSchema.isActive.optional(),
+    code: z
+      .string()
+      .trim()
+      .min(2, 'org.department.validation.codeMinLength')
+      .max(30, 'org.department.validation.codeTooLong')
+      .transform((value) => s(value).toUpperCase())
+      .optional(),
+
+    name: z
+      .string()
+      .trim()
+      .min(2, 'org.department.validation.nameMinLength')
+      .max(120, 'org.department.validation.nameTooLong')
+      .optional(),
+
+    description: z
+      .string()
+      .trim()
+      .max(500, 'org.department.validation.descriptionTooLong')
+      .optional(),
+
+    isActive: z.boolean().optional(),
   })
-  .refine((data) => Object.keys(data).length > 0, {
-    message: 'At least one field is required',
-  })
+  .refine(
+    (value) =>
+      value.code !== undefined ||
+      value.name !== undefined ||
+      value.description !== undefined ||
+      value.isActive !== undefined,
+    {
+      message: 'org.department.validation.updatePayloadRequired',
+    },
+  )
 
 const listDepartmentQuerySchema = z.object({
-  page: z.coerce.number().int().min(1).optional().default(1),
-  limit: z.coerce.number().int().min(1).max(100).optional().default(10),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(10),
+
   search: z.string().trim().optional().default(''),
+
   isActive: z
-    .union([z.literal(''), z.literal('true'), z.literal('false')])
+    .union([z.string(), z.boolean()])
     .optional()
-    .default(''),
+    .transform(toBooleanString),
+
   sortField: z
-    .enum(['code', 'name', 'createdAt', 'isActive'])
+    .enum(['code', 'name', 'isActive', 'createdAt', 'updatedAt'])
     .optional()
     .default('createdAt'),
-  sortOrder: z.coerce
-    .number()
-    .int()
-    .refine((v) => v === 1 || v === -1, 'sortOrder must be 1 or -1')
+
+  sortOrder: z
+    .union([z.string(), z.number()])
     .optional()
-    .default(-1),
+    .transform((value) => {
+      if (value === -1 || value === '-1' || value === 'desc') return -1
+      if (value === 1 || value === '1' || value === 'asc') return 1
+      return -1
+    }),
+})
+
+const departmentLookupQuerySchema = z.object({
+  search: z.string().trim().optional().default(''),
+
+  isActive: z
+    .union([z.string(), z.boolean()])
+    .optional()
+    .transform((value) => {
+      const result = toBooleanString(value)
+      return result || 'true'
+    }),
+
+  limit: z.coerce.number().int().min(1).max(100).default(50),
 })
 
 module.exports = {
@@ -65,4 +128,5 @@ module.exports = {
   createDepartmentSchema,
   updateDepartmentSchema,
   listDepartmentQuerySchema,
+  departmentLookupQuerySchema,
 }

@@ -1,11 +1,24 @@
-// backend/src/modules/org/models/SystemRole.js
+// backend/src/modules/access/models/SystemRole.js
+
 const mongoose = require('mongoose')
 
-function s(v) {
-  return String(v ?? '').trim()
+function s(value) {
+  return String(value ?? '').trim()
 }
 
-const SystemRoleSchema = new mongoose.Schema(
+function uniqueObjectIds(values = []) {
+  if (!Array.isArray(values)) return []
+
+  return [
+    ...new Set(
+      values
+        .map((value) => s(value))
+        .filter(Boolean),
+    ),
+  ]
+}
+
+const systemRoleSchema = new mongoose.Schema(
   {
     code: {
       type: String,
@@ -16,6 +29,7 @@ const SystemRoleSchema = new mongoose.Schema(
       maxlength: 50,
       index: true,
     },
+
     displayName: {
       type: String,
       required: true,
@@ -23,6 +37,7 @@ const SystemRoleSchema = new mongoose.Schema(
       maxlength: 100,
       index: true,
     },
+
     permissionIds: {
       type: [
         {
@@ -32,24 +47,27 @@ const SystemRoleSchema = new mongoose.Schema(
       ],
       default: [],
     },
+
     isActive: {
       type: Boolean,
       default: true,
       index: true,
     },
   },
-  { timestamps: true },
+  {
+    timestamps: true,
+    versionKey: false,
+  },
 )
 
-SystemRoleSchema.pre('validate', function (next) {
+systemRoleSchema.index({ isActive: 1, code: 1 })
+
+systemRoleSchema.pre('validate', function normalize(next) {
   this.code = s(this.code).toUpperCase()
   this.displayName = s(this.displayName)
-
-  this.permissionIds = Array.isArray(this.permissionIds)
-    ? [...new Set(this.permissionIds.map((v) => s(v)).filter(Boolean))]
-    : []
+  this.permissionIds = uniqueObjectIds(this.permissionIds)
 
   next()
 })
 
-module.exports = mongoose.model('SystemRole', SystemRoleSchema)
+module.exports = mongoose.model('SystemRole', systemRoleSchema)

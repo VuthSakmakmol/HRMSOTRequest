@@ -1,7 +1,36 @@
 // backend/src/middlewares/requireAuth.js
+
 const { verifyAccessToken } = require('../shared/utils/jwt')
+const AppError = require('../shared/errors/AppError')
 const Account = require('../modules/auth/models/Account')
 const { resolveEffectiveAccess } = require('../modules/auth/utils/resolveEffectiveAccess')
+
+function unauthorizedError(message = 'Unauthorized') {
+  return new AppError({
+    statusCode: 401,
+    code: 'AUTH_UNAUTHORIZED',
+    messageKey: 'auth.error.unauthorized',
+    message,
+  })
+}
+
+function sessionExpiredError() {
+  return new AppError({
+    statusCode: 401,
+    code: 'AUTH_SESSION_EXPIRED',
+    messageKey: 'auth.error.sessionExpired',
+    message: 'Session expired. Please login again.',
+  })
+}
+
+function invalidTokenError() {
+  return new AppError({
+    statusCode: 401,
+    code: 'AUTH_INVALID_TOKEN',
+    messageKey: 'auth.error.invalidToken',
+    message: 'Invalid or expired token',
+  })
+}
 
 async function requireAuth(req, res, next) {
   try {
@@ -9,30 +38,27 @@ async function requireAuth(req, res, next) {
     const [type, token] = authHeader.split(' ')
 
     if (type !== 'Bearer' || !token) {
-      return res.status(401).json({
-        ok: false,
-        message: 'Unauthorized',
-      })
+      return next(unauthorizedError())
     }
 
-    const payload = verifyAccessToken(token)
+    let payload
+    try {
+      payload = verifyAccessToken(token)
+    } catch (_) {
+      return next(invalidTokenError())
+    }
 
     const account = await Account.findById(payload.sub).lean()
+
     if (!account || !account.isActive) {
-      return res.status(401).json({
-        ok: false,
-        message: 'Unauthorized',
-      })
+      return next(unauthorizedError())
     }
 
     const tokenPasswordVersion = Number(payload.passwordVersion || 1)
     const currentPasswordVersion = Number(account.passwordVersion || 1)
 
     if (tokenPasswordVersion !== currentPasswordVersion) {
-      return res.status(401).json({
-        ok: false,
-        message: 'Session expired. Please login again.',
-      })
+      return next(sessionExpiredError())
     }
 
     const effectiveAccess = await resolveEffectiveAccess(account)
@@ -44,24 +70,23 @@ async function requireAuth(req, res, next) {
       displayName: account.displayName,
       employeeId: account.employeeId ? String(account.employeeId) : null,
       roleIds: Array.isArray(account.roleIds) ? account.roleIds.map(String) : [],
-      roleCodes: effectiveAccess.roleCodes,
-      roles: effectiveAccess.roleCodes,
+      roleCodes: Array.isArray(effectiveAccess.roleCodes) ? effectiveAccess.roleCodes : [],
+      roles: Array.isArray(effectiveAccess.roleCodes) ? effectiveAccess.roleCodes : [],
       directPermissionCodes: Array.isArray(account.directPermissionCodes)
         ? account.directPermissionCodes
         : [],
-      effectivePermissionCodes: effectiveAccess.permissionCodes,
+      effectivePermissionCodes: Array.isArray(effectiveAccess.permissionCodes)
+        ? effectiveAccess.permissionCodes
+        : [],
       passwordVersion: currentPasswordVersion,
       mustChangePassword: !!account.mustChangePassword,
       isRootAdmin: !!effectiveAccess.isRootAdmin,
       isActive: !!account.isActive,
     }
 
-    next()
+    return next()
   } catch (error) {
-    return res.status(401).json({
-      ok: false,
-      message: 'Invalid or expired token',
-    })
+    return next(error)
   }
 }
 

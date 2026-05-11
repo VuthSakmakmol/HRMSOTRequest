@@ -1,77 +1,71 @@
 // backend/src/modules/calendar/controllers/holiday.controller.js
+
 const holidayService = require('../services/holiday.service')
+const { successResponse } = require('../../../shared/utils/apiResponse')
+
 const {
   createHolidaySchema,
   updateHolidaySchema,
-  listHolidayQuerySchema,
+  normalizeListQuery,
+  normalizeLookupQuery,
+  resolveDayTypeQuerySchema,
   holidayIdParamSchema,
 } = require('../validators/holiday.validation')
 
 function parse(schema, data) {
-  const result = schema.safeParse(data)
-
-  if (!result.success) {
-    const err = new Error(result.error.issues[0]?.message || 'Validation error')
-    err.status = 400
-    throw err
-  }
-
-  return result.data
+  return schema.parse(data)
 }
 
 async function lookup(req, res, next) {
   try {
-    const data = await holidayService.lookup(req.query || {})
+    const query = normalizeLookupQuery(req.query || {})
+    const result = await holidayService.lookup(query)
 
-    res.json({
-      ok: true,
-      data,
-    })
+    return successResponse(res, result)
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function list(req, res, next) {
   try {
-    const query = parse(listHolidayQuerySchema, req.query || {})
-    const data = await holidayService.list(query)
+    const query = normalizeListQuery(req.query || {})
+    const result = await holidayService.list(query)
 
-    res.json({
-      ok: true,
-      data,
-    })
+    return successResponse(res, result)
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function getById(req, res, next) {
   try {
     const { id } = parse(holidayIdParamSchema, req.params || {})
-    const data = await holidayService.getById(id)
+    const item = await holidayService.getById(id)
 
-    res.json({
-      ok: true,
-      data,
+    return successResponse(res, {
+      item,
     })
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
 async function create(req, res, next) {
   try {
     const payload = parse(createHolidaySchema, req.body || {})
-    const actorId = req.user?.id || req.user?.accountId || null
-    const data = await holidayService.create(payload, actorId)
+    const actorId = req.user?.accountId || req.user?.id || null
+    const item = await holidayService.create(payload, actorId)
 
-    res.status(201).json({
-      ok: true,
-      data,
-    })
+    return successResponse(
+      res,
+      {
+        item,
+      },
+      201,
+    )
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
@@ -79,15 +73,27 @@ async function update(req, res, next) {
   try {
     const { id } = parse(holidayIdParamSchema, req.params || {})
     const payload = parse(updateHolidaySchema, req.body || {})
-    const actorId = req.user?.id || req.user?.accountId || null
-    const data = await holidayService.update(id, payload, actorId)
+    const actorId = req.user?.accountId || req.user?.id || null
+    const item = await holidayService.update(id, payload, actorId)
 
-    res.json({
-      ok: true,
-      data,
+    return successResponse(res, {
+      item,
     })
   } catch (error) {
-    next(error)
+    return next(error)
+  }
+}
+
+async function resolveDayType(req, res, next) {
+  try {
+    const query = parse(resolveDayTypeQuerySchema, req.query || {})
+    const item = await holidayService.resolveDayType(query.date)
+
+    return successResponse(res, {
+      item,
+    })
+  } catch (error) {
+    return next(error)
   }
 }
 
@@ -97,4 +103,5 @@ module.exports = {
   getById,
   create,
   update,
+  resolveDayType,
 }

@@ -1,14 +1,35 @@
 // backend/src/modules/access/services/systemRole.service.js
+
 const mongoose = require('mongoose')
 const SystemRole = require('../models/SystemRole')
 const Permission = require('../models/Permission')
+const AppError = require('../../../shared/errors/AppError')
 
-function s(v) {
-  return String(v ?? '').trim()
+function s(value) {
+  return String(value ?? '').trim()
 }
 
-function escapeRegex(v) {
-  return String(v).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+function up(value) {
+  return s(value).toUpperCase()
+}
+
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function ensureObjectId(id, field = 'id') {
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    throw new AppError({
+      statusCode: 400,
+      code: 'INVALID_ID',
+      messageKey: 'common.error.invalidId',
+      message: 'Invalid id',
+      field,
+      params: {
+        value: id,
+      },
+    })
+  }
 }
 
 function normalizeObjectIds(values) {
@@ -17,16 +38,53 @@ function normalizeObjectIds(values) {
   return [
     ...new Set(
       values
-        .map((v) => s(v))
-        .filter((v) => mongoose.Types.ObjectId.isValid(v)),
+        .map((value) => s(value))
+        .filter(Boolean),
     ),
   ]
 }
 
-async function validatePermissionIds(permissionIds = []) {
-  if (!permissionIds.length) return []
+function roleNotFoundError() {
+  return new AppError({
+    statusCode: 404,
+    code: 'SYSTEM_ROLE_NOT_FOUND',
+    messageKey: 'access.role.error.notFound',
+    message: 'System role not found',
+  })
+}
 
+function duplicateRoleCodeError(code) {
+  return new AppError({
+    statusCode: 409,
+    code: 'SYSTEM_ROLE_CODE_EXISTS',
+    messageKey: 'access.role.error.codeExists',
+    message: 'Role code already exists',
+    field: 'code',
+    params: {
+      code,
+    },
+  })
+}
+
+async function validatePermissionIds(permissionIds = []) {
   const ids = normalizeObjectIds(permissionIds)
+
+  if (!ids.length) return []
+
+  const invalidFormatIds = ids.filter((id) => !mongoose.Types.ObjectId.isValid(id))
+
+  if (invalidFormatIds.length) {
+    throw new AppError({
+      statusCode: 400,
+      code: 'INVALID_PERMISSION_IDS',
+      messageKey: 'access.role.error.invalidPermissionIds',
+      message: 'Some permission ids are invalid',
+      field: 'permissionIds',
+      params: {
+        invalidIds: invalidFormatIds,
+      },
+    })
+  }
 
   const found = await Permission.find({
     _id: { $in: ids },
@@ -36,12 +94,19 @@ async function validatePermissionIds(permissionIds = []) {
     .lean()
 
   const foundIds = new Set(found.map((item) => String(item._id)))
-  const invalidIds = ids.filter((id) => !foundIds.has(id))
+  const inactiveOrMissingIds = ids.filter((id) => !foundIds.has(id))
 
-  if (invalidIds.length) {
-    const err = new Error('Some permissions are invalid or inactive')
-    err.status = 400
-    throw err
+  if (inactiveOrMissingIds.length) {
+    throw new AppError({
+      statusCode: 400,
+      code: 'PERMISSION_INACTIVE_OR_NOT_FOUND',
+      messageKey: 'access.role.error.permissionInactiveOrNotFound',
+      message: 'Some permissions are invalid or inactive',
+      field: 'permissionIds',
+      params: {
+        invalidIds: inactiveOrMissingIds,
+      },
+    })
   }
 
   return ids
@@ -52,36 +117,34 @@ function mapPermission(permission) {
 
   return {
     id: String(permission._id),
-    code: permission.code,
-    name: permission.name,
-    module: permission.module,
+    code: permission.code || '',
+    name: permission.name || '',
+    module: permission.module || '',
     description: permission.description || '',
     isActive: !!permission.isActive,
   }
 }
 
 function buildPermissionGroups(permissions = []) {
-  const map = new Map()
+  const groupMap = new Map()
 
   for (const permission of permissions) {
-    const moduleName = s(permission?.module) || 'GENERAL'
+    const moduleName = up(permission?.module) || 'GENERAL'
 
-    if (!map.has(moduleName)) {
-      map.set(moduleName, [])
+    if (!groupMap.has(moduleName)) {
+      groupMap.set(moduleName, [])
     }
 
-    map.get(moduleName).push(mapPermission(permission))
+    groupMap.get(moduleName).push(mapPermission(permission))
   }
 
-  return Array.from(map.entries())
+  return Array.from(groupMap.entries())
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([module, items]) => ({
       module,
-      items: items.sort((a, b) => {
-        const codeA = s(a?.code)
-        const codeB = s(b?.code)
-        return codeA.localeCompare(codeB)
-      }),
+      items: items
+        .filter(Boolean)
+        .sort((a, b) => s(a.code).localeCompare(s(b.code))),
     }))
 }
 
@@ -90,12 +153,12 @@ function mapRole(doc) {
     ? doc.permissionIds.filter((item) => item && typeof item === 'object' && item.code)
     : []
 
-  const permissions = rawPermissions.map(mapPermission)
+  const permissions = rawPermissions.map(mapPermission).filter(Boolean)
 
   return {
     id: String(doc._id),
-    code: doc.code,
-    displayName: doc.displayName,
+    code: doc.code || '',
+    displayName: doc.displayName || '',
     permissionIds: Array.isArray(doc.permissionIds)
       ? doc.permissionIds.map((item) =>
           typeof item === 'string' ? item : String(item._id || item),
@@ -105,8 +168,8 @@ function mapRole(doc) {
     permissionGroups: buildPermissionGroups(rawPermissions),
     permissionCount: permissions.length,
     isActive: !!doc.isActive,
-    createdAt: doc.createdAt,
-    updatedAt: doc.updatedAt,
+    createdAt: doc.createdAt || null,
+    updatedAt: doc.updatedAt || null,
   }
 }
 
@@ -117,6 +180,7 @@ function buildFilter({ search = '', isActive = '' } = {}) {
   if (isActive === 'false') filter.isActive = false
 
   const keyword = s(search)
+
   if (keyword) {
     const regex = new RegExp(escapeRegex(keyword), 'i')
     filter.$or = [{ code: regex }, { displayName: regex }]
@@ -126,16 +190,19 @@ function buildFilter({ search = '', isActive = '' } = {}) {
 }
 
 function buildSort(sortField = 'createdAt', sortOrder = -1) {
-  const safeField = ['code', 'displayName', 'isActive', 'createdAt', 'updatedAt'].includes(
-    sortField,
-  )
-    ? sortField
-    : 'createdAt'
+  const allowedFields = new Set([
+    'code',
+    'displayName',
+    'isActive',
+    'createdAt',
+    'updatedAt',
+  ])
 
-  const safeOrder = Number(sortOrder) === 1 ? 1 : -1
+  const field = allowedFields.has(sortField) ? sortField : 'createdAt'
+  const order = Number(sortOrder) === 1 ? 1 : -1
 
   return {
-    [safeField]: safeOrder,
+    [field]: order,
     _id: -1,
   }
 }
@@ -148,33 +215,44 @@ async function list({
   sortField = 'createdAt',
   sortOrder = -1,
 } = {}) {
+  const safePage = Number(page || 1)
+  const safeLimit = Number(limit || 10)
+
   const filter = buildFilter({ search, isActive })
-  const skip = (page - 1) * limit
   const sort = buildSort(sortField, sortOrder)
+  const skip = (safePage - 1) * safeLimit
 
   const [items, total] = await Promise.all([
     SystemRole.find(filter)
       .populate({
         path: 'permissionIds',
         select: 'code name module description isActive',
-        options: { sort: { module: 1, code: 1 } },
+        options: {
+          sort: {
+            module: 1,
+            code: 1,
+          },
+        },
       })
       .sort(sort)
       .skip(skip)
-      .limit(limit)
+      .limit(safeLimit)
       .lean(),
+
     SystemRole.countDocuments(filter),
   ])
 
   return {
     items: items.map(mapRole),
+
     pagination: {
-      page,
-      limit,
+      page: safePage,
+      limit: safeLimit,
       total,
-      totalPages: Math.max(1, Math.ceil(total / limit)),
-      hasMore: page * limit < total,
+      totalPages: Math.max(1, Math.ceil(total / safeLimit)),
+      hasMore: safePage * safeLimit < total,
     },
+
     filters: {
       search: s(search),
       isActive,
@@ -185,32 +263,36 @@ async function list({
 }
 
 async function getById(id) {
+  ensureObjectId(id)
+
   const doc = await SystemRole.findById(id)
     .populate({
       path: 'permissionIds',
       select: 'code name module description isActive',
-      options: { sort: { module: 1, code: 1 } },
+      options: {
+        sort: {
+          module: 1,
+          code: 1,
+        },
+      },
     })
     .lean()
 
   if (!doc) {
-    const err = new Error('System role not found')
-    err.status = 404
-    throw err
+    throw roleNotFoundError()
   }
 
   return mapRole(doc)
 }
 
 async function create(payload) {
-  const code = s(payload.code).toUpperCase()
+  const code = up(payload.code)
   const displayName = s(payload.displayName)
 
   const exists = await SystemRole.findOne({ code }).lean()
+
   if (exists) {
-    const err = new Error('Role code already exists')
-    err.status = 409
-    throw err
+    throw duplicateRoleCodeError(code)
   }
 
   const permissionIds = await validatePermissionIds(payload.permissionIds || [])
@@ -226,16 +308,16 @@ async function create(payload) {
 }
 
 async function update(id, payload) {
+  ensureObjectId(id)
+
   const doc = await SystemRole.findById(id)
 
   if (!doc) {
-    const err = new Error('System role not found')
-    err.status = 404
-    throw err
+    throw roleNotFoundError()
   }
 
   if (payload.code !== undefined) {
-    const code = s(payload.code).toUpperCase()
+    const code = up(payload.code)
 
     const exists = await SystemRole.findOne({
       _id: { $ne: doc._id },
@@ -243,9 +325,7 @@ async function update(id, payload) {
     }).lean()
 
     if (exists) {
-      const err = new Error('Role code already exists')
-      err.status = 409
-      throw err
+      throw duplicateRoleCodeError(code)
     }
 
     doc.code = code
@@ -264,6 +344,7 @@ async function update(id, payload) {
   }
 
   await doc.save()
+
   return getById(doc._id)
 }
 

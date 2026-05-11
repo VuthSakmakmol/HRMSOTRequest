@@ -3,329 +3,304 @@
 const { z } = require('zod')
 const mongoose = require('mongoose')
 
-function isObjectId(value) {
-  return mongoose.Types.ObjectId.isValid(String(value))
-}
-
 function s(value) {
   return String(value ?? '').trim()
 }
 
-function normalizeOTWorkflowRole(value) {
-  const role = s(value || 'NONE').toUpperCase()
-  return ['NONE', 'APPROVER', 'ACKNOWLEDGE'].includes(role) ? role : 'NONE'
+function isObjectId(value) {
+  return mongoose.Types.ObjectId.isValid(String(value))
 }
 
-const booleanLike = z.union([z.boolean(), z.string(), z.number()]).optional()
-
 function toBoolean(value, defaultValue = undefined) {
-  if (value === undefined) return defaultValue
+  if (value === undefined || value === null || value === '') return defaultValue
   if (typeof value === 'boolean') return value
   if (typeof value === 'number') return value === 1
 
-  const v = String(value).trim().toLowerCase()
-  if (['true', '1', 'yes', 'y'].includes(v)) return true
-  if (['false', '0', 'no', 'n'].includes(v)) return false
+  const text = String(value).trim().toLowerCase()
+
+  if (['true', '1', 'yes', 'y', 'active'].includes(text)) return true
+  if (['false', '0', 'no', 'n', 'inactive'].includes(text)) return false
 
   return defaultValue
 }
 
-const objectIdField = (label) =>
+function normalizeOTWorkflowRole(value) {
+  const role = s(value || 'NONE').toUpperCase()
+
+  return ['NONE', 'APPROVER', 'ACKNOWLEDGE'].includes(role) ? role : 'NONE'
+}
+
+const objectIdField = (fieldKey) =>
   z
     .string()
     .trim()
-    .min(1, `${label} is required`)
-    .refine((value) => isObjectId(value), `Invalid ${label}`)
+    .min(1, `${fieldKey}.required`)
+    .refine((value) => isObjectId(value), `${fieldKey}.invalid`)
 
-const optionalObjectIdField = (label) =>
+const optionalObjectIdField = (fieldKey) =>
   z
     .union([z.string(), z.null(), z.undefined()])
     .transform((value) => {
       if (value === undefined || value === null) return null
-      const v = String(value).trim()
-      return v || null
+
+      const text = s(value)
+
+      return text || null
     })
-    .refine((value) => value === null || isObjectId(value), `Invalid ${label}`)
+    .refine((value) => value === null || isObjectId(value), `${fieldKey}.invalid`)
+
+const booleanLike = z.union([z.boolean(), z.string(), z.number()]).optional()
+
+const employeeCodeField = z
+  .string()
+  .trim()
+  .max(50, 'org.employee.validation.employeeCodeTooLong')
+  .optional()
+  .default('')
+  .transform((value) => s(value).toUpperCase())
+
+const displayNameField = z
+  .string()
+  .trim()
+  .min(1, 'org.employee.validation.displayNameRequired')
+  .max(150, 'org.employee.validation.displayNameTooLong')
+
+const phoneField = z
+  .string()
+  .trim()
+  .max(30, 'org.employee.validation.phoneTooLong')
+  .optional()
+  .default('')
+
+const emailField = z
+  .union([
+    z
+      .string()
+      .trim()
+      .email('org.employee.validation.emailInvalid')
+      .max(150, 'org.employee.validation.emailTooLong'),
+    z.literal(''),
+    z.null(),
+    z.undefined(),
+  ])
+  .transform((value) => s(value).toLowerCase())
 
 const joinDateField = z
   .union([z.string(), z.date(), z.null(), z.undefined()])
   .transform((value) => {
     if (value === undefined || value === null || value === '') return null
+
     const date = value instanceof Date ? value : new Date(value)
+
     return Number.isNaN(date.getTime()) ? 'INVALID_DATE' : date
   })
-  .refine((value) => value === null || value !== 'INVALID_DATE', 'Invalid joinDate')
-
-const phoneField = z
-  .string()
-  .trim()
-  .max(30, 'Phone is too long')
-  .optional()
-  .default('')
-
-const emailField = z
-  .string()
-  .trim()
-  .email('Invalid email')
-  .max(150, 'Email is too long')
-  .optional()
-  .or(z.literal(''))
-  .default('')
+  .refine(
+    (value) => value === null || value !== 'INVALID_DATE',
+    'org.employee.validation.joinDateInvalid',
+  )
 
 const otWorkflowRoleField = z
   .union([z.string(), z.null(), z.undefined()])
   .transform((value) => normalizeOTWorkflowRole(value))
   .refine(
     (value) => ['NONE', 'APPROVER', 'ACKNOWLEDGE'].includes(value),
-    'Invalid OT workflow role',
+    'org.employee.validation.otWorkflowRoleInvalid',
   )
 
-const listQuerySchema = z.object({
+const listEmployeeQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(10),
+
   search: z.string().trim().optional().default(''),
+
   departmentId: z.string().trim().optional().default(''),
   positionId: z.string().trim().optional().default(''),
   lineId: z.string().trim().optional().default(''),
   shiftId: z.string().trim().optional().default(''),
+
   isActive: booleanLike,
+
   sortBy: z
     .enum([
       'createdAt',
       'updatedAt',
-      'employeeNo',
+      'employeeCode',
       'displayName',
       'joinDate',
       'isActive',
       'otWorkflowRole',
     ])
     .default('createdAt'),
+
   sortOrder: z.enum(['asc', 'desc']).default('desc'),
 })
 
-const exportQuerySchema = z.object({
+const exportEmployeeQuerySchema = listEmployeeQuerySchema.omit({
+  page: true,
+  limit: true,
+})
+
+const lookupEmployeeQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+
   search: z.string().trim().optional().default(''),
+  q: z.string().trim().optional().default(''),
+
   departmentId: z.string().trim().optional().default(''),
   positionId: z.string().trim().optional().default(''),
   lineId: z.string().trim().optional().default(''),
   shiftId: z.string().trim().optional().default(''),
+  reportsToEmployeeId: z.string().trim().optional().default(''),
+
   isActive: booleanLike,
-  sortBy: z
-    .enum([
-      'createdAt',
-      'updatedAt',
-      'employeeNo',
-      'displayName',
-      'joinDate',
-      'isActive',
-      'otWorkflowRole',
-    ])
-    .default('createdAt'),
-  sortOrder: z.enum(['asc', 'desc']).default('desc'),
+
+  scope: z
+    .string()
+    .trim()
+    .optional()
+    .default('MANAGED')
+    .transform((value) => {
+      const scope = s(value).toUpperCase()
+
+      return ['MANAGED', 'ALL'].includes(scope) ? scope : 'MANAGED'
+    }),
 })
 
-const createEmployeeSchema = z
-  .object({
-    employeeNo: z
-      .string()
-      .trim()
-      .min(1, 'Employee No is required')
-      .max(50, 'Employee No is too long'),
+const createEmployeeSchema = z.object({
+  employeeCode: employeeCodeField,
 
-    displayName: z
-      .string()
-      .trim()
-      .min(1, 'Display Name is required')
-      .max(150, 'Display Name is too long'),
+  displayName: displayNameField,
 
-    departmentId: objectIdField('Department'),
-    positionId: objectIdField('Position'),
+  departmentId: objectIdField('org.employee.field.departmentId'),
+  positionId: objectIdField('org.employee.field.positionId'),
+  lineId: optionalObjectIdField('org.employee.field.lineId'),
+  shiftId: objectIdField('org.employee.field.shiftId'),
 
-    lineId: optionalObjectIdField('Line'),
+  reportsToEmployeeId: optionalObjectIdField('org.employee.field.reportsToEmployeeId'),
 
-    shiftId: objectIdField('Shift'),
+  otWorkflowRole: otWorkflowRoleField.default('NONE'),
 
-    reportsToEmployeeId: optionalObjectIdField('reportsToEmployeeId'),
+  phone: phoneField,
+  email: emailField,
+  joinDate: joinDateField,
 
-    otWorkflowRole: otWorkflowRoleField.default('NONE'),
-
-    phone: phoneField,
-    email: emailField,
-    joinDate: joinDateField,
-    isActive: z.boolean().optional().default(true),
-    createAccount: z.boolean().optional().default(false),
-  })
-  .superRefine((data, ctx) => {
-    if (data.createAccount && !String(data.phone || '').trim()) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['phone'],
-        message: 'Phone is required when creating account',
-      })
-    }
-  })
+  isActive: z.boolean().optional().default(true),
+})
 
 const updateEmployeeSchema = z
   .object({
-    employeeNo: z
-      .string()
-      .trim()
-      .min(1, 'Employee No is required')
-      .max(50, 'Employee No is too long')
-      .optional(),
+    employeeCode: employeeCodeField.optional(),
 
-    displayName: z
-      .string()
-      .trim()
-      .min(1, 'Display Name is required')
-      .max(150, 'Display Name is too long')
-      .optional(),
+    displayName: displayNameField.optional(),
 
-    departmentId: objectIdField('Department').optional(),
-    positionId: objectIdField('Position').optional(),
-    lineId: optionalObjectIdField('Line').optional(),
-    shiftId: objectIdField('Shift').optional(),
-    reportsToEmployeeId: optionalObjectIdField('reportsToEmployeeId').optional(),
+    departmentId: objectIdField('org.employee.field.departmentId').optional(),
+    positionId: objectIdField('org.employee.field.positionId').optional(),
+    lineId: optionalObjectIdField('org.employee.field.lineId').optional(),
+    shiftId: objectIdField('org.employee.field.shiftId').optional(),
+
+    reportsToEmployeeId: optionalObjectIdField(
+      'org.employee.field.reportsToEmployeeId',
+    ).optional(),
 
     otWorkflowRole: otWorkflowRoleField.optional(),
 
-    phone: z.string().trim().max(30, 'Phone is too long').optional(),
+    phone: z.string().trim().max(30, 'org.employee.validation.phoneTooLong').optional(),
 
-    email: z
-      .string()
-      .trim()
-      .email('Invalid email')
-      .max(150, 'Email is too long')
-      .optional()
-      .or(z.literal('')),
+    email: emailField.optional(),
 
     joinDate: joinDateField.optional(),
+
     isActive: z.boolean().optional(),
-    provisionAccount: z.boolean().optional().default(false),
   })
-  .superRefine((data, ctx) => {
-    const hasAnyNormalField =
-      data.employeeNo !== undefined ||
-      data.displayName !== undefined ||
-      data.departmentId !== undefined ||
-      data.positionId !== undefined ||
-      data.lineId !== undefined ||
-      data.shiftId !== undefined ||
-      data.reportsToEmployeeId !== undefined ||
-      data.otWorkflowRole !== undefined ||
-      data.phone !== undefined ||
-      data.email !== undefined ||
-      data.joinDate !== undefined ||
-      data.isActive !== undefined
+  .refine(
+    (value) =>
+      value.employeeCode !== undefined ||
+      value.displayName !== undefined ||
+      value.departmentId !== undefined ||
+      value.positionId !== undefined ||
+      value.lineId !== undefined ||
+      value.shiftId !== undefined ||
+      value.reportsToEmployeeId !== undefined ||
+      value.otWorkflowRole !== undefined ||
+      value.phone !== undefined ||
+      value.email !== undefined ||
+      value.joinDate !== undefined ||
+      value.isActive !== undefined,
+    {
+      message: 'org.employee.validation.updatePayloadRequired',
+    },
+  )
 
-    if (!hasAnyNormalField && data.provisionAccount !== true) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: [],
-        message: 'At least one field is required',
-      })
-    }
-
-    if (
-      data.provisionAccount === true &&
-      data.phone !== undefined &&
-      !String(data.phone || '').trim()
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['phone'],
-        message: 'Phone is required when provisioning account',
-      })
-    }
-  })
-
+// Import rule:
+// - If Employee ID is provided, update that employee by Mongo Employee _id.
+// - If Employee ID is blank, create new employee.
+// - Employee Code is optional display/search only.
 const importEmployeeRowSchema = z.object({
-  employeeNo: z
-    .string()
-    .trim()
-    .min(1, 'Employee No is required')
-    .max(50, 'Employee No is too long'),
+  employeeId: z
+    .union([z.string(), z.null(), z.undefined()])
+    .transform((value) => s(value))
+    .refine((value) => !value || isObjectId(value), 'org.employee.validation.employeeIdInvalid'),
 
-  displayName: z
-    .string()
-    .trim()
-    .min(1, 'Display Name is required')
-    .max(150, 'Display Name is too long'),
+  employeeCode: z
+    .union([z.string(), z.null(), z.undefined()])
+    .transform((value) => s(value).toUpperCase())
+    .refine((value) => value.length <= 50, 'org.employee.validation.employeeCodeTooLong'),
+
+  displayName: displayNameField,
 
   departmentCode: z
     .string()
     .trim()
-    .min(1, 'Department Code is required')
-    .max(50, 'Department Code is too long'),
+    .min(1, 'org.employee.validation.departmentCodeRequired')
+    .max(50, 'org.employee.validation.departmentCodeTooLong')
+    .transform((value) => s(value).toUpperCase()),
 
   positionCode: z
     .string()
     .trim()
-    .min(1, 'Position Code is required')
-    .max(50, 'Position Code is too long'),
+    .min(1, 'org.employee.validation.positionCodeRequired')
+    .max(50, 'org.employee.validation.positionCodeTooLong')
+    .transform((value) => s(value).toUpperCase()),
 
   lineCode: z
     .union([z.string(), z.null(), z.undefined()])
-    .transform((value) => {
-      if (value === undefined || value === null) return ''
-      return String(value).trim()
-    }),
+    .transform((value) => s(value).toUpperCase()),
 
   shiftCode: z
     .string()
     .trim()
-    .min(1, 'Shift Code is required')
-    .max(50, 'Shift Code is too long'),
+    .min(1, 'org.employee.validation.shiftCodeRequired')
+    .max(50, 'org.employee.validation.shiftCodeTooLong')
+    .transform((value) => s(value).toUpperCase()),
 
-  reportsToEmployeeNo: z
+  reportsToEmployeeId: z
     .union([z.string(), z.null(), z.undefined()])
-    .transform((value) => {
-      if (value === undefined || value === null) return ''
-      return String(value).trim()
-    }),
+    .transform((value) => s(value))
+    .refine(
+      (value) => !value || isObjectId(value),
+      'org.employee.validation.reportsToEmployeeIdInvalid',
+    ),
 
   otWorkflowRole: otWorkflowRoleField.default('NONE'),
 
   phone: z
     .union([z.string(), z.null(), z.undefined()])
-    .transform((value) => {
-      if (value === undefined || value === null) return ''
-      return String(value).trim()
-    })
-    .refine((value) => value.length <= 30, 'Phone is too long'),
+    .transform((value) => s(value))
+    .refine((value) => value.length <= 30, 'org.employee.validation.phoneTooLong'),
 
-  email: z
-    .union([z.string(), z.null(), z.undefined()])
-    .transform((value) => {
-      if (value === undefined || value === null) return ''
-      return String(value).trim().toLowerCase()
-    })
-    .refine(
-      (value) => !value || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value),
-      'Invalid email',
-    )
-    .refine((value) => value.length <= 150, 'Email is too long'),
+  email: emailField,
 
-  joinDate: z
-    .union([z.string(), z.date(), z.null(), z.undefined()])
-    .transform((value) => {
-      if (value === undefined || value === null || value === '') return null
-      const date = value instanceof Date ? value : new Date(value)
-      return Number.isNaN(date.getTime()) ? 'INVALID_DATE' : date
-    })
-    .refine((value) => value === null || value !== 'INVALID_DATE', 'Invalid joinDate'),
+  joinDate: joinDateField,
 
   isActive: z
     .union([z.boolean(), z.string(), z.number(), z.null(), z.undefined()])
-    .transform((value) => {
-      if (value === undefined || value === null || value === '') return true
-      return toBoolean(value, 'INVALID_BOOLEAN')
-    })
-    .refine((value) => value !== 'INVALID_BOOLEAN', 'Invalid isActive'),
+    .transform((value) => toBoolean(value, true))
+    .refine((value) => typeof value === 'boolean', 'org.employee.validation.isActiveInvalid'),
 })
 
 function normalizeListQuery(raw = {}) {
-  const parsed = listQuerySchema.parse(raw)
+  const parsed = listEmployeeQuerySchema.parse(raw)
 
   return {
     page: parsed.page,
@@ -342,7 +317,7 @@ function normalizeListQuery(raw = {}) {
 }
 
 function normalizeExportQuery(raw = {}) {
-  const parsed = exportQuerySchema.parse(raw)
+  const parsed = exportEmployeeQuerySchema.parse(raw)
 
   return {
     search: parsed.search,
@@ -356,10 +331,28 @@ function normalizeExportQuery(raw = {}) {
   }
 }
 
+function normalizeLookupQuery(raw = {}) {
+  const parsed = lookupEmployeeQuerySchema.parse(raw)
+
+  return {
+    page: parsed.page,
+    limit: parsed.limit,
+    search: parsed.search || parsed.q,
+    departmentId: parsed.departmentId,
+    positionId: parsed.positionId,
+    lineId: parsed.lineId,
+    shiftId: parsed.shiftId,
+    reportsToEmployeeId: parsed.reportsToEmployeeId,
+    isActive: toBoolean(parsed.isActive, true),
+    scope: parsed.scope,
+  }
+}
+
 module.exports = {
   createEmployeeSchema,
   updateEmployeeSchema,
   importEmployeeRowSchema,
   normalizeListQuery,
   normalizeExportQuery,
+  normalizeLookupQuery,
 }
