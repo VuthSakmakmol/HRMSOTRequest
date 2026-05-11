@@ -974,53 +974,6 @@ onBeforeUnmount(() => {
       @success="handleImportSuccess"
     />
 
-    <section class="ot-page-header">
-      <div class="ot-page-header-main">
-        <div class="ot-page-kicker">
-          <i class="pi pi-users" />
-          {{ t('nav.organization') }}
-        </div>
-
-        <h1 class="ot-page-title">
-          {{ t('nav.employees') }}
-        </h1>
-
-        <p class="ot-page-subtitle">
-          {{ t('org.employee.subtitle') }}
-        </p>
-      </div>
-
-      <div class="ot-page-actions">
-        <Button
-          v-if="canCreate"
-          :label="t('org.employee.importExcel')"
-          icon="pi pi-upload"
-          severity="secondary"
-          outlined
-          size="small"
-          @click="importDialogVisible = true"
-        />
-
-        <Button
-          :label="t('org.employee.exportExcel')"
-          icon="pi pi-download"
-          severity="secondary"
-          outlined
-          size="small"
-          :loading="exporting"
-          @click="handleExport"
-        />
-
-        <Button
-          v-if="canCreate"
-          :label="t('org.employee.newEmployee')"
-          icon="pi pi-plus"
-          size="small"
-          @click="openCreateDialog"
-        />
-      </div>
-    </section>
-
     <section class="ot-filter-bar ot-filter-bar-6">
       <div class="ot-field">
         <label class="ot-field-label">
@@ -1136,6 +1089,34 @@ onBeforeUnmount(() => {
           size="small"
           @click="clearFilters"
         />
+
+        <Button
+          v-if="canCreate"
+          :label="t('org.employee.importExcel')"
+          icon="pi pi-upload"
+          severity="secondary"
+          outlined
+          size="small"
+          @click="importDialogVisible = true"
+        />
+
+        <Button
+          :label="t('org.employee.exportExcel')"
+          icon="pi pi-download"
+          severity="secondary"
+          outlined
+          size="small"
+          :loading="exporting"
+          @click="handleExport"
+        />
+
+        <Button
+          v-if="canCreate"
+          :label="t('org.employee.newEmployee')"
+          icon="pi pi-plus"
+          size="small"
+          @click="openCreateDialog"
+        />
       </div>
     </section>
 
@@ -1145,10 +1126,6 @@ onBeforeUnmount(() => {
           <h2 class="ot-table-title">
             {{ t('org.employee.tableTitle') }}
           </h2>
-
-          <p class="ot-table-subtitle">
-            {{ t('org.employee.tableSubtitle') }}
-          </p>
         </div>
 
         <div class="ot-table-actions">

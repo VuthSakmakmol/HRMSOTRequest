@@ -331,33 +331,6 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="ot-page-shell">
-    <section class="ot-page-header">
-      <div class="ot-page-header-main">
-        <div class="ot-page-kicker">
-          <i class="pi pi-sitemap" />
-          {{ t('nav.organization') }}
-        </div>
-
-        <h1 class="ot-page-title">
-          {{ t('org.orgChart.title') }}
-        </h1>
-
-        <p class="ot-page-subtitle">
-          {{ t('org.orgChart.subtitle') }}
-        </p>
-      </div>
-
-      <div class="ot-page-actions">
-        <Button
-          :label="t('common.refresh')"
-          icon="pi pi-refresh"
-          outlined
-          size="small"
-          :loading="loading"
-          @click="refreshTree"
-        />
-      </div>
-    </section>
 
     <section class="ot-filter-bar">
       <div class="ot-field">

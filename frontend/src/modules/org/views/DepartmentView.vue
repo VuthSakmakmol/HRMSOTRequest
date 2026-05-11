@@ -399,53 +399,6 @@ onBeforeUnmount(() => {
       @success="handleImportSuccess"
     />
 
-    <section class="ot-page-header">
-      <div class="ot-page-header-main">
-        <div class="ot-page-kicker">
-          <i class="pi pi-building" />
-          {{ t('nav.organization') }}
-        </div>
-
-        <h1 class="ot-page-title">
-          {{ t('nav.departments') }}
-        </h1>
-
-        <p class="ot-page-subtitle">
-          {{ t('org.department.subtitle') }}
-        </p>
-      </div>
-
-      <div class="ot-page-actions">
-        <Button
-          v-if="canCreate"
-          :label="t('org.department.importExcel')"
-          icon="pi pi-upload"
-          severity="secondary"
-          outlined
-          size="small"
-          @click="importDialogVisible = true"
-        />
-
-        <Button
-          :label="t('org.department.exportExcel')"
-          icon="pi pi-download"
-          severity="secondary"
-          outlined
-          size="small"
-          :loading="exporting"
-          @click="handleExport"
-        />
-
-        <Button
-          v-if="canCreate"
-          :label="t('org.department.newDepartment')"
-          icon="pi pi-plus"
-          size="small"
-          @click="openCreateDialog"
-        />
-      </div>
-    </section>
-
     <section class="ot-filter-bar">
       <div class="ot-field">
         <label class="ot-field-label">
@@ -494,6 +447,35 @@ onBeforeUnmount(() => {
           @click="clearFilters"
         />
       </div>
+      <div class="ot-page-actions">
+        <Button
+          v-if="canCreate"
+          :label="t('org.department.importExcel')"
+          icon="pi pi-upload"
+          severity="secondary"
+          outlined
+          size="small"
+          @click="importDialogVisible = true"
+        />
+
+        <Button
+          :label="t('org.department.exportExcel')"
+          icon="pi pi-download"
+          severity="secondary"
+          outlined
+          size="small"
+          :loading="exporting"
+          @click="handleExport"
+        />
+
+        <Button
+          v-if="canCreate"
+          :label="t('org.department.newDepartment')"
+          icon="pi pi-plus"
+          size="small"
+          @click="openCreateDialog"
+        />
+      </div>
     </section>
 
     <section class="ot-table-card">
@@ -502,10 +484,6 @@ onBeforeUnmount(() => {
           <h2 class="ot-table-title">
             {{ t('org.department.tableTitle') }}
           </h2>
-
-          <p class="ot-table-subtitle">
-            {{ t('org.department.tableSubtitle') }}
-          </p>
         </div>
 
         <div class="ot-table-actions">

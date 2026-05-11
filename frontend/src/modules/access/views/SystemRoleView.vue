@@ -417,31 +417,6 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="ot-page-shell">
-    <section class="ot-page-header">
-      <div class="ot-page-header-main">
-        <div class="ot-page-kicker">
-          <i class="pi pi-id-card" />
-          {{ t('nav.accessControl') }}
-        </div>
-
-        <h1 class="ot-page-title">
-          {{ t('nav.roles') }}
-        </h1>
-
-        <p class="ot-page-subtitle">
-          {{ t('access.role.subtitle') }}
-        </p>
-      </div>
-
-      <div class="ot-page-actions">
-        <Button
-          :label="t('access.role.newRole')"
-          icon="pi pi-plus"
-          size="small"
-          @click="openCreateDialog"
-        />
-      </div>
-    </section>
 
     <section class="ot-filter-bar">
       <div class="ot-field">
@@ -499,10 +474,6 @@ onBeforeUnmount(() => {
           <h2 class="ot-table-title">
             {{ t('access.role.tableTitle') }}
           </h2>
-
-          <p class="ot-table-subtitle">
-            {{ t('access.role.tableSubtitle') }}
-          </p>
         </div>
 
         <div class="ot-table-actions">

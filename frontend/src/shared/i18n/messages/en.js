@@ -117,9 +117,7 @@ export default {
 
   org: {
     department: {
-      subtitle: 'Manage department master data used by employees, positions, approvals, and reports.',
       tableTitle: 'Department List',
-      tableSubtitle: 'Server-side department list with lazy loading, import, and export.',
       searchPlaceholder: 'Search code, name, or description',
 
       newDepartment: 'New Department',
@@ -165,7 +163,6 @@ export default {
     position: {
       subtitle: 'Manage position master data, reporting hierarchy, and manager scope rules.',
       tableTitle: 'Position List',
-      tableSubtitle: 'Server-side position list with department filtering, hierarchy, import, and export.',
       searchPlaceholder: 'Search code, name, or description',
 
       department: 'Department',
@@ -392,8 +389,7 @@ accountCreateConflict:
       allDepartments: 'All Departments',
       selectDepartment: 'Select department',
       selectAllowedPositions: 'Optional: select allowed positions',
-      allowedPositionsHelp:
-        'Leave empty if this line can be used by all positions in the selected department.',
+
 
       codeExample: 'Example: LINE-01',
       nameExample: 'Example: Sewing Line 01',
@@ -528,10 +524,8 @@ accountCreateConflict:
     positions: 'Positions',
     lines: 'Lines',
     employees: 'Employees',
-    orgChart: 'Organization Chart',
 
     calendar: 'Calendar',
-    holidayMaster: 'Holiday Master',
 
     shift: 'Shift',
     shiftMaster: 'Shift Master',

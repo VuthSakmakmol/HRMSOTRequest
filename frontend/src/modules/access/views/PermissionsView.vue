@@ -240,22 +240,6 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="ot-page-shell">
-    <section class="ot-page-header">
-      <div class="ot-page-header-main">
-        <div class="ot-page-kicker">
-          <i class="pi pi-shield" />
-          {{ t('nav.accessControl') }}
-        </div>
-
-        <h1 class="ot-page-title">
-          {{ t('nav.permissions') }}
-        </h1>
-
-        <p class="ot-page-subtitle">
-          {{ t('access.permission.subtitle') }}
-        </p>
-      </div>
-    </section>
 
     <section class="ot-filter-bar ot-filter-bar-5">
       <div class="ot-field">
@@ -329,10 +313,6 @@ onBeforeUnmount(() => {
           <h2 class="ot-table-title">
             {{ t('access.permission.tableTitle') }}
           </h2>
-
-          <p class="ot-table-subtitle">
-            {{ t('access.permission.tableSubtitle') }}
-          </p>
         </div>
 
         <div class="ot-table-actions">
