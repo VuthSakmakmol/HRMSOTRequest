@@ -1,25 +1,18 @@
 // backend/src/modules/org/controllers/position.controller.js
 
 const positionService = require('../services/position.service')
+const { successResponse } = require('../../../shared/utils/apiResponse')
+
 const {
   createPositionSchema,
   updatePositionSchema,
   listPositionsQuerySchema,
   lookupPositionsQuerySchema,
-  positionCodeParamSchema,
+  positionIdParamSchema,
 } = require('../validators/position.validation')
 
 function parse(schema, data) {
-  const result = schema.safeParse(data || {})
-
-  if (!result.success) {
-    const error = new Error(result.error.issues?.[0]?.message || 'Invalid request')
-    error.status = 400
-    error.statusCode = 400
-    throw error
-  }
-
-  return result.data
+  return schema.parse(data)
 }
 
 function getActor(req) {
@@ -29,6 +22,7 @@ function getActor(req) {
     req.user?.employeeNo ||
     req.user?.email ||
     req.user?.accountId ||
+    req.user?._id ||
     ''
   )
 }
@@ -39,130 +33,131 @@ function setExcelHeaders(res, filename) {
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   )
 
-  res.setHeader(
-    'Content-Disposition',
-    `attachment; filename="${filename}"`,
-  )
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
 }
 
-async function listPositions(req, res, next) {
+async function lookup(req, res, next) {
   try {
-    const query = parse(listPositionsQuerySchema, req.query)
-    const data = await positionService.listPositions(query)
+    const query = parse(lookupPositionsQuerySchema, req.query || {})
+    const result = await positionService.lookupPositions(query)
 
-    res.json({
-      success: true,
-      data,
-    })
+    return successResponse(res, result)
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
-async function lookupPositions(req, res, next) {
+async function list(req, res, next) {
   try {
-    const query = parse(lookupPositionsQuerySchema, req.query)
-    const data = await positionService.lookupPositions(query)
+    const query = parse(listPositionsQuerySchema, req.query || {})
+    const result = await positionService.listPositions(query)
 
-    res.json({
-      success: true,
-      data,
-    })
+    return successResponse(res, result)
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
-async function getPositionByCode(req, res, next) {
+async function getById(req, res, next) {
   try {
-    const params = parse(positionCodeParamSchema, req.params)
-    const item = await positionService.getPositionByCode(params.code)
+    const params = parse(positionIdParamSchema, req.params || {})
+    const item = await positionService.getPositionById(params.id)
 
-    res.json({
-      success: true,
+    return successResponse(res, {
       item,
     })
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
-async function createPosition(req, res, next) {
+async function create(req, res, next) {
   try {
-    const payload = parse(createPositionSchema, req.body)
+    const payload = parse(createPositionSchema, req.body || {})
     const item = await positionService.createPosition(payload, getActor(req))
 
-    res.status(201).json({
-      success: true,
-      message: 'Position created successfully',
+    return successResponse(
+      res,
+      {
+        item,
+      },
+      201,
+    )
+  } catch (error) {
+    return next(error)
+  }
+}
+
+async function update(req, res, next) {
+  try {
+    const params = parse(positionIdParamSchema, req.params || {})
+    const payload = parse(updatePositionSchema, req.body || {})
+    const item = await positionService.updatePosition(params.id, payload, getActor(req))
+
+    return successResponse(res, {
       item,
     })
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
-async function updatePosition(req, res, next) {
+async function exportExcel(req, res, next) {
   try {
-    const params = parse(positionCodeParamSchema, req.params)
-    const payload = parse(updatePositionSchema, req.body)
-
-    const item = await positionService.updatePosition(params.code, payload, getActor(req))
-
-    res.json({
-      success: true,
-      message: 'Position updated successfully',
-      item,
+    const query = parse(listPositionsQuerySchema, {
+      ...(req.query || {}),
+      page: 1,
+      limit: 10,
     })
-  } catch (error) {
-    next(error)
-  }
-}
 
-async function importPositions(req, res, next) {
-  try {
-    const data = await positionService.importPositions(req.file, getActor(req))
-
-    res.status(201).json({
-      success: true,
-      message: 'Positions imported successfully',
-      data,
-    })
-  } catch (error) {
-    next(error)
-  }
-}
-
-async function exportPositions(req, res, next) {
-  try {
-    const query = parse(listPositionsQuerySchema, req.query)
-    const result = await positionService.exportPositions(query)
+    const result = await positionService.exportPositionsExcel(query)
 
     setExcelHeaders(res, result.filename)
-    res.send(result.buffer)
+
+    return res.send(result.buffer)
   } catch (error) {
-    next(error)
+    return next(error)
   }
 }
 
-async function downloadPositionImportSample(req, res, next) {
+async function downloadImportSample(req, res, next) {
   try {
-    const result = await positionService.downloadImportSample()
+    const result = await positionService.downloadPositionImportSample()
 
     setExcelHeaders(res, result.filename)
-    res.send(result.buffer)
+
+    return res.send(result.buffer)
   } catch (error) {
-    next(error)
+    return next(error)
+  }
+}
+
+async function importExcel(req, res, next) {
+  try {
+    const item = await positionService.importPositionsExcel(
+      req.file?.buffer,
+      getActor(req),
+    )
+
+    return successResponse(
+      res,
+      {
+        item,
+      },
+      201,
+    )
+  } catch (error) {
+    return next(error)
   }
 }
 
 module.exports = {
-  listPositions,
-  lookupPositions,
-  getPositionByCode,
-  createPosition,
-  updatePosition,
-  importPositions,
-  exportPositions,
-  downloadPositionImportSample,
+  lookup,
+  list,
+  getById,
+  create,
+  update,
+  exportExcel,
+  downloadImportSample,
+  importExcel,
 }

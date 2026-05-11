@@ -1,723 +1,374 @@
 <!-- frontend/src/modules/org/views/PositionView.vue -->
-<template>
-  <section class="min-h-screen bg-slate-50 px-4 py-4 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
-    <div class="mx-auto flex w-full max-w-[1600px] flex-col gap-4">
-      <!-- Header -->
-      <div class="rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm backdrop-blur dark:border-slate-800 dark:bg-slate-900/80">
-        <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <div class="flex flex-wrap items-center gap-2">
-              <h1 class="text-xl font-semibold tracking-tight">
-                Positions
-              </h1>
-
-              <span class="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                {{ pagination.total }} total
-              </span>
-
-              <span class="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/50 dark:text-emerald-300">
-                {{ rows.length }} loaded
-              </span>
-            </div>
-
-            <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
-              Manage position codes, hierarchy, department mapping, and active status.
-            </p>
-          </div>
-
-          <div class="flex flex-wrap items-center gap-2">
-            <Button
-              label="Download Sample"
-              icon="pi pi-download"
-              severity="secondary"
-              outlined
-              size="small"
-              :loading="sampleLoading"
-              @click="handleDownloadSample"
-            />
-
-            <Button
-              label="Import"
-              icon="pi pi-upload"
-              severity="secondary"
-              outlined
-              size="small"
-              @click="openImportDialog"
-            />
-
-            <Button
-              label="Export"
-              icon="pi pi-file-excel"
-              severity="secondary"
-              outlined
-              size="small"
-              :loading="exporting"
-              @click="handleExport"
-            />
-
-            <Button
-              label="New Position"
-              icon="pi pi-plus"
-              size="small"
-              @click="openCreateDialog"
-            />
-          </div>
-        </div>
-      </div>
-
-      <!-- Content Card -->
-      <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-        <!-- Filters -->
-        <div class="border-b border-slate-200 p-3 dark:border-slate-800">
-          <div class="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_minmax(180px,220px)_minmax(180px,220px)_minmax(140px,180px)_auto] xl:items-center">
-            <span class="p-input-icon-left w-full">
-              <i class="pi pi-search" />
-              <InputText
-                v-model="filters.search"
-                class="w-full"
-                size="small"
-                placeholder="Search code, name, department..."
-              />
-            </span>
-
-            <Dropdown
-              v-model="filters.departmentCode"
-              class="w-full"
-              size="small"
-              :options="departmentOptions"
-              option-label="label"
-              option-value="code"
-              filter
-              show-clear
-              placeholder="Department"
-              :loading="departmentLoading"
-            />
-
-            <Dropdown
-              v-model="filters.hierarchyScope"
-              class="w-full"
-              size="small"
-              :options="hierarchyScopeOptions"
-              option-label="label"
-              option-value="value"
-              show-clear
-              placeholder="Hierarchy Scope"
-            />
-
-            <Dropdown
-              v-model="filters.isActive"
-              class="w-full"
-              size="small"
-              :options="activeOptions"
-              option-label="label"
-              option-value="value"
-              show-clear
-              placeholder="Status"
-            />
-
-            <div class="flex items-center gap-2">
-              <Button
-                label="Refresh"
-                icon="pi pi-refresh"
-                severity="secondary"
-                outlined
-                size="small"
-                :loading="loading"
-                @click="reload"
-              />
-
-              <Button
-                label="Clear"
-                icon="pi pi-filter-slash"
-                severity="secondary"
-                outlined
-                size="small"
-                @click="clearFilters"
-              />
-            </div>
-          </div>
-        </div>
-
-        <!-- Table -->
-        <DataTable
-          :value="rows"
-          data-key="code"
-          size="small"
-          striped-rows
-          scrollable
-          scroll-height="520px"
-          class="text-sm"
-          :loading="loading && !rows.length"
-        >
-          <Column header="#" class="w-16">
-            <template #body="{ index }">
-              <span class="text-xs text-slate-500">
-                {{ index + 1 }}
-              </span>
-            </template>
-          </Column>
-
-          <Column header="Code">
-            <template #body="{ data }">
-              <span class="font-semibold text-slate-900 dark:text-slate-100">
-                {{ data.code || '-' }}
-              </span>
-            </template>
-          </Column>
-
-          <Column header="Name">
-            <template #body="{ data }">
-              <div class="min-w-[180px]">
-                <div class="font-medium">
-                  {{ data.name || '-' }}
-                </div>
-
-                <div
-                  v-if="data.description"
-                  class="mt-0.5 max-w-[320px] truncate text-xs text-slate-500"
-                >
-                  {{ data.description }}
-                </div>
-              </div>
-            </template>
-          </Column>
-
-          <Column header="Department">
-            <template #body="{ data }">
-              <span class="text-sm">
-                {{ data.departmentLabel || data.departmentName || 'None' }}
-              </span>
-            </template>
-          </Column>
-
-          <Column header="Reports To">
-            <template #body="{ data }">
-              <span class="text-sm">
-                {{ data.reportsToPositionLabel || 'None' }}
-              </span>
-            </template>
-          </Column>
-
-          <Column header="Scope">
-            <template #body="{ data }">
-              <Tag
-                :value="scopeLabel(data.hierarchyScope)"
-                :severity="scopeSeverity(data.hierarchyScope)"
-                rounded
-              />
-            </template>
-          </Column>
-
-          <Column header="Level">
-            <template #body="{ data }">
-              <span class="font-medium">
-                {{ data.level ?? 0 }}
-              </span>
-            </template>
-          </Column>
-
-          <Column header="Status">
-            <template #body="{ data }">
-              <Tag
-                :value="data.isActive ? 'Active' : 'Inactive'"
-                :severity="data.isActive ? 'success' : 'danger'"
-                rounded
-              />
-            </template>
-          </Column>
-
-          <Column header="Updated">
-            <template #body="{ data }">
-              <span class="text-xs text-slate-500">
-                {{ data.updatedAtDisplayHm || data.createdAtDisplayHm || '-' }}
-              </span>
-            </template>
-          </Column>
-
-          <Column header="Action" frozen align-frozen="right">
-            <template #body="{ data }">
-              <Button
-                icon="pi pi-pencil"
-                text
-                rounded
-                size="small"
-                aria-label="Edit"
-                @click="openEditDialog(data)"
-              />
-            </template>
-          </Column>
-
-          <template #empty>
-            <div class="py-10 text-center text-sm text-slate-500">
-              No positions found.
-            </div>
-          </template>
-        </DataTable>
-
-        <div
-          ref="sentinelRef"
-          class="flex min-h-[52px] items-center justify-center border-t border-slate-200 px-3 py-3 text-xs text-slate-500 dark:border-slate-800"
-        >
-          <span v-if="loadingMore">Loading more...</span>
-          <span v-else-if="pagination.hasMore">Scroll to load more</span>
-          <span v-else>All positions loaded</span>
-        </div>
-      </div>
-    </div>
-
-    <!-- Create/Edit Dialog -->
-    <Dialog
-      v-model:visible="formDialog.visible"
-      modal
-      :header="formDialog.mode === 'create' ? 'New Position' : 'Edit Position'"
-      class="w-[95vw] max-w-3xl"
-    >
-      <form class="grid grid-cols-1 gap-4 md:grid-cols-2" @submit.prevent="submitForm">
-        <div>
-          <label class="mb-1 block text-sm font-medium">Code</label>
-          <InputText
-            v-model="form.code"
-            class="w-full"
-            autocomplete="off"
-            placeholder="Example: SEWER"
-          />
-          <small class="mt-1 block text-slate-500">
-            User-facing position code.
-          </small>
-        </div>
-
-        <div>
-          <label class="mb-1 block text-sm font-medium">Name</label>
-          <InputText
-            v-model="form.name"
-            class="w-full"
-            autocomplete="off"
-            placeholder="Example: Sewer"
-          />
-        </div>
-
-        <div>
-          <label class="mb-1 block text-sm font-medium">Department</label>
-          <Dropdown
-            v-model="form.departmentCode"
-            class="w-full"
-            :options="departmentOptions"
-            option-label="label"
-            option-value="code"
-            filter
-            show-clear
-            placeholder="Select department"
-            :loading="departmentLoading"
-          />
-        </div>
-
-        <div>
-          <label class="mb-1 block text-sm font-medium">Reports To Position</label>
-          <Dropdown
-            v-model="form.reportsToPositionCode"
-            class="w-full"
-            :options="reportsToOptions"
-            option-label="label"
-            option-value="code"
-            filter
-            show-clear
-            placeholder="Select parent position"
-            :loading="reportsToLoading"
-          />
-        </div>
-
-        <div>
-          <label class="mb-1 block text-sm font-medium">Hierarchy Scope</label>
-          <Dropdown
-            v-model="form.hierarchyScope"
-            class="w-full"
-            :options="hierarchyScopeOptions"
-            option-label="label"
-            option-value="value"
-            placeholder="Select scope"
-          />
-        </div>
-
-        <div>
-          <label class="mb-1 block text-sm font-medium">Level</label>
-          <InputNumber
-            v-model="form.level"
-            class="w-full"
-            input-class="w-full"
-            :min="0"
-            show-buttons
-          />
-        </div>
-
-        <div class="md:col-span-2">
-          <label class="mb-1 block text-sm font-medium">Description</label>
-          <Textarea
-            v-model="form.description"
-            class="w-full"
-            rows="3"
-            auto-resize
-            placeholder="Optional"
-          />
-        </div>
-
-        <div class="md:col-span-2 flex items-center justify-between rounded-xl border border-slate-200 p-3 dark:border-slate-700">
-          <div>
-            <div class="text-sm font-medium">Active</div>
-            <div class="text-xs text-slate-500">
-              Inactive positions will be hidden from normal lookup selectors.
-            </div>
-          </div>
-
-          <InputSwitch v-model="form.isActive" />
-        </div>
-      </form>
-
-      <template #footer>
-        <div class="flex justify-end gap-2">
-          <Button
-            label="Cancel"
-            severity="secondary"
-            outlined
-            @click="formDialog.visible = false"
-          />
-
-          <Button
-            :label="formDialog.mode === 'create' ? 'Create' : 'Save'"
-            icon="pi pi-check"
-            :loading="saving"
-            @click="submitForm"
-          />
-        </div>
-      </template>
-    </Dialog>
-
-    <!-- Import Dialog -->
-    <Dialog
-      v-model:visible="importDialog.visible"
-      modal
-      header="Import Positions"
-      class="w-[95vw] max-w-xl"
-    >
-      <div class="space-y-4">
-        <div class="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm dark:border-slate-700 dark:bg-slate-800">
-          Import columns:
-          <span class="font-medium">
-            Code, Name, Department Code, Reports To Position Code, Hierarchy Scope, Level, Description, Active
-          </span>
-        </div>
-
-        <input
-          ref="fileInputRef"
-          type="file"
-          accept=".xlsx,.xls,.csv"
-          class="block w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
-          @change="onFileChange"
-        />
-
-        <div v-if="selectedFile" class="text-sm text-slate-600 dark:text-slate-300">
-          Selected:
-          <span class="font-medium">{{ selectedFile.name }}</span>
-        </div>
-      </div>
-
-      <template #footer>
-        <div class="flex justify-end gap-2">
-          <Button
-            label="Cancel"
-            severity="secondary"
-            outlined
-            @click="importDialog.visible = false"
-          />
-
-          <Button
-            label="Import"
-            icon="pi pi-upload"
-            :disabled="!selectedFile"
-            :loading="importing"
-            @click="handleImport"
-          />
-        </div>
-      </template>
-    </Dialog>
-  </section>
-</template>
-
 <script setup>
-// frontend/src/modules/org/views/PositionView.vue
-
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
+
+import Button from 'primevue/button'
+import Column from 'primevue/column'
+import DataTable from 'primevue/datatable'
+import Dialog from 'primevue/dialog'
+import IconField from 'primevue/iconfield'
+import InputIcon from 'primevue/inputicon'
+import InputNumber from 'primevue/inputnumber'
+import InputSwitch from 'primevue/inputswitch'
+import InputText from 'primevue/inputtext'
+import Select from 'primevue/select'
+import Tag from 'primevue/tag'
+import Textarea from 'primevue/textarea'
 
 import {
   createPosition,
-  downloadPositionImportSample,
   exportPositionsExcel,
   getPositionLookupOptions,
   getPositions,
-  importPositionsExcel,
   updatePosition,
 } from '@/modules/org/position.api'
-
 import { getDepartmentLookupOptions } from '@/modules/org/department.api'
-
-defineOptions({
-  name: 'PositionView',
-})
+import PositionImportDialog from '@/modules/org/components/PositionImportDialog.vue'
+import { useAuthStore } from '@/modules/auth/auth.store'
+import { buildSaveErrorMessage, getApiErrorMessage } from '@/shared/utils/apiError'
+import { formatDateTime } from '@/shared/utils/dateFormat'
 
 const toast = useToast()
+const auth = useAuthStore()
+const { t } = useI18n()
 
-const rows = ref([])
-const loading = ref(false)
-const loadingMore = ref(false)
+const PAGE_SIZE = 10
+const SEARCH_DEBOUNCE_MS = 250
+
 const saving = ref(false)
 const exporting = ref(false)
-const importing = ref(false)
-const sampleLoading = ref(false)
+const importDialogVisible = ref(false)
 
+const rows = ref([])
+const totalRecords = ref(0)
+const loadedPages = ref(new Set())
+
+const bootstrapped = ref(false)
+const backgroundLoading = ref(false)
+
+const positionDialogVisible = ref(false)
+const editingPositionId = ref('')
+
+const departmentOptions = ref([])
+const reportsToPositionOptions = ref([])
 const departmentLoading = ref(false)
 const reportsToLoading = ref(false)
 
-const sentinelRef = ref(null)
-const observer = ref(null)
-const fileInputRef = ref(null)
-const selectedFile = ref(null)
-
-const pagination = reactive({
-  page: 1,
-  limit: 10,
-  total: 0,
-  totalPages: 1,
-  hasMore: false,
-})
-
 const filters = reactive({
   search: '',
-  departmentCode: null,
-  hierarchyScope: null,
-  isActive: null,
-  sortBy: 'createdAt',
-  sortOrder: 'desc',
-})
-
-const formDialog = reactive({
-  visible: false,
-  mode: 'create',
-  editingCode: '',
-})
-
-const importDialog = reactive({
-  visible: false,
+  isActive: '',
+  departmentId: '',
+  hierarchyScope: '',
+  sortField: 'createdAt',
+  sortOrder: -1,
 })
 
 const form = reactive({
   code: '',
   name: '',
   description: '',
-  departmentCode: null,
-  reportsToPositionCode: null,
+  departmentId: '',
+  reportsToPositionId: '',
   hierarchyScope: 'SAME_LINE',
   level: 0,
   isActive: true,
 })
 
-const departmentOptions = ref([])
-const reportsToOptions = ref([])
+const canCreate = computed(() => auth.hasPermission('POSITION_CREATE'))
+const canUpdate = computed(() => auth.hasPermission('POSITION_UPDATE'))
 
-const activeOptions = [
-  { label: 'Active', value: true },
-  { label: 'Inactive', value: false },
-]
+const statusOptions = computed(() => [
+  { label: t('common.allStatus'), value: '' },
+  { label: t('common.active'), value: 'true' },
+  { label: t('common.inactive'), value: 'false' },
+])
 
-const hierarchyScopeOptions = [
-  { label: 'Same Line', value: 'SAME_LINE' },
-  { label: 'Global', value: 'GLOBAL' },
-  { label: 'Cross Department', value: 'CROSS_DEPARTMENT' },
-]
+const hierarchyScopeOptions = computed(() => [
+  { label: t('org.position.scopeSameLine'), value: 'SAME_LINE' },
+  { label: t('org.position.scopeGlobal'), value: 'GLOBAL' },
+  { label: t('org.position.scopeCrossDepartment'), value: 'CROSS_DEPARTMENT' },
+])
 
-const filterParams = computed(() => ({
-  page: pagination.page,
-  limit: pagination.limit,
-  search: filters.search || '',
-  departmentCode: filters.departmentCode || undefined,
-  hierarchyScope: filters.hierarchyScope || undefined,
-  isActive: typeof filters.isActive === 'boolean' ? filters.isActive : undefined,
-  sortBy: filters.sortBy,
-  sortOrder: filters.sortOrder,
-}))
+const reportsToOptionsForForm = computed(() => {
+  const currentId = String(editingPositionId.value || '').trim()
 
-function s(value) {
-  return String(value ?? '').trim()
+  return reportsToPositionOptions.value.filter((item) => {
+    return String(item.value || '') !== currentId
+  })
+})
+
+const isEditMode = computed(() => !!editingPositionId.value)
+const totalPositions = computed(() => Number(totalRecords.value || 0))
+const loadedCount = computed(() => rows.value.filter(Boolean).length)
+const hasAnyData = computed(() => rows.value.some(Boolean))
+const useVirtualScroll = computed(() => totalPositions.value > PAGE_SIZE)
+
+const loadedLabel = computed(() =>
+  t('common.loaded', {
+    loaded: loadedCount.value,
+    total: totalPositions.value,
+  }),
+)
+
+const dialogTitle = computed(() =>
+  isEditMode.value ? t('org.position.editTitle') : t('org.position.createTitle'),
+)
+
+const saveLabel = computed(() =>
+  isEditMode.value ? t('common.save') : t('org.position.createTitle'),
+)
+
+const isSaveDisabled = computed(() => {
+  return (
+    saving.value ||
+    !String(form.code || '').trim() ||
+    !String(form.name || '').trim()
+  )
+})
+
+let searchTimer = null
+let currentRequestId = 0
+
+function normalizePayload(res) {
+  return res?.data?.data || res?.data || {}
 }
 
-function upper(value) {
-  return s(value).toUpperCase()
+function normalizeItems(payload) {
+  return Array.isArray(payload?.items) ? payload.items : []
 }
 
-function normalizeApiList(response) {
-  return response?.data?.data?.items || response?.data?.items || []
+function normalizePaginationTotal(payload) {
+  return Number(payload?.pagination?.total || payload?.total || 0)
 }
 
-function normalizeLookupItems(items = []) {
-  return items
+function normalizeId(row) {
+  return String(row?.id || row?._id || '').trim()
+}
+
+function normalizeLookupOptions(payload) {
+  return normalizeItems(payload)
     .map((item) => {
-      const code = upper(item.code)
+      const id = normalizeId(item)
+      const code = String(item?.code || '').trim()
+      const name = String(item?.name || '').trim()
+      const label = String(item?.label || [code, name].filter(Boolean).join(' - ')).trim()
 
-      if (!code) return null
-
-      const name = s(item.name)
-      const label = s(item.label) || (name ? `${code} - ${name}` : code)
+      if (!id) return null
 
       return {
         ...item,
+        id,
+        value: id,
         code,
-        value: code,
         name,
-        label,
+        label: label || code || name || id,
       }
     })
     .filter(Boolean)
 }
 
-function showSuccess(message) {
+function buildQuery(page) {
+  return {
+    page,
+    limit: PAGE_SIZE,
+    search: String(filters.search || '').trim(),
+    isActive: filters.isActive,
+    departmentId: filters.departmentId,
+    hierarchyScope: filters.hierarchyScope,
+    sortField: filters.sortField,
+    sortOrder: filters.sortOrder,
+  }
+}
+
+function showToast(severity, summary, detail, life = 3000) {
   toast.add({
-    severity: 'success',
-    summary: 'Success',
-    detail: message,
-    life: 3000,
+    severity,
+    summary,
+    detail,
+    life,
   })
 }
 
-function showError(error, fallback = 'Something went wrong') {
-  toast.add({
-    severity: 'error',
-    summary: 'Error',
-    detail: error?.response?.data?.message || error?.message || fallback,
-    life: 5000,
-  })
-}
-
-function scopeLabel(value) {
-  if (value === 'SAME_LINE') return 'Same Line'
-  if (value === 'GLOBAL') return 'Global'
-  if (value === 'CROSS_DEPARTMENT') return 'Cross Dept'
-  return value || 'Unknown'
-}
-
-function scopeSeverity(value) {
-  if (value === 'SAME_LINE') return 'success'
-  if (value === 'GLOBAL') return 'info'
-  if (value === 'CROSS_DEPARTMENT') return 'warning'
-  return 'secondary'
-}
-
-function saveBlob(response, filename) {
-  const blob = new Blob([response.data])
-  const url = window.URL.createObjectURL(blob)
-
-  const link = document.createElement('a')
-  link.href = url
-  link.download = filename
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-
-  window.URL.revokeObjectURL(url)
-}
-
-function getExportFileName(response, fallback) {
-  const disposition = response?.headers?.['content-disposition'] || ''
-  const match = disposition.match(/filename="?([^"]+)"?/i)
-  return match?.[1] || fallback
-}
-
-async function fetchDepartments() {
+async function loadDepartmentOptions() {
   departmentLoading.value = true
 
   try {
-    const response = await getDepartmentLookupOptions({
+    const res = await getDepartmentLookupOptions({
       limit: 100,
       isActive: true,
     })
 
-    departmentOptions.value = normalizeLookupItems(normalizeApiList(response))
+    departmentOptions.value = normalizeLookupOptions(normalizePayload(res))
   } catch (error) {
-    showError(error, 'Failed to load departments')
+    showToast(
+      'error',
+      t('common.loadFailed'),
+      getApiErrorMessage(error, t('org.position.departmentLookupFailed')),
+      3500,
+    )
   } finally {
     departmentLoading.value = false
   }
 }
 
-async function fetchReportsToOptions() {
+async function loadReportsToPositionOptions() {
   reportsToLoading.value = true
 
   try {
-    const response = await getPositionLookupOptions({
+    const res = await getPositionLookupOptions({
       limit: 100,
       isActive: true,
     })
 
-    const items = normalizeLookupItems(normalizeApiList(response))
-
-    reportsToOptions.value = items.filter((item) => item.code !== upper(formDialog.editingCode))
+    reportsToPositionOptions.value = normalizeLookupOptions(normalizePayload(res))
   } catch (error) {
-    showError(error, 'Failed to load position lookup')
+    showToast(
+      'error',
+      t('common.loadFailed'),
+      getApiErrorMessage(error, t('org.position.reportsToLookupFailed')),
+      3500,
+    )
   } finally {
     reportsToLoading.value = false
   }
 }
 
-async function fetchRows({ append = false } = {}) {
-  if (append) {
-    if (loadingMore.value || !pagination.hasMore) return
-    loadingMore.value = true
-  } else {
-    loading.value = true
+async function loadLookupOptions() {
+  await Promise.all([
+    loadDepartmentOptions(),
+    loadReportsToPositionOptions(),
+  ])
+}
+
+async function fetchPage(page, { replace = false, silent = false } = {}) {
+  if (!replace && loadedPages.value.has(page)) return
+
+  const requestId = ++currentRequestId
+
+  if (silent) {
+    backgroundLoading.value = true
   }
 
   try {
-    const response = await getPositions(filterParams.value)
-    const data = response.data?.data || response.data || {}
+    const res = await getPositions(buildQuery(page))
+    if (requestId !== currentRequestId) return
 
-    const items = data.items || []
-    const pageInfo = data.pagination || {}
+    const payload = normalizePayload(res)
+    const items = normalizeItems(payload)
+    const total = normalizePaginationTotal(payload)
+    const startIndex = (page - 1) * PAGE_SIZE
 
-    rows.value = append ? [...rows.value, ...items] : items
+    totalRecords.value = total
 
-    pagination.page = Number(pageInfo.page || pagination.page)
-    pagination.limit = Number(pageInfo.limit || pagination.limit)
-    pagination.total = Number(pageInfo.total || 0)
-    pagination.totalPages = Number(pageInfo.totalPages || 1)
-    pagination.hasMore = pageInfo.hasMore === true
+    if (replace) {
+      const nextRows = total > 0 ? Array.from({ length: total }, () => null) : []
+
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
+      }
+
+      rows.value = nextRows
+      loadedPages.value = new Set([page])
+    } else {
+      if (!rows.value.length && total > 0) {
+        rows.value = Array.from({ length: total }, () => null)
+      }
+
+      const nextRows = [...rows.value]
+
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
+      }
+
+      rows.value = nextRows
+      loadedPages.value.add(page)
+    }
+
+    bootstrapped.value = true
   } catch (error) {
-    showError(error, 'Failed to load positions')
+    showToast(
+      'error',
+      t('common.loadFailed'),
+      getApiErrorMessage(error, t('org.position.loadFailed')),
+      3500,
+    )
   } finally {
-    loading.value = false
-    loadingMore.value = false
+    backgroundLoading.value = false
   }
 }
 
-function reload() {
-  pagination.page = 1
-  rows.value = []
-  return fetchRows()
+async function reloadFirstPage({ keepVisible = true } = {}) {
+  if (!keepVisible) {
+    rows.value = []
+    totalRecords.value = 0
+    loadedPages.value = new Set()
+  }
+
+  await fetchPage(1, {
+    replace: true,
+    silent: true,
+  })
+}
+
+function runSearchSoon() {
+  window.clearTimeout(searchTimer)
+
+  searchTimer = window.setTimeout(() => {
+    reloadFirstPage({ keepVisible: true })
+  }, SEARCH_DEBOUNCE_MS)
+}
+
+function onSearchInput() {
+  runSearchSoon()
+}
+
+function onFilterChange() {
+  reloadFirstPage({ keepVisible: true })
 }
 
 function clearFilters() {
   filters.search = ''
-  filters.departmentCode = null
-  filters.hierarchyScope = null
-  filters.isActive = null
-  filters.sortBy = 'createdAt'
-  filters.sortOrder = 'desc'
-  reload()
+  filters.isActive = ''
+  filters.departmentId = ''
+  filters.hierarchyScope = ''
+  filters.sortField = 'createdAt'
+  filters.sortOrder = -1
+
+  reloadFirstPage({ keepVisible: true })
+}
+
+function onSort(event) {
+  filters.sortField = event.sortField || 'createdAt'
+  filters.sortOrder = typeof event.sortOrder === 'number' ? event.sortOrder : -1
+
+  reloadFirstPage({ keepVisible: true })
+}
+
+async function onVirtualLazyLoad(event) {
+  if (!useVirtualScroll.value) return
+
+  const first = Number(event?.first || 0)
+  const last = Number(event?.last || first + PAGE_SIZE)
+
+  const startPage = Math.floor(first / PAGE_SIZE) + 1
+  const endPage = Math.floor(Math.max(last - 1, first) / PAGE_SIZE) + 1
+
+  for (let page = startPage; page <= endPage; page += 1) {
+    if (!loadedPages.value.has(page)) {
+      await fetchPage(page, { silent: true })
+    }
+  }
 }
 
 function resetForm() {
+  editingPositionId.value = ''
   form.code = ''
   form.name = ''
   form.description = ''
-  form.departmentCode = null
-  form.reportsToPositionCode = null
+  form.departmentId = ''
+  form.reportsToPositionId = ''
   form.hierarchyScope = 'SAME_LINE'
   form.level = 0
   form.isActive = true
@@ -725,213 +376,680 @@ function resetForm() {
 
 async function openCreateDialog() {
   resetForm()
-  formDialog.mode = 'create'
-  formDialog.editingCode = ''
-  formDialog.visible = true
-  await fetchReportsToOptions()
-}
 
-async function openEditDialog(item) {
-  resetForm()
-
-  formDialog.mode = 'edit'
-  formDialog.editingCode = item.code || ''
-
-  form.code = item.code || ''
-  form.name = item.name || ''
-  form.description = item.description || ''
-  form.departmentCode = item.departmentCode || null
-  form.reportsToPositionCode = item.reportsToPositionCode || null
-  form.hierarchyScope = item.hierarchyScope || 'SAME_LINE'
-  form.level = Number(item.level || 0)
-  form.isActive = item.isActive === true
-
-  formDialog.visible = true
-  await fetchReportsToOptions()
-}
-
-function buildPayload() {
-  return {
-    code: upper(form.code),
-    name: s(form.name),
-    description: s(form.description),
-    departmentCode: upper(form.departmentCode),
-    reportsToPositionCode: upper(form.reportsToPositionCode),
-    hierarchyScope: form.hierarchyScope || 'SAME_LINE',
-    level: Number(form.level || 0),
-    isActive: form.isActive === true,
-  }
-}
-
-async function submitForm() {
-  if (saving.value) return
-
-  const payload = buildPayload()
-
-  if (!payload.code) {
-    showError(new Error('Code is required'))
-    return
+  if (!departmentOptions.value.length || !reportsToPositionOptions.value.length) {
+    await loadLookupOptions()
   }
 
-  if (!payload.name) {
-    showError(new Error('Name is required'))
-    return
+  positionDialogVisible.value = true
+}
+
+async function openEditDialog(row) {
+  if (!row) return
+
+  editingPositionId.value = normalizeId(row)
+  form.code = row?.code || ''
+  form.name = row?.name || ''
+  form.description = row?.description || ''
+  form.departmentId = row?.departmentId || ''
+  form.reportsToPositionId = row?.reportsToPositionId || ''
+  form.hierarchyScope = row?.hierarchyScope || 'SAME_LINE'
+  form.level = Number(row?.level || 0)
+  form.isActive = row?.isActive !== false
+
+  if (!departmentOptions.value.length || !reportsToPositionOptions.value.length) {
+    await loadLookupOptions()
   }
 
+  positionDialogVisible.value = true
+}
+
+async function submitPosition() {
   saving.value = true
 
   try {
-    if (formDialog.mode === 'create') {
-      await createPosition(payload)
-      showSuccess('Position created successfully')
-    } else {
-      await updatePosition(formDialog.editingCode, payload)
-      showSuccess('Position updated successfully')
+    const payload = {
+      code: String(form.code || '').trim().toUpperCase(),
+      name: String(form.name || '').trim(),
+      description: String(form.description || '').trim(),
+      departmentId: String(form.departmentId || '').trim(),
+      reportsToPositionId: String(form.reportsToPositionId || '').trim(),
+      hierarchyScope: form.hierarchyScope || 'SAME_LINE',
+      level: Number(form.level || 0),
+      isActive: !!form.isActive,
     }
 
-    formDialog.visible = false
-    await reload()
-    await fetchReportsToOptions()
+    if (editingPositionId.value) {
+      await updatePosition(editingPositionId.value, payload)
+      showToast('success', t('common.updated'), t('org.position.updatedSuccess'), 2500)
+    } else {
+      await createPosition(payload)
+      showToast('success', t('common.created'), t('org.position.createdSuccess'), 2500)
+    }
+
+    positionDialogVisible.value = false
+    resetForm()
+
+    await Promise.all([
+      reloadFirstPage({ keepVisible: false }),
+      loadReportsToPositionOptions(),
+    ])
   } catch (error) {
-    showError(error, 'Failed to save position')
+    showToast(
+      'error',
+      isEditMode.value ? t('common.updateFailed') : t('common.createFailed'),
+      buildSaveErrorMessage(error, t('org.position.saveFailed')),
+      3500,
+    )
   } finally {
     saving.value = false
   }
 }
 
-async function handleDownloadSample() {
-  sampleLoading.value = true
+function statusSeverity(active) {
+  return active ? 'success' : 'secondary'
+}
 
-  try {
-    const response = await downloadPositionImportSample()
-    saveBlob(response, getExportFileName(response, 'position-import-sample.xlsx'))
-  } catch (error) {
-    showError(error, 'Failed to download sample')
-  } finally {
-    sampleLoading.value = false
-  }
+function scopeLabel(value) {
+  if (value === 'SAME_LINE') return t('org.position.scopeSameLine')
+  if (value === 'GLOBAL') return t('org.position.scopeGlobal')
+  if (value === 'CROSS_DEPARTMENT') return t('org.position.scopeCrossDepartment')
+
+  return value || '-'
+}
+
+function scopeSeverity(value) {
+  if (value === 'SAME_LINE') return 'success'
+  if (value === 'GLOBAL') return 'info'
+  if (value === 'CROSS_DEPARTMENT') return 'warning'
+
+  return 'secondary'
+}
+
+function getFilenameFromHeader(res, fallback) {
+  const disposition = String(res?.headers?.['content-disposition'] || '')
+  const match = disposition.match(/filename="?([^"]+)"?/i)
+
+  return match?.[1] || fallback
+}
+
+function downloadBlob(blob, filename) {
+  const url = window.URL.createObjectURL(blob)
+  const link = document.createElement('a')
+
+  link.href = url
+  link.download = filename
+
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+
+  window.URL.revokeObjectURL(url)
 }
 
 async function handleExport() {
   exporting.value = true
 
   try {
-    const response = await exportPositionsExcel({
-      search: filters.search || '',
-      departmentCode: filters.departmentCode || undefined,
-      hierarchyScope: filters.hierarchyScope || undefined,
-      isActive: typeof filters.isActive === 'boolean' ? filters.isActive : undefined,
-      sortBy: filters.sortBy,
+    const res = await exportPositionsExcel({
+      search: String(filters.search || '').trim(),
+      isActive: filters.isActive,
+      departmentId: filters.departmentId,
+      hierarchyScope: filters.hierarchyScope,
+      sortField: filters.sortField,
       sortOrder: filters.sortOrder,
     })
 
-    saveBlob(response, getExportFileName(response, 'positions.xlsx'))
+    const blob = new Blob([res.data], {
+      type:
+        res?.headers?.['content-type'] ||
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+
+    downloadBlob(blob, getFilenameFromHeader(res, `positions-${Date.now()}.xlsx`))
+
+    showToast('success', t('org.position.exported'), t('org.position.exportedSuccess'), 2500)
   } catch (error) {
-    showError(error, 'Failed to export positions')
+    showToast(
+      'error',
+      t('org.position.exportFailed'),
+      getApiErrorMessage(error, t('org.position.exportFailed')),
+      3500,
+    )
   } finally {
     exporting.value = false
   }
 }
 
-function openImportDialog() {
-  selectedFile.value = null
-  importDialog.visible = true
+async function handleImportSuccess(payload) {
+  const summary = payload?.summary || {}
+  const created = Number(summary.created || payload?.created || payload?.createdCount || 0)
+  const updated = Number(summary.updated || payload?.updated || payload?.updatedCount || 0)
+  const failed = Number(summary.failed || payload?.failed || payload?.failedCount || 0)
 
-  nextTick(() => {
-    if (fileInputRef.value) {
-      fileInputRef.value.value = ''
-    }
-  })
-}
-
-function onFileChange(event) {
-  selectedFile.value = event.target.files?.[0] || null
-}
-
-async function handleImport() {
-  if (!selectedFile.value || importing.value) return
-
-  importing.value = true
-
-  try {
-    const response = await importPositionsExcel(selectedFile.value)
-    const data = response.data?.data || {}
-
-    showSuccess(
-      `Import completed. Success: ${data.successCount || 0}, Failed: ${data.failedCount || 0}`,
-    )
-
-    importDialog.visible = false
-    selectedFile.value = null
-
-    await reload()
-    await fetchReportsToOptions()
-  } catch (error) {
-    showError(error, 'Failed to import positions')
-  } finally {
-    importing.value = false
-  }
-}
-
-function setupObserver() {
-  if (observer.value) {
-    observer.value.disconnect()
-  }
-
-  observer.value = new IntersectionObserver(
-    (entries) => {
-      const entry = entries[0]
-
-      if (!entry?.isIntersecting) return
-      if (!pagination.hasMore) return
-      if (loading.value || loadingMore.value) return
-
-      pagination.page += 1
-      fetchRows({ append: true })
-    },
-    {
-      root: null,
-      threshold: 0.1,
-    },
+  showToast(
+    failed > 0 ? 'warn' : 'success',
+    t('org.position.imported'),
+    t('org.position.importedSuccess', { created, updated, failed }),
+    4500,
   )
 
-  if (sentinelRef.value) {
-    observer.value.observe(sentinelRef.value)
-  }
+  await Promise.all([
+    reloadFirstPage({ keepVisible: false }),
+    loadLookupOptions(),
+  ])
 }
-
-let filterTimer = null
-
-watch(
-  () => [
-    filters.search,
-    filters.departmentCode,
-    filters.hierarchyScope,
-    filters.isActive,
-  ],
-  () => {
-    window.clearTimeout(filterTimer)
-    filterTimer = window.setTimeout(() => {
-      reload()
-    }, 300)
-  },
-)
 
 onMounted(async () => {
   await Promise.all([
-    fetchDepartments(),
-    fetchRows(),
+    loadLookupOptions(),
+    reloadFirstPage({ keepVisible: false }),
   ])
-
-  await nextTick()
-  setupObserver()
 })
 
 onBeforeUnmount(() => {
-  window.clearTimeout(filterTimer)
-
-  if (observer.value) {
-    observer.value.disconnect()
-  }
+  window.clearTimeout(searchTimer)
 })
 </script>
+
+<template>
+  <div class="ot-page-shell">
+    <PositionImportDialog
+      v-model:visible="importDialogVisible"
+      @success="handleImportSuccess"
+    />
+
+    <section class="ot-page-header">
+      <div class="ot-page-header-main">
+        <div class="ot-page-kicker">
+          <i class="pi pi-briefcase" />
+          {{ t('nav.organization') }}
+        </div>
+
+        <h1 class="ot-page-title">
+          {{ t('nav.positions') }}
+        </h1>
+
+        <p class="ot-page-subtitle">
+          {{ t('org.position.subtitle') }}
+        </p>
+      </div>
+
+      <div class="ot-page-actions">
+        <Button
+          v-if="canCreate"
+          :label="t('org.position.importExcel')"
+          icon="pi pi-upload"
+          severity="secondary"
+          outlined
+          size="small"
+          @click="importDialogVisible = true"
+        />
+
+        <Button
+          :label="t('org.position.exportExcel')"
+          icon="pi pi-download"
+          severity="secondary"
+          outlined
+          size="small"
+          :loading="exporting"
+          @click="handleExport"
+        />
+
+        <Button
+          v-if="canCreate"
+          :label="t('org.position.newPosition')"
+          icon="pi pi-plus"
+          size="small"
+          @click="openCreateDialog"
+        />
+      </div>
+    </section>
+
+    <section class="ot-filter-bar">
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('common.search') }}
+        </label>
+
+        <IconField>
+          <InputIcon class="pi pi-search" />
+          <InputText
+            v-model="filters.search"
+            :placeholder="t('org.position.searchPlaceholder')"
+            class="w-full"
+            size="small"
+            @input="onSearchInput"
+          />
+        </IconField>
+      </div>
+
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('org.position.department') }}
+        </label>
+
+        <Select
+          v-model="filters.departmentId"
+          :options="departmentOptions"
+          option-label="label"
+          option-value="value"
+          class="w-full"
+          size="small"
+          filter
+          show-clear
+          :loading="departmentLoading"
+          :placeholder="t('org.position.allDepartments')"
+          @change="onFilterChange"
+        />
+      </div>
+
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('org.position.hierarchyScope') }}
+        </label>
+
+        <Select
+          v-model="filters.hierarchyScope"
+          :options="hierarchyScopeOptions"
+          option-label="label"
+          option-value="value"
+          class="w-full"
+          size="small"
+          show-clear
+          :placeholder="t('org.position.allScopes')"
+          @change="onFilterChange"
+        />
+      </div>
+
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('common.status') }}
+        </label>
+
+        <Select
+          v-model="filters.isActive"
+          :options="statusOptions"
+          option-label="label"
+          option-value="value"
+          class="w-full"
+          size="small"
+          @change="onFilterChange"
+        />
+      </div>
+
+      <div class="ot-filter-actions">
+        <span class="ot-loaded-badge">
+          {{ loadedLabel }}
+        </span>
+
+        <Button
+          :label="t('common.clear')"
+          icon="pi pi-filter-slash"
+          severity="secondary"
+          outlined
+          size="small"
+          @click="clearFilters"
+        />
+      </div>
+    </section>
+
+    <section class="ot-table-card">
+      <div class="ot-table-toolbar">
+        <div>
+          <h2 class="ot-table-title">
+            {{ t('org.position.tableTitle') }}
+          </h2>
+
+          <p class="ot-table-subtitle">
+            {{ t('org.position.tableSubtitle') }}
+          </p>
+        </div>
+
+        <div class="ot-table-actions">
+          <span
+            v-if="backgroundLoading && hasAnyData"
+            class="ot-loaded-badge"
+          >
+            <i class="pi pi-spin pi-spinner" />
+            {{ t('common.updating') }}
+          </span>
+        </div>
+      </div>
+
+      <div class="ot-table-wrapper">
+        <DataTable
+          :value="rows"
+          lazy
+          removable-sort
+          scrollable
+          scroll-height="500px"
+          :sort-field="filters.sortField"
+          :sort-order="filters.sortOrder"
+          table-style="min-width: 86rem"
+          class="ot-data-table ot-data-table-compact"
+          :virtual-scroller-options="useVirtualScroll ? {
+            lazy: true,
+            onLazyLoad: onVirtualLazyLoad,
+            itemSize: 72,
+            delay: 0,
+            showLoader: false,
+            loading: false,
+            numToleratedItems: 12,
+          } : null"
+          @sort="onSort"
+        >
+          <template #empty>
+            <div
+              v-if="bootstrapped"
+              class="ot-empty-state"
+            >
+              <div class="ot-empty-icon">
+                <i class="pi pi-briefcase" />
+              </div>
+
+              <div class="ot-empty-title">
+                {{ t('common.noData') }}
+              </div>
+
+              <div class="ot-empty-text">
+                {{ t('org.position.noData') }}
+              </div>
+            </div>
+          </template>
+
+          <Column
+            field="code"
+            :header="t('common.code')"
+            sortable
+            style="min-width: 9rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="font-bold"
+              >
+                {{ data.code || '-' }}
+              </span>
+            </template>
+          </Column>
+
+          <Column
+            field="name"
+            :header="t('common.name')"
+            sortable
+            style="min-width: 14rem"
+          >
+            <template #body="{ data }">
+              <div
+                v-if="data"
+                class="min-w-0"
+              >
+                <div class="font-semibold text-[color:var(--ot-text)]">
+                  {{ data.name || '-' }}
+                </div>
+
+                <div
+                  v-if="data.description"
+                  class="ot-truncate-2 mt-1 text-xs text-[color:var(--ot-text-muted)]"
+                >
+                  {{ data.description }}
+                </div>
+              </div>
+            </template>
+          </Column>
+
+          <Column
+            field="departmentName"
+            :header="t('org.position.department')"
+            sortable
+            style="min-width: 14rem"
+          >
+            <template #body="{ data }">
+              <span v-if="data">
+                {{ data.departmentLabel || t('common.none') }}
+              </span>
+            </template>
+          </Column>
+
+          <Column
+            field="reportsToPositionName"
+            :header="t('org.position.reportsToPosition')"
+            sortable
+            style="min-width: 15rem"
+          >
+            <template #body="{ data }">
+              <span v-if="data">
+                {{ data.reportsToPositionLabel || t('common.none') }}
+              </span>
+            </template>
+          </Column>
+
+          <Column
+            field="hierarchyScope"
+            :header="t('org.position.hierarchyScope')"
+            sortable
+            style="min-width: 11rem"
+          >
+            <template #body="{ data }">
+              <Tag
+                v-if="data"
+                :value="scopeLabel(data.hierarchyScope)"
+                :severity="scopeSeverity(data.hierarchyScope)"
+              />
+            </template>
+          </Column>
+
+          <Column
+            field="level"
+            :header="t('org.position.level')"
+            sortable
+            style="min-width: 7rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="font-semibold"
+              >
+                {{ data.level ?? 0 }}
+              </span>
+            </template>
+          </Column>
+
+          <Column
+            field="isActive"
+            :header="t('common.status')"
+            sortable
+            style="min-width: 7rem"
+          >
+            <template #body="{ data }">
+              <Tag
+                v-if="data"
+                :value="data.isActive ? t('common.active') : t('common.inactive')"
+                :severity="statusSeverity(data.isActive)"
+              />
+            </template>
+          </Column>
+
+          <Column
+            field="createdAt"
+            :header="t('common.createdAt')"
+            sortable
+            style="min-width: 13rem"
+          >
+            <template #body="{ data }">
+              <span v-if="data">{{ formatDateTime(data.createdAt) }}</span>
+            </template>
+          </Column>
+
+          <Column
+            :header="t('common.actions')"
+            style="width: 7rem; min-width: 7rem"
+          >
+            <template #body="{ data }">
+              <Button
+                v-if="data && canUpdate"
+                :label="t('common.edit')"
+                icon="pi pi-pencil"
+                size="small"
+                outlined
+                @click="openEditDialog(data)"
+              />
+            </template>
+          </Column>
+        </DataTable>
+      </div>
+    </section>
+
+    <Dialog
+      v-model:visible="positionDialogVisible"
+      modal
+      :header="dialogTitle"
+      :style="{ width: '48rem', maxWidth: '96vw' }"
+      @hide="resetForm"
+    >
+      <div class="ot-dialog-form">
+        <div class="ot-form-grid">
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('org.position.positionCode') }}
+            </label>
+
+            <InputText
+              v-model="form.code"
+              class="w-full"
+              :placeholder="t('org.position.codeExample')"
+            />
+          </div>
+
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('org.position.positionName') }}
+            </label>
+
+            <InputText
+              v-model="form.name"
+              class="w-full"
+              :placeholder="t('org.position.nameExample')"
+            />
+          </div>
+        </div>
+
+        <div class="ot-form-grid">
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('org.position.department') }}
+            </label>
+
+            <Select
+              v-model="form.departmentId"
+              :options="departmentOptions"
+              option-label="label"
+              option-value="value"
+              class="w-full"
+              filter
+              show-clear
+              :loading="departmentLoading"
+              :placeholder="t('org.position.selectDepartment')"
+            />
+          </div>
+
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('org.position.reportsToPosition') }}
+            </label>
+
+            <Select
+              v-model="form.reportsToPositionId"
+              :options="reportsToOptionsForForm"
+              option-label="label"
+              option-value="value"
+              class="w-full"
+              filter
+              show-clear
+              :loading="reportsToLoading"
+              :placeholder="t('org.position.selectReportsToPosition')"
+            />
+          </div>
+        </div>
+
+        <div class="ot-form-grid">
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('org.position.hierarchyScope') }}
+            </label>
+
+            <Select
+              v-model="form.hierarchyScope"
+              :options="hierarchyScopeOptions"
+              option-label="label"
+              option-value="value"
+              class="w-full"
+              :placeholder="t('org.position.selectHierarchyScope')"
+            />
+          </div>
+
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('org.position.level') }}
+            </label>
+
+            <InputNumber
+              v-model="form.level"
+              class="w-full"
+              input-class="w-full"
+              :min="0"
+              show-buttons
+            />
+          </div>
+        </div>
+
+        <div class="ot-field">
+          <label class="ot-field-label">
+            {{ t('common.description') }}
+          </label>
+
+          <Textarea
+            v-model="form.description"
+            class="w-full"
+            rows="3"
+            :placeholder="t('org.position.descriptionPlaceholder')"
+          />
+        </div>
+
+        <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] px-4 py-3">
+          <div>
+            <div class="text-sm font-semibold text-[color:var(--ot-text)]">
+              {{ t('common.active') }}
+            </div>
+
+            <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
+              {{ t('org.position.activeHelp') }}
+            </div>
+          </div>
+
+          <InputSwitch v-model="form.isActive" />
+        </div>
+      </div>
+
+      <template #footer>
+        <div class="ot-form-footer">
+          <Button
+            :label="t('common.cancel')"
+            text
+            size="small"
+            @click="positionDialogVisible = false"
+          />
+
+          <Button
+            :label="saveLabel"
+            :loading="saving"
+            :disabled="isSaveDisabled"
+            size="small"
+            @click="submitPosition"
+          />
+        </div>
+      </template>
+    </Dialog>
+  </div>
+</template>

@@ -30,7 +30,10 @@ const positionSchema = new Schema(
       type: String,
       required: true,
       trim: true,
+      uppercase: true,
+      minlength: 2,
       maxlength: 50,
+      unique: true,
     },
 
     name: {
@@ -38,6 +41,7 @@ const positionSchema = new Schema(
       required: true,
       trim: true,
       maxlength: 150,
+      index: true,
     },
 
     description: {
@@ -47,20 +51,20 @@ const positionSchema = new Schema(
       maxlength: 1000,
     },
 
-    // Internal DB reference only. Never expose to frontend.
     departmentId: {
       type: Schema.Types.ObjectId,
       ref: 'Department',
       default: null,
-      select: true,
+      index: true,
     },
 
-    // User-facing identity.
     departmentCode: {
       type: String,
       default: '',
       trim: true,
+      uppercase: true,
       maxlength: 50,
+      index: true,
     },
 
     departmentName: {
@@ -70,20 +74,20 @@ const positionSchema = new Schema(
       maxlength: 150,
     },
 
-    // Internal DB reference only. Never expose to frontend.
     reportsToPositionId: {
       type: Schema.Types.ObjectId,
       ref: 'Position',
       default: null,
-      select: true,
+      index: true,
     },
 
-    // User-facing identity.
     reportsToPositionCode: {
       type: String,
       default: '',
       trim: true,
+      uppercase: true,
       maxlength: 50,
+      index: true,
     },
 
     reportsToPositionName: {
@@ -98,17 +102,21 @@ const positionSchema = new Schema(
       enum: POSITION_HIERARCHY_SCOPE,
       default: 'SAME_LINE',
       trim: true,
+      uppercase: true,
+      index: true,
     },
 
     level: {
       type: Number,
       min: 0,
       default: 0,
+      index: true,
     },
 
     isActive: {
       type: Boolean,
       default: true,
+      index: true,
     },
 
     createdBy: {
@@ -128,10 +136,12 @@ const positionSchema = new Schema(
   {
     timestamps: true,
     versionKey: false,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
   },
 )
 
-positionSchema.pre('validate', function preValidate(next) {
+positionSchema.pre('validate', function normalize(next) {
   this.code = upper(this.code)
   this.name = s(this.name)
   this.description = s(this.description)
@@ -151,9 +161,7 @@ positionSchema.pre('validate', function preValidate(next) {
   next()
 })
 
-positionSchema.index({ code: 1 }, { unique: true })
-positionSchema.index({ name: 1 })
-positionSchema.index({ isActive: 1, name: 1 })
+positionSchema.index({ isActive: 1, code: 1 })
 positionSchema.index({ departmentId: 1, isActive: 1, name: 1 })
 positionSchema.index({ departmentCode: 1, isActive: 1 })
 positionSchema.index({ reportsToPositionId: 1, isActive: 1 })
