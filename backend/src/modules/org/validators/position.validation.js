@@ -1,249 +1,177 @@
 // backend/src/modules/org/validators/position.validation.js
 
 const { z } = require('zod')
-const mongoose = require('mongoose')
+
+const POSITION_HIERARCHY_SCOPE = ['SAME_LINE', 'GLOBAL', 'CROSS_DEPARTMENT']
+
+const POSITION_SORT_FIELDS = [
+  'code',
+  'name',
+  'departmentName',
+  'reportsToPositionName',
+  'hierarchyScope',
+  'level',
+  'isActive',
+  'createdAt',
+  'updatedAt',
+]
 
 function s(value) {
   return String(value ?? '').trim()
 }
 
-function isObjectId(value) {
-  return mongoose.Types.ObjectId.isValid(String(value || ''))
+function normalizeUpperOptional(value) {
+  if (typeof value === 'undefined') return undefined
+  const raw = s(value)
+  return raw ? raw.toUpperCase() : ''
 }
 
-function toBoolean(value, defaultValue = undefined) {
-  if (value === undefined || value === null || value === '') return defaultValue
-  if (typeof value === 'boolean') return value
-  if (typeof value === 'number') return value === 1
-
-  const text = String(value).trim().toLowerCase()
-
-  if (['true', '1', 'yes', 'y', 'active'].includes(text)) return true
-  if (['false', '0', 'no', 'n', 'inactive'].includes(text)) return false
-
-  return defaultValue
+function requiredUpperString(label, max = 50) {
+  return z.preprocess(
+    (value) => s(value).toUpperCase(),
+    z
+      .string({
+        required_error: `${label} is required`,
+        invalid_type_error: `${label} must be text`,
+      })
+      .trim()
+      .min(1, `${label} is required`)
+      .max(max, `${label} is too long`),
+  )
 }
 
-const booleanLike = z.union([z.boolean(), z.string(), z.number()]).optional()
-
-const objectIdField = (fieldKey) =>
-  z
-    .string()
-    .trim()
-    .min(1, `${fieldKey}.required`)
-    .refine((value) => isObjectId(value), `${fieldKey}.invalid`)
-
-const optionalObjectIdField = (fieldKey) =>
-  z
-    .union([z.string(), z.null(), z.undefined()])
-    .transform((value) => {
-      if (value === undefined || value === null) return null
-
-      const text = s(value)
-
-      return text || null
+function requiredText(label, max = 150) {
+  return z
+    .string({
+      required_error: `${label} is required`,
+      invalid_type_error: `${label} must be text`,
     })
-    .refine((value) => value === null || isObjectId(value), `${fieldKey}.invalid`)
-
-const managerScopeField = z
-  .union([z.string(), z.null(), z.undefined()])
-  .transform((value) => {
-    const scope = s(value || 'SAME_LINE').toUpperCase()
-
-    return ['SAME_LINE', 'GLOBAL'].includes(scope) ? scope : 'SAME_LINE'
-  })
-
-const listPositionQuerySchema = z.object({
-  page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce.number().int().min(1).max(100).default(10),
-
-  search: z.string().trim().optional().default(''),
-
-  departmentId: z
-    .string()
     .trim()
-    .optional()
-    .default('')
-    .refine((value) => !value || isObjectId(value), 'org.position.field.departmentId.invalid'),
+    .min(1, `${label} is required`)
+    .max(max, `${label} is too long`)
+}
 
-  isActive: booleanLike,
+function optionalText(max = 500) {
+  return z.preprocess(
+    (value) => {
+      if (typeof value === 'undefined') return undefined
+      return s(value)
+    },
+    z.string().max(max).optional(),
+  )
+}
 
-  sortField: z
-    .enum(['code', 'name', 'isActive', 'createdAt', 'updatedAt'])
-    .optional()
-    .default('createdAt'),
+function optionalUpperText(max = 100) {
+  return z.preprocess(
+    (value) => normalizeUpperOptional(value),
+    z.string().max(max).optional(),
+  )
+}
 
-  sortOrder: z
-    .union([z.string(), z.number()])
-    .optional()
-    .transform((value) => {
-      if (value === -1 || value === '-1' || value === 'desc') return -1
-      if (value === 1 || value === '1' || value === 'asc') return 1
-      return -1
-    }),
-})
+function optionalUpperEnum(values) {
+  return z.preprocess(
+    (value) => {
+      const raw = s(value)
+      return raw ? raw.toUpperCase() : undefined
+    },
+    z.enum(values).optional(),
+  )
+}
 
-const positionLookupQuerySchema = z.object({
-  search: z.string().trim().optional().default(''),
+function optionalBoolean() {
+  return z.preprocess(
+    (value) => {
+      if (typeof value === 'undefined') return undefined
 
-  departmentId: z
-    .string()
-    .trim()
-    .optional()
-    .default('')
-    .refine((value) => !value || isObjectId(value), 'org.position.field.departmentId.invalid'),
+      const raw = s(value).toLowerCase()
 
-  isActive: booleanLike,
+      if (!raw) return undefined
+      if (value === true || raw === 'true' || raw === '1' || raw === 'yes') return true
+      if (value === false || raw === 'false' || raw === '0' || raw === 'no') return false
 
-  limit: z.coerce.number().int().min(1).max(100).default(50),
-})
+      return value
+    },
+    z.boolean().optional(),
+  )
+}
+
+const pageSchema = z.coerce.number().int().min(1).default(1)
+const limitSchema = z.coerce.number().int().min(1).max(200).default(10)
+const sortOrderSchema = z.enum(['asc', 'desc']).default('desc')
 
 const createPositionSchema = z.object({
-  code: z
-    .string()
-    .trim()
-    .min(1, 'org.position.validation.codeRequired')
-    .max(50, 'org.position.validation.codeTooLong')
-    .transform((value) => s(value).toUpperCase()),
+  code: requiredUpperString('Code', 50),
+  name: requiredText('Name', 150),
+  description: optionalText(1000).default(''),
 
-  name: z
-    .string()
-    .trim()
-    .min(1, 'org.position.validation.nameRequired')
-    .max(120, 'org.position.validation.nameTooLong'),
+  departmentCode: optionalUpperText(50).default(''),
+  reportsToPositionCode: optionalUpperText(50).default(''),
 
-  departmentId: objectIdField('org.position.field.departmentId'),
-
-  reportsToPositionId: optionalObjectIdField(
-    'org.position.field.reportsToPositionId',
-  ).default(null),
-
-  managerScope: managerScopeField.default('SAME_LINE'),
-
-  description: z
-    .string()
-    .trim()
-    .max(500, 'org.position.validation.descriptionTooLong')
-    .optional()
-    .default(''),
+  hierarchyScope: optionalUpperEnum(POSITION_HIERARCHY_SCOPE).default('SAME_LINE'),
+  level: z.coerce.number().int().min(0).optional().default(0),
 
   isActive: z.boolean().optional().default(true),
 })
 
 const updatePositionSchema = z
   .object({
-    code: z
-      .string()
-      .trim()
-      .min(1, 'org.position.validation.codeRequired')
-      .max(50, 'org.position.validation.codeTooLong')
-      .transform((value) => s(value).toUpperCase())
-      .optional(),
+    code: optionalUpperText(50),
+    name: optionalText(150),
+    description: optionalText(1000),
 
-    name: z
-      .string()
-      .trim()
-      .min(1, 'org.position.validation.nameRequired')
-      .max(120, 'org.position.validation.nameTooLong')
-      .optional(),
+    departmentCode: optionalUpperText(50),
+    reportsToPositionCode: optionalUpperText(50),
 
-    departmentId: objectIdField('org.position.field.departmentId').optional(),
-
-    reportsToPositionId: optionalObjectIdField(
-      'org.position.field.reportsToPositionId',
-    ).optional(),
-
-    managerScope: managerScopeField.optional(),
-
-    description: z
-      .string()
-      .trim()
-      .max(500, 'org.position.validation.descriptionTooLong')
-      .optional(),
+    hierarchyScope: optionalUpperEnum(POSITION_HIERARCHY_SCOPE),
+    level: z.coerce.number().int().min(0).optional(),
 
     isActive: z.boolean().optional(),
   })
-  .refine(
-    (value) =>
-      value.code !== undefined ||
-      value.name !== undefined ||
-      value.departmentId !== undefined ||
-      value.reportsToPositionId !== undefined ||
-      value.managerScope !== undefined ||
-      value.description !== undefined ||
-      value.isActive !== undefined,
-    {
-      message: 'org.position.validation.updatePayloadRequired',
+  .refine((data) => Object.keys(data).length > 0, {
+    message: 'At least one field is required',
+  })
+
+const listPositionsQuerySchema = z.object({
+  page: pageSchema,
+  limit: limitSchema,
+
+  search: optionalText(200).default(''),
+  isActive: optionalBoolean(),
+
+  departmentCode: optionalUpperText(50),
+  reportsToPositionCode: optionalUpperText(50),
+  hierarchyScope: optionalUpperEnum(POSITION_HIERARCHY_SCOPE),
+
+  sortBy: z.preprocess(
+    (value) => {
+      const raw = s(value)
+      return raw || undefined
     },
-  )
+    z.enum(POSITION_SORT_FIELDS).optional().default('createdAt'),
+  ),
 
-const importPositionRowSchema = z.object({
-  positionId: z
-    .union([z.string(), z.null(), z.undefined()])
-    .transform((value) => s(value))
-    .refine((value) => !value || isObjectId(value), 'org.position.validation.positionIdInvalid'),
-
-  departmentId: objectIdField('org.position.field.departmentId'),
-
-  code: z
-    .string()
-    .trim()
-    .min(1, 'org.position.validation.codeRequired')
-    .max(50, 'org.position.validation.codeTooLong')
-    .transform((value) => s(value).toUpperCase()),
-
-  name: z
-    .string()
-    .trim()
-    .min(1, 'org.position.validation.nameRequired')
-    .max(120, 'org.position.validation.nameTooLong'),
-
-  reportsToPositionId: optionalObjectIdField(
-    'org.position.field.reportsToPositionId',
-  ).default(null),
-
-  managerScope: managerScopeField.default('SAME_LINE'),
-
-  description: z
-    .union([z.string(), z.null(), z.undefined()])
-    .transform((value) => s(value))
-    .refine((value) => value.length <= 500, 'org.position.validation.descriptionTooLong'),
-
-  isActive: z
-    .union([z.boolean(), z.string(), z.number(), z.null(), z.undefined()])
-    .transform((value) => toBoolean(value, true))
-    .refine((value) => typeof value === 'boolean', 'org.position.validation.isActiveInvalid'),
+  sortOrder: sortOrderSchema,
 })
 
-function normalizeListQuery(raw = {}) {
-  const parsed = listPositionQuerySchema.parse(raw)
+const lookupPositionsQuerySchema = z.object({
+  search: optionalText(200).default(''),
+  isActive: optionalBoolean().default(true),
+  departmentCode: optionalUpperText(50),
+  hierarchyScope: optionalUpperEnum(POSITION_HIERARCHY_SCOPE),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+})
 
-  return {
-    page: parsed.page,
-    limit: parsed.limit,
-    search: parsed.search,
-    departmentId: parsed.departmentId,
-    isActive: toBoolean(parsed.isActive),
-    sortField: parsed.sortField,
-    sortOrder: parsed.sortOrder,
-  }
-}
-
-function normalizeLookupQuery(raw = {}) {
-  const parsed = positionLookupQuerySchema.parse(raw)
-
-  return {
-    search: parsed.search,
-    departmentId: parsed.departmentId,
-    isActive: toBoolean(parsed.isActive, true),
-    limit: parsed.limit,
-  }
-}
+const positionCodeParamSchema = z.object({
+  code: requiredUpperString('Position code', 50),
+})
 
 module.exports = {
   createPositionSchema,
   updatePositionSchema,
-  importPositionRowSchema,
-  normalizeListQuery,
-  normalizeLookupQuery,
+  listPositionsQuerySchema,
+  lookupPositionsQuerySchema,
+  positionCodeParamSchema,
+
+  POSITION_HIERARCHY_SCOPE,
+  POSITION_SORT_FIELDS,
 }

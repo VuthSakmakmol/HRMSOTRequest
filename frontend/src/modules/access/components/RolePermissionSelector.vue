@@ -1,7 +1,9 @@
 <!-- frontend/src/modules/access/components/RolePermissionSelector.vue -->
 <script setup>
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 
+import Button from 'primevue/button'
 import Checkbox from 'primevue/checkbox'
 import IconField from 'primevue/iconfield'
 import InputIcon from 'primevue/inputicon'
@@ -24,6 +26,8 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['update:modelValue'])
+
+const { t } = useI18n()
 
 const keyword = ref('')
 
@@ -97,17 +101,21 @@ function togglePermission(id, checked) {
 
 function selectModule(items) {
   const next = new Set(selectedIds.value)
+
   for (const item of items) {
     next.add(String(item.value))
   }
+
   emit('update:modelValue', Array.from(next))
 }
 
 function clearModule(items) {
   const next = new Set(selectedIds.value)
+
   for (const item of items) {
     next.delete(String(item.value))
   }
+
   emit('update:modelValue', Array.from(next))
 }
 
@@ -125,15 +133,14 @@ function moduleSelectedCount(items) {
           v-model="keyword"
           class="w-full"
           size="small"
-          placeholder="Search permission code, name, module"
+          :placeholder="t('access.permission.searchPlaceholder')"
         />
       </IconField>
 
       <div class="flex items-center xl:justify-end">
         <Tag
-          :value="`${selectedCount} selected`"
-          severity="contrast"
-          class="ot-count-tag"
+          :value="t('access.role.selectedCount', { count: selectedCount })"
+          severity="secondary"
         />
       </div>
     </div>
@@ -142,51 +149,56 @@ function moduleSelectedCount(items) {
       v-if="loading"
       class="rounded-2xl border border-dashed border-[color:var(--ot-border)] px-4 py-5 text-sm text-[color:var(--ot-text-muted)]"
     >
-      Loading permissions...
+      {{ t('access.permission.loading') }}
     </div>
 
     <div
       v-else-if="!groupedOptions.length"
       class="rounded-2xl border border-dashed border-[color:var(--ot-border)] px-4 py-5 text-sm text-[color:var(--ot-text-muted)]"
     >
-      No permissions found.
+      {{ t('access.permission.noData') }}
     </div>
 
-    <div v-else class="grid grid-cols-1 gap-3 xl:grid-cols-2">
+    <div
+      v-else
+      class="grid grid-cols-1 gap-3 xl:grid-cols-2"
+    >
       <div
         v-for="group in groupedOptions"
         :key="group.module"
         class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]"
       >
-        <div
-          class="flex items-start justify-between gap-3 border-b border-[color:var(--ot-border)] px-3 py-3"
-        >
+        <div class="flex items-start justify-between gap-3 border-b border-[color:var(--ot-border)] px-3 py-3">
           <div class="min-w-0">
-            <div
-              class="truncate text-[11px] font-semibold uppercase tracking-[0.14em] text-[color:var(--ot-text-muted)]"
-            >
+            <div class="truncate text-[11px] font-bold uppercase tracking-[0.14em] text-[color:var(--ot-text-muted)]">
               {{ group.module }}
             </div>
+
             <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
-              {{ moduleSelectedCount(group.items) }} / {{ group.items.length }} selected
+              {{ t('access.role.moduleSelectedCount', {
+                selected: moduleSelectedCount(group.items),
+                total: group.items.length,
+              }) }}
             </div>
           </div>
 
-          <div class="flex shrink-0 items-center gap-2">
-            <button
-              type="button"
-              class="text-xs font-medium text-primary-600 hover:underline"
+          <div class="flex shrink-0 items-center gap-1">
+            <Button
+              :label="t('common.selectAll')"
+              text
+              size="small"
+              class="ot-compact-button"
               @click="selectModule(group.items)"
-            >
-              Select all
-            </button>
-            <button
-              type="button"
-              class="text-xs font-medium text-[color:var(--ot-text-muted)] hover:underline"
+            />
+
+            <Button
+              :label="t('common.clear')"
+              text
+              severity="secondary"
+              size="small"
+              class="ot-compact-button"
               @click="clearModule(group.items)"
-            >
-              Clear
-            </button>
+            />
           </div>
         </div>
 
@@ -198,13 +210,13 @@ function moduleSelectedCount(items) {
           >
             <Checkbox
               :binary="true"
-              :modelValue="isChecked(item.value)"
+              :model-value="isChecked(item.value)"
               class="mt-0.5"
-              @update:modelValue="togglePermission(item.value, $event)"
+              @update:model-value="togglePermission(item.value, $event)"
             />
 
             <div class="min-w-0 flex-1">
-              <div class="text-sm font-medium text-[color:var(--ot-text)]">
+              <div class="text-sm font-bold text-[color:var(--ot-text)]">
                 {{ item.code || '-' }}
               </div>
 
@@ -214,7 +226,7 @@ function moduleSelectedCount(items) {
 
               <div
                 v-if="item.description"
-                class="mt-1 line-clamp-2 text-xs text-[color:var(--ot-text-muted)]"
+                class="ot-truncate-2 mt-1 text-xs text-[color:var(--ot-text-muted)]"
               >
                 {{ item.description }}
               </div>
@@ -225,14 +237,3 @@ function moduleSelectedCount(items) {
     </div>
   </div>
 </template>
-
-<style scoped>
-:deep(.p-tag.ot-count-tag) {
-  min-height: 1.35rem !important;
-  padding: 0.12rem 0.45rem !important;
-  font-size: 0.7rem !important;
-  font-weight: 600 !important;
-  line-height: 1 !important;
-  border-radius: 999px !important;
-}
-</style>

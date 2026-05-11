@@ -1,12 +1,13 @@
 // backend/src/modules/org/services/position.service.js
 
-const mongoose = require('mongoose')
 const XLSX = require('xlsx')
 
-const AppError = require('../../../shared/errors/AppError')
 const Position = require('../models/Position')
 const Department = require('../models/Department')
-const { importPositionRowSchema } = require('../validators/position.validation')
+const {
+  formatDateTimeToDmy,
+  formatDateTimeToDmyHm,
+} = require('../../../shared/utils/dateFormat')
 
 function s(value) {
   return String(value ?? '').trim()
@@ -16,923 +17,836 @@ function upper(value) {
   return s(value).toUpperCase()
 }
 
-function id(value) {
-  return value ? String(value?._id || value?.id || value) : ''
-}
-
-function isObjectId(value) {
-  return mongoose.Types.ObjectId.isValid(String(value || ''))
-}
-
-function objectId(value) {
-  return new mongoose.Types.ObjectId(String(value))
-}
-
-function appError({
-  statusCode = 400,
-  code,
-  messageKey,
-  message,
-  field = null,
-  params = {},
-}) {
-  return new AppError({
-    statusCode,
-    code,
-    messageKey,
-    message,
-    field,
-    params,
-  })
+function createHttpError(message, status = 400, messageKey = '') {
+  const error = new Error(message)
+  error.status = status
+  error.statusCode = status
+  error.messageKey = messageKey
+  return error
 }
 
 function escapeRegex(value) {
   return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-function mapPosition(doc) {
-  if (!doc) return null
-
-  const department = doc.departmentId && typeof doc.departmentId === 'object'
-    ? doc.departmentId
-    : null
-
-  const reportsTo = doc.reportsToPositionId && typeof doc.reportsToPositionId === 'object'
-    ? doc.reportsToPositionId
-    : null
-
-  return {
-    id: id(doc._id),
-    _id: id(doc._id),
-
-    code: doc.code || '',
-    name: doc.name || '',
-    label: [doc.code, doc.name].filter(Boolean).join(' - '),
-
-    departmentId: department?._id ? id(department._id) : id(doc.departmentId) || null,
-    departmentCode: department?.code || '',
-    departmentName: department?.name || '',
-
-    reportsToPositionId: reportsTo?._id
-      ? id(reportsTo._id)
-      : id(doc.reportsToPositionId) || null,
-    reportsToPositionCode: reportsTo?.code || '',
-    reportsToPositionName: reportsTo?.name || '',
-    reportsToPositionDepartmentId: reportsTo?.departmentId
-      ? id(reportsTo.departmentId)
-      : null,
-
-    managerScope: upper(doc.managerScope || 'SAME_LINE'),
-
-    description: doc.description || '',
-    isActive: !!doc.isActive,
-    createdAt: doc.createdAt || null,
-    updatedAt: doc.updatedAt || null,
-  }
+function normalizePage(value) {
+  const page = Number(value || 1)
+  return Number.isFinite(page) && page > 0 ? Math.floor(page) : 1
 }
 
-function mapLookupItem(doc) {
-  const item = mapPosition(doc)
-
-  return {
-    id: item.id,
-    _id: item._id,
-    code: item.code,
-    name: item.name,
-    label: item.label,
-
-    departmentId: item.departmentId,
-    departmentCode: item.departmentCode,
-    departmentName: item.departmentName,
-
-    reportsToPositionId: item.reportsToPositionId,
-    reportsToPositionCode: item.reportsToPositionCode,
-    reportsToPositionName: item.reportsToPositionName,
-
-    managerScope: item.managerScope,
-    isActive: item.isActive,
-  }
+function normalizeLimit(value) {
+  const limit = Number(value || 10)
+  if (!Number.isFinite(limit)) return 10
+  return Math.min(Math.max(Math.floor(limit), 1), 200)
 }
 
-function buildFilter(query = {}) {
-  const filter = {}
+function normalizeCode(value) {
+  return upper(value)
+}
 
-  const keyword = s(query.search)
+function normalizeText(value) {
+  return s(value)
+}
 
-  if (keyword) {
-    const regex = new RegExp(escapeRegex(keyword), 'i')
+function buildSearchFilter(search) {
+  const keyword = s(search)
+  if (!keyword) return null
 
-    filter.$or = [
+  const regex = new RegExp(escapeRegex(keyword), 'i')
+
+  return {
+    $or: [
       { code: regex },
       { name: regex },
       { description: regex },
-    ]
+      { departmentCode: regex },
+      { departmentName: regex },
+      { reportsToPositionCode: regex },
+      { reportsToPositionName: regex },
+      { hierarchyScope: regex },
+    ],
   }
+}
 
-  if (query.departmentId && isObjectId(query.departmentId)) {
-    filter.departmentId = objectId(query.departmentId)
-  }
+function buildPositionFilter(query = {}) {
+  const filter = {}
 
   if (typeof query.isActive === 'boolean') {
     filter.isActive = query.isActive
   }
 
+  if (s(query.departmentCode)) {
+    filter.departmentCode = upper(query.departmentCode)
+  }
+
+  if (s(query.reportsToPositionCode)) {
+    filter.reportsToPositionCode = upper(query.reportsToPositionCode)
+  }
+
+  if (s(query.hierarchyScope)) {
+    filter.hierarchyScope = upper(query.hierarchyScope)
+  }
+
+  const searchFilter = buildSearchFilter(query.search)
+
+  if (searchFilter) {
+    filter.$and = filter.$and || []
+    filter.$and.push(searchFilter)
+  }
+
   return filter
 }
 
-function buildSort(sortField = 'createdAt', sortOrder = -1) {
-  const allowedFields = new Set(['code', 'name', 'isActive', 'createdAt', 'updatedAt'])
-  const field = allowedFields.has(sortField) ? sortField : 'createdAt'
-  const direction = Number(sortOrder) === 1 ? 1 : -1
+function buildPositionSort(query = {}) {
+  const direction = query.sortOrder === 'asc' ? 1 : -1
+
+  const sortField =
+    {
+      code: 'code',
+      name: 'name',
+      departmentName: 'departmentName',
+      reportsToPositionName: 'reportsToPositionName',
+      hierarchyScope: 'hierarchyScope',
+      level: 'level',
+      isActive: 'isActive',
+      createdAt: 'createdAt',
+      updatedAt: 'updatedAt',
+    }[query.sortBy] || 'createdAt'
 
   return {
-    [field]: direction,
+    [sortField]: direction,
+    code: 1,
     _id: -1,
   }
 }
 
-async function ensureObjectId(value, field = 'id') {
-  if (!isObjectId(value)) {
-    throw appError({
-      statusCode: 400,
-      code: 'INVALID_ID',
-      messageKey: 'common.error.invalidId',
-      message: 'Invalid id',
-      field,
-      params: { value },
-    })
+function makeLabel(code, name) {
+  const c = upper(code)
+  const n = s(name)
+
+  if (c && n) return `${c} - ${n}`
+  if (c) return c
+  return n
+}
+
+function mapPositionItem(doc = {}) {
+  return {
+    code: upper(doc.code),
+    name: s(doc.name),
+    label: makeLabel(doc.code, doc.name),
+
+    description: s(doc.description),
+
+    departmentCode: upper(doc.departmentCode),
+    departmentName: s(doc.departmentName),
+    departmentLabel: doc.departmentCode
+      ? makeLabel(doc.departmentCode, doc.departmentName)
+      : '',
+
+    reportsToPositionCode: upper(doc.reportsToPositionCode),
+    reportsToPositionName: s(doc.reportsToPositionName),
+    reportsToPositionLabel: doc.reportsToPositionCode
+      ? makeLabel(doc.reportsToPositionCode, doc.reportsToPositionName)
+      : '',
+
+    hierarchyScope: upper(doc.hierarchyScope || 'SAME_LINE'),
+    level: Number(doc.level || 0),
+
+    isActive: doc.isActive === true,
+
+    createdBy: s(doc.createdBy),
+    updatedBy: s(doc.updatedBy),
+
+    createdAt: doc.createdAt || null,
+    createdAtDisplay: formatDateTimeToDmy(doc.createdAt),
+    createdAtDisplayHm: formatDateTimeToDmyHm(doc.createdAt),
+
+    updatedAt: doc.updatedAt || null,
+    updatedAtDisplay: formatDateTimeToDmy(doc.updatedAt),
+    updatedAtDisplayHm: formatDateTimeToDmyHm(doc.updatedAt),
   }
 }
 
-async function ensureDepartmentExists(departmentId) {
-  await ensureObjectId(departmentId, 'departmentId')
-
-  const department = await Department.findById(departmentId)
-    .select('_id code name isActive')
-    .lean()
-
-  if (!department) {
-    throw appError({
-      statusCode: 404,
-      code: 'DEPARTMENT_NOT_FOUND',
-      messageKey: 'org.department.error.notFound',
-      message: 'Department not found',
-      field: 'departmentId',
-    })
-  }
-
-  if (department.isActive === false) {
-    throw appError({
-      statusCode: 400,
-      code: 'DEPARTMENT_INACTIVE',
-      messageKey: 'org.department.error.inactive',
-      message: 'Department is inactive',
-      field: 'departmentId',
-    })
-  }
-
-  return department
-}
-
-async function ensurePositionCodeAvailable({ departmentId, code, excludeId = null }) {
-  const normalizedCode = upper(code)
-
-  const filter = {
-    departmentId,
-    code: normalizedCode,
-  }
-
-  if (excludeId) {
-    filter._id = {
-      $ne: excludeId,
-    }
-  }
-
-  const exists = await Position.exists(filter)
-
-  if (exists) {
-    throw appError({
-      statusCode: 409,
-      code: 'POSITION_CODE_EXISTS',
-      messageKey: 'org.position.error.codeExists',
-      message: 'Position code already exists in this department',
-      field: 'code',
-      params: {
-        code: normalizedCode,
-        departmentId: id(departmentId),
-      },
-    })
-  }
-}
-
-async function ensureReportsToPositionValid({
-  reportsToPositionId,
-  currentPositionId = null,
-}) {
-  if (!reportsToPositionId) return null
-
-  await ensureObjectId(reportsToPositionId, 'reportsToPositionId')
-
-  if (currentPositionId && id(reportsToPositionId) === id(currentPositionId)) {
-    throw appError({
-      statusCode: 400,
-      code: 'POSITION_REPORT_TO_SELF',
-      messageKey: 'org.position.error.reportToSelf',
-      message: 'Position cannot report to itself',
-      field: 'reportsToPositionId',
-    })
-  }
-
-  const parentPosition = await Position.findById(reportsToPositionId)
-    .select('_id code name departmentId reportsToPositionId managerScope isActive')
-    .lean()
-
-  if (!parentPosition) {
-    throw appError({
-      statusCode: 404,
-      code: 'REPORTS_TO_POSITION_NOT_FOUND',
-      messageKey: 'org.position.error.reportsToPositionNotFound',
-      message: 'Reports-to position not found',
-      field: 'reportsToPositionId',
-    })
-  }
-
-  if (parentPosition.isActive === false) {
-    throw appError({
-      statusCode: 400,
-      code: 'REPORTS_TO_POSITION_INACTIVE',
-      messageKey: 'org.position.error.reportsToPositionInactive',
-      message: 'Reports-to position is inactive',
-      field: 'reportsToPositionId',
-    })
-  }
-
-  if (currentPositionId) {
-    let cursor = parentPosition
-    const visited = new Set()
-
-    while (cursor?.reportsToPositionId) {
-      const nextId = id(cursor.reportsToPositionId)
-
-      if (!nextId) break
-
-      if (nextId === id(currentPositionId)) {
-        throw appError({
-          statusCode: 400,
-          code: 'POSITION_HIERARCHY_CIRCULAR',
-          messageKey: 'org.position.error.circularHierarchy',
-          message: 'Circular position hierarchy is not allowed',
-          field: 'reportsToPositionId',
-        })
-      }
-
-      if (visited.has(nextId)) {
-        throw appError({
-          statusCode: 400,
-          code: 'POSITION_HIERARCHY_CIRCULAR',
-          messageKey: 'org.position.error.circularHierarchy',
-          message: 'Circular position hierarchy is not allowed',
-          field: 'reportsToPositionId',
-        })
-      }
-
-      visited.add(nextId)
-
-      cursor = await Position.findById(nextId)
-        .select('_id reportsToPositionId')
-        .lean()
-
-      if (!cursor) break
-    }
-  }
-
-  return parentPosition._id
-}
-
-async function lookup(query = {}) {
-  const limit = Number(query.limit || 50)
-  const filter = buildFilter(query)
-
-  const items = await Position.find(filter)
-    .populate('departmentId', 'code name isActive')
-    .populate('reportsToPositionId', 'code name departmentId managerScope isActive')
-    .sort({ name: 1, code: 1, _id: 1 })
-    .limit(limit)
-    .lean()
+function mapPositionLookupItem(doc = {}) {
+  const item = mapPositionItem(doc)
 
   return {
-    items: items.map(mapLookupItem),
-    meta: {
-      limit,
-      count: items.length,
-    },
+    value: item.code,
+    code: item.code,
+    name: item.name,
+    label: item.label,
+
+    departmentCode: item.departmentCode,
+    departmentName: item.departmentName,
+    departmentLabel: item.departmentLabel,
+
+    reportsToPositionCode: item.reportsToPositionCode,
+    reportsToPositionName: item.reportsToPositionName,
+    reportsToPositionLabel: item.reportsToPositionLabel,
+
+    hierarchyScope: item.hierarchyScope,
+    level: item.level,
+    isActive: item.isActive,
   }
 }
 
-async function list(query = {}) {
-  const page = Number(query.page || 1)
-  const limit = Number(query.limit || 10)
+async function ensureCodeAvailable(code, currentCode = '') {
+  const normalizedCode = normalizeCode(code)
+  const normalizedCurrentCode = normalizeCode(currentCode)
+
+  if (!normalizedCode) {
+    throw createHttpError('Position code is required', 400, 'position.code_required')
+  }
+
+  const existing = await Position.findOne({ code: normalizedCode })
+    .select({ code: 1 })
+    .lean()
+
+  if (existing && upper(existing.code) !== normalizedCurrentCode) {
+    throw createHttpError(
+      'Position code already exists',
+      409,
+      'position.code_already_exists',
+    )
+  }
+}
+
+async function getDepartmentSnapshotByCode(departmentCode) {
+  const code = normalizeCode(departmentCode)
+
+  if (!code) {
+    return {
+      departmentId: null,
+      departmentCode: '',
+      departmentName: '',
+    }
+  }
+
+  const department = await Department.findOne({ code }).lean()
+
+  if (!department) {
+    throw createHttpError(
+      `Department not found: ${code}`,
+      404,
+      'position.department_not_found',
+    )
+  }
+
+  return {
+    departmentId: department._id,
+    departmentCode: upper(department.code),
+    departmentName: s(department.name),
+  }
+}
+
+async function getReportsToPositionSnapshotByCode(reportsToPositionCode, currentPositionCode = '') {
+  const code = normalizeCode(reportsToPositionCode)
+  const currentCode = normalizeCode(currentPositionCode)
+
+  if (!code) {
+    return {
+      reportsToPositionId: null,
+      reportsToPositionCode: '',
+      reportsToPositionName: '',
+    }
+  }
+
+  if (currentCode && code === currentCode) {
+    throw createHttpError(
+      'Position cannot report to itself',
+      400,
+      'position.cannot_report_to_self',
+    )
+  }
+
+  const parent = await Position.findOne({ code }).lean()
+
+  if (!parent) {
+    throw createHttpError(
+      `Reports-to position not found: ${code}`,
+      404,
+      'position.reports_to_position_not_found',
+    )
+  }
+
+  return {
+    reportsToPositionId: parent._id,
+    reportsToPositionCode: upper(parent.code),
+    reportsToPositionName: s(parent.name),
+  }
+}
+
+async function buildPositionPayload(payload = {}, actor = '', currentPositionCode = '') {
+  const data = {}
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'code')) {
+    data.code = normalizeCode(payload.code)
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'name')) {
+    data.name = normalizeText(payload.name)
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'description')) {
+    data.description = normalizeText(payload.description)
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'departmentCode')) {
+    Object.assign(data, await getDepartmentSnapshotByCode(payload.departmentCode))
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'reportsToPositionCode')) {
+    Object.assign(
+      data,
+      await getReportsToPositionSnapshotByCode(
+        payload.reportsToPositionCode,
+        currentPositionCode,
+      ),
+    )
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'hierarchyScope')) {
+    data.hierarchyScope = upper(payload.hierarchyScope || 'SAME_LINE')
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'level')) {
+    const level = Number(payload.level || 0)
+    data.level = Number.isFinite(level) && level >= 0 ? Math.floor(level) : 0
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'isActive')) {
+    data.isActive = payload.isActive === true
+  }
+
+  data.updatedBy = s(actor)
+
+  return data
+}
+
+async function syncChildPositionSnapshots(oldCode, newItem) {
+  const normalizedOldCode = normalizeCode(oldCode)
+
+  if (!normalizedOldCode || !newItem?.code) return
+
+  await Position.updateMany(
+    { reportsToPositionCode: normalizedOldCode },
+    {
+      $set: {
+        reportsToPositionCode: newItem.code,
+        reportsToPositionName: newItem.name,
+      },
+    },
+  )
+}
+
+async function listPositions(query = {}) {
+  const page = normalizePage(query.page)
+  const limit = normalizeLimit(query.limit)
   const skip = (page - 1) * limit
 
-  const filter = buildFilter(query)
-  const sort = buildSort(query.sortField, query.sortOrder)
+  const filter = buildPositionFilter(query)
+  const sort = buildPositionSort(query)
 
   const [items, total] = await Promise.all([
-    Position.find(filter)
-      .populate('departmentId', 'code name isActive')
-      .populate('reportsToPositionId', 'code name departmentId managerScope isActive')
-      .sort(sort)
-      .skip(skip)
-      .limit(limit)
-      .lean(),
-
+    Position.find(filter).sort(sort).skip(skip).limit(limit).lean(),
     Position.countDocuments(filter),
   ])
 
+  const totalPages = Math.ceil(total / limit) || 1
+
   return {
-    items: items.map(mapPosition),
+    items: items.map(mapPositionItem),
     pagination: {
       page,
       limit,
       total,
-      totalPages: Math.max(1, Math.ceil(total / limit)),
-      hasMore: page * limit < total,
+      totalPages,
+      hasMore: page < totalPages,
     },
   }
 }
 
-async function getById(positionId) {
-  await ensureObjectId(positionId, 'positionId')
+async function lookupPositions(query = {}) {
+  const limit = Math.min(Math.max(Number(query.limit || 50), 1), 100)
 
-  const doc = await Position.findById(positionId)
-    .populate('departmentId', 'code name isActive')
-    .populate('reportsToPositionId', 'code name departmentId managerScope isActive')
+  const filter = buildPositionFilter({
+    ...query,
+    isActive: typeof query.isActive === 'boolean' ? query.isActive : true,
+  })
+
+  const items = await Position.find(filter)
+    .sort({
+      level: 1,
+      name: 1,
+      code: 1,
+      _id: 1,
+    })
+    .limit(limit)
     .lean()
 
+  return {
+    items: items.map(mapPositionLookupItem),
+  }
+}
+
+async function getPositionByCode(code) {
+  const normalizedCode = normalizeCode(code)
+
+  if (!normalizedCode) {
+    throw createHttpError('Position code is required', 400, 'position.code_required')
+  }
+
+  const doc = await Position.findOne({ code: normalizedCode }).lean()
+
   if (!doc) {
-    throw appError({
-      statusCode: 404,
-      code: 'POSITION_NOT_FOUND',
-      messageKey: 'org.position.error.notFound',
-      message: 'Position not found',
-      field: 'positionId',
-    })
+    throw createHttpError('Position not found', 404, 'position.not_found')
   }
 
-  return mapPosition(doc)
+  return mapPositionItem(doc)
 }
 
-async function create(payload) {
-  const department = await ensureDepartmentExists(payload.departmentId)
-  const code = upper(payload.code)
+async function createPosition(payload = {}, actor = '') {
+  const code = normalizeCode(payload.code)
 
-  await ensurePositionCodeAvailable({
-    departmentId: department._id,
-    code,
-  })
+  await ensureCodeAvailable(code)
 
-  const reportsToPositionId = await ensureReportsToPositionValid({
-    reportsToPositionId: payload.reportsToPositionId,
-  })
-
-  try {
-    const created = await Position.create({
+  const data = await buildPositionPayload(
+    {
+      ...payload,
       code,
-      name: s(payload.name),
-      departmentId: department._id,
-      reportsToPositionId,
-      managerScope: upper(payload.managerScope || 'SAME_LINE'),
-      description: s(payload.description),
-      isActive: payload.isActive ?? true,
-    })
-
-    return getById(created._id)
-  } catch (error) {
-    if (error?.code === 11000) {
-      throw appError({
-        statusCode: 409,
-        code: 'POSITION_CODE_EXISTS',
-        messageKey: 'org.position.error.codeExists',
-        message: 'Position code already exists in this department',
-        field: 'code',
-      })
-    }
-
-    throw error
-  }
-}
-
-async function update(positionId, payload) {
-  await ensureObjectId(positionId, 'positionId')
-
-  const existing = await Position.findById(positionId)
-
-  if (!existing) {
-    throw appError({
-      statusCode: 404,
-      code: 'POSITION_NOT_FOUND',
-      messageKey: 'org.position.error.notFound',
-      message: 'Position not found',
-      field: 'positionId',
-    })
-  }
-
-  const nextDepartmentId =
-    payload.departmentId !== undefined ? payload.departmentId : existing.departmentId
-
-  const nextCode =
-    payload.code !== undefined ? upper(payload.code) : upper(existing.code)
-
-  const department = await ensureDepartmentExists(nextDepartmentId)
-
-  if (
-    payload.code !== undefined ||
-    payload.departmentId !== undefined
-  ) {
-    await ensurePositionCodeAvailable({
-      departmentId: department._id,
-      code: nextCode,
-      excludeId: existing._id,
-    })
-  }
-
-  const hasReportsToPositionField = Object.prototype.hasOwnProperty.call(
-    payload,
-    'reportsToPositionId',
+    },
+    actor,
+    '',
   )
 
-  const nextReportsToPositionId = hasReportsToPositionField
-    ? payload.reportsToPositionId
-    : existing.reportsToPositionId
-
-  const reportsToPositionId = await ensureReportsToPositionValid({
-    reportsToPositionId: nextReportsToPositionId,
-    currentPositionId: existing._id,
+  const doc = await Position.create({
+    ...data,
+    createdBy: s(actor),
+    updatedBy: s(actor),
   })
 
-  existing.departmentId = department._id
-  existing.code = nextCode
-
-  if (payload.name !== undefined) {
-    existing.name = s(payload.name)
-  }
-
-  if (hasReportsToPositionField || payload.departmentId !== undefined) {
-    existing.reportsToPositionId = reportsToPositionId
-  }
-
-  if (payload.managerScope !== undefined) {
-    existing.managerScope = upper(payload.managerScope || 'SAME_LINE')
-  }
-
-  if (payload.description !== undefined) {
-    existing.description = s(payload.description)
-  }
-
-  if (payload.isActive !== undefined) {
-    existing.isActive = !!payload.isActive
-  }
-
-  try {
-    await existing.save()
-    return getById(existing._id)
-  } catch (error) {
-    if (error?.code === 11000) {
-      throw appError({
-        statusCode: 409,
-        code: 'POSITION_CODE_EXISTS',
-        messageKey: 'org.position.error.codeExists',
-        message: 'Position code already exists in this department',
-        field: 'code',
-      })
-    }
-
-    throw error
-  }
+  return mapPositionItem(doc.toObject())
 }
 
-function autoFitColumns(rows = []) {
-  const widths = []
+async function updatePosition(code, payload = {}, actor = '') {
+  const currentCode = normalizeCode(code)
 
-  rows.forEach((row) => {
-    Object.keys(row || {}).forEach((key, index) => {
-      const raw = row[key]
-      const value = raw === null || raw === undefined ? '' : String(raw)
-      const current = widths[index] || { wch: String(key).length + 2 }
+  if (!currentCode) {
+    throw createHttpError('Position code is required', 400, 'position.code_required')
+  }
 
-      current.wch = Math.min(Math.max(current.wch, value.length + 2), 45)
-      widths[index] = current
-    })
-  })
+  const current = await Position.findOne({ code: currentCode }).lean()
 
-  return widths
+  if (!current) {
+    throw createHttpError('Position not found', 404, 'position.not_found')
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'code')) {
+    await ensureCodeAvailable(payload.code, currentCode)
+  }
+
+  const data = await buildPositionPayload(payload, actor, currentCode)
+
+  const doc = await Position.findOneAndUpdate(
+    { code: currentCode },
+    data,
+    {
+      new: true,
+      runValidators: true,
+    },
+  ).lean()
+
+  if (!doc) {
+    throw createHttpError('Position not found', 404, 'position.not_found')
+  }
+
+  const item = mapPositionItem(doc)
+
+  await syncChildPositionSnapshots(currentCode, item)
+
+  return item
 }
 
-function workbookToBuffer(workbook) {
+function buildImportSampleWorkbook() {
+  const workbook = XLSX.utils.book_new()
+
+  const rows = [
+    [
+      'Code',
+      'Name',
+      'Department Code',
+      'Reports To Position Code',
+      'Hierarchy Scope',
+      'Level',
+      'Description',
+      'Active',
+    ],
+    ['SEWER', 'Sewer', 'PROD', 'SEW-SUP', 'SAME_LINE', 1, 'Production sewer position', 'TRUE'],
+    ['SEW-SUP', 'Sewing Supervisor', 'PROD', 'PROD-MGR', 'SAME_LINE', 2, '', 'TRUE'],
+  ]
+
+  const sheet = XLSX.utils.aoa_to_sheet(rows)
+
+  sheet['!cols'] = [
+    { wch: 18 },
+    { wch: 28 },
+    { wch: 20 },
+    { wch: 28 },
+    { wch: 22 },
+    { wch: 10 },
+    { wch: 40 },
+    { wch: 12 },
+  ]
+
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Position Import Sample')
+
   return XLSX.write(workbook, {
     type: 'buffer',
     bookType: 'xlsx',
   })
 }
 
-function formatExcelDate(value) {
-  if (!value) return ''
-
-  const date = value instanceof Date ? value : new Date(value)
-
-  if (Number.isNaN(date.getTime())) return ''
-
-  const day = String(date.getDate()).padStart(2, '0')
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const year = date.getFullYear()
-
-  return `${day}/${month}/${year}`
+function normalizeHeader(value) {
+  return upper(value).replace(/\s+/g, '').replace(/[_-]/g, '')
 }
 
-async function downloadSample() {
-  const sampleRows = [
-    {
-      'Position ID': '',
-      'Department ID': 'PASTE_DEPARTMENT_MONGO_ID_HERE',
-      'Position Code': 'SEWER_SUPERVISOR',
-      'Position Name': 'Sewer Supervisor',
-      'Reports To Position ID': '',
-      'Manager Scope': 'SAME_LINE',
-      Description: 'Supervise sewer employees by line',
-      Status: 'Active',
-    },
-    {
-      'Position ID': '',
-      'Department ID': 'PASTE_DEPARTMENT_MONGO_ID_HERE',
-      'Position Code': 'SEWER',
-      'Position Name': 'Sewer',
-      'Reports To Position ID': 'PASTE_PARENT_POSITION_MONGO_ID_HERE',
-      'Manager Scope': 'SAME_LINE',
-      Description: 'Sewing operator',
-      Status: 'Active',
-    },
-  ]
+function findValue(row, possibleHeaders = []) {
+  const normalizedRow = {}
 
-  const guideRows = [
-    ['Position Import Guide', ''],
-    ['', ''],
-    ['Field', 'Rule'],
-    ['Position ID', 'Leave blank to create. Fill Mongo Position ID to update existing position.'],
-    ['Department ID', 'Required. Use Mongo Department ID only.'],
-    ['Position Code', 'Required. Unique inside selected Department ID.'],
-    ['Position Name', 'Required.'],
-    ['Reports To Position ID', 'Optional. Use Mongo Position ID only. Cross-department is allowed.'],
-    ['Manager Scope', 'SAME_LINE or GLOBAL. Blank = SAME_LINE.'],
-    ['Description', 'Optional.'],
-    ['Status', 'Active or Inactive. Blank = Active.'],
-  ]
+  Object.entries(row || {}).forEach(([key, value]) => {
+    normalizedRow[normalizeHeader(key)] = value
+  })
 
-  const workbook = XLSX.utils.book_new()
-  const sampleSheet = XLSX.utils.json_to_sheet(sampleRows)
-  const guideSheet = XLSX.utils.aoa_to_sheet(guideRows)
-
-  sampleSheet['!cols'] = autoFitColumns(sampleRows)
-  guideSheet['!cols'] = [{ wch: 28 }, { wch: 90 }]
-
-  XLSX.utils.book_append_sheet(workbook, sampleSheet, 'Sample')
-  XLSX.utils.book_append_sheet(workbook, guideSheet, 'Guide')
-
-  return {
-    filename: 'position-import-sample.xlsx',
-    buffer: workbookToBuffer(workbook),
-  }
-}
-
-async function exportExcel(query = {}) {
-  const filter = buildFilter(query)
-  const sort = buildSort(query.sortField, query.sortOrder)
-
-  const items = await Position.find(filter)
-    .populate('departmentId', 'code name isActive')
-    .populate('reportsToPositionId', 'code name departmentId managerScope isActive')
-    .sort(sort)
-    .lean()
-
-  const rows = items.map((doc, index) => {
-    const item = mapPosition(doc)
-
-    return {
-      No: index + 1,
-      'Position ID': item.id,
-      'Department ID': item.departmentId || '',
-      'Department Code': item.departmentCode || '',
-      'Department Name': item.departmentName || '',
-      'Position Code': item.code || '',
-      'Position Name': item.name || '',
-      'Reports To Position ID': item.reportsToPositionId || '',
-      'Reports To Position Code': item.reportsToPositionCode || '',
-      'Reports To Position Name': item.reportsToPositionName || '',
-      'Manager Scope': item.managerScope || '',
-      Description: item.description || '',
-      Status: item.isActive ? 'Active' : 'Inactive',
-      CreatedAt: formatExcelDate(item.createdAt),
-      UpdatedAt: formatExcelDate(item.updatedAt),
+  for (const header of possibleHeaders) {
+    const key = normalizeHeader(header)
+    if (Object.prototype.hasOwnProperty.call(normalizedRow, key)) {
+      return normalizedRow[key]
     }
-  })
+  }
 
-  const fallbackRows = rows.length
-    ? rows
-    : [
-        {
-          No: '',
-          'Position ID': '',
-          'Department ID': '',
-          'Department Code': '',
-          'Department Name': '',
-          'Position Code': '',
-          'Position Name': '',
-          'Reports To Position ID': '',
-          'Reports To Position Code': '',
-          'Reports To Position Name': '',
-          'Manager Scope': '',
-          Description: '',
-          Status: '',
-          CreatedAt: '',
-          UpdatedAt: '',
-        },
-      ]
+  return undefined
+}
 
-  const workbook = XLSX.utils.book_new()
-  const worksheet = XLSX.utils.json_to_sheet(fallbackRows)
+function parseBoolean(value, fallback = true) {
+  const raw = s(value).toLowerCase()
 
-  worksheet['!cols'] = autoFitColumns(fallbackRows)
+  if (!raw) return fallback
+  if (['true', '1', 'yes', 'active', 'y'].includes(raw)) return true
+  if (['false', '0', 'no', 'inactive', 'n'].includes(raw)) return false
 
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Positions')
+  return fallback
+}
 
+function normalizeImportRow(row, rowNo) {
   return {
-    filename: `positions-export-${new Date().toISOString().slice(0, 10)}.xlsx`,
-    buffer: workbookToBuffer(workbook),
+    rowNo,
+    code: upper(findValue(row, ['Code', 'Position Code', 'PositionCode'])),
+    name: s(findValue(row, ['Name', 'Position Name', 'PositionName'])),
+    description: s(findValue(row, ['Description', 'Remark', 'Remarks'])),
+
+    departmentCode: upper(
+      findValue(row, [
+        'Department Code',
+        'DepartmentCode',
+        'Department',
+        'Dept Code',
+        'DeptCode',
+      ]),
+    ),
+
+    reportsToPositionCode: upper(
+      findValue(row, [
+        'Reports To Position Code',
+        'ReportsToPositionCode',
+        'Parent Position Code',
+        'ParentPositionCode',
+        'Reports To',
+      ]),
+    ),
+
+    hierarchyScope: upper(
+      findValue(row, ['Hierarchy Scope', 'HierarchyScope', 'Scope']) || 'SAME_LINE',
+    ),
+
+    level: Math.max(Number(findValue(row, ['Level', 'Position Level']) || 0), 0),
+    isActive: parseBoolean(findValue(row, ['Active', 'Is Active', 'IsActive']), true),
   }
 }
 
-function readWorkbookRows(buffer) {
-  const workbook = XLSX.read(buffer, {
+async function importPositions(file, actor = '') {
+  if (!file || !file.buffer || !Buffer.isBuffer(file.buffer)) {
+    throw createHttpError('Import file is required', 400, 'position.import_file_required')
+  }
+
+  const workbook = XLSX.read(file.buffer, {
     type: 'buffer',
+    cellDates: true,
   })
 
-  const preferredSheetName = workbook.SheetNames.includes('Sample')
-    ? 'Sample'
-    : workbook.SheetNames[0]
+  const sheetName = workbook.SheetNames?.[0]
 
-  if (!preferredSheetName) return []
+  if (!sheetName) {
+    throw createHttpError('Import file has no sheet', 400, 'position.import_sheet_missing')
+  }
 
-  const sheet = workbook.Sheets[preferredSheetName]
-
-  if (!sheet) return []
-
-  return XLSX.utils.sheet_to_json(sheet, {
+  const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
     defval: '',
     raw: false,
   })
-}
 
-function normalizeImportStatus(value) {
-  const text = s(value).toLowerCase()
+  const normalizedRows = rows.map((row, index) => normalizeImportRow(row, index + 2))
 
-  if (!text) return true
-  if (['active', 'true', 'yes', 'y', '1'].includes(text)) return true
-  if (['inactive', 'false', 'no', 'n', '0'].includes(text)) return false
+  const departmentCodes = Array.from(
+    new Set(normalizedRows.map((row) => row.departmentCode).filter(Boolean)),
+  )
 
-  return 'INVALID_BOOLEAN'
-}
+  const rowCodes = Array.from(
+    new Set(normalizedRows.map((row) => row.code).filter(Boolean)),
+  )
 
-function normalizeImportManagerScope(value) {
-  const scope = upper(value || 'SAME_LINE')
+  const parentCodes = Array.from(
+    new Set(normalizedRows.map((row) => row.reportsToPositionCode).filter(Boolean)),
+  )
 
-  return ['SAME_LINE', 'GLOBAL'].includes(scope) ? scope : 'INVALID_MANAGER_SCOPE'
-}
+  const [departments, existingPositions, existingParents] = await Promise.all([
+    departmentCodes.length
+      ? Department.find({ code: { $in: departmentCodes } }).lean()
+      : [],
+    rowCodes.length
+      ? Position.find({ code: { $in: rowCodes } }).lean()
+      : [],
+    parentCodes.length
+      ? Position.find({ code: { $in: parentCodes } }).lean()
+      : [],
+  ])
 
-function getCell(row, names = []) {
-  for (const name of names) {
-    if (Object.prototype.hasOwnProperty.call(row, name)) {
-      return row[name]
-    }
-  }
+  const departmentMap = new Map(departments.map((item) => [upper(item.code), item]))
+  const existingPositionMap = new Map(existingPositions.map((item) => [upper(item.code), item]))
+  const existingParentCodeSet = new Set(existingParents.map((item) => upper(item.code)))
+  const importCodeSet = new Set(rowCodes)
 
-  const normalized = Object.entries(row || {}).reduce((acc, [key, value]) => {
-    acc[upper(key)] = value
-    return acc
-  }, {})
+  const results = []
+  const validRows = []
+  const seenCodes = new Set()
 
-  for (const name of names) {
-    const value = normalized[upper(name)]
+  let successCount = 0
+  let failedCount = 0
 
-    if (value !== undefined) return value
-  }
-
-  return ''
-}
-
-function normalizeImportRow(raw = {}, index = 0) {
-  const rowNo = index + 2
-
-  return {
-    rowNo,
-    positionId: s(getCell(raw, ['Position ID', 'positionId'])),
-    departmentId: s(getCell(raw, ['Department ID', 'departmentId'])),
-    code: upper(getCell(raw, ['Position Code', 'code'])),
-    name: s(getCell(raw, ['Position Name', 'name'])),
-    reportsToPositionId: s(getCell(raw, ['Reports To Position ID', 'reportsToPositionId'])),
-    managerScope: normalizeImportManagerScope(getCell(raw, ['Manager Scope', 'managerScope'])),
-    description: s(getCell(raw, ['Description', 'description'])),
-    isActive: normalizeImportStatus(getCell(raw, ['Status', 'Active', 'Is Active', 'isActive'])),
-  }
-}
-
-async function importExcel(file) {
-  if (!file?.buffer) {
-    throw appError({
-      statusCode: 400,
-      code: 'POSITION_EXCEL_FILE_REQUIRED',
-      messageKey: 'org.position.error.excelFileRequired',
-      message: 'Excel file is required',
-    })
-  }
-
-  const rows = readWorkbookRows(file.buffer)
-
-  if (!rows.length) {
-    throw appError({
-      statusCode: 400,
-      code: 'POSITION_EXCEL_NO_ROWS',
-      messageKey: 'org.position.error.excelNoRows',
-      message: 'Excel file has no rows',
-    })
-  }
-
-  const parsedRows = rows
-    .map(normalizeImportRow)
-    .filter((row) => row.positionId || row.departmentId || row.code || row.name)
-
-  const seenPositionIds = new Set()
-  const seenDepartmentCodePairs = new Set()
-
-  for (const row of parsedRows) {
-    if (row.managerScope === 'INVALID_MANAGER_SCOPE') {
-      throw appError({
-        statusCode: 400,
-        code: 'POSITION_IMPORT_INVALID_MANAGER_SCOPE',
-        messageKey: 'org.position.import.error.invalidManagerScope',
-        message: `Row ${row.rowNo}: Invalid manager scope`,
-        params: {
-          rowNo: row.rowNo,
-        },
-      })
-    }
-
-    if (row.isActive === 'INVALID_BOOLEAN') {
-      throw appError({
-        statusCode: 400,
-        code: 'POSITION_IMPORT_INVALID_STATUS',
-        messageKey: 'org.position.import.error.invalidStatus',
-        message: `Row ${row.rowNo}: Invalid status`,
-        params: {
-          rowNo: row.rowNo,
-        },
-      })
-    }
-
-    const result = importPositionRowSchema.safeParse(row)
-
-    if (!result.success) {
-      throw appError({
-        statusCode: 400,
-        code: 'POSITION_IMPORT_ROW_INVALID',
-        messageKey: result.error.issues[0]?.message || 'org.position.import.error.rowInvalid',
-        message: `Row ${row.rowNo}: ${result.error.issues[0]?.message || 'Invalid data'}`,
-        params: {
-          rowNo: row.rowNo,
-        },
-      })
-    }
-
-    if (row.positionId) {
-      if (seenPositionIds.has(row.positionId)) {
-        throw appError({
-          statusCode: 400,
-          code: 'POSITION_IMPORT_DUPLICATE_POSITION_ID',
-          messageKey: 'org.position.import.error.duplicatePositionId',
-          message: `Row ${row.rowNo}: Duplicate Position ID in import file`,
-          params: {
-            rowNo: row.rowNo,
-            positionId: row.positionId,
-          },
-        })
+  for (const row of normalizedRows) {
+    try {
+      if (!row.code) {
+        throw createHttpError('Code is required', 400)
       }
 
-      seenPositionIds.add(row.positionId)
-    }
+      if (!row.name) {
+        throw createHttpError('Name is required', 400)
+      }
 
-    const pairKey = `${row.departmentId}:${row.code}`
+      if (seenCodes.has(row.code)) {
+        throw createHttpError(`Duplicate code in import file: ${row.code}`, 400)
+      }
 
-    if (seenDepartmentCodePairs.has(pairKey)) {
-      throw appError({
-        statusCode: 400,
-        code: 'POSITION_IMPORT_DUPLICATE_CODE_IN_DEPARTMENT',
-        messageKey: 'org.position.import.error.duplicateCodeInDepartment',
-        message: `Row ${row.rowNo}: Duplicate Position Code in same Department ID`,
-        params: {
-          rowNo: row.rowNo,
-          departmentId: row.departmentId,
-          code: row.code,
-        },
+      seenCodes.add(row.code)
+
+      if (row.departmentCode && !departmentMap.has(row.departmentCode)) {
+        throw createHttpError(`Department not found: ${row.departmentCode}`, 400)
+      }
+
+      if (row.reportsToPositionCode === row.code) {
+        throw createHttpError('Position cannot report to itself', 400)
+      }
+
+      if (
+        row.reportsToPositionCode &&
+        !existingParentCodeSet.has(row.reportsToPositionCode) &&
+        !importCodeSet.has(row.reportsToPositionCode)
+      ) {
+        throw createHttpError(
+          `Reports-to position not found: ${row.reportsToPositionCode}`,
+          400,
+        )
+      }
+
+      validRows.push(row)
+    } catch (error) {
+      failedCount += 1
+      results.push({
+        rowNo: row.rowNo,
+        code: row.code,
+        name: row.name,
+        status: 'FAILED',
+        message: error.message,
       })
     }
-
-    seenDepartmentCodePairs.add(pairKey)
   }
 
-  let created = 0
-  let updated = 0
+  for (const row of validRows) {
+    try {
+      const department = row.departmentCode ? departmentMap.get(row.departmentCode) : null
+      const existed = existingPositionMap.has(row.code)
 
-  for (const row of parsedRows) {
-    const data = importPositionRowSchema.parse(row)
+      await Position.updateOne(
+        { code: row.code },
+        {
+          $set: {
+            code: row.code,
+            name: row.name,
+            description: row.description,
 
-    const existing = data.positionId
-      ? await Position.findById(data.positionId)
+            departmentId: department?._id || null,
+            departmentCode: upper(department?.code),
+            departmentName: s(department?.name),
+
+            hierarchyScope: row.hierarchyScope || 'SAME_LINE',
+            level: row.level,
+            isActive: row.isActive,
+            updatedBy: s(actor),
+          },
+          $setOnInsert: {
+            createdBy: s(actor),
+          },
+        },
+        {
+          upsert: true,
+          runValidators: true,
+        },
+      )
+
+      results.push({
+        rowNo: row.rowNo,
+        code: row.code,
+        name: row.name,
+        status: existed ? 'UPDATED' : 'CREATED',
+      })
+
+      successCount += 1
+    } catch (error) {
+      failedCount += 1
+      results.push({
+        rowNo: row.rowNo,
+        code: row.code,
+        name: row.name,
+        status: 'FAILED',
+        message: error.message,
+      })
+    }
+  }
+
+  const allNeededPositionCodes = Array.from(
+    new Set([
+      ...validRows.map((row) => row.code),
+      ...validRows.map((row) => row.reportsToPositionCode).filter(Boolean),
+    ]),
+  )
+
+  const allNeededPositions = allNeededPositionCodes.length
+    ? await Position.find({ code: { $in: allNeededPositionCodes } }).lean()
+    : []
+
+  const positionMap = new Map(allNeededPositions.map((item) => [upper(item.code), item]))
+
+  for (const row of validRows) {
+    const parent = row.reportsToPositionCode
+      ? positionMap.get(row.reportsToPositionCode)
       : null
 
-    if (data.positionId && !existing) {
-      throw appError({
-        statusCode: 404,
-        code: 'POSITION_IMPORT_POSITION_ID_NOT_FOUND',
-        messageKey: 'org.position.import.error.positionIdNotFound',
-        message: `Row ${row.rowNo}: Position ID not found`,
-        params: {
-          rowNo: row.rowNo,
-          positionId: data.positionId,
+    await Position.updateOne(
+      { code: row.code },
+      {
+        $set: {
+          reportsToPositionId: parent?._id || null,
+          reportsToPositionCode: upper(parent?.code),
+          reportsToPositionName: s(parent?.name),
         },
-      })
-    }
-
-    await ensureDepartmentExists(data.departmentId)
-
-    if (data.reportsToPositionId && data.positionId && data.reportsToPositionId === data.positionId) {
-      throw appError({
-        statusCode: 400,
-        code: 'POSITION_REPORT_TO_SELF',
-        messageKey: 'org.position.error.reportToSelf',
-        message: `Row ${row.rowNo}: Position cannot report to itself`,
-        params: {
-          rowNo: row.rowNo,
-        },
-      })
-    }
-
-    const reportsToPositionId = await ensureReportsToPositionValid({
-      reportsToPositionId: data.reportsToPositionId,
-      currentPositionId: existing?._id || null,
-    })
-
-    await ensurePositionCodeAvailable({
-      departmentId: data.departmentId,
-      code: data.code,
-      excludeId: existing?._id || null,
-    })
-
-    const payload = {
-      departmentId: data.departmentId,
-      code: upper(data.code),
-      name: s(data.name),
-      reportsToPositionId,
-      managerScope: upper(data.managerScope || 'SAME_LINE'),
-      description: s(data.description),
-      isActive: data.isActive,
-    }
-
-    if (existing) {
-      Object.assign(existing, payload)
-      await existing.save()
-      updated += 1
-      continue
-    }
-
-    await Position.create(payload)
-    created += 1
+      },
+      {
+        runValidators: true,
+      },
+    )
   }
 
   return {
-    summary: {
-      totalRows: parsedRows.length,
-      created,
-      updated,
-    },
-    messageKey: 'org.position.import.success.completed',
+    sheetName,
+    rowCount: rows.length,
+    successCount,
+    failedCount,
+    results: results.sort((a, b) => Number(a.rowNo || 0) - Number(b.rowNo || 0)),
+  }
+}
+
+async function exportPositions(query = {}) {
+  const filter = buildPositionFilter(query)
+  const sort = buildPositionSort({
+    ...query,
+    sortBy: query.sortBy || 'code',
+    sortOrder: query.sortOrder || 'asc',
+  })
+
+  const items = await Position.find(filter).sort(sort).lean()
+
+  const rows = items.map((doc, index) => {
+    const item = mapPositionItem(doc)
+
+    return {
+      No: index + 1,
+      Code: item.code,
+      Name: item.name,
+      Department: item.departmentLabel,
+      'Reports To Position': item.reportsToPositionLabel,
+      'Hierarchy Scope': item.hierarchyScope,
+      Level: item.level,
+      Description: item.description,
+      Active: item.isActive ? 'Yes' : 'No',
+      'Created At': item.createdAtDisplayHm,
+      'Updated At': item.updatedAtDisplayHm,
+    }
+  })
+
+  const workbook = XLSX.utils.book_new()
+  const sheet = XLSX.utils.json_to_sheet(rows)
+
+  sheet['!cols'] = [
+    { wch: 8 },
+    { wch: 18 },
+    { wch: 28 },
+    { wch: 30 },
+    { wch: 32 },
+    { wch: 18 },
+    { wch: 10 },
+    { wch: 40 },
+    { wch: 10 },
+    { wch: 20 },
+    { wch: 20 },
+  ]
+
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Positions')
+
+  return {
+    filename: 'positions.xlsx',
+    buffer: XLSX.write(workbook, {
+      type: 'buffer',
+      bookType: 'xlsx',
+    }),
+  }
+}
+
+async function downloadImportSample() {
+  return {
+    filename: 'position-import-sample.xlsx',
+    buffer: buildImportSampleWorkbook(),
   }
 }
 
 module.exports = {
-  lookup,
-  list,
-  getById,
-  create,
-  update,
-  downloadSample,
-  exportExcel,
-  importExcel,
+  listPositions,
+  lookupPositions,
+  getPositionByCode,
+  createPosition,
+  updatePosition,
+  importPositions,
+  exportPositions,
+  downloadImportSample,
+
+  mapPositionItem,
+  mapPositionLookupItem,
 }

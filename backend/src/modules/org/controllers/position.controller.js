@@ -1,17 +1,36 @@
 // backend/src/modules/org/controllers/position.controller.js
 
 const positionService = require('../services/position.service')
-const { successResponse } = require('../../../shared/utils/apiResponse')
-
 const {
   createPositionSchema,
   updatePositionSchema,
-  normalizeListQuery,
-  normalizeLookupQuery,
+  listPositionsQuerySchema,
+  lookupPositionsQuerySchema,
+  positionCodeParamSchema,
 } = require('../validators/position.validation')
 
 function parse(schema, data) {
-  return schema.parse(data)
+  const result = schema.safeParse(data || {})
+
+  if (!result.success) {
+    const error = new Error(result.error.issues?.[0]?.message || 'Invalid request')
+    error.status = 400
+    error.statusCode = 400
+    throw error
+  }
+
+  return result.data
+}
+
+function getActor(req) {
+  return (
+    req.user?.loginId ||
+    req.user?.username ||
+    req.user?.employeeNo ||
+    req.user?.email ||
+    req.user?.accountId ||
+    ''
+  )
 }
 
 function setExcelHeaders(res, filename) {
@@ -20,126 +39,130 @@ function setExcelHeaders(res, filename) {
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   )
 
-  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="${filename}"`,
+  )
 }
 
-async function lookup(req, res, next) {
+async function listPositions(req, res, next) {
   try {
-    const query = normalizeLookupQuery(req.query || {})
-    const result = await positionService.lookup(query)
+    const query = parse(listPositionsQuerySchema, req.query)
+    const data = await positionService.listPositions(query)
 
-    return successResponse(res, result)
+    res.json({
+      success: true,
+      data,
+    })
   } catch (error) {
-    return next(error)
+    next(error)
   }
 }
 
-async function list(req, res, next) {
+async function lookupPositions(req, res, next) {
   try {
-    const query = normalizeListQuery(req.query || {})
-    const result = await positionService.list(query)
+    const query = parse(lookupPositionsQuerySchema, req.query)
+    const data = await positionService.lookupPositions(query)
 
-    return successResponse(res, result)
+    res.json({
+      success: true,
+      data,
+    })
   } catch (error) {
-    return next(error)
+    next(error)
   }
 }
 
-async function getOne(req, res, next) {
+async function getPositionByCode(req, res, next) {
   try {
-    const item = await positionService.getById(req.params.id)
+    const params = parse(positionCodeParamSchema, req.params)
+    const item = await positionService.getPositionByCode(params.code)
 
-    return successResponse(res, {
+    res.json({
+      success: true,
       item,
     })
   } catch (error) {
-    return next(error)
+    next(error)
   }
 }
 
-async function create(req, res, next) {
+async function createPosition(req, res, next) {
   try {
-    const payload = parse(createPositionSchema, req.body || {})
-    const item = await positionService.create(payload)
+    const payload = parse(createPositionSchema, req.body)
+    const item = await positionService.createPosition(payload, getActor(req))
 
-    return successResponse(
-      res,
-      {
-        item,
-      },
-      201,
-    )
-  } catch (error) {
-    return next(error)
-  }
-}
-
-async function update(req, res, next) {
-  try {
-    const payload = parse(updatePositionSchema, req.body || {})
-    const item = await positionService.update(req.params.id, payload)
-
-    return successResponse(res, {
+    res.status(201).json({
+      success: true,
+      message: 'Position created successfully',
       item,
     })
   } catch (error) {
-    return next(error)
+    next(error)
   }
 }
 
-async function downloadSample(req, res, next) {
+async function updatePosition(req, res, next) {
   try {
-    const result = await positionService.downloadSample()
+    const params = parse(positionCodeParamSchema, req.params)
+    const payload = parse(updatePositionSchema, req.body)
 
-    setExcelHeaders(res, result.filename)
+    const item = await positionService.updatePosition(params.code, payload, getActor(req))
 
-    return res.send(result.buffer)
-  } catch (error) {
-    return next(error)
-  }
-}
-
-async function exportExcel(req, res, next) {
-  try {
-    const query = normalizeListQuery({
-      ...(req.query || {}),
-      page: 1,
-      limit: 10,
+    res.json({
+      success: true,
+      message: 'Position updated successfully',
+      item,
     })
-
-    const result = await positionService.exportExcel(query)
-
-    setExcelHeaders(res, result.filename)
-
-    return res.send(result.buffer)
   } catch (error) {
-    return next(error)
+    next(error)
   }
 }
 
-async function importExcel(req, res, next) {
+async function importPositions(req, res, next) {
   try {
-    const item = await positionService.importExcel(req.file)
+    const data = await positionService.importPositions(req.file, getActor(req))
 
-    return successResponse(
-      res,
-      {
-        item,
-      },
-      201,
-    )
+    res.status(201).json({
+      success: true,
+      message: 'Positions imported successfully',
+      data,
+    })
   } catch (error) {
-    return next(error)
+    next(error)
+  }
+}
+
+async function exportPositions(req, res, next) {
+  try {
+    const query = parse(listPositionsQuerySchema, req.query)
+    const result = await positionService.exportPositions(query)
+
+    setExcelHeaders(res, result.filename)
+    res.send(result.buffer)
+  } catch (error) {
+    next(error)
+  }
+}
+
+async function downloadPositionImportSample(req, res, next) {
+  try {
+    const result = await positionService.downloadImportSample()
+
+    setExcelHeaders(res, result.filename)
+    res.send(result.buffer)
+  } catch (error) {
+    next(error)
   }
 }
 
 module.exports = {
-  lookup,
-  list,
-  getOne,
-  create,
-  update,
-  downloadSample,
-  exportExcel,
-  importExcel,
+  listPositions,
+  lookupPositions,
+  getPositionByCode,
+  createPosition,
+  updatePosition,
+  importPositions,
+  exportPositions,
+  downloadPositionImportSample,
 }

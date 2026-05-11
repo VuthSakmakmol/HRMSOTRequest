@@ -1,6 +1,7 @@
 <!-- frontend/src/modules/access/components/RolePermissionSummary.vue -->
 <script setup>
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 import Tag from 'primevue/tag'
 
@@ -14,6 +15,8 @@ const props = defineProps({
     default: 4,
   },
 })
+
+const { t } = useI18n()
 
 const normalizedGroups = computed(() => {
   return Array.isArray(props.groups)
@@ -36,20 +39,21 @@ function hiddenCount(items) {
 </script>
 
 <template>
-  <div v-if="normalizedGroups.length" class="flex flex-col gap-2">
+  <div
+    v-if="normalizedGroups.length"
+    class="flex flex-col gap-2"
+  >
     <div
       v-for="group in normalizedGroups"
       :key="group.module"
-      class="rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-3 py-2.5"
+      class="rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface-2)] px-3 py-2.5"
     >
       <div class="mb-2 flex items-center justify-between gap-2">
-        <div
-          class="truncate text-[11px] font-semibold uppercase tracking-[0.14em] text-[color:var(--ot-text-muted)]"
-        >
+        <div class="truncate text-[11px] font-bold uppercase tracking-[0.14em] text-[color:var(--ot-text-muted)]">
           {{ group.module }}
         </div>
 
-        <div class="shrink-0 text-xs text-[color:var(--ot-text-muted)]">
+        <div class="shrink-0 text-xs font-bold text-[color:var(--ot-text-muted)]">
           {{ group.items.length }}
         </div>
       </div>
@@ -60,28 +64,21 @@ function hiddenCount(items) {
           :key="item.id || item.code"
           :value="item.code || '-'"
           severity="info"
-          class="ot-permission-tag"
         />
+
         <Tag
           v-if="hiddenCount(group.items)"
-          :value="`+${hiddenCount(group.items)} more`"
+          :value="t('access.role.morePermissions', { count: hiddenCount(group.items) })"
           severity="secondary"
-          class="ot-permission-tag"
         />
       </div>
     </div>
   </div>
 
-  <span v-else class="text-sm text-[color:var(--ot-text-muted)]">-</span>
+  <span
+    v-else
+    class="text-sm text-[color:var(--ot-text-muted)]"
+  >
+    -
+  </span>
 </template>
-
-<style scoped>
-:deep(.p-tag.ot-permission-tag) {
-  min-height: 1.3rem !important;
-  padding: 0.1rem 0.42rem !important;
-  font-size: 0.68rem !important;
-  font-weight: 600 !important;
-  line-height: 1 !important;
-  border-radius: 999px !important;
-}
-</style>

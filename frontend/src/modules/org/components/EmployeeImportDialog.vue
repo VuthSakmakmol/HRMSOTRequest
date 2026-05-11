@@ -1,8 +1,7 @@
 <!-- frontend/src/modules/org/components/EmployeeImportDialog.vue -->
 <script setup>
-// frontend/src/modules/org/components/EmployeeImportDialog.vue
-
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
@@ -12,6 +11,10 @@ import {
   downloadEmployeeImportSample,
   importEmployeesExcel,
 } from '@/modules/org/employee.api'
+import {
+  getApiErrorMessage,
+  getApiErrorStatus,
+} from '@/shared/utils/apiError'
 
 const props = defineProps({
   visible: {
@@ -22,10 +25,13 @@ const props = defineProps({
 
 const emit = defineEmits(['update:visible', 'success'])
 
+const { t } = useI18n()
+
 const fileInputRef = ref(null)
 const selectedFile = ref(null)
 const downloading = ref(false)
 const importing = ref(false)
+const uploadProgress = ref(0)
 
 const errorTitle = ref('')
 const errorMessage = ref('')
@@ -44,6 +50,7 @@ watch(
 
 function resetState() {
   selectedFile.value = null
+  uploadProgress.value = 0
   errorTitle.value = ''
   errorMessage.value = ''
   successMessage.value = ''
@@ -54,18 +61,19 @@ function resetState() {
 }
 
 function closeDialog() {
+  if (importing.value) return
   emit('update:visible', false)
-}
-
-function triggerChooseFile() {
-  clearMessage()
-  fileInputRef.value?.click()
 }
 
 function clearMessage() {
   errorTitle.value = ''
   errorMessage.value = ''
   successMessage.value = ''
+}
+
+function triggerChooseFile() {
+  clearMessage()
+  fileInputRef.value?.click()
 }
 
 function onFileChange(event) {
@@ -91,8 +99,8 @@ function onFileChange(event) {
       fileInputRef.value.value = ''
     }
 
-    errorTitle.value = 'Invalid file type'
-    errorMessage.value = 'Please choose an Excel file only: .xlsx, .xls, or .csv.'
+    errorTitle.value = t('org.employee.importInvalidFileTitle')
+    errorMessage.value = t('org.employee.importInvalidFileMessage')
     return
   }
 
@@ -103,86 +111,71 @@ function normalizePayload(res) {
   return res?.data?.data || res?.data || {}
 }
 
-function getErrorText(error) {
-  const data = error?.response?.data
-
-  if (typeof data === 'string') {
-    return data
-  }
-
-  if (data instanceof Blob) {
-    return 'Import failed. Please check the Excel file and try again.'
-  }
-
-  return (
-    data?.message ||
-    data?.error ||
-    error?.message ||
-    'Import failed. Please check the Excel file and try again.'
-  )
+function normalizeImportPayload(res) {
+  const payload = normalizePayload(res)
+  return payload.item || payload
 }
 
 function getErrorTitle(error) {
-  const status = Number(error?.response?.status || 0)
+  const status = getApiErrorStatus(error)
 
-  if (status === 400) return 'Invalid Excel Data'
-  if (status === 401) return 'Login Required'
-  if (status === 403) return 'No Permission'
-  if (status === 404) return 'Import API Not Found'
-  if (status === 409) return 'Duplicate Data'
-  if (status >= 500) return 'Server Error'
+  if (status === 400) return t('org.employee.invalidExcelData')
+  if (status === 401) return t('auth.accessDenied')
+  if (status === 403) return t('auth.noPermission')
+  if (status === 404) return t('org.employee.importApiNotFound')
+  if (status === 409) return t('org.employee.duplicateData')
+  if (status >= 500) return t('org.employee.serverError')
 
-  return 'Import Failed'
+  return t('org.employee.importFailed')
 }
 
-function makeFriendlyImportMessage(message) {
-  const text = String(message || '').trim()
+function makeFriendlyImportMessage(error) {
+  const text = getApiErrorMessage(error, t('org.employee.importFailed'))
 
-  if (!text) {
-    return 'Please check the Excel file and try again.'
+  if (/Employee Code.*required|employeeCodeRequired/i.test(text)) {
+    return `${text}. ${t('org.employee.employeeCodeRequiredHelp')}`
   }
 
-  if (/joinDate|join date/i.test(text)) {
-    if (/dd\/mm\/yyyy/i.test(text)) {
-      return text
-    }
-
-    return `${text}. Please use DD/MM/YYYY format, for example 30/11/2012.`
+  if (/joinDate|join date|Invalid Join Date/i.test(text)) {
+    return `${text}. ${t('org.employee.joinDateFormatHelp')}`
   }
 
   if (/Department Code not found/i.test(text)) {
-    return `${text}. Please check Department master first.`
+    return `${text}. ${t('org.employee.checkDepartmentMaster')}`
   }
 
   if (/Position Code not found/i.test(text)) {
-    return `${text}. Please check Position master first.`
+    return `${text}. ${t('org.employee.checkPositionMaster')}`
   }
 
   if (/Position does not belong to Department/i.test(text)) {
-    return `${text}. Please make sure the Position Code belongs to the selected Department Code.`
+    return `${text}. ${t('org.employee.positionDepartmentMismatchHelp')}`
   }
 
   if (/Line Code not found/i.test(text)) {
-    return `${text}. Please check Line master first.`
+    return `${text}. ${t('org.employee.checkLineMaster')}`
   }
 
   if (/Shift Code not found/i.test(text)) {
-    return `${text}. Please check Shift master first and make sure the shift is active.`
+    return `${text}. ${t('org.employee.checkShiftMaster')}`
   }
 
-  if (/Duplicate Employee No/i.test(text)) {
-    return `${text}. Please remove duplicate Employee No from the Excel file.`
+  if (/Reports To Employee Code not found|manager.*not found/i.test(text)) {
+    return `${text}. ${t('org.employee.checkManagerEmployeeCode')}`
   }
 
   if (/Email already exists/i.test(text)) {
-    return `${text}. Please use a unique email or leave the email blank.`
-  }
-
-  if (/Reports To Employee No not found/i.test(text)) {
-    return `${text}. Please import the manager first or use an existing manager Employee No.`
+    return `${text}. ${t('org.employee.uniqueEmailHelp')}`
   }
 
   return text
+}
+
+function getFilenameFromHeader(res, fallback) {
+  const disposition = String(res?.headers?.['content-disposition'] || '')
+  const match = disposition.match(/filename="?([^"]+)"?/i)
+
+  return match?.[1] || fallback
 }
 
 function downloadBlob(blob, filename) {
@@ -212,11 +205,11 @@ async function handleDownloadSample() {
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     })
 
-    downloadBlob(blob, 'employee-import-sample.xlsx')
-    successMessage.value = 'Sample file downloaded successfully.'
+    downloadBlob(blob, getFilenameFromHeader(res, 'employee-import-sample.xlsx'))
+    successMessage.value = t('org.employee.sampleDownloaded')
   } catch (error) {
     errorTitle.value = getErrorTitle(error)
-    errorMessage.value = makeFriendlyImportMessage(getErrorText(error))
+    errorMessage.value = makeFriendlyImportMessage(error)
   } finally {
     downloading.value = false
   }
@@ -226,22 +219,24 @@ async function handleImport() {
   if (!selectedFile.value || importing.value) return
 
   importing.value = true
+  uploadProgress.value = 0
   clearMessage()
 
   try {
-    const res = await importEmployeesExcel(selectedFile.value)
-    const payload = normalizePayload(res)
+    const res = await importEmployeesExcel(selectedFile.value, {
+      onUploadProgress(event) {
+        if (!event.total) return
+        uploadProgress.value = Math.round((event.loaded * 100) / event.total)
+      },
+    })
 
-    const created = payload?.summary?.created || 0
-    const updated = payload?.summary?.updated || 0
-
-    successMessage.value = `Import completed successfully. Created: ${created}, Updated: ${updated}.`
+    const payload = normalizeImportPayload(res)
 
     emit('success', payload)
     closeDialog()
   } catch (error) {
     errorTitle.value = getErrorTitle(error)
-    errorMessage.value = makeFriendlyImportMessage(getErrorText(error))
+    errorMessage.value = makeFriendlyImportMessage(error)
   } finally {
     importing.value = false
   }
@@ -252,24 +247,24 @@ async function handleImport() {
   <Dialog
     :visible="visible"
     modal
-    header="Import Employee Excel"
-    :style="{ width: '34rem', maxWidth: '96vw' }"
+    :header="t('org.employee.importTitle')"
+    :style="{ width: '36rem', maxWidth: '96vw' }"
     @update:visible="emit('update:visible', $event)"
   >
     <div class="space-y-4">
       <div
         v-if="errorMessage"
-        class="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200"
+        class="ot-inline-error"
       >
         <div class="flex items-start gap-3">
-          <i class="pi pi-exclamation-triangle mt-0.5 text-red-500" />
+          <i class="pi pi-exclamation-triangle mt-0.5" />
 
           <div class="min-w-0">
-            <div class="text-sm font-semibold">
-              {{ errorTitle || 'Import Failed' }}
+            <div class="font-bold">
+              {{ errorTitle || t('org.employee.importFailed') }}
             </div>
 
-            <div class="mt-1 whitespace-pre-line text-sm leading-6">
+            <div class="mt-1 whitespace-pre-line leading-6">
               {{ errorMessage }}
             </div>
           </div>
@@ -278,33 +273,32 @@ async function handleImport() {
 
       <div
         v-if="successMessage"
-        class="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200"
+        class="ot-inline-info"
       >
         <div class="flex items-start gap-3">
-          <i class="pi pi-check-circle mt-0.5 text-emerald-500" />
-
-          <div class="min-w-0 text-sm font-medium leading-6">
+          <i class="pi pi-check-circle mt-0.5" />
+          <div class="min-w-0">
             {{ successMessage }}
           </div>
         </div>
       </div>
 
-      <div class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-4 py-4">
-        <div class="text-sm font-semibold text-[color:var(--ot-text)]">
-          Import guide
+      <div class="ot-panel">
+        <div class="text-sm font-bold text-[color:var(--ot-text)]">
+          {{ t('org.employee.importGuideTitle') }}
         </div>
 
-        <div class="mt-2 space-y-1 text-sm text-[color:var(--ot-text-muted)]">
-          <div>1. Download the sample file.</div>
-          <div>2. Fill your employee data in the same format.</div>
-          <div>3. Join Date format must be DD/MM/YYYY, example 30/11/2012.</div>
-          <div>4. Department, Position, Line, and Shift must already exist in master data.</div>
-          <div>5. Choose the completed Excel file, then click Import.</div>
+        <div class="mt-2 space-y-1 text-sm leading-6 text-[color:var(--ot-text-muted)]">
+          <div>1. {{ t('org.employee.importGuideStep1') }}</div>
+          <div>2. {{ t('org.employee.importGuideStep2') }}</div>
+          <div>3. {{ t('org.employee.importGuideStep3') }}</div>
+          <div>4. {{ t('org.employee.importGuideStep4') }}</div>
+          <div>5. {{ t('org.employee.importGuideStep5') }}</div>
         </div>
 
         <div class="mt-4">
           <Button
-            label="Download Sample"
+            :label="t('org.employee.downloadSample')"
             icon="pi pi-download"
             outlined
             severity="secondary"
@@ -326,17 +320,17 @@ async function handleImport() {
 
         <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div class="min-w-0">
-            <div class="text-sm font-medium text-[color:var(--ot-text)]">
-              Excel file
+            <div class="text-sm font-bold text-[color:var(--ot-text)]">
+              {{ t('org.employee.excelFile') }}
             </div>
 
             <div class="mt-1 truncate text-sm text-[color:var(--ot-text-muted)]">
-              {{ fileName || 'No file selected' }}
+              {{ fileName || t('org.employee.noFileSelected') }}
             </div>
           </div>
 
           <Button
-            label="Choose File"
+            :label="t('org.employee.chooseFile')"
             icon="pi pi-upload"
             severity="secondary"
             outlined
@@ -349,19 +343,19 @@ async function handleImport() {
 
       <ProgressBar
         v-if="importing"
-        mode="indeterminate"
+        :value="uploadProgress"
         style="height: 6px"
       />
 
-      <div class="rounded-xl bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
-        If import fails, the exact row number and reason will show above.
+      <div class="ot-inline-info">
+        {{ t('org.employee.importNote') }}
       </div>
     </div>
 
     <template #footer>
-      <div class="flex justify-end gap-2">
+      <div class="ot-form-footer">
         <Button
-          label="Cancel"
+          :label="t('common.cancel')"
           text
           size="small"
           :disabled="importing"
@@ -369,7 +363,7 @@ async function handleImport() {
         />
 
         <Button
-          label="Import"
+          :label="t('common.import')"
           icon="pi pi-check"
           size="small"
           :disabled="!selectedFile || importing"

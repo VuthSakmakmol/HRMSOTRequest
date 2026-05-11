@@ -4,8 +4,24 @@ const mongoose = require('mongoose')
 
 const { Schema } = mongoose
 
+const POSITION_HIERARCHY_SCOPE = ['SAME_LINE', 'GLOBAL', 'CROSS_DEPARTMENT']
+
 function s(value) {
   return String(value ?? '').trim()
+}
+
+function upper(value) {
+  return s(value).toUpperCase()
+}
+
+function safeNumber(value, fallback = 0) {
+  const num = Number(value)
+  return Number.isFinite(num) ? num : fallback
+}
+
+function safeNonNegativeInt(value, fallback = 0) {
+  const num = Math.round(safeNumber(value, fallback))
+  return num < 0 ? fallback : num
 }
 
 const positionSchema = new Schema(
@@ -14,7 +30,6 @@ const positionSchema = new Schema(
       type: String,
       required: true,
       trim: true,
-      uppercase: true,
       maxlength: 50,
     },
 
@@ -22,50 +37,92 @@ const positionSchema = new Schema(
       type: String,
       required: true,
       trim: true,
-      maxlength: 120,
-    },
-
-    departmentId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Department',
-      required: true,
-      index: true,
-    },
-
-    // Real relationship key: Position _id.
-    // Cross-department reporting is allowed.
-    reportsToPositionId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Position',
-      default: null,
-      index: true,
-    },
-
-    // SAME_LINE:
-    //   Employee manager is resolved by parent position + same department + same line.
-    //
-    // GLOBAL:
-    //   Employee manager is resolved by parent position across departments/lines.
-    managerScope: {
-      type: String,
-      enum: ['SAME_LINE', 'GLOBAL'],
-      default: 'SAME_LINE',
-      uppercase: true,
-      trim: true,
-      index: true,
+      maxlength: 150,
     },
 
     description: {
       type: String,
       default: '',
       trim: true,
-      maxlength: 500,
+      maxlength: 1000,
+    },
+
+    // Internal DB reference only. Never expose to frontend.
+    departmentId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Department',
+      default: null,
+      select: true,
+    },
+
+    // User-facing identity.
+    departmentCode: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 50,
+    },
+
+    departmentName: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 150,
+    },
+
+    // Internal DB reference only. Never expose to frontend.
+    reportsToPositionId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Position',
+      default: null,
+      select: true,
+    },
+
+    // User-facing identity.
+    reportsToPositionCode: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 50,
+    },
+
+    reportsToPositionName: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 150,
+    },
+
+    hierarchyScope: {
+      type: String,
+      enum: POSITION_HIERARCHY_SCOPE,
+      default: 'SAME_LINE',
+      trim: true,
+    },
+
+    level: {
+      type: Number,
+      min: 0,
+      default: 0,
     },
 
     isActive: {
       type: Boolean,
       default: true,
-      index: true,
+    },
+
+    createdBy: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 100,
+    },
+
+    updatedBy: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 100,
     },
   },
   {
@@ -74,32 +131,36 @@ const positionSchema = new Schema(
   },
 )
 
-positionSchema.pre('validate', function normalize(next) {
-  this.code = s(this.code).toUpperCase()
+positionSchema.pre('validate', function preValidate(next) {
+  this.code = upper(this.code)
   this.name = s(this.name)
   this.description = s(this.description)
-  this.managerScope = s(this.managerScope || 'SAME_LINE').toUpperCase()
 
-  if (!this.reportsToPositionId) {
-    this.reportsToPositionId = null
-  }
+  this.departmentCode = upper(this.departmentCode)
+  this.departmentName = s(this.departmentName)
+
+  this.reportsToPositionCode = upper(this.reportsToPositionCode)
+  this.reportsToPositionName = s(this.reportsToPositionName)
+
+  this.hierarchyScope = upper(this.hierarchyScope || 'SAME_LINE')
+  this.level = safeNonNegativeInt(this.level, 0)
+
+  this.createdBy = s(this.createdBy)
+  this.updatedBy = s(this.updatedBy)
 
   next()
 })
 
-positionSchema.index(
-  {
-    departmentId: 1,
-    code: 1,
-  },
-  {
-    unique: true,
-  },
-)
-
-positionSchema.index({ departmentId: 1, name: 1 })
+positionSchema.index({ code: 1 }, { unique: true })
+positionSchema.index({ name: 1 })
+positionSchema.index({ isActive: 1, name: 1 })
+positionSchema.index({ departmentId: 1, isActive: 1, name: 1 })
+positionSchema.index({ departmentCode: 1, isActive: 1 })
 positionSchema.index({ reportsToPositionId: 1, isActive: 1 })
-positionSchema.index({ isActive: 1, code: 1 })
-positionSchema.index({ name: 'text', code: 'text', description: 'text' })
+positionSchema.index({ reportsToPositionCode: 1, isActive: 1 })
+positionSchema.index({ hierarchyScope: 1, isActive: 1 })
+positionSchema.index({ level: 1, name: 1 })
+positionSchema.index({ createdAt: -1 })
+positionSchema.index({ updatedAt: -1 })
 
 module.exports = mongoose.model('Position', positionSchema)

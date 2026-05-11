@@ -1,5 +1,4 @@
 // backend/src/modules/org/validators/employee.validation.js
-
 const { z } = require('zod')
 const mongoose = require('mongoose')
 
@@ -51,13 +50,17 @@ const optionalObjectIdField = (fieldKey) =>
 
 const booleanLike = z.union([z.boolean(), z.string(), z.number()]).optional()
 
-const employeeCodeField = z
+const employeeCodeRequiredField = z
   .string()
   .trim()
+  .min(1, 'org.employee.validation.employeeCodeRequired')
   .max(50, 'org.employee.validation.employeeCodeTooLong')
-  .optional()
-  .default('')
   .transform((value) => s(value).toUpperCase())
+
+const employeeCodeOptionalField = z
+  .union([z.string(), z.null(), z.undefined()])
+  .transform((value) => s(value).toUpperCase())
+  .refine((value) => value.length <= 50, 'org.employee.validation.employeeCodeTooLong')
 
 const displayNameField = z
   .string()
@@ -168,7 +171,7 @@ const lookupEmployeeQuerySchema = z.object({
 })
 
 const createEmployeeSchema = z.object({
-  employeeCode: employeeCodeField,
+  employeeCode: employeeCodeRequiredField,
 
   displayName: displayNameField,
 
@@ -190,7 +193,7 @@ const createEmployeeSchema = z.object({
 
 const updateEmployeeSchema = z
   .object({
-    employeeCode: employeeCodeField.optional(),
+    employeeCode: employeeCodeRequiredField.optional(),
 
     displayName: displayNameField.optional(),
 
@@ -233,19 +236,12 @@ const updateEmployeeSchema = z
   )
 
 // Import rule:
-// - If Employee ID is provided, update that employee by Mongo Employee _id.
-// - If Employee ID is blank, create new employee.
-// - Employee Code is optional display/search only.
+// - Employee Code is required.
+// - If Employee Code already exists, update that employee.
+// - If Employee Code does not exist, create a new employee.
+// - Users never need Mongo Employee ID in Excel.
 const importEmployeeRowSchema = z.object({
-  employeeId: z
-    .union([z.string(), z.null(), z.undefined()])
-    .transform((value) => s(value))
-    .refine((value) => !value || isObjectId(value), 'org.employee.validation.employeeIdInvalid'),
-
-  employeeCode: z
-    .union([z.string(), z.null(), z.undefined()])
-    .transform((value) => s(value).toUpperCase())
-    .refine((value) => value.length <= 50, 'org.employee.validation.employeeCodeTooLong'),
+  employeeCode: employeeCodeRequiredField,
 
   displayName: displayNameField,
 
@@ -274,13 +270,7 @@ const importEmployeeRowSchema = z.object({
     .max(50, 'org.employee.validation.shiftCodeTooLong')
     .transform((value) => s(value).toUpperCase()),
 
-  reportsToEmployeeId: z
-    .union([z.string(), z.null(), z.undefined()])
-    .transform((value) => s(value))
-    .refine(
-      (value) => !value || isObjectId(value),
-      'org.employee.validation.reportsToEmployeeIdInvalid',
-    ),
+  reportsToEmployeeCode: employeeCodeOptionalField,
 
   otWorkflowRole: otWorkflowRoleField.default('NONE'),
 

@@ -22,7 +22,14 @@ export function parseDate(value) {
   const raw = s(value)
   if (!raw) return null
 
-  const ymdMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  // Full ISO datetime should keep time.
+  if (/^\d{4}-\d{2}-\d{2}T/.test(raw)) {
+    const date = new Date(raw)
+    return isValidDate(date) ? date : null
+  }
+
+  // Date-only API format: YYYY-MM-DD
+  const ymdMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/)
   if (ymdMatch) {
     const year = Number(ymdMatch[1])
     const month = Number(ymdMatch[2])
@@ -41,6 +48,7 @@ export function parseDate(value) {
     return null
   }
 
+  // UI date format: DD/MM/YYYY
   const dmyMatch = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
   if (dmyMatch) {
     const day = Number(dmyMatch[1])

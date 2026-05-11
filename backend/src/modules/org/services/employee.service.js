@@ -435,6 +435,7 @@ function sanitizeOrgNode(doc) {
     shiftEndTime: item.shiftEndTime,
 
     reportsToEmployeeId: item.reportsToEmployeeId,
+    reportsToEmployeeCode: item.reportsToEmployeeCode,
     reportsToEmployeeName: item.reportsToEmployeeName,
 
     lineManagerIds: item.lineManagerIds,
@@ -700,7 +701,15 @@ async function ensureReportsToEmployeeExists(employeeId) {
 async function ensureEmployeeCodeUnique(employeeCode, excludeId = null) {
   const code = upper(employeeCode)
 
-  if (!code) return
+  if (!code) {
+    throw appError({
+      statusCode: 400,
+      code: 'EMPLOYEE_CODE_REQUIRED',
+      messageKey: 'org.employee.validation.employeeCodeRequired',
+      message: 'Employee code is required',
+      field: 'employeeCode',
+    })
+  }
 
   const filter = {
     employeeCode: code,
@@ -1029,16 +1038,17 @@ async function list(query, currentUser = null) {
 function buildEmployeeExportRows(items = []) {
   return items.map((item, index) => ({
     No: index + 1,
-    'Employee ID': item.id || '',
     'Employee Code': item.employeeCode || '',
     'Display Name': item.displayName || '',
+    'Department Code': item.departmentCode || '',
     Department: item.departmentName || '',
+    'Position Code': item.positionCode || '',
     Position: item.positionName || '',
     'Line Code': item.lineCode || '',
     'Line Name': item.lineName || '',
     'Line Managers': item.lineManagerNames || '',
-    'Primary Manager ID': item.reportsToEmployeeId || '',
-    'Primary Manager': item.reportsToEmployeeName || '',
+    'Reports To Employee Code': item.reportsToEmployeeCode || '',
+    'Reports To Employee Name': item.reportsToEmployeeName || '',
     'OT Workflow Role': item.otWorkflowRole || 'NONE',
     'Shift Code': item.shiftCode || '',
     'Shift Name': item.shiftName || '',
@@ -1091,14 +1101,13 @@ async function exportExcel(query = {}, currentUser = null) {
 async function downloadImportSample() {
   const sampleRows = [
     {
-      'Employee ID': '',
       'Employee Code': 'TRX001',
       'Display Name': 'Mr A',
       'Department Code': 'SEWING',
       'Position Code': 'SEWER_SUPERVISOR',
       'Line Code': 'LINE-01',
       'Shift Code': 'DAY',
-      'Reports To Employee ID': '',
+      'Reports To Employee Code': '',
       'OT Workflow Role': 'APPROVER',
       Phone: '012345678',
       Email: 'mra@company.com',
@@ -1106,14 +1115,13 @@ async function downloadImportSample() {
       Status: 'Active',
     },
     {
-      'Employee ID': '',
       'Employee Code': 'TRX002',
       'Display Name': 'Worker 001',
       'Department Code': 'SEWING',
       'Position Code': 'SEWER',
       'Line Code': 'LINE-01',
       'Shift Code': 'DAY',
-      'Reports To Employee ID': '',
+      'Reports To Employee Code': 'TRX001',
       'OT Workflow Role': 'NONE',
       Phone: '098765432',
       Email: 'worker001@company.com',
@@ -1125,15 +1133,14 @@ async function downloadImportSample() {
   const guideRows = [
     ['Employee Import Guide', ''],
     ['', ''],
-    ['Rule', 'Description'],
-    ['Employee ID', 'Leave blank to create new employee. Fill Mongo Employee ID to update existing employee.'],
-    ['Employee Code', 'Optional display/search code. Must be unique if provided.'],
+    ['Field', 'Rule'],
+    ['Employee Code', 'Required. Human-readable employee code. If it already exists, the row updates that employee. If it does not exist, the row creates a new employee.'],
     ['Display Name', 'Required.'],
-    ['Department Code', 'Required. Must already exist.'],
+    ['Department Code', 'Required. Must already exist in Department master.'],
     ['Position Code', 'Required. Must already exist and belong to Department Code.'],
     ['Line Code', 'Optional. Must already exist if provided.'],
     ['Shift Code', 'Required. Must already exist and be active.'],
-    ['Reports To Employee ID', 'Optional. Use Mongo Employee ID only. Do not use Employee No.'],
+    ['Reports To Employee Code', 'Optional. Use employee code of the manager/supervisor. Do not use Mongo ID.'],
     ['OT Workflow Role', 'Use NONE, APPROVER, or ACKNOWLEDGE. Blank = NONE.'],
     ['Phone', 'Optional.'],
     ['Email', 'Optional. Must be unique if provided.'],
@@ -1171,15 +1178,20 @@ function normalizeImportRow(raw = {}) {
   const joinDate = parseImportDate(rawJoinDate)
 
   return {
-    employeeId: s(getImportField(raw, ['Employee ID', 'employeeId', 'EmployeeId'])),
-    employeeCode: upper(getImportField(raw, ['Employee Code', 'employeeCode', 'EmployeeCode'])),
+    employeeCode: upper(
+      getImportField(raw, ['Employee Code', 'employeeCode', 'EmployeeCode']),
+    ),
     displayName: s(getImportField(raw, ['Display Name', 'displayName', 'Name'])),
     departmentCode: upper(getImportField(raw, ['Department Code', 'departmentCode'])),
     positionCode: upper(getImportField(raw, ['Position Code', 'positionCode'])),
     lineCode: upper(getImportField(raw, ['Line Code', 'lineCode'])),
     shiftCode: upper(getImportField(raw, ['Shift Code', 'shiftCode'])),
-    reportsToEmployeeId: s(
-      getImportField(raw, ['Reports To Employee ID', 'reportsToEmployeeId']),
+    reportsToEmployeeCode: upper(
+      getImportField(raw, [
+        'Reports To Employee Code',
+        'reportsToEmployeeCode',
+        'ReportsToEmployeeCode',
+      ]),
     ),
     otWorkflowRole: normalizeOTWorkflowRole(
       getImportField(raw, ['OT Workflow Role', 'otWorkflowRole']),
@@ -1269,7 +1281,8 @@ async function importExcel(file, currentUser = null) {
       throw appError({
         statusCode: 400,
         code: 'EMPLOYEE_IMPORT_ROW_INVALID',
-        messageKey: result.error.issues[0]?.message || 'org.employee.import.error.rowInvalid',
+        messageKey:
+          result.error.issues[0]?.message || 'org.employee.import.error.rowInvalid',
         message: `Row ${rowNo}: ${result.error.issues[0]?.message || 'Invalid data'}`,
         params: {
           rowNo,
@@ -1284,7 +1297,7 @@ async function importExcel(file, currentUser = null) {
       positionCode: upper(result.data.positionCode),
       lineCode: upper(result.data.lineCode),
       shiftCode: upper(result.data.shiftCode),
-      reportsToEmployeeId: s(result.data.reportsToEmployeeId),
+      reportsToEmployeeCode: upper(result.data.reportsToEmployeeCode),
       otWorkflowRole: normalizeOTWorkflowRole(result.data.otWorkflowRole),
       email: s(result.data.email).toLowerCase(),
       isActive:
@@ -1293,44 +1306,24 @@ async function importExcel(file, currentUser = null) {
     }
   })
 
-  const seenEmployeeIds = new Set()
   const seenEmployeeCodes = new Set()
   const seenEmails = new Set()
 
   for (const row of parsedRows) {
-    if (row.employeeId) {
-      if (seenEmployeeIds.has(row.employeeId)) {
-        throw appError({
-          statusCode: 400,
-          code: 'EMPLOYEE_IMPORT_DUPLICATE_EMPLOYEE_ID',
-          messageKey: 'org.employee.import.error.duplicateEmployeeId',
-          message: `Row ${row.rowNo}: Duplicate Employee ID in import file`,
-          params: {
-            rowNo: row.rowNo,
-            employeeId: row.employeeId,
-          },
-        })
-      }
-
-      seenEmployeeIds.add(row.employeeId)
+    if (seenEmployeeCodes.has(row.employeeCode)) {
+      throw appError({
+        statusCode: 400,
+        code: 'EMPLOYEE_IMPORT_DUPLICATE_EMPLOYEE_CODE',
+        messageKey: 'org.employee.import.error.duplicateEmployeeCode',
+        message: `Row ${row.rowNo}: Duplicate Employee Code in import file`,
+        params: {
+          rowNo: row.rowNo,
+          employeeCode: row.employeeCode,
+        },
+      })
     }
 
-    if (row.employeeCode) {
-      if (seenEmployeeCodes.has(row.employeeCode)) {
-        throw appError({
-          statusCode: 400,
-          code: 'EMPLOYEE_IMPORT_DUPLICATE_EMPLOYEE_CODE',
-          messageKey: 'org.employee.import.error.duplicateEmployeeCode',
-          message: `Row ${row.rowNo}: Duplicate Employee Code in import file`,
-          params: {
-            rowNo: row.rowNo,
-            employeeCode: row.employeeCode,
-          },
-        })
-      }
-
-      seenEmployeeCodes.add(row.employeeCode)
-    }
+    seenEmployeeCodes.add(row.employeeCode)
 
     if (row.email) {
       if (seenEmails.has(row.email)) {
@@ -1350,9 +1343,15 @@ async function importExcel(file, currentUser = null) {
     }
   }
 
-  const employeeIds = uniqueIds(parsedRows.map((row) => row.employeeId))
-  const managerEmployeeIds = uniqueIds(parsedRows.map((row) => row.reportsToEmployeeId))
-  const employeeCodes = [...seenEmployeeCodes]
+  const employeeCodes = [
+    ...new Set(
+      parsedRows
+        .flatMap((row) => [row.employeeCode, row.reportsToEmployeeCode])
+        .map(upper)
+        .filter(Boolean),
+    ),
+  ]
+
   const emails = [...seenEmails]
 
   const departmentCodes = [
@@ -1374,8 +1373,6 @@ async function importExcel(file, currentUser = null) {
     lines,
     shifts,
     existingEmployees,
-    existingManagers,
-    existingCodeOwners,
     existingEmailOwners,
   ] = await Promise.all([
     Department.find({ code: { $in: departmentCodes } }, '_id code name isActive').lean(),
@@ -1397,24 +1394,10 @@ async function importExcel(file, currentUser = null) {
       '_id code name type startTime endTime breakStartTime breakEndTime crossMidnight isActive',
     ).lean(),
 
-    employeeIds.length
-      ? Employee.find(
-          { _id: { $in: employeeIds.filter(isObjectId).map(objectId) } },
-          '_id employeeCode displayName email departmentId positionId lineId shiftId reportsToEmployeeId lineManagerIds otWorkflowRole',
-        ).lean()
-      : [],
-
-    managerEmployeeIds.length
-      ? Employee.find(
-          { _id: { $in: managerEmployeeIds.filter(isObjectId).map(objectId) } },
-          '_id employeeCode displayName isActive',
-        ).lean()
-      : [],
-
     employeeCodes.length
       ? Employee.find(
           { employeeCode: { $in: employeeCodes } },
-          '_id employeeCode displayName',
+          '_id employeeCode displayName email departmentId positionId lineId shiftId reportsToEmployeeId lineManagerIds otWorkflowRole isActive',
         ).lean()
       : [],
 
@@ -1427,30 +1410,21 @@ async function importExcel(file, currentUser = null) {
   const positionByCode = new Map(positions.map((item) => [upper(item.code), item]))
   const lineByCode = new Map(lines.map((item) => [upper(item.code), item]))
   const shiftByCode = new Map(shifts.map((item) => [upper(item.code), item]))
-  const existingEmployeeById = new Map(existingEmployees.map((item) => [id(item._id), item]))
-  const existingManagerById = new Map(existingManagers.map((item) => [id(item._id), item]))
-  const codeOwnerByCode = new Map(existingCodeOwners.map((item) => [upper(item.employeeCode), item]))
-  const emailOwnerByEmail = new Map(existingEmailOwners.map((item) => [s(item.email).toLowerCase(), item]))
+
+  const employeeByCode = new Map(
+    existingEmployees.map((employee) => [upper(employee.employeeCode), employee]),
+  )
+
+  const emailOwnerByEmail = new Map(
+    existingEmailOwners.map((item) => [s(item.email).toLowerCase(), item]),
+  )
 
   const createdEmployeeIds = []
   let createdCount = 0
   let updatedCount = 0
 
   for (const row of parsedRows) {
-    const existing = row.employeeId ? existingEmployeeById.get(row.employeeId) : null
-
-    if (row.employeeId && !existing) {
-      throw appError({
-        statusCode: 404,
-        code: 'EMPLOYEE_IMPORT_EMPLOYEE_ID_NOT_FOUND',
-        messageKey: 'org.employee.import.error.employeeIdNotFound',
-        message: `Row ${row.rowNo}: Employee ID not found`,
-        params: {
-          rowNo: row.rowNo,
-          employeeId: row.employeeId,
-        },
-      })
-    }
+    const existing = employeeByCode.get(row.employeeCode) || null
 
     const department = departmentByCode.get(row.departmentCode)
 
@@ -1528,24 +1502,6 @@ async function importExcel(file, currentUser = null) {
       })
     }
 
-    if (row.employeeCode) {
-      const owner = codeOwnerByCode.get(row.employeeCode)
-
-      if (owner && !sameId(owner._id, existing?._id)) {
-        throw appError({
-          statusCode: 409,
-          code: 'EMPLOYEE_CODE_EXISTS',
-          messageKey: 'org.employee.error.employeeCodeExists',
-          message: `Row ${row.rowNo}: Employee Code already exists`,
-          field: 'employeeCode',
-          params: {
-            rowNo: row.rowNo,
-            employeeCode: row.employeeCode,
-          },
-        })
-      }
-    }
-
     if (row.email) {
       const owner = emailOwnerByEmail.get(row.email)
 
@@ -1564,18 +1520,20 @@ async function importExcel(file, currentUser = null) {
       }
     }
 
-    if (row.reportsToEmployeeId) {
-      const manager = existingManagerById.get(row.reportsToEmployeeId)
+    let manualReportsToEmployeeId = null
+
+    if (row.reportsToEmployeeCode) {
+      const manager = employeeByCode.get(row.reportsToEmployeeCode)
 
       if (!manager) {
         throw appError({
           statusCode: 400,
           code: 'EMPLOYEE_IMPORT_MANAGER_NOT_FOUND',
           messageKey: 'org.employee.import.error.managerNotFound',
-          message: `Row ${row.rowNo}: Reports To Employee ID not found`,
+          message: `Row ${row.rowNo}: Reports To Employee Code not found`,
           params: {
             rowNo: row.rowNo,
-            reportsToEmployeeId: row.reportsToEmployeeId,
+            reportsToEmployeeCode: row.reportsToEmployeeCode,
           },
         })
       }
@@ -1591,6 +1549,8 @@ async function importExcel(file, currentUser = null) {
           },
         })
       }
+
+      manualReportsToEmployeeId = manager._id
     }
 
     const managerResult = await resolveFinalManagerIds({
@@ -1598,11 +1558,11 @@ async function importExcel(file, currentUser = null) {
       departmentId: department._id,
       position,
       lineId: line?._id || null,
-      manualReportsToEmployeeId: row.reportsToEmployeeId || null,
+      manualReportsToEmployeeId,
     })
 
     const payload = {
-      employeeCode: row.employeeCode || '',
+      employeeCode: row.employeeCode,
       displayName: row.displayName,
       departmentId: department._id,
       positionId: position._id,
@@ -1623,16 +1583,18 @@ async function importExcel(file, currentUser = null) {
       createdEmployeeIds.push(id(created._id))
       createdCount += 1
 
-      if (row.employeeCode) {
-        codeOwnerByCode.set(row.employeeCode, {
-          _id: created._id,
-          employeeCode: row.employeeCode,
-        })
-      }
+      employeeByCode.set(row.employeeCode, {
+        _id: created._id,
+        employeeCode: row.employeeCode,
+        displayName: row.displayName,
+        email: row.email || '',
+        isActive: true,
+      })
 
       if (row.email) {
         emailOwnerByEmail.set(row.email, {
           _id: created._id,
+          employeeCode: row.employeeCode,
           email: row.email,
         })
       }
@@ -1648,6 +1610,20 @@ async function importExcel(file, currentUser = null) {
         $set: payload,
       },
     )
+
+    employeeByCode.set(row.employeeCode, {
+      ...existing,
+      ...payload,
+      _id: existing._id,
+    })
+
+    if (row.email) {
+      emailOwnerByEmail.set(row.email, {
+        _id: existing._id,
+        employeeCode: row.employeeCode,
+        email: row.email,
+      })
+    }
 
     updatedCount += 1
   }

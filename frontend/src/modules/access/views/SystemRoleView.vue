@@ -1,6 +1,7 @@
 <!-- frontend/src/modules/access/views/SystemRoleView.vue -->
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
@@ -22,11 +23,15 @@ import {
   getSystemRoles,
   updateSystemRole,
 } from '@/modules/access/systemRole.api'
+import { buildSaveErrorMessage, getApiErrorMessage } from '@/shared/utils/apiError'
+import { formatDateTime } from '@/shared/utils/dateFormat'
 
 const toast = useToast()
+const { t } = useI18n()
 
 const PAGE_SIZE = 10
 const SEARCH_DEBOUNCE_MS = 250
+const PERMISSION_PAGE_SIZE = 100
 
 const saving = ref(false)
 const permissionLoading = ref(false)
@@ -57,20 +62,35 @@ const form = reactive({
   isActive: true,
 })
 
-const statusOptions = [
-  { label: 'All Status', value: '' },
-  { label: 'Active', value: 'true' },
-  { label: 'Inactive', value: 'false' },
-]
+const statusOptions = computed(() => [
+  { label: t('common.allStatus'), value: '' },
+  { label: t('common.active'), value: 'true' },
+  { label: t('common.inactive'), value: 'false' },
+])
 
 const isEditMode = computed(() => !!editingRoleId.value)
 const totalRoles = computed(() => Number(totalRecords.value || 0))
 const loadedCount = computed(() => rows.value.filter(Boolean).length)
-const summaryText = computed(() => `${loadedCount.value} of ${totalRoles.value}`)
 const hasAnyData = computed(() => rows.value.some(Boolean))
 const useVirtualScroll = computed(() => totalRoles.value > PAGE_SIZE)
+
+const loadedLabel = computed(() =>
+  t('common.loaded', {
+    loaded: loadedCount.value,
+    total: totalRoles.value,
+  }),
+)
+
 const selectedPermissionCount = computed(() =>
   Array.isArray(form.permissionIds) ? form.permissionIds.length : 0,
+)
+
+const dialogTitle = computed(() =>
+  isEditMode.value ? t('access.role.editTitle') : t('access.role.createTitle'),
+)
+
+const saveLabel = computed(() =>
+  isEditMode.value ? t('common.save') : t('access.role.createTitle'),
 )
 
 const isSaveDisabled = computed(() => {
@@ -92,14 +112,16 @@ function normalizeItems(payload) {
   return Array.isArray(payload?.items) ? payload.items : []
 }
 
-function normalizePermissionItems(payload) {
-  if (Array.isArray(payload?.items)) return payload.items
-  if (Array.isArray(payload)) return payload
-  return []
+function normalizePaginationTotal(payload) {
+  return Number(payload?.pagination?.total || payload?.total || 0)
+}
+
+function normalizeId(row) {
+  return String(row?.id || row?._id || '').trim()
 }
 
 function mapPermissionOption(item) {
-  const id = String(item?.id || item?._id || '')
+  const id = normalizeId(item)
   const code = String(item?.code || '').trim()
   const name = String(item?.name || '').trim()
   const module = String(item?.module || '').trim()
@@ -110,18 +132,18 @@ function mapPermissionOption(item) {
     name,
     module,
     description: String(item?.description || '').trim(),
-    isActive: !!item?.isActive,
+    isActive: item?.isActive !== false,
   }
 }
 
 function normalizeRolePermissionIds(row) {
   if (Array.isArray(row?.permissionIds) && row.permissionIds.length) {
-    return row.permissionIds.map((v) => String(v))
+    return row.permissionIds.map((value) => String(value)).filter(Boolean)
   }
 
   if (Array.isArray(row?.permissions) && row.permissions.length) {
     return row.permissions
-      .map((item) => String(item?.id || item?._id || ''))
+      .map((item) => normalizeId(item))
       .filter(Boolean)
   }
 
@@ -139,31 +161,62 @@ function buildQuery(page) {
   }
 }
 
-async function fetchPermissions() {
-  permissionLoading.value = true
-  try {
-    const res = await getPermissionOptions({
-      page: 1,
-      limit: 500,
-      isActive: true,
-    })
+function showToast(severity, summary, detail, life = 3000) {
+  toast.add({
+    severity,
+    summary,
+    detail,
+    life,
+  })
+}
 
-    const payload = normalizePayload(res)
-    const items = normalizePermissionItems(payload)
-    permissionOptions.value = items.map(mapPermissionOption)
+async function fetchAllPermissions() {
+  permissionLoading.value = true
+
+  try {
+    const allItems = []
+    let page = 1
+    let hasMore = true
+
+    while (hasMore) {
+      const res = await getPermissionOptions({
+        page,
+        limit: PERMISSION_PAGE_SIZE,
+        isActive: true,
+        sortField: 'module',
+        sortOrder: 1,
+      })
+
+      const payload = normalizePayload(res)
+      const items = normalizeItems(payload)
+
+      allItems.push(...items)
+
+      const pagination = payload?.pagination || {}
+      hasMore = !!pagination.hasMore
+      page += 1
+
+      if (page > 50) {
+        hasMore = false
+      }
+    }
+
+    permissionOptions.value = allItems.map(mapPermissionOption)
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Permissions load failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to load permissions',
-      life: 3000,
-    })
+    permissionOptions.value = []
+    showToast(
+      'error',
+      t('access.permission.loadFailed'),
+      getApiErrorMessage(error, t('access.permission.loadFailed')),
+    )
   } finally {
     permissionLoading.value = false
   }
+}
+
+async function ensurePermissionsLoaded() {
+  if (permissionOptions.value.length) return
+  await fetchAllPermissions()
 }
 
 async function fetchPage(page, { replace = false, silent = false } = {}) {
@@ -181,45 +234,42 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
     const payload = normalizePayload(res)
     const items = normalizeItems(payload)
-    const total = Number(payload?.pagination?.total || 0)
+    const total = normalizePaginationTotal(payload)
+    const startIndex = (page - 1) * PAGE_SIZE
 
     totalRecords.value = total
 
     if (replace) {
-      const nextRows = Array.from({ length: total }, () => null)
-      const startIndex = (page - 1) * PAGE_SIZE
+      const nextRows = total > 0 ? Array.from({ length: total }, () => null) : []
 
-      for (let i = 0; i < items.length; i += 1) {
-        nextRows[startIndex + i] = items[i]
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
       }
 
-      rows.value = total === 0 ? [] : nextRows
+      rows.value = nextRows
       loadedPages.value = new Set([page])
     } else {
       if (!rows.value.length && total > 0) {
         rows.value = Array.from({ length: total }, () => null)
       }
 
-      const startIndex = (page - 1) * PAGE_SIZE
+      const nextRows = [...rows.value]
 
-      for (let i = 0; i < items.length; i += 1) {
-        rows.value[startIndex + i] = items[i]
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
       }
 
+      rows.value = nextRows
       loadedPages.value.add(page)
     }
 
     bootstrapped.value = true
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Load failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to load roles',
-      life: 3000,
-    })
+    showToast(
+      'error',
+      t('common.loadFailed'),
+      getApiErrorMessage(error, t('access.role.loadFailed')),
+    )
   } finally {
     backgroundLoading.value = false
   }
@@ -240,6 +290,7 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
 
 function runSearchSoon() {
   window.clearTimeout(searchTimer)
+
   searchTimer = window.setTimeout(() => {
     reloadFirstPage({ keepVisible: true })
   }, SEARCH_DEBOUNCE_MS)
@@ -293,89 +344,69 @@ function resetForm() {
 
 async function openCreateDialog() {
   resetForm()
-
-  if (!permissionOptions.value.length) {
-    await fetchPermissions()
-  }
-
+  await ensurePermissionsLoaded()
   roleDialogVisible.value = true
 }
 
 async function openEditDialog(row) {
-  editingRoleId.value = row?.id || row?._id || ''
+  editingRoleId.value = normalizeId(row)
   form.code = row?.code || ''
   form.displayName = row?.displayName || ''
   form.permissionIds = normalizeRolePermissionIds(row)
-  form.isActive = !!row?.isActive
+  form.isActive = row?.isActive !== false
 
-  if (!permissionOptions.value.length) {
-    await fetchPermissions()
-  }
+  await ensurePermissionsLoaded()
 
   roleDialogVisible.value = true
 }
 
 async function submitRole() {
   saving.value = true
+
   try {
     const payload = {
       code: String(form.code || '').trim().toUpperCase(),
       displayName: String(form.displayName || '').trim(),
       permissionIds: Array.isArray(form.permissionIds)
-        ? [...new Set(form.permissionIds.map((v) => String(v)).filter(Boolean))]
+        ? [...new Set(form.permissionIds.map((value) => String(value)).filter(Boolean))]
         : [],
       isActive: !!form.isActive,
     }
 
     if (editingRoleId.value) {
       await updateSystemRole(editingRoleId.value, payload)
-      toast.add({
-        severity: 'success',
-        summary: 'Updated',
-        detail: 'Role updated successfully',
-        life: 2500,
-      })
+
+      showToast('success', t('common.updated'), t('access.role.updatedSuccess'), 2500)
     } else {
       await createSystemRole(payload)
-      toast.add({
-        severity: 'success',
-        summary: 'Created',
-        detail: 'Role created successfully',
-        life: 2500,
-      })
+
+      showToast('success', t('common.created'), t('access.role.createdSuccess'), 2500)
     }
 
     roleDialogVisible.value = false
     resetForm()
+
     await reloadFirstPage({ keepVisible: false })
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: isEditMode.value ? 'Save failed' : 'Create failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to save role',
-      life: 3500,
-    })
+    showToast(
+      'error',
+      isEditMode.value ? t('common.updateFailed') : t('common.createFailed'),
+      buildSaveErrorMessage(error, t('access.role.saveFailed')),
+      3500,
+    )
   } finally {
     saving.value = false
   }
 }
 
 function statusSeverity(active) {
-  return active ? 'success' : 'contrast'
-}
-
-function formatDateTime(value) {
-  if (!value) return '-'
-  return new Date(value).toLocaleString()
+  return active ? 'success' : 'secondary'
 }
 
 onMounted(async () => {
   await Promise.all([
     reloadFirstPage({ keepVisible: false }),
-    fetchPermissions(),
+    fetchAllPermissions(),
   ])
 })
 
@@ -385,218 +416,300 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4">
-    <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-      <div class="flex flex-wrap items-center gap-2">
+  <div class="ot-page-shell">
+    <section class="ot-page-header">
+      <div class="ot-page-header-main">
+        <div class="ot-page-kicker">
+          <i class="pi pi-id-card" />
+          {{ t('nav.accessControl') }}
+        </div>
+
+        <h1 class="ot-page-title">
+          {{ t('nav.roles') }}
+        </h1>
+
+        <p class="ot-page-subtitle">
+          {{ t('access.role.subtitle') }}
+        </p>
+      </div>
+
+      <div class="ot-page-actions">
         <Button
-          label="New Role"
+          :label="t('access.role.newRole')"
           icon="pi pi-plus"
           size="small"
           @click="openCreateDialog"
         />
       </div>
-    </div>
+    </section>
 
-    <div class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]">
-      <div class="border-b border-[color:var(--ot-border)] px-3 py-3">
-        <div class="flex flex-col gap-2 xl:flex-row xl:items-center">
-          <IconField class="w-full xl:w-[280px] xl:shrink-0">
-            <InputIcon class="pi pi-search" />
-            <InputText
-              v-model="filters.search"
-              placeholder="Search role code or display name"
-              class="w-full"
-              size="small"
-              @input="onSearchInput"
-            />
-          </IconField>
+    <section class="ot-filter-bar">
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('common.search') }}
+        </label>
 
-          <div class="w-full xl:w-[160px] xl:shrink-0">
-            <Select
-              v-model="filters.isActive"
-              :options="statusOptions"
-              optionLabel="label"
-              optionValue="value"
-              placeholder="Status"
-              class="w-full"
-              size="small"
-              @change="onStatusChange"
-            />
-          </div>
+        <IconField>
+          <InputIcon class="pi pi-search" />
+          <InputText
+            v-model="filters.search"
+            :placeholder="t('access.role.searchPlaceholder')"
+            class="w-full"
+            size="small"
+            @input="onSearchInput"
+          />
+        </IconField>
+      </div>
 
-          <div class="flex items-center gap-2 xl:ml-auto xl:shrink-0">
-            <div class="rounded-lg border border-[color:var(--ot-border)] px-3 py-1.5 text-xs font-medium text-[color:var(--ot-text-muted)]">
-              Loaded {{ summaryText }}
-            </div>
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('common.status') }}
+        </label>
 
-            <Button
-              label="Clear"
-              icon="pi pi-refresh"
-              severity="secondary"
-              outlined
-              size="small"
-              @click="clearFilters"
-            />
-          </div>
+        <Select
+          v-model="filters.isActive"
+          :options="statusOptions"
+          option-label="label"
+          option-value="value"
+          class="w-full"
+          size="small"
+          @change="onStatusChange"
+        />
+      </div>
+
+      <div class="ot-filter-actions">
+        <span class="ot-loaded-badge">
+          {{ loadedLabel }}
+        </span>
+
+        <Button
+          :label="t('common.clear')"
+          icon="pi pi-filter-slash"
+          severity="secondary"
+          outlined
+          size="small"
+          @click="clearFilters"
+        />
+      </div>
+    </section>
+
+    <section class="ot-table-card">
+      <div class="ot-table-toolbar">
+        <div>
+          <h2 class="ot-table-title">
+            {{ t('access.role.tableTitle') }}
+          </h2>
+
+          <p class="ot-table-subtitle">
+            {{ t('access.role.tableSubtitle') }}
+          </p>
+        </div>
+
+        <div class="ot-table-actions">
+          <span
+            v-if="backgroundLoading && hasAnyData"
+            class="ot-loaded-badge"
+          >
+            <i class="pi pi-spin pi-spinner" />
+            {{ t('common.updating') }}
+          </span>
         </div>
       </div>
 
-      <DataTable
-        :value="rows"
-        lazy
-        removableSort
-        scrollable
-        scrollHeight="500px"
-        :sortField="filters.sortField"
-        :sortOrder="filters.sortOrder"
-        tableStyle="min-width: 74rem"
-        class="role-table"
-        :virtualScrollerOptions="useVirtualScroll ? {
-          lazy: true,
-          onLazyLoad: onVirtualLazyLoad,
-          itemSize: 76,
-          delay: 0,
-          showLoader: false,
-          loading: false,
-          numToleratedItems: 12,
-        } : null"
-        @sort="onSort"
-      >
-        <template #empty>
-          <div
-            v-if="bootstrapped"
-            class="py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
+      <div class="ot-table-wrapper">
+        <DataTable
+          :value="rows"
+          lazy
+          removable-sort
+          scrollable
+          scroll-height="500px"
+          :sort-field="filters.sortField"
+          :sort-order="filters.sortOrder"
+          table-style="min-width: 74rem"
+          class="ot-data-table ot-data-table-compact"
+          :virtual-scroller-options="useVirtualScroll ? {
+            lazy: true,
+            onLazyLoad: onVirtualLazyLoad,
+            itemSize: 76,
+            delay: 0,
+            showLoader: false,
+            loading: false,
+            numToleratedItems: 12,
+          } : null"
+          @sort="onSort"
+        >
+          <template #empty>
+            <div
+              v-if="bootstrapped"
+              class="ot-empty-state"
+            >
+              <div class="ot-empty-icon">
+                <i class="pi pi-id-card" />
+              </div>
+              <div class="ot-empty-title">
+                {{ t('common.noData') }}
+              </div>
+              <div class="ot-empty-text">
+                {{ t('access.role.noData') }}
+              </div>
+            </div>
+          </template>
+
+          <Column
+            field="code"
+            :header="t('common.code')"
+            sortable
+            style="min-width: 10rem"
           >
-            No roles found.
-          </div>
-        </template>
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="font-bold"
+              >
+                {{ data.code || '-' }}
+              </span>
+            </template>
+          </Column>
 
-        <Column field="code" header="Code" sortable style="min-width: 10rem">
-          <template #body="{ data }">
-            <span v-if="data" class="font-medium">
-              {{ data.code || '-' }}
-            </span>
-          </template>
-        </Column>
+          <Column
+            field="displayName"
+            :header="t('access.role.displayName')"
+            sortable
+            style="min-width: 15rem"
+          >
+            <template #body="{ data }">
+              <span v-if="data">{{ data.displayName || '-' }}</span>
+            </template>
+          </Column>
 
-        <Column field="displayName" header="Display Name" sortable style="min-width: 15rem">
-          <template #body="{ data }">
-            <span v-if="data">{{ data.displayName || '-' }}</span>
-          </template>
-        </Column>
+          <Column
+            :header="t('access.role.permissionsByModule')"
+            style="min-width: 28rem"
+          >
+            <template #body="{ data }">
+              <RolePermissionSummary
+                v-if="data"
+                :groups="data.permissionGroups || []"
+                :max-per-module="4"
+              />
+            </template>
+          </Column>
 
-        <Column header="Permissions by Module" style="min-width: 28rem">
-          <template #body="{ data }">
-            <RolePermissionSummary
-              v-if="data"
-              :groups="data.permissionGroups || []"
-              :maxPerModule="4"
-            />
-          </template>
-        </Column>
+          <Column
+            :header="t('access.role.count')"
+            style="min-width: 6rem"
+          >
+            <template #body="{ data }">
+              <Tag
+                v-if="data"
+                :value="String(data.permissionCount || 0)"
+                severity="secondary"
+              />
+            </template>
+          </Column>
 
-        <Column header="Count" style="min-width: 6rem">
-          <template #body="{ data }">
-            <Tag
-              v-if="data"
-              :value="String(data.permissionCount || 0)"
-              severity="contrast"
-              class="ot-count-tag"
-            />
-          </template>
-        </Column>
+          <Column
+            field="isActive"
+            :header="t('common.status')"
+            sortable
+            style="min-width: 7rem"
+          >
+            <template #body="{ data }">
+              <Tag
+                v-if="data"
+                :value="data.isActive ? t('common.active') : t('common.inactive')"
+                :severity="statusSeverity(data.isActive)"
+              />
+            </template>
+          </Column>
 
-        <Column field="isActive" header="Status" sortable style="min-width: 7rem">
-          <template #body="{ data }">
-            <Tag
-              v-if="data"
-              :value="data.isActive ? 'Active' : 'Inactive'"
-              :severity="statusSeverity(data.isActive)"
-              class="ot-status-tag"
-            />
-          </template>
-        </Column>
+          <Column
+            field="createdAt"
+            :header="t('common.createdAt')"
+            sortable
+            style="min-width: 13rem"
+          >
+            <template #body="{ data }">
+              <span v-if="data">{{ formatDateTime(data.createdAt) }}</span>
+            </template>
+          </Column>
 
-        <Column field="createdAt" header="Created At" sortable style="min-width: 13rem">
-          <template #body="{ data }">
-            <span v-if="data">{{ formatDateTime(data.createdAt) }}</span>
-          </template>
-        </Column>
-
-        <Column header="Actions" style="width: 7rem; min-width: 7rem">
-          <template #body="{ data }">
-            <Button
-              v-if="data"
-              label="Edit"
-              icon="pi pi-pencil"
-              size="small"
-              outlined
-              @click="openEditDialog(data)"
-            />
-          </template>
-        </Column>
-      </DataTable>
-
-      <div
-        v-if="backgroundLoading && hasAnyData"
-        class="flex items-center justify-center border-t border-[color:var(--ot-border)] px-3 py-2 text-xs text-[color:var(--ot-text-muted)]"
-      >
-        Updating...
+          <Column
+            :header="t('common.actions')"
+            style="width: 7rem; min-width: 7rem"
+          >
+            <template #body="{ data }">
+              <Button
+                v-if="data"
+                :label="t('common.edit')"
+                icon="pi pi-pencil"
+                size="small"
+                outlined
+                @click="openEditDialog(data)"
+              />
+            </template>
+          </Column>
+        </DataTable>
       </div>
-    </div>
+    </section>
 
     <Dialog
       v-model:visible="roleDialogVisible"
       modal
-      :header="isEditMode ? 'Edit Role' : 'Create Role'"
+      :header="dialogTitle"
       :style="{ width: '76rem', maxWidth: '96vw' }"
       @hide="resetForm"
     >
-      <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Role Code
-          </label>
-          <InputText
-            v-model="form.code"
-            class="w-full"
-            placeholder="Example: SYSTEM_ADMIN"
-          />
+      <div class="ot-dialog-form">
+        <div class="ot-form-grid">
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('access.role.roleCode') }}
+            </label>
+
+            <InputText
+              v-model="form.code"
+              class="w-full"
+              placeholder="SYSTEM_ADMIN"
+            />
+          </div>
+
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('access.role.displayName') }}
+            </label>
+
+            <InputText
+              v-model="form.displayName"
+              class="w-full"
+              :placeholder="t('access.role.displayNameExample')"
+            />
+          </div>
         </div>
 
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Display Name
-          </label>
-          <InputText
-            v-model="form.displayName"
-            class="w-full"
-            placeholder="Example: System Administrator"
-          />
-        </div>
-
-        <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] px-4 py-3 md:col-span-2">
-          <span class="text-sm font-medium text-[color:var(--ot-text)]">
-            Active Status
+        <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] px-4 py-3">
+          <span class="text-sm font-semibold text-[color:var(--ot-text)]">
+            {{ t('common.active') }}
           </span>
+
           <InputSwitch v-model="form.isActive" />
         </div>
 
-        <div class="space-y-3 md:col-span-2">
+        <div class="space-y-3">
           <div class="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <label class="text-sm font-medium text-[color:var(--ot-text)]">
-                Permissions by Module
+              <label class="ot-field-label">
+                {{ t('access.role.permissionsByModule') }}
               </label>
-              <p class="mt-1 text-sm text-[color:var(--ot-text-muted)]">
-                Select permissions clearly by module to avoid confusing role setup.
+
+              <p class="ot-field-help">
+                {{ t('access.role.permissionHelp') }}
               </p>
             </div>
 
             <Tag
-              :value="`${selectedPermissionCount} selected`"
-              severity="contrast"
-              class="ot-count-tag"
+              :value="t('access.role.selectedCount', { count: selectedPermissionCount })"
+              severity="secondary"
             />
           </div>
 
@@ -609,15 +722,16 @@ onBeforeUnmount(() => {
       </div>
 
       <template #footer>
-        <div class="flex justify-end gap-2">
+        <div class="ot-form-footer">
           <Button
-            label="Cancel"
+            :label="t('common.cancel')"
             text
             size="small"
             @click="roleDialogVisible = false"
           />
+
           <Button
-            :label="isEditMode ? 'Save Changes' : 'Create Role'"
+            :label="saveLabel"
             :loading="saving"
             :disabled="isSaveDisabled"
             size="small"
@@ -628,33 +742,3 @@ onBeforeUnmount(() => {
     </Dialog>
   </div>
 </template>
-
-<style scoped>
-:deep(.role-table .p-datatable-thead > tr > th) {
-  padding: 0.72rem 0.9rem !important;
-}
-
-:deep(.role-table .p-datatable-tbody > tr > td) {
-  padding: 0.72rem 0.9rem !important;
-  height: 76px !important;
-  vertical-align: middle !important;
-}
-
-:deep(.role-table .p-tag.ot-status-tag) {
-  min-height: 1.35rem !important;
-  padding: 0.12rem 0.45rem !important;
-  font-size: 0.7rem !important;
-  font-weight: 600 !important;
-  line-height: 1 !important;
-  border-radius: 999px !important;
-}
-
-:deep(.p-tag.ot-count-tag) {
-  min-height: 1.35rem !important;
-  padding: 0.12rem 0.45rem !important;
-  font-size: 0.7rem !important;
-  font-weight: 600 !important;
-  line-height: 1 !important;
-  border-radius: 999px !important;
-}
-</style>

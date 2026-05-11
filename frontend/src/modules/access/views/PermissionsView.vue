@@ -1,6 +1,7 @@
 <!-- frontend/src/modules/access/views/PermissionsView.vue -->
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
@@ -13,8 +14,11 @@ import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 
 import { getPermissions } from '@/modules/access/permission.api'
+import { getApiErrorMessage } from '@/shared/utils/apiError'
+import { formatDateTime } from '@/shared/utils/dateFormat'
 
 const toast = useToast()
+const { t } = useI18n()
 
 const PAGE_SIZE = 10
 const SEARCH_DEBOUNCE_MS = 250
@@ -36,21 +40,26 @@ const filters = reactive({
   sortOrder: 1,
 })
 
-const statusOptions = [
-  { label: 'All Status', value: '' },
-  { label: 'Active', value: 'true' },
-  { label: 'Inactive', value: 'false' },
-]
+const statusOptions = computed(() => [
+  { label: t('common.allStatus'), value: '' },
+  { label: t('common.active'), value: 'true' },
+  { label: t('common.inactive'), value: 'false' },
+])
 
 const totalPermissions = computed(() => Number(totalRecords.value || 0))
 const loadedCount = computed(() => rows.value.filter(Boolean).length)
-const summaryText = computed(() => `${loadedCount.value} of ${totalPermissions.value}`)
-
 const hasAnyData = computed(() => rows.value.some(Boolean))
 const useVirtualScroll = computed(() => totalPermissions.value > PAGE_SIZE)
 
+const loadedLabel = computed(() =>
+  t('common.loaded', {
+    loaded: loadedCount.value,
+    total: totalPermissions.value,
+  }),
+)
+
 const moduleSelectOptions = computed(() => [
-  { label: 'All Modules', value: '' },
+  { label: t('access.permission.allModules'), value: '' },
   ...moduleOptions.value.map((item) => ({
     label: item,
     value: item,
@@ -68,6 +77,10 @@ function normalizeItems(payload) {
   return Array.isArray(payload?.items) ? payload.items : []
 }
 
+function normalizePaginationTotal(payload) {
+  return Number(payload?.pagination?.total || payload?.total || 0)
+}
+
 function buildQuery(page) {
   return {
     page,
@@ -78,6 +91,15 @@ function buildQuery(page) {
     sortField: filters.sortField,
     sortOrder: filters.sortOrder,
   }
+}
+
+function showToast(severity, summary, detail, life = 3000) {
+  toast.add({
+    severity,
+    summary,
+    detail,
+    life,
+  })
 }
 
 async function fetchPage(page, { replace = false, silent = false } = {}) {
@@ -95,7 +117,8 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
     const payload = normalizePayload(res)
     const items = normalizeItems(payload)
-    const total = Number(payload?.pagination?.total || 0)
+    const total = normalizePaginationTotal(payload)
+    const startIndex = (page - 1) * PAGE_SIZE
 
     totalRecords.value = total
     moduleOptions.value = Array.isArray(payload?.filters?.modules)
@@ -103,40 +126,36 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
       : []
 
     if (replace) {
-      const nextRows = Array.from({ length: total }, () => null)
-      const startIndex = (page - 1) * PAGE_SIZE
+      const nextRows = total > 0 ? Array.from({ length: total }, () => null) : []
 
-      for (let i = 0; i < items.length; i += 1) {
-        nextRows[startIndex + i] = items[i]
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
       }
 
-      rows.value = total === 0 ? [] : nextRows
+      rows.value = nextRows
       loadedPages.value = new Set([page])
     } else {
       if (!rows.value.length && total > 0) {
         rows.value = Array.from({ length: total }, () => null)
       }
 
-      const startIndex = (page - 1) * PAGE_SIZE
+      const nextRows = [...rows.value]
 
-      for (let i = 0; i < items.length; i += 1) {
-        rows.value[startIndex + i] = items[i]
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
       }
 
+      rows.value = nextRows
       loadedPages.value.add(page)
     }
 
     bootstrapped.value = true
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Load failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to load permissions',
-      life: 3000,
-    })
+    showToast(
+      'error',
+      t('common.loadFailed'),
+      getApiErrorMessage(error, t('access.permission.loadFailed')),
+    )
   } finally {
     backgroundLoading.value = false
   }
@@ -157,6 +176,7 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
 
 function runSearchSoon() {
   window.clearTimeout(searchTimer)
+
   searchTimer = window.setTimeout(() => {
     reloadFirstPage({ keepVisible: true })
   }, SEARCH_DEBOUNCE_MS)
@@ -206,12 +226,7 @@ async function onVirtualLazyLoad(event) {
 }
 
 function statusSeverity(active) {
-  return active ? 'success' : 'contrast'
-}
-
-function formatDateTime(value) {
-  if (!value) return '-'
-  return new Date(value).toLocaleString()
+  return active ? 'success' : 'secondary'
 }
 
 onMounted(() => {
@@ -224,165 +239,232 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4">
+  <div class="ot-page-shell">
+    <section class="ot-page-header">
+      <div class="ot-page-header-main">
+        <div class="ot-page-kicker">
+          <i class="pi pi-shield" />
+          {{ t('nav.accessControl') }}
+        </div>
 
-    <div class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]">
-      <div class="border-b border-[color:var(--ot-border)] px-3 py-3">
-        <div class="flex flex-col gap-2 xl:flex-row xl:items-center">
-          <IconField class="w-full xl:w-[280px] xl:shrink-0">
-            <InputIcon class="pi pi-search" />
-            <InputText
-              v-model="filters.search"
-              placeholder="Search code, name, module, description"
-              class="w-full"
-              size="small"
-              @input="onSearchInput"
-            />
-          </IconField>
+        <h1 class="ot-page-title">
+          {{ t('nav.permissions') }}
+        </h1>
 
-          <div class="w-full xl:w-[180px] xl:shrink-0">
-            <Select
-              v-model="filters.module"
-              :options="moduleSelectOptions"
-              optionLabel="label"
-              optionValue="value"
-              placeholder="All Modules"
-              class="w-full"
-              size="small"
-              @change="onModuleChange"
-            />
-          </div>
+        <p class="ot-page-subtitle">
+          {{ t('access.permission.subtitle') }}
+        </p>
+      </div>
+    </section>
 
-          <div class="w-full xl:w-[160px] xl:shrink-0">
-            <Select
-              v-model="filters.isActive"
-              :options="statusOptions"
-              optionLabel="label"
-              optionValue="value"
-              placeholder="Status"
-              class="w-full"
-              size="small"
-              @change="onStatusChange"
-            />
-          </div>
+    <section class="ot-filter-bar ot-filter-bar-5">
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('common.search') }}
+        </label>
 
-          <div class="flex items-center gap-2 xl:ml-auto xl:shrink-0">
-            <div class="rounded-lg border border-[color:var(--ot-border)] px-3 py-1.5 text-xs font-medium text-[color:var(--ot-text-muted)]">
-              Loaded {{ summaryText }}
-            </div>
+        <IconField>
+          <InputIcon class="pi pi-search" />
+          <InputText
+            v-model="filters.search"
+            :placeholder="t('access.permission.searchPlaceholder')"
+            class="w-full"
+            size="small"
+            @input="onSearchInput"
+          />
+        </IconField>
+      </div>
 
-            <Button
-              label="Clear"
-              icon="pi pi-refresh"
-              severity="secondary"
-              outlined
-              size="small"
-              @click="clearFilters"
-            />
-          </div>
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('access.permission.module') }}
+        </label>
+
+        <Select
+          v-model="filters.module"
+          :options="moduleSelectOptions"
+          option-label="label"
+          option-value="value"
+          class="w-full"
+          size="small"
+          @change="onModuleChange"
+        />
+      </div>
+
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('common.status') }}
+        </label>
+
+        <Select
+          v-model="filters.isActive"
+          :options="statusOptions"
+          option-label="label"
+          option-value="value"
+          class="w-full"
+          size="small"
+          @change="onStatusChange"
+        />
+      </div>
+
+      <div class="ot-filter-actions">
+        <span class="ot-loaded-badge">
+          {{ loadedLabel }}
+        </span>
+
+        <Button
+          :label="t('common.clear')"
+          icon="pi pi-filter-slash"
+          severity="secondary"
+          outlined
+          size="small"
+          @click="clearFilters"
+        />
+      </div>
+    </section>
+
+    <section class="ot-table-card">
+      <div class="ot-table-toolbar">
+        <div>
+          <h2 class="ot-table-title">
+            {{ t('access.permission.tableTitle') }}
+          </h2>
+
+          <p class="ot-table-subtitle">
+            {{ t('access.permission.tableSubtitle') }}
+          </p>
+        </div>
+
+        <div class="ot-table-actions">
+          <span
+            v-if="backgroundLoading && hasAnyData"
+            class="ot-loaded-badge"
+          >
+            <i class="pi pi-spin pi-spinner" />
+            {{ t('common.updating') }}
+          </span>
         </div>
       </div>
 
-      <DataTable
-        :value="rows"
-        lazy
-        removableSort
-        scrollable
-        scrollHeight="500px"
-        :sortField="filters.sortField"
-        :sortOrder="filters.sortOrder"
-        tableStyle="min-width: 72rem"
-        class="permission-table"
-        :virtualScrollerOptions="useVirtualScroll ? {
-          lazy: true,
-          onLazyLoad: onVirtualLazyLoad,
-          itemSize: 72,
-          delay: 0,
-          showLoader: false,
-          loading: false,
-          numToleratedItems: 12,
-        } : null"
-        @sort="onSort"
-      >
-        <template #empty>
-          <div
-            v-if="bootstrapped"
-            class="py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
+      <div class="ot-table-wrapper">
+        <DataTable
+          :value="rows"
+          lazy
+          removable-sort
+          scrollable
+          scroll-height="500px"
+          :sort-field="filters.sortField"
+          :sort-order="filters.sortOrder"
+          table-style="min-width: 72rem"
+          class="ot-data-table ot-data-table-compact"
+          :virtual-scroller-options="useVirtualScroll ? {
+            lazy: true,
+            onLazyLoad: onVirtualLazyLoad,
+            itemSize: 72,
+            delay: 0,
+            showLoader: false,
+            loading: false,
+            numToleratedItems: 12,
+          } : null"
+          @sort="onSort"
+        >
+          <template #empty>
+            <div
+              v-if="bootstrapped"
+              class="ot-empty-state"
+            >
+              <div class="ot-empty-icon">
+                <i class="pi pi-shield" />
+              </div>
+              <div class="ot-empty-title">
+                {{ t('common.noData') }}
+              </div>
+              <div class="ot-empty-text">
+                {{ t('access.permission.noData') }}
+              </div>
+            </div>
+          </template>
+
+          <Column
+            field="module"
+            :header="t('access.permission.module')"
+            sortable
+            style="min-width: 11rem"
           >
-            No permissions found.
-          </div>
-        </template>
+            <template #body="{ data }">
+              <span v-if="data">{{ data.module || '-' }}</span>
+            </template>
+          </Column>
 
-        <Column field="module" header="Module" sortable style="min-width: 11rem">
-          <template #body="{ data }">
-            <span v-if="data">{{ data.module || '-' }}</span>
-          </template>
-        </Column>
+          <Column
+            field="code"
+            :header="t('common.code')"
+            sortable
+            style="min-width: 14rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="font-bold"
+              >
+                {{ data.code || '-' }}
+              </span>
+            </template>
+          </Column>
 
-        <Column field="code" header="Code" sortable style="min-width: 14rem">
-          <template #body="{ data }">
-            <span v-if="data" class="font-medium">{{ data.code || '-' }}</span>
-          </template>
-        </Column>
+          <Column
+            field="name"
+            :header="t('common.name')"
+            sortable
+            style="min-width: 15rem"
+          >
+            <template #body="{ data }">
+              <span v-if="data">{{ data.name || '-' }}</span>
+            </template>
+          </Column>
 
-        <Column field="name" header="Name" sortable style="min-width: 15rem">
-          <template #body="{ data }">
-            <span v-if="data">{{ data.name || '-' }}</span>
-          </template>
-        </Column>
+          <Column
+            field="description"
+            :header="t('common.description')"
+            style="min-width: 18rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="ot-truncate-2"
+              >
+                {{ data.description || '-' }}
+              </span>
+            </template>
+          </Column>
 
-        <Column field="description" header="Description" style="min-width: 18rem">
-          <template #body="{ data }">
-            <span v-if="data" class="line-clamp-1">
-              {{ data.description || '-' }}
-            </span>
-          </template>
-        </Column>
+          <Column
+            field="isActive"
+            :header="t('common.status')"
+            sortable
+            style="min-width: 7rem"
+          >
+            <template #body="{ data }">
+              <Tag
+                v-if="data"
+                :value="data.isActive ? t('common.active') : t('common.inactive')"
+                :severity="statusSeverity(data.isActive)"
+              />
+            </template>
+          </Column>
 
-        <Column field="isActive" header="Status" sortable style="min-width: 7rem">
-          <template #body="{ data }">
-            <Tag
-              v-if="data"
-              :value="data.isActive ? 'Active' : 'Inactive'"
-              :severity="statusSeverity(data.isActive)"
-              class="ot-status-tag"
-            />
-          </template>
-        </Column>
-
-        <Column field="createdAt" header="Created At" sortable style="min-width: 13rem">
-          <template #body="{ data }">
-            <span v-if="data">{{ formatDateTime(data.createdAt) }}</span>
-          </template>
-        </Column>
-      </DataTable>
-
-      <div
-        v-if="backgroundLoading && hasAnyData"
-        class="flex items-center justify-center border-t border-[color:var(--ot-border)] px-3 py-2 text-xs text-[color:var(--ot-text-muted)]"
-      >
-        Updating...
+          <Column
+            field="createdAt"
+            :header="t('common.createdAt')"
+            sortable
+            style="min-width: 13rem"
+          >
+            <template #body="{ data }">
+              <span v-if="data">{{ formatDateTime(data.createdAt) }}</span>
+            </template>
+          </Column>
+        </DataTable>
       </div>
-    </div>
+    </section>
   </div>
 </template>
-
-<style scoped>
-:deep(.permission-table .p-datatable-thead > tr > th) {
-  padding: 0.72rem 0.9rem !important;
-}
-
-:deep(.permission-table .p-datatable-tbody > tr > td) {
-  padding: 0.72rem 0.9rem !important;
-  height: 72px !important;
-}
-
-:deep(.permission-table .p-tag.ot-status-tag) {
-  min-height: 1.35rem !important;
-  padding: 0.12rem 0.45rem !important;
-  font-size: 0.7rem !important;
-  font-weight: 600 !important;
-  line-height: 1 !important;
-  border-radius: 999px !important;
-}
-</style>

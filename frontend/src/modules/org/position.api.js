@@ -1,6 +1,10 @@
 // frontend/src/modules/org/position.api.js
+
 import api from '@/shared/services/api'
-import { toFileFormData } from '@/shared/utils/formData'
+
+function cleanCode(code) {
+  return encodeURIComponent(String(code ?? '').trim().toUpperCase())
+}
 
 export function getPositionLookupOptions(params = {}) {
   return api.get('/org/positions/lookup', { params })
@@ -10,38 +14,40 @@ export function getPositions(params = {}) {
   return api.get('/org/positions', { params })
 }
 
-export function getPositionById(id) {
-  return api.get(`/org/positions/${id}`)
+export function getPositionByCode(code) {
+  return api.get(`/org/positions/${cleanCode(code)}`)
 }
 
 export function createPosition(payload) {
   return api.post('/org/positions', payload)
 }
 
-export function updatePosition(id, payload) {
-  return api.patch(`/org/positions/${id}`, payload)
+export function updatePosition(code, payload) {
+  return api.patch(`/org/positions/${cleanCode(code)}`, payload)
 }
 
-export function downloadPositionSample() {
-  return api.get('/org/positions/sample', {
+export function downloadPositionImportSample() {
+  return api.get('/org/positions/import/sample', {
     responseType: 'blob',
   })
 }
 
-export function exportPositions(params = {}) {
+export function importPositionsExcel(file, options = {}) {
+  const formData = new FormData()
+  formData.append('file', file)
+
+  return api.post('/org/positions/import', formData, {
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+      'Content-Type': 'multipart/form-data',
+    },
+  })
+}
+
+export function exportPositionsExcel(params = {}) {
   return api.get('/org/positions/export', {
     params,
     responseType: 'blob',
-  })
-}
-
-export function importPositions(input, options = {}) {
-  const { onUploadProgress } = options
-
-  return api.post('/org/positions/import', toFileFormData(input), {
-    headers: {
-      'Content-Type': 'multipart/form-data',
-    },
-    onUploadProgress,
   })
 }

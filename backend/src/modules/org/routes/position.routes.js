@@ -3,7 +3,7 @@
 const express = require('express')
 const multer = require('multer')
 
-const controller = require('../controllers/position.controller')
+const positionController = require('../controllers/position.controller')
 const requireAuth = require('../../../middlewares/requireAuth')
 const requirePermission = require('../../../middlewares/requirePermission.middleware')
 
@@ -12,38 +12,62 @@ const router = express.Router()
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 5 * 1024 * 1024,
+    fileSize: 10 * 1024 * 1024,
   },
 })
 
+// ✅ Important:
+// Login token must be verified before permission middleware.
+// Without this, req.user is empty and requirePermission returns 401.
 router.use(requireAuth)
 
-router.get('/lookup', requirePermission('POSITION_LOOKUP'), controller.lookup)
-
-router.get('/export', requirePermission('POSITION_VIEW'), controller.exportExcel)
-
 router.get(
-  '/import-sample',
-  requirePermission('POSITION_VIEW'),
-  controller.downloadSample,
+  '/lookup',
+  requirePermission('POSITION_LOOKUP'),
+  positionController.lookupPositions,
 )
 
-// Keep old route temporarily if your frontend still calls /sample.
-router.get('/sample', requirePermission('POSITION_VIEW'), controller.downloadSample)
+router.get(
+  '/export',
+  requirePermission('POSITION_VIEW'),
+  positionController.exportPositions,
+)
+
+router.get(
+  '/import/sample',
+  requirePermission('POSITION_VIEW'),
+  positionController.downloadPositionImportSample,
+)
 
 router.post(
   '/import',
   requirePermission('POSITION_CREATE'),
   upload.single('file'),
-  controller.importExcel,
+  positionController.importPositions,
 )
 
-router.get('/', requirePermission('POSITION_VIEW'), controller.list)
+router.get(
+  '/',
+  requirePermission('POSITION_VIEW'),
+  positionController.listPositions,
+)
 
-router.get('/:id', requirePermission('POSITION_VIEW'), controller.getOne)
+router.get(
+  '/:code',
+  requirePermission('POSITION_VIEW'),
+  positionController.getPositionByCode,
+)
 
-router.post('/', requirePermission('POSITION_CREATE'), controller.create)
+router.post(
+  '/',
+  requirePermission('POSITION_CREATE'),
+  positionController.createPosition,
+)
 
-router.patch('/:id', requirePermission('POSITION_UPDATE'), controller.update)
+router.patch(
+  '/:code',
+  requirePermission('POSITION_UPDATE'),
+  positionController.updatePosition,
+)
 
 module.exports = router

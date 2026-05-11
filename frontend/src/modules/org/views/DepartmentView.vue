@@ -1,6 +1,7 @@
 <!-- frontend/src/modules/org/views/DepartmentView.vue -->
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
@@ -22,8 +23,13 @@ import {
   updateDepartment,
 } from '@/modules/org/department.api'
 import DepartmentImportDialog from '@/modules/org/components/DepartmentImportDialog.vue'
+import { useAuthStore } from '@/modules/auth/auth.store'
+import { buildSaveErrorMessage, getApiErrorMessage } from '@/shared/utils/apiError'
+import { formatDateTime } from '@/shared/utils/dateFormat'
 
 const toast = useToast()
+const auth = useAuthStore()
+const { t } = useI18n()
 
 const PAGE_SIZE = 10
 const SEARCH_DEBOUNCE_MS = 250
@@ -56,16 +62,35 @@ const form = reactive({
   isActive: true,
 })
 
-const statusOptions = [
-  { label: 'All Status', value: '' },
-  { label: 'Active', value: 'true' },
-  { label: 'Inactive', value: 'false' },
-]
+const canCreate = computed(() => auth.hasPermission('DEPARTMENT_CREATE'))
+const canUpdate = computed(() => auth.hasPermission('DEPARTMENT_UPDATE'))
+
+const statusOptions = computed(() => [
+  { label: t('common.allStatus'), value: '' },
+  { label: t('common.active'), value: 'true' },
+  { label: t('common.inactive'), value: 'false' },
+])
 
 const isEditMode = computed(() => !!editingDepartmentId.value)
 const totalDepartments = computed(() => Number(totalRecords.value || 0))
 const loadedCount = computed(() => rows.value.filter(Boolean).length)
-const summaryText = computed(() => `${loadedCount.value} of ${totalDepartments.value}`)
+const hasAnyData = computed(() => rows.value.some(Boolean))
+const useVirtualScroll = computed(() => totalDepartments.value > PAGE_SIZE)
+
+const loadedLabel = computed(() =>
+  t('common.loaded', {
+    loaded: loadedCount.value,
+    total: totalDepartments.value,
+  }),
+)
+
+const dialogTitle = computed(() =>
+  isEditMode.value ? t('org.department.editTitle') : t('org.department.createTitle'),
+)
+
+const saveLabel = computed(() =>
+  isEditMode.value ? t('common.save') : t('org.department.createTitle'),
+)
 
 const isSaveDisabled = computed(() => {
   return (
@@ -74,9 +99,6 @@ const isSaveDisabled = computed(() => {
     !String(form.name || '').trim()
   )
 })
-
-const hasAnyData = computed(() => rows.value.some(Boolean))
-const useVirtualScroll = computed(() => totalDepartments.value > PAGE_SIZE)
 
 let searchTimer = null
 let currentRequestId = 0
@@ -89,6 +111,14 @@ function normalizeItems(payload) {
   return Array.isArray(payload?.items) ? payload.items : []
 }
 
+function normalizePaginationTotal(payload) {
+  return Number(payload?.pagination?.total || payload?.total || 0)
+}
+
+function normalizeId(row) {
+  return String(row?.id || row?._id || '').trim()
+}
+
 function buildQuery(page) {
   return {
     page,
@@ -98,6 +128,15 @@ function buildQuery(page) {
     sortField: filters.sortField,
     sortOrder: filters.sortOrder,
   }
+}
+
+function showToast(severity, summary, detail, life = 3000) {
+  toast.add({
+    severity,
+    summary,
+    detail,
+    life,
+  })
 }
 
 async function fetchPage(page, { replace = false, silent = false } = {}) {
@@ -115,45 +154,42 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
     const payload = normalizePayload(res)
     const items = normalizeItems(payload)
-    const total = Number(payload?.pagination?.total || 0)
+    const total = normalizePaginationTotal(payload)
+    const startIndex = (page - 1) * PAGE_SIZE
 
     totalRecords.value = total
 
     if (replace) {
-      const nextRows = Array.from({ length: total }, () => null)
-      const startIndex = (page - 1) * PAGE_SIZE
+      const nextRows = total > 0 ? Array.from({ length: total }, () => null) : []
 
-      for (let i = 0; i < items.length; i += 1) {
-        nextRows[startIndex + i] = items[i]
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
       }
 
-      rows.value = total === 0 ? [] : nextRows
+      rows.value = nextRows
       loadedPages.value = new Set([page])
     } else {
       if (!rows.value.length && total > 0) {
         rows.value = Array.from({ length: total }, () => null)
       }
 
-      const startIndex = (page - 1) * PAGE_SIZE
+      const nextRows = [...rows.value]
 
-      for (let i = 0; i < items.length; i += 1) {
-        rows.value[startIndex + i] = items[i]
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
       }
 
+      rows.value = nextRows
       loadedPages.value.add(page)
     }
 
     bootstrapped.value = true
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Load failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to load departments',
-      life: 3000,
-    })
+    showToast(
+      'error',
+      t('common.loadFailed'),
+      getApiErrorMessage(error, t('org.department.loadFailed')),
+    )
   } finally {
     backgroundLoading.value = false
   }
@@ -174,6 +210,7 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
 
 function runSearchSoon() {
   window.clearTimeout(searchTimer)
+
   searchTimer = window.setTimeout(() => {
     reloadFirstPage({ keepVisible: true })
   }, SEARCH_DEBOUNCE_MS)
@@ -231,16 +268,17 @@ function openCreateDialog() {
 }
 
 function openEditDialog(row) {
-  editingDepartmentId.value = row?.id || row?._id || ''
+  editingDepartmentId.value = normalizeId(row)
   form.code = row?.code || ''
   form.name = row?.name || ''
   form.description = row?.description || ''
-  form.isActive = !!row?.isActive
+  form.isActive = row?.isActive !== false
   departmentDialogVisible.value = true
 }
 
 async function submitDepartment() {
   saving.value = true
+
   try {
     const payload = {
       code: String(form.code || '').trim().toUpperCase(),
@@ -251,62 +289,56 @@ async function submitDepartment() {
 
     if (editingDepartmentId.value) {
       await updateDepartment(editingDepartmentId.value, payload)
-      toast.add({
-        severity: 'success',
-        summary: 'Updated',
-        detail: 'Department updated successfully',
-        life: 2500,
-      })
+      showToast('success', t('common.updated'), t('org.department.updatedSuccess'), 2500)
     } else {
       await createDepartment(payload)
-      toast.add({
-        severity: 'success',
-        summary: 'Created',
-        detail: 'Department created successfully',
-        life: 2500,
-      })
+      showToast('success', t('common.created'), t('org.department.createdSuccess'), 2500)
     }
 
     departmentDialogVisible.value = false
     resetForm()
+
     await reloadFirstPage({ keepVisible: false })
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: isEditMode.value ? 'Save failed' : 'Create failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to save department',
-      life: 3500,
-    })
+    showToast(
+      'error',
+      isEditMode.value ? t('common.updateFailed') : t('common.createFailed'),
+      buildSaveErrorMessage(error, t('org.department.saveFailed')),
+      3500,
+    )
   } finally {
     saving.value = false
   }
 }
 
 function statusSeverity(active) {
-  return active ? 'success' : 'contrast'
+  return active ? 'success' : 'secondary'
 }
 
-function formatDateTime(value) {
-  if (!value) return '-'
-  return new Date(value).toLocaleString()
+function getFilenameFromHeader(res, fallback) {
+  const disposition = String(res?.headers?.['content-disposition'] || '')
+  const match = disposition.match(/filename="?([^"]+)"?/i)
+
+  return match?.[1] || fallback
 }
 
 function downloadBlob(blob, filename) {
   const url = window.URL.createObjectURL(blob)
   const link = document.createElement('a')
+
   link.href = url
   link.download = filename
+
   document.body.appendChild(link)
   link.click()
   link.remove()
+
   window.URL.revokeObjectURL(url)
 }
 
 async function handleExport() {
   exporting.value = true
+
   try {
     const res = await exportDepartmentsExcel({
       search: String(filters.search || '').trim(),
@@ -321,36 +353,32 @@ async function handleExport() {
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     })
 
-    downloadBlob(blob, `departments-${Date.now()}.xlsx`)
+    downloadBlob(blob, getFilenameFromHeader(res, `departments-${Date.now()}.xlsx`))
 
-    toast.add({
-      severity: 'success',
-      summary: 'Exported',
-      detail: 'Department excel exported successfully',
-      life: 2500,
-    })
+    showToast('success', t('org.department.exported'), t('org.department.exportedSuccess'), 2500)
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Export failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to export excel',
-      life: 3500,
-    })
+    showToast(
+      'error',
+      t('org.department.exportFailed'),
+      getApiErrorMessage(error, t('org.department.exportFailed')),
+      3500,
+    )
   } finally {
     exporting.value = false
   }
 }
 
 async function handleImportSuccess(payload) {
-  toast.add({
-    severity: 'success',
-    summary: 'Imported',
-    detail: `Import completed. Created: ${payload?.createdCount || 0}, Updated: ${payload?.updatedCount || 0}`,
-    life: 3500,
-  })
+  const summary = payload?.summary || {}
+  const created = Number(summary.created || payload?.created || payload?.createdCount || 0)
+  const updated = Number(summary.updated || payload?.updated || payload?.updatedCount || 0)
+
+  showToast(
+    'success',
+    t('org.department.imported'),
+    t('org.department.importedSuccess', { created, updated }),
+    3500,
+  )
 
   await reloadFirstPage({ keepVisible: false })
 }
@@ -365,17 +393,32 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4">
+  <div class="ot-page-shell">
     <DepartmentImportDialog
       v-model:visible="importDialogVisible"
       @success="handleImportSuccess"
     />
 
-    <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+    <section class="ot-page-header">
+      <div class="ot-page-header-main">
+        <div class="ot-page-kicker">
+          <i class="pi pi-building" />
+          {{ t('nav.organization') }}
+        </div>
 
-      <div class="flex flex-wrap items-center gap-2">
+        <h1 class="ot-page-title">
+          {{ t('nav.departments') }}
+        </h1>
+
+        <p class="ot-page-subtitle">
+          {{ t('org.department.subtitle') }}
+        </p>
+      </div>
+
+      <div class="ot-page-actions">
         <Button
-          label="Import Excel"
+          v-if="canCreate"
+          :label="t('org.department.importExcel')"
           icon="pi pi-upload"
           severity="secondary"
           outlined
@@ -384,7 +427,7 @@ onBeforeUnmount(() => {
         />
 
         <Button
-          label="Export Excel"
+          :label="t('org.department.exportExcel')"
           icon="pi pi-download"
           severity="secondary"
           outlined
@@ -394,207 +437,281 @@ onBeforeUnmount(() => {
         />
 
         <Button
-          label="New Department"
+          v-if="canCreate"
+          :label="t('org.department.newDepartment')"
           icon="pi pi-plus"
           size="small"
           @click="openCreateDialog"
         />
       </div>
-    </div>
+    </section>
 
-    <div class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]">
-      <div class="border-b border-[color:var(--ot-border)] px-3 py-3">
-        <div class="flex flex-col gap-2 xl:flex-row xl:items-center">
-          <IconField class="w-full xl:w-[280px] xl:shrink-0">
-            <InputIcon class="pi pi-search" />
-            <InputText
-              v-model="filters.search"
-              placeholder="Search code, name, description"
-              class="w-full"
-              size="small"
-              @input="onSearchInput"
-            />
-          </IconField>
+    <section class="ot-filter-bar">
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('common.search') }}
+        </label>
 
-          <div class="w-full xl:w-[160px] xl:shrink-0">
-            <Select
-              v-model="filters.isActive"
-              :options="statusOptions"
-              optionLabel="label"
-              optionValue="value"
-              placeholder="Status"
-              class="w-full"
-              size="small"
-              @change="onStatusChange"
-            />
-          </div>
+        <IconField>
+          <InputIcon class="pi pi-search" />
+          <InputText
+            v-model="filters.search"
+            :placeholder="t('org.department.searchPlaceholder')"
+            class="w-full"
+            size="small"
+            @input="onSearchInput"
+          />
+        </IconField>
+      </div>
 
-          <div class="flex items-center gap-2 xl:ml-auto xl:shrink-0">
-            <div class="rounded-lg border border-[color:var(--ot-border)] px-3 py-1.5 text-xs font-medium text-[color:var(--ot-text-muted)]">
-              Loaded {{ summaryText }}
-            </div>
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('common.status') }}
+        </label>
 
-            <Button
-              label="Clear"
-              icon="pi pi-refresh"
-              severity="secondary"
-              outlined
-              size="small"
-              @click="clearFilters"
-            />
-          </div>
+        <Select
+          v-model="filters.isActive"
+          :options="statusOptions"
+          option-label="label"
+          option-value="value"
+          class="w-full"
+          size="small"
+          @change="onStatusChange"
+        />
+      </div>
+
+      <div class="ot-filter-actions">
+        <span class="ot-loaded-badge">
+          {{ loadedLabel }}
+        </span>
+
+        <Button
+          :label="t('common.clear')"
+          icon="pi pi-filter-slash"
+          severity="secondary"
+          outlined
+          size="small"
+          @click="clearFilters"
+        />
+      </div>
+    </section>
+
+    <section class="ot-table-card">
+      <div class="ot-table-toolbar">
+        <div>
+          <h2 class="ot-table-title">
+            {{ t('org.department.tableTitle') }}
+          </h2>
+
+          <p class="ot-table-subtitle">
+            {{ t('org.department.tableSubtitle') }}
+          </p>
+        </div>
+
+        <div class="ot-table-actions">
+          <span
+            v-if="backgroundLoading && hasAnyData"
+            class="ot-loaded-badge"
+          >
+            <i class="pi pi-spin pi-spinner" />
+            {{ t('common.updating') }}
+          </span>
         </div>
       </div>
 
-      <DataTable
-        :value="rows"
-        lazy
-        removableSort
-        scrollable
-        scrollHeight="500px"
-        :sortField="filters.sortField"
-        :sortOrder="filters.sortOrder"
-        tableStyle="min-width: 62rem"
-        class="department-table"
-        :virtualScrollerOptions="useVirtualScroll ? {
-          lazy: true,
-          onLazyLoad: onVirtualLazyLoad,
-          itemSize: 72,
-          delay: 0,
-          showLoader: false,
-          loading: false,
-          numToleratedItems: 12,
-        } : null"
-        @sort="onSort"
-      >
-        <template #empty>
-          <div
-            v-if="bootstrapped"
-            class="py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
+      <div class="ot-table-wrapper">
+        <DataTable
+          :value="rows"
+          lazy
+          removable-sort
+          scrollable
+          scroll-height="500px"
+          :sort-field="filters.sortField"
+          :sort-order="filters.sortOrder"
+          table-style="min-width: 62rem"
+          class="ot-data-table ot-data-table-compact"
+          :virtual-scroller-options="useVirtualScroll ? {
+            lazy: true,
+            onLazyLoad: onVirtualLazyLoad,
+            itemSize: 72,
+            delay: 0,
+            showLoader: false,
+            loading: false,
+            numToleratedItems: 12,
+          } : null"
+          @sort="onSort"
+        >
+          <template #empty>
+            <div
+              v-if="bootstrapped"
+              class="ot-empty-state"
+            >
+              <div class="ot-empty-icon">
+                <i class="pi pi-building" />
+              </div>
+              <div class="ot-empty-title">
+                {{ t('common.noData') }}
+              </div>
+              <div class="ot-empty-text">
+                {{ t('org.department.noData') }}
+              </div>
+            </div>
+          </template>
+
+          <Column
+            field="code"
+            :header="t('common.code')"
+            sortable
+            style="min-width: 9rem"
           >
-            No departments found.
-          </div>
-        </template>
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="font-bold"
+              >
+                {{ data.code || '-' }}
+              </span>
+            </template>
+          </Column>
 
-        <Column field="code" header="Code" sortable style="min-width: 9rem">
-          <template #body="{ data }">
-            <span v-if="data">{{ data.code || '-' }}</span>
-          </template>
-        </Column>
+          <Column
+            field="name"
+            :header="t('common.name')"
+            sortable
+            style="min-width: 14rem"
+          >
+            <template #body="{ data }">
+              <span v-if="data">{{ data.name || '-' }}</span>
+            </template>
+          </Column>
 
-        <Column field="name" header="Name" sortable style="min-width: 14rem">
-          <template #body="{ data }">
-            <span v-if="data">{{ data.name || '-' }}</span>
-          </template>
-        </Column>
+          <Column
+            field="description"
+            :header="t('common.description')"
+            style="min-width: 18rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="ot-truncate-2"
+              >
+                {{ data.description || '-' }}
+              </span>
+            </template>
+          </Column>
 
-        <Column field="description" header="Description" style="min-width: 18rem">
-          <template #body="{ data }">
-            <span v-if="data" class="line-clamp-1">
-              {{ data.description || '-' }}
-            </span>
-          </template>
-        </Column>
+          <Column
+            field="isActive"
+            :header="t('common.status')"
+            sortable
+            style="min-width: 7rem"
+          >
+            <template #body="{ data }">
+              <Tag
+                v-if="data"
+                :value="data.isActive ? t('common.active') : t('common.inactive')"
+                :severity="statusSeverity(data.isActive)"
+              />
+            </template>
+          </Column>
 
-        <Column field="isActive" header="Status" sortable style="min-width: 7rem">
-          <template #body="{ data }">
-            <Tag
-              v-if="data"
-              :value="data.isActive ? 'Active' : 'Inactive'"
-              :severity="statusSeverity(data.isActive)"
-              class="ot-status-tag"
-            />
-          </template>
-        </Column>
+          <Column
+            field="createdAt"
+            :header="t('common.createdAt')"
+            sortable
+            style="min-width: 13rem"
+          >
+            <template #body="{ data }">
+              <span v-if="data">{{ formatDateTime(data.createdAt) }}</span>
+            </template>
+          </Column>
 
-        <Column field="createdAt" header="Created At" sortable style="min-width: 13rem">
-          <template #body="{ data }">
-            <span v-if="data">{{ formatDateTime(data.createdAt) }}</span>
-          </template>
-        </Column>
-
-        <Column header="Actions" style="width: 7rem; min-width: 7rem">
-          <template #body="{ data }">
-            <Button
-              v-if="data"
-              label="Edit"
-              icon="pi pi-pencil"
-              size="small"
-              outlined
-              @click="openEditDialog(data)"
-            />
-          </template>
-        </Column>
-      </DataTable>
-
-      <div
-        v-if="backgroundLoading && hasAnyData"
-        class="flex items-center justify-center border-t border-[color:var(--ot-border)] px-3 py-2 text-xs text-[color:var(--ot-text-muted)]"
-      >
-        Updating...
+          <Column
+            :header="t('common.actions')"
+            style="width: 7rem; min-width: 7rem"
+          >
+            <template #body="{ data }">
+              <Button
+                v-if="data && canUpdate"
+                :label="t('common.edit')"
+                icon="pi pi-pencil"
+                size="small"
+                outlined
+                @click="openEditDialog(data)"
+              />
+            </template>
+          </Column>
+        </DataTable>
       </div>
-    </div>
+    </section>
 
     <Dialog
       v-model:visible="departmentDialogVisible"
       modal
-      :header="isEditMode ? 'Edit Department' : 'Create Department'"
+      :header="dialogTitle"
       :style="{ width: '38rem', maxWidth: '96vw' }"
       @hide="resetForm"
     >
-      <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Department Code
-          </label>
-          <InputText
-            v-model="form.code"
-            class="w-full"
-            placeholder="Example: HR"
-          />
+      <div class="ot-dialog-form">
+        <div class="ot-form-grid">
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('org.department.departmentCode') }}
+            </label>
+
+            <InputText
+              v-model="form.code"
+              class="w-full"
+              :placeholder="t('org.department.codeExample')"
+            />
+          </div>
+
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('org.department.departmentName') }}
+            </label>
+
+            <InputText
+              v-model="form.name"
+              class="w-full"
+              :placeholder="t('org.department.nameExample')"
+            />
+          </div>
         </div>
 
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Department Name
+        <div class="ot-field">
+          <label class="ot-field-label">
+            {{ t('common.description') }}
           </label>
-          <InputText
-            v-model="form.name"
-            class="w-full"
-            placeholder="Example: Human Resources"
-          />
-        </div>
 
-        <div class="space-y-2 md:col-span-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Description
-          </label>
           <Textarea
             v-model="form.description"
             class="w-full"
             rows="3"
-            placeholder="Optional department description"
+            :placeholder="t('org.department.descriptionPlaceholder')"
           />
         </div>
 
-        <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] px-4 py-3 md:col-span-2">
-          <span class="text-sm font-medium text-[color:var(--ot-text)]">
-            Active Status
+        <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] px-4 py-3">
+          <span class="text-sm font-semibold text-[color:var(--ot-text)]">
+            {{ t('common.active') }}
           </span>
+
           <InputSwitch v-model="form.isActive" />
         </div>
       </div>
 
       <template #footer>
-        <div class="flex justify-end gap-2">
+        <div class="ot-form-footer">
           <Button
-            label="Cancel"
+            :label="t('common.cancel')"
             text
             size="small"
             @click="departmentDialogVisible = false"
           />
+
           <Button
-            :label="isEditMode ? 'Save Changes' : 'Create Department'"
+            :label="saveLabel"
             :loading="saving"
             :disabled="isSaveDisabled"
             size="small"
@@ -605,23 +722,3 @@ onBeforeUnmount(() => {
     </Dialog>
   </div>
 </template>
-
-<style scoped>
-:deep(.department-table .p-datatable-thead > tr > th) {
-  padding: 0.72rem 0.9rem !important;
-}
-
-:deep(.department-table .p-datatable-tbody > tr > td) {
-  padding: 0.72rem 0.9rem !important;
-  height: 72px !important;
-}
-
-:deep(.department-table .p-tag.ot-status-tag) {
-  min-height: 1.35rem !important;
-  padding: 0.12rem 0.45rem !important;
-  font-size: 0.7rem !important;
-  font-weight: 600 !important;
-  line-height: 1 !important;
-  border-radius: 999px !important;
-}
-</style>

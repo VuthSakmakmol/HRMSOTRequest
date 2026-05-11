@@ -1,5 +1,4 @@
 // backend/src/modules/org/models/Employee.js
-
 const mongoose = require('mongoose')
 
 const { Schema } = mongoose
@@ -29,13 +28,12 @@ function uniqueObjectIdStrings(values = []) {
 
 const employeeSchema = new Schema(
   {
-    // Optional company-visible ID/code.
-    // Example: TRX001, EMP001, A123.
-    // This is for display/search/export only.
-    // It must not be used as the real relational key.
+    // Human-readable business key.
+    // Users see/use this in UI and Excel.
+    // Mongo _id remains the hidden internal relational key.
     employeeCode: {
       type: String,
-      default: '',
+      required: true,
       trim: true,
       uppercase: true,
       maxlength: 50,
@@ -168,12 +166,6 @@ employeeSchema.index(
   { employeeCode: 1 },
   {
     unique: true,
-    partialFilterExpression: {
-      employeeCode: {
-        $type: 'string',
-        $ne: '',
-      },
-    },
   },
 )
 

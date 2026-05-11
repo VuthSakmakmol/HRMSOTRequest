@@ -23,6 +23,8 @@ export function getSystemRoleOptions(params = {}) {
       page: 1,
       limit: 100,
       isActive: true,
+      sortField: 'code',
+      sortOrder: 1,
       ...params,
     },
   })
@@ -33,6 +35,9 @@ export function getPermissionOptions(params = {}) {
     params: {
       page: 1,
       limit: 100,
+      isActive: true,
+      sortField: 'module',
+      sortOrder: 1,
       ...params,
     },
   })

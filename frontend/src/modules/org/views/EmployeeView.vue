@@ -1,8 +1,7 @@
 <!-- frontend/src/modules/org/views/EmployeeView.vue -->
 <script setup>
-// frontend/src/modules/org/views/EmployeeView.vue
-
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
@@ -23,28 +22,30 @@ import { getLineLookupOptions } from '@/modules/org/line.api'
 import {
   createEmployee,
   exportEmployeesExcel,
-  getEmployees,
   getEmployeeLookupOptions,
+  getEmployees,
   updateEmployee,
 } from '@/modules/org/employee.api'
 import { getShiftLookupOptions } from '@/modules/shift/shift.api'
+import { useAuthStore } from '@/modules/auth/auth.store'
+import { buildSaveErrorMessage, getApiErrorMessage } from '@/shared/utils/apiError'
+import { formatDate, formatDateTime, toApiDate } from '@/shared/utils/dateFormat'
 
 const toast = useToast()
+const auth = useAuthStore()
+const { t } = useI18n()
 
 const PAGE_SIZE = 10
 const SEARCH_DEBOUNCE_MS = 250
 
 const saving = ref(false)
 const exporting = ref(false)
+
 const loadingDepartments = ref(false)
 const loadingPositions = ref(false)
 const loadingLines = ref(false)
 const loadingManagers = ref(false)
 const loadingShifts = ref(false)
-const loadingAutoManager = ref(false)
-
-const autoManagerPreview = ref(null)
-const autoManagerError = ref('')
 
 const rows = ref([])
 const totalRecords = ref(0)
@@ -54,14 +55,13 @@ const bootstrapped = ref(false)
 const backgroundLoading = ref(false)
 
 const employeeDialogVisible = ref(false)
-const editingEmployeeId = ref('')
-
 const importDialogVisible = ref(false)
+const editingEmployeeId = ref('')
 
 const departmentOptions = ref([])
 const positionOptions = ref([])
 const lineOptions = ref([])
-const rawManagerItems = ref([])
+const managerOptions = ref([])
 const shiftOptions = ref([])
 
 const filters = reactive({
@@ -71,146 +71,112 @@ const filters = reactive({
   lineId: '',
   shiftId: '',
   isActive: '',
-  sortField: 'createdAt',
+  sortBy: 'createdAt',
   sortOrder: -1,
 })
 
 const form = reactive({
-  employeeNo: '',
+  employeeCode: '',
   displayName: '',
   departmentId: '',
   positionId: '',
-  lineId: '',
+  lineId: null,
   shiftId: '',
-  reportsToEmployeeId: '',
+  reportsToEmployeeId: null,
   otWorkflowRole: 'NONE',
   phone: '',
   email: '',
   joinDate: '',
   isActive: true,
-
-  accountMode: 'WITHOUT_ACCOUNT',
-  hasAccount: false,
-  accountLoginId: '',
-  accountIsActive: false,
 })
 
-const statusOptions = [
-  { label: 'All Status', value: '' },
-  { label: 'Active', value: 'true' },
-  { label: 'Inactive', value: 'false' },
-]
+const canCreate = computed(() => auth.hasPermission('EMPLOYEE_CREATE'))
+const canUpdate = computed(() => auth.hasPermission('EMPLOYEE_UPDATE'))
 
-const accountModeOptions = [
-  { label: 'Create without account', value: 'WITHOUT_ACCOUNT' },
-  { label: 'Create with account', value: 'WITH_ACCOUNT' },
-]
+const statusOptions = computed(() => [
+  { label: t('common.allStatus'), value: '' },
+  { label: t('common.active'), value: 'true' },
+  { label: t('common.inactive'), value: 'false' },
+])
 
-const otWorkflowRoleOptions = [
-  { label: 'None', value: 'NONE' },
-  { label: 'Approver', value: 'APPROVER' },
-  { label: 'Acknowledge', value: 'ACKNOWLEDGE' },
-]
+const departmentFilterOptions = computed(() => [
+  { label: t('org.employee.allDepartments'), value: '' },
+  ...departmentOptions.value,
+])
+
+const positionFilterOptions = computed(() => [
+  { label: t('org.employee.allPositions'), value: '' },
+  ...positionOptions.value,
+])
+
+const lineFilterOptions = computed(() => [
+  { label: t('org.employee.allLines'), value: '' },
+  ...lineOptions.value,
+])
+
+const shiftFilterOptions = computed(() => [
+  { label: t('org.employee.allShifts'), value: '' },
+  ...shiftOptions.value,
+])
+
+const otWorkflowRoleOptions = computed(() => [
+  { label: t('org.employee.otWorkflowRole.none'), value: 'NONE' },
+  { label: t('org.employee.otWorkflowRole.approver'), value: 'APPROVER' },
+  { label: t('org.employee.otWorkflowRole.acknowledge'), value: 'ACKNOWLEDGE' },
+])
 
 const isEditMode = computed(() => !!editingEmployeeId.value)
 const totalEmployees = computed(() => Number(totalRecords.value || 0))
 const loadedCount = computed(() => rows.value.filter(Boolean).length)
-const summaryText = computed(() => `${loadedCount.value} of ${totalEmployees.value}`)
 const hasAnyData = computed(() => rows.value.some(Boolean))
 const useVirtualScroll = computed(() => totalEmployees.value > PAGE_SIZE)
 
-const selectedPositionOption = computed(() => {
-  return positionOptions.value.find((item) => String(item.value) === String(form.positionId))
-})
+const loadedLabel = computed(() =>
+  t('common.loaded', {
+    loaded: loadedCount.value,
+    total: totalEmployees.value,
+  }),
+)
 
-const shouldAutoResolveManager = computed(() => {
-  const selected = selectedPositionOption.value
+const selectedPosition = computed(() =>
+  positionOptions.value.find((item) => String(item.value) === String(form.positionId)),
+)
 
-  if (!selected?.reportsToPositionId) {
-    return false
+const managerRuleHint = computed(() => {
+  const position = selectedPosition.value
+
+  if (!position?.reportsToPositionId) {
+    return t('org.employee.manualManagerHelp')
   }
 
-  if (selected.managerScope === 'GLOBAL') {
-    return true
+  if (position.managerScope === 'GLOBAL') {
+    return t('org.employee.globalManagerHelp', {
+      position: position.reportsToPositionName || t('org.position.reportsToPosition'),
+    })
   }
 
-  return !!form.lineId
+  return t('org.employee.sameLineManagerHelp', {
+    position: position.reportsToPositionName || t('org.position.reportsToPosition'),
+  })
 })
 
-const autoManagerHint = computed(() => {
-  const selected = selectedPositionOption.value
+const dialogTitle = computed(() =>
+  isEditMode.value ? t('org.employee.editTitle') : t('org.employee.createTitle'),
+)
 
-  if (!shouldAutoResolveManager.value || !selected) {
-    return ''
-  }
-
-  const reportsToName = selected.reportsToPositionName || 'parent position'
-
-  if (selected.managerScope === 'GLOBAL') {
-    return `Manager will be auto-selected by backend using ${reportsToName} across departments.`
-  }
-
-  return `Manager will be auto-selected by backend using ${reportsToName} in the selected line.`
-})
-
-const autoManagerDisplayHint = computed(() => {
-  if (!shouldAutoResolveManager.value) {
-    return ''
-  }
-
-  if (autoManagerPreview.value) {
-    return `Manager auto-selected: ${autoManagerPreview.value.employeeNo} - ${autoManagerPreview.value.displayName}`
-  }
-
-  if (loadingAutoManager.value) {
-    return 'Finding manager...'
-  }
-
-  if (autoManagerError.value) {
-    return autoManagerError.value
-  }
-
-  return autoManagerHint.value
-})
-
-const managerOptions = computed(() => mapManagerOptions(rawManagerItems.value))
-
-const wantsCreateAccount = computed(() => {
-  return !isEditMode.value && form.accountMode === 'WITH_ACCOUNT'
-})
-
-const wantsProvisionAccount = computed(() => {
-  return isEditMode.value && !form.hasAccount && form.accountMode === 'WITH_ACCOUNT'
-})
-
-const isPhoneRequired = computed(() => {
-  return wantsCreateAccount.value || wantsProvisionAccount.value
-})
-
-const phonePreviewPassword = computed(() => {
-  const employeeNo = String(form.employeeNo || '').trim().toUpperCase()
-  const phone = String(form.phone || '').trim()
-  if (!employeeNo || !phone) return '-'
-  return `${employeeNo}${phone}`
-})
+const saveLabel = computed(() =>
+  isEditMode.value ? t('common.save') : t('org.employee.createTitle'),
+)
 
 const isSaveDisabled = computed(() => {
-  if (
+  return (
     saving.value ||
-    !String(form.employeeNo || '').trim() ||
+    !String(form.employeeCode || '').trim() ||
     !String(form.displayName || '').trim() ||
     !String(form.departmentId || '').trim() ||
     !String(form.positionId || '').trim() ||
     !String(form.shiftId || '').trim()
-  ) {
-    return true
-  }
-
-  if (isPhoneRequired.value && !String(form.phone || '').trim()) {
-    return true
-  }
-
-  return false
+  )
 })
 
 let searchTimer = null
@@ -224,109 +190,109 @@ function normalizeItems(payload) {
   return Array.isArray(payload?.items) ? payload.items : []
 }
 
-function errorMessage(error, fallback = 'Something went wrong') {
-  return (
-    error?.response?.data?.message ||
-    error?.response?.data?.error ||
-    error?.message ||
-    fallback
-  )
+function normalizeTotal(payload) {
+  return Number(payload?.pagination?.total || payload?.total || 0)
 }
 
-function sameValue(a, b) {
-  return String(a || '') !== '' && String(a || '') === String(b || '')
+function normalizeId(row) {
+  return String(row?.id || row?._id || row?.employeeId || '').trim()
 }
 
-function getRowId(row) {
-  return row?._id || row?.id || ''
+function normalizeRefId(value) {
+  if (!value) return null
+  if (typeof value === 'string') return value
+  return value?.id || value?._id || value?.employeeId || null
 }
 
-function getRowLineId(row) {
-  const line = row?.lineId
-
-  if (!line) return ''
-
-  if (typeof line === 'string') {
-    return line
-  }
-
-  return line._id || line.id || ''
-}
-
-function getRowReportsToPositionId(row) {
-  return row?.reportsToPositionId || row?.positionId?.reportsToPositionId || ''
-}
-
-function isInvalidManagerCandidate(item) {
-  const candidateId = getRowId(item)
-
-  if (editingEmployeeId.value && sameValue(candidateId, editingEmployeeId.value)) {
-    return true
-  }
-
-  const candidateReportsToPositionId = getRowReportsToPositionId(item)
-  const candidateLineId = getRowLineId(item)
-
-  if (form.positionId && sameValue(candidateReportsToPositionId, form.positionId)) {
-    if (!form.lineId || !candidateLineId || sameValue(candidateLineId, form.lineId)) {
-      return true
-    }
-  }
-
-  return false
+function buildLabel(...parts) {
+  return parts
+    .map((part) => String(part || '').trim())
+    .filter(Boolean)
+    .join(' - ')
 }
 
 function mapDepartmentOptions(items = []) {
-  return items.map((item) => ({
-    label: item.label || `${item.code} - ${item.name}`,
-    value: item._id || item.id,
-  }))
+  return items
+    .map((item) => ({
+      label: item.label || buildLabel(item.code, item.name),
+      value: normalizeId(item),
+    }))
+    .filter((item) => item.value)
 }
 
 function mapPositionOptions(items = []) {
-  return items.map((item) => ({
-    label: item.label || `${item.code} - ${item.name}`,
-    value: item._id || item.id,
-    code: item.code || '',
-    name: item.name || '',
-    reportsToPositionId: item.reportsToPositionId || null,
-    reportsToPositionCode: item.reportsToPositionCode || '',
-    reportsToPositionName: item.reportsToPositionName || '',
-    managerScope: item.managerScope || 'SAME_LINE',
-  }))
+  return items
+    .map((item) => ({
+      label: item.label || buildLabel(item.code, item.name),
+      value: normalizeId(item),
+      code: item.code || '',
+      name: item.name || '',
+      departmentId: item.departmentId || null,
+      reportsToPositionId: item.reportsToPositionId || null,
+      reportsToPositionCode: item.reportsToPositionCode || '',
+      reportsToPositionName: item.reportsToPositionName || '',
+      managerScope: item.managerScope || 'SAME_LINE',
+    }))
+    .filter((item) => item.value)
 }
 
 function mapLineOptions(items = []) {
-  return items.map((item) => ({
-    label: item.label || `${item.code} - ${item.name}`,
-    value: item._id || item.id,
-    code: item.code || '',
-    name: item.name || '',
-  }))
+  return items
+    .map((item) => ({
+      label: item.label || buildLabel(item.code, item.name),
+      value: normalizeId(item),
+      code: item.code || '',
+      name: item.name || '',
+      departmentId: item.departmentId || null,
+    }))
+    .filter((item) => item.value)
+}
+
+function mapShiftOptions(items = []) {
+  return items
+    .map((item) => {
+      const code = item.code || item.shiftCode || ''
+      const name = item.name || item.shiftName || ''
+      const type = item.type || item.shiftType || ''
+      const time =
+        item.startTime && item.endTime
+          ? `${item.startTime}-${item.endTime}`
+          : ''
+
+      return {
+        label:
+          item.label ||
+          [buildLabel(code, name), type, time].filter(Boolean).join(' · '),
+        value: normalizeId(item) || item.shiftId,
+      }
+    })
+    .filter((item) => item.value)
 }
 
 function mapManagerOptions(items = []) {
   return [
-    { label: 'No Manager', value: '' },
+    { label: t('org.employee.noManager'), value: null },
     ...items
       .filter(Boolean)
-      .filter((item) => !isInvalidManagerCandidate(item))
+      .filter((item) => {
+        const itemId = normalizeId(item)
+        return !editingEmployeeId.value || itemId !== editingEmployeeId.value
+      })
       .map((item) => ({
-        label: `${item.employeeNo || item.code || ''} - ${item.displayName || item.name || ''}`,
-        value: item._id || item.id,
-      })),
+        label: item.label || buildLabel(item.employeeCode, item.displayName),
+        value: normalizeId(item),
+      }))
+      .filter((item) => item.value),
   ]
 }
 
-function mapShiftOptions(items = []) {
-  return items.map((item) => ({
-    label:
-      item.label ||
-      `${item.code || item.shiftCode || ''} - ${item.name || item.shiftName || ''}${
-        item.type || item.shiftType ? ` (${item.type || item.shiftType})` : ''
-      }`,
-    value: item._id || item.id || item.shiftId,
-  }))
+function showToast(severity, summary, detail, life = 3000) {
+  toast.add({
+    severity,
+    summary,
+    detail,
+    life,
+  })
 }
 
 function buildQuery(page) {
@@ -339,7 +305,7 @@ function buildQuery(page) {
     lineId: filters.lineId,
     shiftId: filters.shiftId,
     isActive: filters.isActive,
-    sortBy: filters.sortField,
+    sortBy: filters.sortBy,
     sortOrder: filters.sortOrder === 1 ? 'asc' : 'desc',
   }
 }
@@ -354,15 +320,13 @@ async function fetchDepartmentsForDropdown(search = '') {
       isActive: true,
     })
 
-    const payload = normalizePayload(res)
-    departmentOptions.value = mapDepartmentOptions(normalizeItems(payload))
+    departmentOptions.value = mapDepartmentOptions(normalizeItems(normalizePayload(res)))
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Department load failed',
-      detail: errorMessage(error, 'Failed to load departments'),
-      life: 3000,
-    })
+    showToast(
+      'error',
+      t('org.employee.departmentLoadFailed'),
+      getApiErrorMessage(error, t('org.employee.departmentLoadFailed')),
+    )
   } finally {
     loadingDepartments.value = false
   }
@@ -379,15 +343,13 @@ async function fetchPositionsForDropdown(departmentId = '', search = '') {
       isActive: true,
     })
 
-    const payload = normalizePayload(res)
-    positionOptions.value = mapPositionOptions(normalizeItems(payload))
+    positionOptions.value = mapPositionOptions(normalizeItems(normalizePayload(res)))
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Position load failed',
-      detail: errorMessage(error, 'Failed to load positions'),
-      life: 3000,
-    })
+    showToast(
+      'error',
+      t('org.employee.positionLoadFailed'),
+      getApiErrorMessage(error, t('org.employee.positionLoadFailed')),
+    )
   } finally {
     loadingPositions.value = false
   }
@@ -398,23 +360,45 @@ async function fetchLinesForDropdown(departmentId = '', search = '') {
 
   try {
     const res = await getLineLookupOptions({
+      page: 1,
       limit: 100,
       search: String(search || '').trim(),
       departmentId: String(departmentId || '').trim(),
-      isActive: 'true',
+      isActive: true,
     })
 
-    const payload = normalizePayload(res)
-    lineOptions.value = mapLineOptions(normalizeItems(payload))
+    lineOptions.value = mapLineOptions(normalizeItems(normalizePayload(res)))
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Line load failed',
-      detail: errorMessage(error, 'Failed to load lines'),
-      life: 3000,
-    })
+    showToast(
+      'error',
+      t('org.employee.lineLoadFailed'),
+      getApiErrorMessage(error, t('org.employee.lineLoadFailed')),
+    )
   } finally {
     loadingLines.value = false
+  }
+}
+
+async function fetchShiftsForDropdown(search = '') {
+  loadingShifts.value = true
+
+  try {
+    const res = await getShiftLookupOptions({
+      page: 1,
+      limit: 100,
+      search: String(search || '').trim(),
+      isActive: true,
+    })
+
+    shiftOptions.value = mapShiftOptions(normalizeItems(normalizePayload(res)))
+  } catch (error) {
+    showToast(
+      'error',
+      t('org.employee.shiftLoadFailed'),
+      getApiErrorMessage(error, t('org.employee.shiftLoadFailed')),
+    )
+  } finally {
+    loadingShifts.value = false
   }
 }
 
@@ -422,139 +406,39 @@ async function fetchManagersForDropdown() {
   loadingManagers.value = true
 
   try {
-    const res = await getEmployeeLookupOptions({
-      page: 1,
-      limit: 100,
-      search: '',
-      isActive: 'true',
-      sortBy: 'displayName',
-      sortOrder: 'asc',
-    })
+    let res
 
-    const payload = normalizePayload(res)
-    rawManagerItems.value = normalizeItems(payload)
-  } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Manager load failed',
-      detail: errorMessage(error, 'Failed to load managers'),
-      life: 3000,
-    })
-  } finally {
-    loadingManagers.value = false
-  }
-}
+    try {
+      res = await getEmployeeLookupOptions({
+        page: 1,
+        limit: 100,
+        search: '',
+        isActive: true,
+        scope: 'ALL',
+      })
+    } catch (error) {
+      if (Number(error?.response?.status || 0) !== 403) {
+        throw error
+      }
 
-function addManagerToOptions(manager) {
-  if (!manager) return
-
-  const managerId = manager._id || manager.id
-  if (!managerId) return
-
-  const exists = rawManagerItems.value.some((item) => {
-    return String(item?._id || item?.id || '') === String(managerId)
-  })
-
-  if (!exists) {
-    rawManagerItems.value = [manager, ...rawManagerItems.value]
-  }
-}
-
-function clearAutoManagerPreview() {
-  autoManagerPreview.value = null
-  autoManagerError.value = ''
-  loadingAutoManager.value = false
-}
-
-async function refreshAutoManagerPreview() {
-  autoManagerPreview.value = null
-  autoManagerError.value = ''
-
-  if (!shouldAutoResolveManager.value) {
-    return
-  }
-
-  const selected = selectedPositionOption.value
-  const parentPositionId = selected?.reportsToPositionId || ''
-  const managerScope = String(selected?.managerScope || 'SAME_LINE').toUpperCase()
-
-  if (!parentPositionId) {
-    form.reportsToEmployeeId = ''
-    return
-  }
-
-  if (managerScope !== 'GLOBAL' && !form.lineId) {
-    form.reportsToEmployeeId = ''
-    autoManagerError.value = 'Please select line first so the system can find the supervisor.'
-    return
-  }
-
-  loadingAutoManager.value = true
-
-  try {
-    const res = await getEmployeeLookupOptions({
-      page: 1,
-      limit: 10,
-      search: '',
-      isActive: 'true',
-      scope: 'ALL',
-      positionId: parentPositionId,
-      lineId: managerScope === 'GLOBAL' ? '' : form.lineId,
-      sortBy: 'displayName',
-      sortOrder: 'asc',
-    })
-
-    const payload = normalizePayload(res)
-    const items = normalizeItems(payload)
-
-    const manager = items.find((item) => {
-      const managerId = item?._id || item?.id || ''
-      return !sameValue(managerId, editingEmployeeId.value)
-    })
-
-    if (!manager) {
-      form.reportsToEmployeeId = ''
-      autoManagerError.value = `No active manager found for ${selected.reportsToPositionName || 'parent position'}.`
-      return
+      res = await getEmployeeLookupOptions({
+        page: 1,
+        limit: 100,
+        search: '',
+        isActive: true,
+        scope: 'MANAGED',
+      })
     }
 
-    const managerId = manager._id || manager.id
-
-    autoManagerPreview.value = manager
-    addManagerToOptions(manager)
-    form.reportsToEmployeeId = managerId
+    managerOptions.value = mapManagerOptions(normalizeItems(normalizePayload(res)))
   } catch (error) {
-    form.reportsToEmployeeId = ''
-    autoManagerError.value = errorMessage(error, 'Failed to find auto manager')
+    showToast(
+      'error',
+      t('org.employee.managerLoadFailed'),
+      getApiErrorMessage(error, t('org.employee.managerLoadFailed')),
+    )
   } finally {
-    loadingAutoManager.value = false
-  }
-}
-
-async function fetchShiftsForDropdown() {
-  loadingShifts.value = true
-
-  try {
-    const res = await getShiftLookupOptions({
-      page: 1,
-      limit: 100,
-      search: '',
-      isActive: 'true',
-      sortBy: 'name',
-      sortOrder: 'asc',
-    })
-
-    const payload = normalizePayload(res)
-    shiftOptions.value = mapShiftOptions(normalizeItems(payload))
-  } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Shift load failed',
-      detail: errorMessage(error, 'Failed to load shifts'),
-      life: 3000,
-    })
-  } finally {
-    loadingShifts.value = false
+    loadingManagers.value = false
   }
 }
 
@@ -573,42 +457,42 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
     const payload = normalizePayload(res)
     const items = normalizeItems(payload)
-    const total = Number(payload?.pagination?.total || 0)
+    const total = normalizeTotal(payload)
+    const startIndex = (page - 1) * PAGE_SIZE
 
     totalRecords.value = total
 
     if (replace) {
-      const nextRows = Array.from({ length: total }, () => null)
-      const startIndex = (page - 1) * PAGE_SIZE
+      const nextRows = total > 0 ? Array.from({ length: total }, () => null) : []
 
-      for (let i = 0; i < items.length; i += 1) {
-        nextRows[startIndex + i] = items[i]
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
       }
 
-      rows.value = total === 0 ? [] : nextRows
+      rows.value = nextRows
       loadedPages.value = new Set([page])
     } else {
       if (!rows.value.length && total > 0) {
         rows.value = Array.from({ length: total }, () => null)
       }
 
-      const startIndex = (page - 1) * PAGE_SIZE
+      const nextRows = [...rows.value]
 
-      for (let i = 0; i < items.length; i += 1) {
-        rows.value[startIndex + i] = items[i]
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
       }
 
+      rows.value = nextRows
       loadedPages.value.add(page)
     }
 
     bootstrapped.value = true
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Load failed',
-      detail: errorMessage(error, 'Failed to load employees'),
-      life: 3000,
-    })
+    showToast(
+      'error',
+      t('common.loadFailed'),
+      getApiErrorMessage(error, t('org.employee.loadFailed')),
+    )
   } finally {
     backgroundLoading.value = false
   }
@@ -629,6 +513,7 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
 
 function runSearchSoon() {
   window.clearTimeout(searchTimer)
+
   searchTimer = window.setTimeout(() => {
     reloadFirstPage({ keepVisible: true })
   }, SEARCH_DEBOUNCE_MS)
@@ -638,31 +523,31 @@ function onSearchInput() {
   runSearchSoon()
 }
 
-function onStatusChange() {
-  reloadFirstPage({ keepVisible: true })
-}
-
 async function onDepartmentFilterChange() {
   filters.positionId = ''
   filters.lineId = ''
 
   await Promise.all([
-    fetchPositionsForDropdown(filters.departmentId || ''),
-    fetchLinesForDropdown(filters.departmentId || ''),
+    fetchPositionsForDropdown(filters.departmentId),
+    fetchLinesForDropdown(filters.departmentId),
   ])
 
   await reloadFirstPage({ keepVisible: true })
 }
 
-function onPositionChange() {
+function onPositionFilterChange() {
   reloadFirstPage({ keepVisible: true })
 }
 
-function onLineChange() {
+function onLineFilterChange() {
   reloadFirstPage({ keepVisible: true })
 }
 
-function onShiftChange() {
+function onShiftFilterChange() {
+  reloadFirstPage({ keepVisible: true })
+}
+
+function onStatusChange() {
   reloadFirstPage({ keepVisible: true })
 }
 
@@ -673,16 +558,19 @@ function clearFilters() {
   filters.lineId = ''
   filters.shiftId = ''
   filters.isActive = ''
-  filters.sortField = 'createdAt'
+  filters.sortBy = 'createdAt'
   filters.sortOrder = -1
 
-  fetchPositionsForDropdown('')
-  fetchLinesForDropdown('')
+  Promise.all([
+    fetchPositionsForDropdown(''),
+    fetchLinesForDropdown(''),
+  ])
+
   reloadFirstPage({ keepVisible: true })
 }
 
 function onSort(event) {
-  filters.sortField = event.sortField || 'createdAt'
+  filters.sortBy = event.sortField || 'createdAt'
   filters.sortOrder = typeof event.sortOrder === 'number' ? event.sortOrder : -1
   reloadFirstPage({ keepVisible: true })
 }
@@ -705,25 +593,18 @@ async function onVirtualLazyLoad(event) {
 
 function resetForm() {
   editingEmployeeId.value = ''
-  form.employeeNo = ''
+  form.employeeCode = ''
   form.displayName = ''
   form.departmentId = ''
   form.positionId = ''
-  form.lineId = ''
+  form.lineId = null
   form.shiftId = ''
-  form.reportsToEmployeeId = ''
+  form.reportsToEmployeeId = null
   form.otWorkflowRole = 'NONE'
   form.phone = ''
   form.email = ''
   form.joinDate = ''
   form.isActive = true
-  form.accountMode = 'WITHOUT_ACCOUNT'
-  form.hasAccount = false
-  form.accountLoginId = ''
-  form.accountIsActive = false
-  clearAutoManagerPreview()
-  positionOptions.value = []
-  lineOptions.value = []
 }
 
 async function openCreateDialog() {
@@ -732,86 +613,72 @@ async function openCreateDialog() {
   await Promise.all([
     fetchPositionsForDropdown(''),
     fetchLinesForDropdown(''),
+    fetchManagersForDropdown(),
   ])
 
   employeeDialogVisible.value = true
 }
 
 async function openEditDialog(row) {
-  editingEmployeeId.value = row?.id || row?._id || ''
-  form.employeeNo = row?.employeeNo || ''
+  editingEmployeeId.value = normalizeId(row)
+
+  form.employeeCode = row?.employeeCode || ''
   form.displayName = row?.displayName || ''
-  form.departmentId =
-    row?.departmentId?._id ||
-    row?.departmentId?.id ||
-    row?.departmentId ||
-    ''
+  form.departmentId = normalizeRefId(row?.departmentId) || row?.departmentId || ''
+
+  await Promise.all([
+    fetchPositionsForDropdown(form.departmentId),
+    fetchLinesForDropdown(form.departmentId),
+    fetchManagersForDropdown(),
+  ])
+
+  form.positionId = normalizeRefId(row?.positionId) || row?.positionId || ''
+  form.lineId = normalizeRefId(row?.lineId) || row?.lineId || null
+  form.shiftId = normalizeRefId(row?.shiftId) || row?.shiftId || ''
+  form.reportsToEmployeeId =
+    normalizeRefId(row?.reportsToEmployeeId) ||
+    row?.reportsToEmployeeId ||
+    null
+  form.otWorkflowRole = String(row?.otWorkflowRole || 'NONE').toUpperCase()
+  form.phone = row?.phone || ''
+  form.email = row?.email || ''
+  form.joinDate = row?.joinDate ? toApiDate(row.joinDate, '') : ''
+  form.isActive = row?.isActive !== false
+
+  employeeDialogVisible.value = true
+}
+
+async function onFormDepartmentChange() {
+  form.positionId = ''
+  form.lineId = null
+  form.reportsToEmployeeId = null
 
   await Promise.all([
     fetchPositionsForDropdown(form.departmentId),
     fetchLinesForDropdown(form.departmentId),
   ])
+}
 
-  form.positionId =
-    row?.positionId?._id ||
-    row?.positionId?.id ||
-    row?.positionId ||
-    ''
+function onFormPositionChange() {
+  form.reportsToEmployeeId = null
+}
 
-  form.lineId =
-    row?.lineId?._id ||
-    row?.lineId?.id ||
-    row?.lineId ||
-    ''
-
-  form.shiftId =
-    row?.shiftId?._id ||
-    row?.shiftId?.id ||
-    row?.shiftId ||
-    ''
-
-  form.reportsToEmployeeId =
-    row?.reportsToEmployeeId?._id ||
-    row?.reportsToEmployeeId?.id ||
-    row?.reportsToEmployeeId ||
-    ''
-
-  form.otWorkflowRole = String(row?.otWorkflowRole || 'NONE').toUpperCase()
-
-  form.phone = row?.phone || ''
-  form.email = row?.email || ''
-  form.joinDate = row?.joinDate ? String(row.joinDate).slice(0, 10) : ''
-  form.isActive = !!row?.isActive
-  form.hasAccount = !!row?.hasAccount
-  form.accountLoginId = row?.accountLoginId || ''
-  form.accountIsActive = !!row?.accountIsActive
-  form.accountMode = 'WITHOUT_ACCOUNT'
-
-  if (shouldAutoResolveManager.value) {
-    await refreshAutoManagerPreview()
-  } else if (form.reportsToEmployeeId && row?.reportsToEmployeeId && typeof row.reportsToEmployeeId === 'object') {
-    addManagerToOptions(row.reportsToEmployeeId)
-  }
-
-  employeeDialogVisible.value = true
+function onFormLineChange() {
+  form.reportsToEmployeeId = null
 }
 
 async function submitEmployee() {
   saving.value = true
 
   try {
-    const manualManagerId = shouldAutoResolveManager.value
-      ? null
-      : String(form.reportsToEmployeeId || '').trim() || null
-
     const payload = {
-      employeeNo: String(form.employeeNo || '').trim().toUpperCase(),
+      employeeCode: String(form.employeeCode || '').trim().toUpperCase(),
       displayName: String(form.displayName || '').trim(),
       departmentId: String(form.departmentId || '').trim(),
       positionId: String(form.positionId || '').trim(),
-      lineId: String(form.lineId || '').trim() || null,
+      lineId: form.lineId || null,
       shiftId: String(form.shiftId || '').trim(),
-      reportsToEmployeeId: manualManagerId,
+      reportsToEmployeeId: form.reportsToEmployeeId || null,
       otWorkflowRole: String(form.otWorkflowRole || 'NONE').trim().toUpperCase(),
       phone: String(form.phone || '').trim(),
       email: String(form.email || '').trim().toLowerCase(),
@@ -820,154 +687,48 @@ async function submitEmployee() {
     }
 
     if (editingEmployeeId.value) {
-      payload.provisionAccount = wantsProvisionAccount.value
       await updateEmployee(editingEmployeeId.value, payload)
-
-      toast.add({
-        severity: 'success',
-        summary: 'Updated',
-        detail: wantsProvisionAccount.value
-          ? 'Employee updated and account provisioned successfully'
-          : 'Employee updated successfully',
-        life: 2500,
-      })
+      showToast('success', t('common.updated'), t('org.employee.updatedSuccess'), 2500)
     } else {
-      payload.createAccount = wantsCreateAccount.value
       await createEmployee(payload)
-
-      toast.add({
-        severity: 'success',
-        summary: 'Created',
-        detail: wantsCreateAccount.value
-          ? 'Employee and account created successfully'
-          : 'Employee created successfully',
-        life: 2500,
-      })
+      showToast('success', t('common.created'), t('org.employee.createdSuccess'), 2500)
     }
 
     employeeDialogVisible.value = false
     resetForm()
+
     await fetchManagersForDropdown()
     await reloadFirstPage({ keepVisible: false })
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: isEditMode.value ? 'Update failed' : 'Create failed',
-      detail: errorMessage(error, 'Failed to save employee'),
-      life: 3500,
-    })
+    showToast(
+      'error',
+      isEditMode.value ? t('common.updateFailed') : t('common.createFailed'),
+      buildSaveErrorMessage(error, t('org.employee.saveFailed')),
+      3500,
+    )
   } finally {
     saving.value = false
   }
 }
 
-function statusSeverity(active) {
-  return active ? 'success' : 'contrast'
-}
+function getFilenameFromHeader(res, fallback) {
+  const disposition = String(res?.headers?.['content-disposition'] || '')
+  const match = disposition.match(/filename="?([^"]+)"?/i)
 
-function accountSeverity(row) {
-  return row?.hasAccount ? 'success' : 'warn'
-}
-
-function accountStatusLabel(row) {
-  return row?.hasAccount ? 'Has Account' : 'No Account'
-}
-
-function otWorkflowRoleLabel(value) {
-  const role = String(value || 'NONE').toUpperCase()
-
-  if (role === 'APPROVER') return 'Approver'
-  if (role === 'ACKNOWLEDGE') return 'Acknowledge'
-
-  return 'None'
-}
-
-function otWorkflowRoleSeverity(value) {
-  const role = String(value || 'NONE').toUpperCase()
-
-  if (role === 'APPROVER') return 'success'
-  if (role === 'ACKNOWLEDGE') return 'info'
-
-  return 'secondary'
-}
-
-function departmentLabel(row) {
-  const dept = row?.departmentId
-  if (!dept) return row?.departmentName || '-'
-  if (typeof dept === 'string') return row?.departmentName || dept
-  return [dept.code, dept.name].filter(Boolean).join(' - ') || row?.departmentName || '-'
-}
-
-function positionLabel(row) {
-  const pos = row?.positionId
-  if (!pos) return row?.positionName || '-'
-  if (typeof pos === 'string') return row?.positionName || pos
-  return [pos.code, pos.name].filter(Boolean).join(' - ') || row?.positionName || '-'
-}
-
-function lineLabel(row) {
-  const line = row?.lineId
-
-  if (!line) {
-    return [row?.lineCode, row?.lineName].filter(Boolean).join(' - ') || '-'
-  }
-
-  if (typeof line === 'string') {
-    return [row?.lineCode, row?.lineName].filter(Boolean).join(' - ') || line
-  }
-
-  return [line.code, line.name].filter(Boolean).join(' - ') || row?.lineName || '-'
-}
-
-function shiftLabel(row) {
-  const code = row?.shiftCode || row?.shiftId?.code || ''
-  const name = row?.shiftName || row?.shiftId?.name || ''
-  const type = row?.shiftType || row?.shiftId?.type || ''
-  const base = [code, name].filter(Boolean).join(' - ')
-  return type ? `${base} (${type})` : base || '-'
-}
-
-function managerLabel(row) {
-  const lineManagers = Array.isArray(row?.lineManagers) ? row.lineManagers : []
-
-  if (lineManagers.length) {
-    return lineManagers
-      .map((manager) =>
-        [manager.employeeNo, manager.displayName].filter(Boolean).join(' - '),
-      )
-      .filter(Boolean)
-      .join(', ')
-  }
-
-  if (row?.lineManagerNames) {
-    return row.lineManagerNames
-  }
-
-  const manager = row?.reportsToEmployeeId
-
-  if (!manager) return row?.reportsToEmployeeName || '-'
-  if (typeof manager === 'string') return row?.reportsToEmployeeName || manager
-
-  return (
-    [manager.employeeNo, manager.displayName].filter(Boolean).join(' - ') ||
-    row?.reportsToEmployeeName ||
-    '-'
-  )
-}
-
-function formatDateTime(value) {
-  if (!value) return '-'
-  return new Date(value).toLocaleString()
+  return match?.[1] || fallback
 }
 
 function downloadBlob(blob, filename) {
   const url = window.URL.createObjectURL(blob)
   const link = document.createElement('a')
+
   link.href = url
   link.download = filename
+
   document.body.appendChild(link)
   link.click()
   link.remove()
+
   window.URL.revokeObjectURL(url)
 }
 
@@ -982,7 +743,7 @@ async function handleExport() {
       lineId: filters.lineId,
       shiftId: filters.shiftId,
       isActive: filters.isActive,
-      sortBy: filters.sortField,
+      sortBy: filters.sortBy,
       sortOrder: filters.sortOrder === 1 ? 'asc' : 'desc',
     })
 
@@ -992,68 +753,106 @@ async function handleExport() {
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     })
 
-    downloadBlob(blob, `employees-${Date.now()}.xlsx`)
+    downloadBlob(blob, getFilenameFromHeader(res, `employees-${Date.now()}.xlsx`))
 
-    toast.add({
-      severity: 'success',
-      summary: 'Exported',
-      detail: 'Employee excel exported successfully',
-      life: 2500,
-    })
+    showToast('success', t('org.employee.exported'), t('org.employee.exportedSuccess'), 2500)
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Export failed',
-      detail: errorMessage(error, 'Failed to export excel'),
-      life: 3500,
-    })
+    showToast(
+      'error',
+      t('org.employee.exportFailed'),
+      getApiErrorMessage(error, t('org.employee.exportFailed')),
+      3500,
+    )
   } finally {
     exporting.value = false
   }
 }
 
 async function handleImportSuccess(payload) {
-  toast.add({
-    severity: 'success',
-    summary: 'Imported',
-    detail: `Import completed. Created: ${payload?.summary?.created || 0}, Updated: ${payload?.summary?.updated || 0}`,
-    life: 3500,
-  })
+  const summary = payload?.summary || {}
+  const created = Number(summary.created || payload?.created || payload?.createdCount || 0)
+  const updated = Number(summary.updated || payload?.updated || payload?.updatedCount || 0)
+
+  showToast(
+    'success',
+    t('org.employee.imported'),
+    t('org.employee.importedSuccess', { created, updated }),
+    4000,
+  )
 
   await fetchManagersForDropdown()
   await reloadFirstPage({ keepVisible: false })
 }
 
-watch(
-  () => form.departmentId,
-  async (newDepartmentId, oldDepartmentId) => {
-    if (newDepartmentId === oldDepartmentId) return
+function statusSeverity(active) {
+  return active ? 'success' : 'secondary'
+}
 
-    form.positionId = ''
-    form.lineId = ''
-    form.reportsToEmployeeId = ''
-    clearAutoManagerPreview()
+function accountSeverity(row) {
+  return row?.hasAccount ? 'success' : 'warn'
+}
 
-    await Promise.all([
-      fetchPositionsForDropdown(newDepartmentId || ''),
-      fetchLinesForDropdown(newDepartmentId || ''),
-    ])
-  },
-)
+function accountStatusLabel(row) {
+  return row?.hasAccount ? t('org.employee.hasAccount') : t('org.employee.noAccount')
+}
 
-watch(
-  () => form.positionId,
-  async () => {
-    await refreshAutoManagerPreview()
-  },
-)
+function otWorkflowRoleLabel(value) {
+  const role = String(value || 'NONE').toUpperCase()
 
-watch(
-  () => form.lineId,
-  async () => {
-    await refreshAutoManagerPreview()
-  },
-)
+  if (role === 'APPROVER') return t('org.employee.otWorkflowRole.approver')
+  if (role === 'ACKNOWLEDGE') return t('org.employee.otWorkflowRole.acknowledge')
+
+  return t('org.employee.otWorkflowRole.none')
+}
+
+function otWorkflowRoleSeverity(value) {
+  const role = String(value || 'NONE').toUpperCase()
+
+  if (role === 'APPROVER') return 'success'
+  if (role === 'ACKNOWLEDGE') return 'info'
+
+  return 'secondary'
+}
+
+function departmentLabel(row) {
+  return buildLabel(row?.departmentCode, row?.departmentName) || '-'
+}
+
+function positionLabel(row) {
+  return buildLabel(row?.positionCode, row?.positionName) || '-'
+}
+
+function lineLabel(row) {
+  return buildLabel(row?.lineCode, row?.lineName) || '-'
+}
+
+function shiftLabel(row) {
+  const base = buildLabel(row?.shiftCode, row?.shiftName)
+  const type = row?.shiftType || ''
+  const time =
+    row?.shiftStartTime && row?.shiftEndTime
+      ? `${row.shiftStartTime}-${row.shiftEndTime}`
+      : ''
+
+  return [base, type, time].filter(Boolean).join(' · ') || '-'
+}
+
+function managerLabel(row) {
+  const lineManagers = Array.isArray(row?.lineManagers) ? row.lineManagers : []
+
+  if (lineManagers.length) {
+    return lineManagers
+      .map((manager) => buildLabel(manager.employeeCode, manager.displayName))
+      .filter(Boolean)
+      .join(', ')
+  }
+
+  if (row?.lineManagerNames) {
+    return row.lineManagerNames
+  }
+
+  return buildLabel(row?.reportsToEmployeeCode, row?.reportsToEmployeeName) || '-'
+}
 
 onMounted(async () => {
   await Promise.all([
@@ -1073,16 +872,32 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4">
+  <div class="ot-page-shell">
     <EmployeeImportDialog
       v-model:visible="importDialogVisible"
       @success="handleImportSuccess"
     />
 
-    <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-      <div class="flex flex-wrap items-center gap-2">
+    <section class="ot-page-header">
+      <div class="ot-page-header-main">
+        <div class="ot-page-kicker">
+          <i class="pi pi-users" />
+          {{ t('nav.organization') }}
+        </div>
+
+        <h1 class="ot-page-title">
+          {{ t('nav.employees') }}
+        </h1>
+
+        <p class="ot-page-subtitle">
+          {{ t('org.employee.subtitle') }}
+        </p>
+      </div>
+
+      <div class="ot-page-actions">
         <Button
-          label="Import Excel"
+          v-if="canCreate"
+          :label="t('org.employee.importExcel')"
           icon="pi pi-upload"
           severity="secondary"
           outlined
@@ -1091,7 +906,7 @@ onBeforeUnmount(() => {
         />
 
         <Button
-          label="Export Excel"
+          :label="t('org.employee.exportExcel')"
           icon="pi pi-download"
           severity="secondary"
           outlined
@@ -1101,591 +916,635 @@ onBeforeUnmount(() => {
         />
 
         <Button
-          label="New Employee"
+          v-if="canCreate"
+          :label="t('org.employee.newEmployee')"
           icon="pi pi-plus"
           size="small"
           @click="openCreateDialog"
         />
       </div>
-    </div>
+    </section>
 
-    <div class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]">
-      <div class="border-b border-[color:var(--ot-border)] px-3 py-3">
-        <div class="flex flex-col gap-2 xl:flex-row xl:items-center">
-          <IconField class="w-full xl:w-[280px] xl:shrink-0">
-            <InputIcon class="pi pi-search" />
-            <InputText
-              v-model="filters.search"
-              placeholder="Search employee no, name, email, phone"
-              class="w-full"
-              size="small"
-              @input="onSearchInput"
-            />
-          </IconField>
+    <section class="ot-filter-bar ot-filter-bar-6">
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('common.search') }}
+        </label>
 
-          <div class="w-full xl:w-[180px] xl:shrink-0">
-            <Select
-              v-model="filters.departmentId"
-              :options="[{ label: 'All Departments', value: '' }, ...departmentOptions]"
-              optionLabel="label"
-              optionValue="value"
-              placeholder="Department"
-              class="w-full"
-              size="small"
-              :loading="loadingDepartments"
-              @change="onDepartmentFilterChange"
-            />
-          </div>
+        <IconField>
+          <InputIcon class="pi pi-search" />
+          <InputText
+            v-model="filters.search"
+            :placeholder="t('org.employee.searchPlaceholder')"
+            class="w-full"
+            size="small"
+            @input="onSearchInput"
+          />
+        </IconField>
+      </div>
 
-          <div class="w-full xl:w-[180px] xl:shrink-0">
-            <Select
-              v-model="filters.positionId"
-              :options="[{ label: 'All Positions', value: '' }, ...positionOptions]"
-              optionLabel="label"
-              optionValue="value"
-              placeholder="Position"
-              class="w-full"
-              size="small"
-              :loading="loadingPositions"
-              @change="onPositionChange"
-            />
-          </div>
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('nav.departments') }}
+        </label>
 
-          <div class="w-full xl:w-[170px] xl:shrink-0">
-            <Select
-              v-model="filters.lineId"
-              :options="[{ label: 'All Lines', value: '' }, ...lineOptions]"
-              optionLabel="label"
-              optionValue="value"
-              placeholder="Line"
-              class="w-full"
-              size="small"
-              :loading="loadingLines"
-              @change="onLineChange"
-            />
-          </div>
+        <Select
+          v-model="filters.departmentId"
+          :options="departmentFilterOptions"
+          option-label="label"
+          option-value="value"
+          class="w-full"
+          size="small"
+          :loading="loadingDepartments"
+          @change="onDepartmentFilterChange"
+        />
+      </div>
 
-          <div class="w-full xl:w-[180px] xl:shrink-0">
-            <Select
-              v-model="filters.shiftId"
-              :options="[{ label: 'All Shifts', value: '' }, ...shiftOptions]"
-              optionLabel="label"
-              optionValue="value"
-              placeholder="Shift"
-              class="w-full"
-              size="small"
-              :loading="loadingShifts"
-              @change="onShiftChange"
-            />
-          </div>
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('nav.positions') }}
+        </label>
 
-          <div class="w-full xl:w-[160px] xl:shrink-0">
-            <Select
-              v-model="filters.isActive"
-              :options="statusOptions"
-              optionLabel="label"
-              optionValue="value"
-              placeholder="Status"
-              class="w-full"
-              size="small"
-              @change="onStatusChange"
-            />
-          </div>
+        <Select
+          v-model="filters.positionId"
+          :options="positionFilterOptions"
+          option-label="label"
+          option-value="value"
+          class="w-full"
+          size="small"
+          :loading="loadingPositions"
+          @change="onPositionFilterChange"
+        />
+      </div>
 
-          <div class="flex items-center gap-2 xl:ml-auto xl:shrink-0">
-            <div class="rounded-lg border border-[color:var(--ot-border)] px-3 py-1.5 text-xs font-medium text-[color:var(--ot-text-muted)]">
-              Loaded {{ summaryText }}
-            </div>
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('nav.lines') }}
+        </label>
 
-            <Button
-              label="Clear"
-              icon="pi pi-refresh"
-              severity="secondary"
-              outlined
-              size="small"
-              @click="clearFilters"
-            />
-          </div>
+        <Select
+          v-model="filters.lineId"
+          :options="lineFilterOptions"
+          option-label="label"
+          option-value="value"
+          class="w-full"
+          size="small"
+          :loading="loadingLines"
+          @change="onLineFilterChange"
+        />
+      </div>
+
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('nav.shift') }}
+        </label>
+
+        <Select
+          v-model="filters.shiftId"
+          :options="shiftFilterOptions"
+          option-label="label"
+          option-value="value"
+          class="w-full"
+          size="small"
+          :loading="loadingShifts"
+          @change="onShiftFilterChange"
+        />
+      </div>
+
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('common.status') }}
+        </label>
+
+        <Select
+          v-model="filters.isActive"
+          :options="statusOptions"
+          option-label="label"
+          option-value="value"
+          class="w-full"
+          size="small"
+          @change="onStatusChange"
+        />
+      </div>
+
+      <div class="ot-filter-actions">
+        <span class="ot-loaded-badge">
+          {{ loadedLabel }}
+        </span>
+
+        <Button
+          :label="t('common.clear')"
+          icon="pi pi-filter-slash"
+          severity="secondary"
+          outlined
+          size="small"
+          @click="clearFilters"
+        />
+      </div>
+    </section>
+
+    <section class="ot-table-card">
+      <div class="ot-table-toolbar">
+        <div>
+          <h2 class="ot-table-title">
+            {{ t('org.employee.tableTitle') }}
+          </h2>
+
+          <p class="ot-table-subtitle">
+            {{ t('org.employee.tableSubtitle') }}
+          </p>
+        </div>
+
+        <div class="ot-table-actions">
+          <span
+            v-if="backgroundLoading && hasAnyData"
+            class="ot-loaded-badge"
+          >
+            <i class="pi pi-spin pi-spinner" />
+            {{ t('common.updating') }}
+          </span>
         </div>
       </div>
 
-      <DataTable
-        :value="rows"
-        lazy
-        removableSort
-        scrollable
-        scrollHeight="500px"
-        :sortField="filters.sortField"
-        :sortOrder="filters.sortOrder"
-        tableStyle="min-width: 126rem"
-        class="employee-table"
-        :virtualScrollerOptions="useVirtualScroll ? {
-          lazy: true,
-          onLazyLoad: onVirtualLazyLoad,
-          itemSize: 72,
-          delay: 0,
-          showLoader: false,
-          loading: false,
-          numToleratedItems: 12,
-        } : null"
-        @sort="onSort"
-      >
-        <template #empty>
-          <div
-            v-if="bootstrapped"
-            class="py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
-          >
-            No employees found.
-          </div>
-        </template>
-
-        <Column field="employeeNo" header="Employee No" sortable style="min-width: 9rem">
-          <template #body="{ data }">
-            <span v-if="data">{{ data.employeeNo || '-' }}</span>
-          </template>
-        </Column>
-
-        <Column field="displayName" header="Display Name" sortable style="min-width: 14rem">
-          <template #body="{ data }">
-            <span v-if="data">{{ data.displayName || '-' }}</span>
-          </template>
-        </Column>
-
-        <Column field="departmentName" header="Department" style="min-width: 14rem">
-          <template #body="{ data }">
-            <span v-if="data" class="line-clamp-1">{{ departmentLabel(data) }}</span>
-          </template>
-        </Column>
-
-        <Column field="positionName" header="Position" style="min-width: 14rem">
-          <template #body="{ data }">
-            <span v-if="data" class="line-clamp-1">{{ positionLabel(data) }}</span>
-          </template>
-        </Column>
-
-        <Column header="Line" style="min-width: 13rem">
-          <template #body="{ data }">
-            <span v-if="data" class="line-clamp-1">{{ lineLabel(data) }}</span>
-          </template>
-        </Column>
-
-        <Column header="Shift" style="min-width: 15rem">
-          <template #body="{ data }">
-            <span v-if="data" class="line-clamp-1">{{ shiftLabel(data) }}</span>
-          </template>
-        </Column>
-
-        <Column header="Manager" style="min-width: 22rem">
-          <template #body="{ data }">
-            <span
-              v-if="data"
-              class="line-clamp-2"
-              :title="managerLabel(data)"
+      <div class="ot-table-wrapper">
+        <DataTable
+          :value="rows"
+          lazy
+          removable-sort
+          scrollable
+          scroll-height="500px"
+          :sort-field="filters.sortBy"
+          :sort-order="filters.sortOrder"
+          table-style="min-width: 124rem"
+          class="ot-data-table ot-data-table-compact"
+          :virtual-scroller-options="useVirtualScroll ? {
+            lazy: true,
+            onLazyLoad: onVirtualLazyLoad,
+            itemSize: 72,
+            delay: 0,
+            showLoader: false,
+            loading: false,
+            numToleratedItems: 12,
+          } : null"
+          @sort="onSort"
+        >
+          <template #empty>
+            <div
+              v-if="bootstrapped"
+              class="ot-empty-state"
             >
-              {{ managerLabel(data) }}
-            </span>
-          </template>
-        </Column>
+              <div class="ot-empty-icon">
+                <i class="pi pi-users" />
+              </div>
 
-        <Column field="otWorkflowRole" header="OT Role" style="min-width: 10rem">
-          <template #body="{ data }">
-            <Tag
-              v-if="data"
-              :value="otWorkflowRoleLabel(data.otWorkflowRole)"
-              :severity="otWorkflowRoleSeverity(data.otWorkflowRole)"
-              class="ot-status-tag"
-            />
-          </template>
-        </Column>
+              <div class="ot-empty-title">
+                {{ t('common.noData') }}
+              </div>
 
-        <Column field="email" header="Email" style="min-width: 16rem">
-          <template #body="{ data }">
-            <span v-if="data" class="line-clamp-1">{{ data.email || '-' }}</span>
-          </template>
-        </Column>
-
-        <Column field="phone" header="Phone" style="min-width: 10rem">
-          <template #body="{ data }">
-            <span v-if="data">{{ data.phone || '-' }}</span>
-          </template>
-        </Column>
-
-        <Column header="Account" style="min-width: 11rem">
-          <template #body="{ data }">
-            <div v-if="data" class="flex flex-col gap-1">
-              <Tag
-                :value="accountStatusLabel(data)"
-                :severity="accountSeverity(data)"
-                class="ot-status-tag"
-              />
-              <span
-                v-if="data.hasAccount"
-                class="text-xs text-[color:var(--ot-text-muted)]"
-              >
-                {{ data.accountLoginId || '-' }}
-              </span>
+              <div class="ot-empty-text">
+                {{ t('org.employee.noData') }}
+              </div>
             </div>
           </template>
-        </Column>
 
-        <Column field="joinDate" header="Join Date" sortable style="min-width: 10rem">
-          <template #body="{ data }">
-            <span v-if="data">
-              {{ data.joinDate ? String(data.joinDate).slice(0, 10) : '-' }}
-            </span>
-          </template>
-        </Column>
+          <Column
+            field="employeeCode"
+            :header="t('org.employee.employeeCode')"
+            sortable
+            style="min-width: 10rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="font-bold"
+              >
+                {{ data.employeeCode || '-' }}
+              </span>
+            </template>
+          </Column>
 
-        <Column field="isActive" header="Status" sortable style="min-width: 8rem">
-          <template #body="{ data }">
-            <Tag
-              v-if="data"
-              :value="data.isActive ? 'Active' : 'Inactive'"
-              :severity="statusSeverity(data.isActive)"
-              class="ot-status-tag"
-            />
-          </template>
-        </Column>
+          <Column
+            field="displayName"
+            :header="t('org.employee.displayName')"
+            sortable
+            style="min-width: 14rem"
+          >
+            <template #body="{ data }">
+              <span v-if="data">{{ data.displayName || '-' }}</span>
+            </template>
+          </Column>
 
-        <Column field="createdAt" header="Created At" sortable style="min-width: 13rem">
-          <template #body="{ data }">
-            <span v-if="data">{{ formatDateTime(data.createdAt) }}</span>
-          </template>
-        </Column>
+          <Column
+            :header="t('nav.departments')"
+            style="min-width: 14rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="ot-truncate-2"
+              >
+                {{ departmentLabel(data) }}
+              </span>
+            </template>
+          </Column>
 
-        <Column header="Actions" style="width: 7rem; min-width: 7rem">
-          <template #body="{ data }">
-            <Button
-              v-if="data"
-              label="Edit"
-              icon="pi pi-pencil"
-              size="small"
-              outlined
-              @click="openEditDialog(data)"
-            />
-          </template>
-        </Column>
-      </DataTable>
+          <Column
+            :header="t('nav.positions')"
+            style="min-width: 14rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="ot-truncate-2"
+              >
+                {{ positionLabel(data) }}
+              </span>
+            </template>
+          </Column>
 
-      <div
-        v-if="backgroundLoading && hasAnyData"
-        class="flex items-center justify-center border-t border-[color:var(--ot-border)] px-3 py-2 text-xs text-[color:var(--ot-text-muted)]"
-      >
-        Updating...
+          <Column
+            :header="t('nav.lines')"
+            style="min-width: 13rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="ot-truncate-2"
+              >
+                {{ lineLabel(data) }}
+              </span>
+            </template>
+          </Column>
+
+          <Column
+            :header="t('nav.shift')"
+            style="min-width: 16rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="ot-truncate-2"
+              >
+                {{ shiftLabel(data) }}
+              </span>
+            </template>
+          </Column>
+
+          <Column
+            :header="t('org.employee.manager')"
+            style="min-width: 22rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="ot-truncate-2"
+                :title="managerLabel(data)"
+              >
+                {{ managerLabel(data) }}
+              </span>
+            </template>
+          </Column>
+
+          <Column
+            field="otWorkflowRole"
+            :header="t('org.employee.otRole')"
+            sortable
+            style="min-width: 11rem"
+          >
+            <template #body="{ data }">
+              <Tag
+                v-if="data"
+                :value="otWorkflowRoleLabel(data.otWorkflowRole)"
+                :severity="otWorkflowRoleSeverity(data.otWorkflowRole)"
+              />
+            </template>
+          </Column>
+
+          <Column
+            field="email"
+            :header="t('org.employee.email')"
+            style="min-width: 16rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="ot-truncate-2"
+              >
+                {{ data.email || '-' }}
+              </span>
+            </template>
+          </Column>
+
+          <Column
+            field="phone"
+            :header="t('org.employee.phone')"
+            style="min-width: 10rem"
+          >
+            <template #body="{ data }">
+              <span v-if="data">{{ data.phone || '-' }}</span>
+            </template>
+          </Column>
+
+          <Column
+            :header="t('nav.accounts')"
+            style="min-width: 12rem"
+          >
+            <template #body="{ data }">
+              <div
+                v-if="data"
+                class="flex flex-col gap-1"
+              >
+                <Tag
+                  :value="accountStatusLabel(data)"
+                  :severity="accountSeverity(data)"
+                />
+
+                <span
+                  v-if="data.hasAccount"
+                  class="text-xs text-[color:var(--ot-text-muted)]"
+                >
+                  {{ data.accountLoginId || '-' }}
+                </span>
+              </div>
+            </template>
+          </Column>
+
+          <Column
+            field="joinDate"
+            :header="t('org.employee.joinDate')"
+            sortable
+            style="min-width: 10rem"
+          >
+            <template #body="{ data }">
+              <span v-if="data">
+                {{ data.joinDateText || formatDate(data.joinDate) }}
+              </span>
+            </template>
+          </Column>
+
+          <Column
+            field="isActive"
+            :header="t('common.status')"
+            sortable
+            style="min-width: 8rem"
+          >
+            <template #body="{ data }">
+              <Tag
+                v-if="data"
+                :value="data.isActive ? t('common.active') : t('common.inactive')"
+                :severity="statusSeverity(data.isActive)"
+              />
+            </template>
+          </Column>
+
+          <Column
+            field="createdAt"
+            :header="t('common.createdAt')"
+            sortable
+            style="min-width: 14rem"
+          >
+            <template #body="{ data }">
+              <span v-if="data">{{ formatDateTime(data.createdAt) }}</span>
+            </template>
+          </Column>
+
+          <Column
+            :header="t('common.actions')"
+            style="width: 7rem; min-width: 7rem"
+          >
+            <template #body="{ data }">
+              <Button
+                v-if="data && canUpdate"
+                :label="t('common.edit')"
+                icon="pi pi-pencil"
+                size="small"
+                outlined
+                @click="openEditDialog(data)"
+              />
+            </template>
+          </Column>
+        </DataTable>
       </div>
-    </div>
+    </section>
 
     <Dialog
       v-model:visible="employeeDialogVisible"
       modal
-      :header="isEditMode ? 'Edit Employee' : 'Create Employee'"
+      :header="dialogTitle"
       :style="{ width: '60rem', maxWidth: '96vw' }"
       @hide="resetForm"
     >
-      <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Employee No
-          </label>
-          <InputText
-            v-model="form.employeeNo"
-            class="w-full"
-            placeholder="Example: EMP001"
-          />
+      <div class="ot-dialog-form">
+        <div class="ot-form-grid">
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('org.employee.employeeCode') }}
+            </label>
+
+            <InputText
+              v-model="form.employeeCode"
+              class="w-full"
+              :placeholder="t('org.employee.employeeCodeExample')"
+            />
+
+            <p class="ot-field-help">
+              {{ t('org.employee.employeeCodeHelp') }}
+            </p>
+          </div>
+
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('org.employee.displayName') }}
+            </label>
+
+            <InputText
+              v-model="form.displayName"
+              class="w-full"
+              :placeholder="t('org.employee.displayNameExample')"
+            />
+          </div>
+
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('nav.departments') }}
+            </label>
+
+            <Select
+              v-model="form.departmentId"
+              :options="departmentOptions"
+              option-label="label"
+              option-value="value"
+              :placeholder="t('org.employee.selectDepartment')"
+              class="w-full"
+              filter
+              :loading="loadingDepartments"
+              @change="onFormDepartmentChange"
+            />
+          </div>
+
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('nav.positions') }}
+            </label>
+
+            <Select
+              v-model="form.positionId"
+              :options="positionOptions"
+              option-label="label"
+              option-value="value"
+              :placeholder="t('org.employee.selectPosition')"
+              class="w-full"
+              filter
+              :loading="loadingPositions"
+              :disabled="!form.departmentId"
+              @change="onFormPositionChange"
+            />
+          </div>
+
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('nav.lines') }}
+            </label>
+
+            <Select
+              v-model="form.lineId"
+              :options="lineOptions"
+              option-label="label"
+              option-value="value"
+              :placeholder="t('org.employee.selectLine')"
+              class="w-full"
+              filter
+              show-clear
+              :loading="loadingLines"
+              :disabled="!form.departmentId"
+              @change="onFormLineChange"
+            />
+
+            <p class="ot-field-help">
+              {{ t('org.employee.lineHelp') }}
+            </p>
+          </div>
+
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('nav.shift') }}
+            </label>
+
+            <Select
+              v-model="form.shiftId"
+              :options="shiftOptions"
+              option-label="label"
+              option-value="value"
+              :placeholder="t('org.employee.selectShift')"
+              class="w-full"
+              filter
+              :loading="loadingShifts"
+            />
+          </div>
         </div>
 
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Display Name
+        <div class="ot-field">
+          <label class="ot-field-label">
+            {{ t('org.employee.manager') }}
           </label>
-          <InputText
-            v-model="form.displayName"
-            class="w-full"
-            placeholder="Example: John Smith"
-          />
-        </div>
 
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Department
-          </label>
-          <Select
-            v-model="form.departmentId"
-            :options="departmentOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="Select department"
-            class="w-full"
-            filter
-            :loading="loadingDepartments"
-          />
-        </div>
-
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Position
-          </label>
-          <Select
-            v-model="form.positionId"
-            :options="positionOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="Select position"
-            class="w-full"
-            filter
-            :loading="loadingPositions"
-            :disabled="!form.departmentId"
-          />
-        </div>
-
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Line
-          </label>
-          <Select
-            v-model="form.lineId"
-            :options="lineOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="Optional: select production line"
-            class="w-full"
-            filter
-            showClear
-            :loading="loadingLines"
-            :disabled="!form.departmentId"
-          />
-          <small class="text-[color:var(--ot-text-muted)]">
-            Required for production employees such as Sewer if manager should follow line.
-          </small>
-        </div>
-
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Shift
-          </label>
-          <Select
-            v-model="form.shiftId"
-            :options="shiftOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="Select shift"
-            class="w-full"
-            filter
-            :loading="loadingShifts"
-          />
-        </div>
-
-        <div class="space-y-2 md:col-span-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Manager
-          </label>
           <Select
             v-model="form.reportsToEmployeeId"
             :options="managerOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="Select manager"
+            option-label="label"
+            option-value="value"
+            :placeholder="t('org.employee.selectManager')"
             class="w-full"
             filter
-            :loading="loadingManagers || loadingAutoManager"
-            :disabled="shouldAutoResolveManager"
+            show-clear
+            :loading="loadingManagers"
           />
-          <small
-            v-if="shouldAutoResolveManager"
-            :class="autoManagerPreview
-              ? 'text-emerald-600 dark:text-emerald-300'
-              : 'text-amber-600 dark:text-amber-300'"
-          >
-            {{ autoManagerDisplayHint }}
-          </small>
-          <small
-            v-else
-            class="text-[color:var(--ot-text-muted)]"
-          >
-            Manual manager is used only when the selected position does not have a parent position rule.
-          </small>
+
+          <p class="ot-field-help">
+            {{ managerRuleHint }}
+          </p>
         </div>
 
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            OT Workflow Role
-          </label>
-          <Select
-            v-model="form.otWorkflowRole"
-            :options="otWorkflowRoleOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="Select OT workflow role"
-            class="w-full"
-          />
-          <small class="text-[color:var(--ot-text-muted)]">
-            Approver must approve OT. Acknowledge is only informed. None is skipped.
-          </small>
-        </div>
-
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Join Date
-          </label>
-          <InputText
-            v-model="form.joinDate"
-            type="date"
-            class="w-full"
-          />
-        </div>
-
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Email
-          </label>
-          <InputText
-            v-model="form.email"
-            class="w-full"
-            placeholder="example@company.com"
-          />
-        </div>
-
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-[color:var(--ot-text)]">
-            Phone
-            <span v-if="isPhoneRequired" class="text-red-500">*</span>
-          </label>
-          <InputText
-            v-model="form.phone"
-            class="w-full"
-            placeholder="Phone number"
-            :invalid="isPhoneRequired && !String(form.phone || '').trim()"
-          />
-          <small
-            v-if="isPhoneRequired"
-            class="text-[color:var(--ot-text-muted)]"
-          >
-            Phone is required when account will be created.
-          </small>
-        </div>
-
-        <div class="space-y-3 rounded-xl border border-[color:var(--ot-border)] p-4 md:col-span-2">
-          <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div>
-              <div class="text-sm font-semibold text-[color:var(--ot-text)]">
-                Account Setup
-              </div>
-              <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
-                Backend creates login using employee number and phone only when requested.
-              </div>
-            </div>
-
-            <Tag
-              v-if="isEditMode"
-              :value="form.hasAccount ? 'Account exists' : 'No account yet'"
-              :severity="form.hasAccount ? 'success' : 'warn'"
-              class="ot-status-tag"
-            />
-          </div>
-
-          <div v-if="!isEditMode" class="space-y-2">
-            <label class="text-sm font-medium text-[color:var(--ot-text)]">
-              Create Mode
+        <div class="ot-form-grid">
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('org.employee.otRole') }}
             </label>
+
             <Select
-              v-model="form.accountMode"
-              :options="accountModeOptions"
-              optionLabel="label"
-              optionValue="value"
-              class="w-full md:w-[320px]"
+              v-model="form.otWorkflowRole"
+              :options="otWorkflowRoleOptions"
+              option-label="label"
+              option-value="value"
+              class="w-full"
             />
+
+            <p class="ot-field-help">
+              {{ t('org.employee.otRoleHelp') }}
+            </p>
           </div>
 
-          <div
-            v-else-if="form.hasAccount"
-            class="grid grid-cols-1 gap-3 md:grid-cols-3"
-          >
-            <div class="rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface-2)] px-4 py-3">
-              <div class="text-xs font-semibold uppercase tracking-[0.12em] text-[color:var(--ot-text-muted)]">
-                Account Status
-              </div>
-              <div class="mt-1 text-sm font-semibold text-[color:var(--ot-text)]">
-                Already provisioned
-              </div>
-            </div>
-
-            <div class="rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface-2)] px-4 py-3">
-              <div class="text-xs font-semibold uppercase tracking-[0.12em] text-[color:var(--ot-text-muted)]">
-                Login ID
-              </div>
-              <div class="mt-1 text-sm font-semibold text-[color:var(--ot-text)]">
-                {{ form.accountLoginId || '-' }}
-              </div>
-            </div>
-
-            <div class="rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface-2)] px-4 py-3">
-              <div class="text-xs font-semibold uppercase tracking-[0.12em] text-[color:var(--ot-text-muted)]">
-                Account Active
-              </div>
-              <div class="mt-1 text-sm font-semibold text-[color:var(--ot-text)]">
-                {{ form.accountIsActive ? 'Yes' : 'No' }}
-              </div>
-            </div>
-          </div>
-
-          <div v-else class="space-y-2">
-            <label class="text-sm font-medium text-[color:var(--ot-text)]">
-              Provision Account
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('org.employee.joinDate') }}
             </label>
-            <Select
-              v-model="form.accountMode"
-              :options="accountModeOptions"
-              optionLabel="label"
-              optionValue="value"
-              class="w-full md:w-[320px]"
+
+            <InputText
+              v-model="form.joinDate"
+              type="date"
+              class="w-full"
             />
-            <small class="text-[color:var(--ot-text-muted)]">
-              Choose “Create with account” to provision login for this employee now.
-            </small>
           </div>
 
-          <div
-            v-if="wantsCreateAccount || wantsProvisionAccount"
-            class="grid grid-cols-1 gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-800 dark:bg-emerald-950/30 md:grid-cols-2"
-          >
-            <div>
-              <div class="text-xs font-semibold uppercase tracking-[0.12em] text-emerald-700 dark:text-emerald-300">
-                Login ID
-              </div>
-              <div class="mt-1 text-sm font-bold text-emerald-900 dark:text-emerald-100">
-                {{ String(form.employeeNo || '').trim().toUpperCase() || '-' }}
-              </div>
-            </div>
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('org.employee.email') }}
+            </label>
 
-            <div>
-              <div class="text-xs font-semibold uppercase tracking-[0.12em] text-emerald-700 dark:text-emerald-300">
-                Default Password
-              </div>
-              <div class="mt-1 break-all text-sm font-bold text-emerald-900 dark:text-emerald-100">
-                {{ phonePreviewPassword }}
-              </div>
-            </div>
+            <InputText
+              v-model="form.email"
+              class="w-full"
+              placeholder="example@company.com"
+            />
+          </div>
+
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('org.employee.phone') }}
+            </label>
+
+            <InputText
+              v-model="form.phone"
+              class="w-full"
+              :placeholder="t('org.employee.phonePlaceholder')"
+            />
           </div>
         </div>
 
-        <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] px-4 py-3 md:col-span-2">
-          <span class="text-sm font-medium text-[color:var(--ot-text)]">
-            Active Status
+        <div class="ot-inline-info">
+          {{ t('org.employee.accountInfo') }}
+        </div>
+
+        <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] px-4 py-3">
+          <span class="text-sm font-semibold text-[color:var(--ot-text)]">
+            {{ t('common.active') }}
           </span>
+
           <InputSwitch v-model="form.isActive" />
         </div>
       </div>
 
       <template #footer>
-        <div class="flex justify-end gap-2">
+        <div class="ot-form-footer">
           <Button
-            label="Cancel"
+            :label="t('common.cancel')"
             text
             size="small"
             @click="employeeDialogVisible = false"
           />
+
           <Button
-            :label="isEditMode ? 'Save Changes' : 'Create Employee'"
+            :label="saveLabel"
             :loading="saving"
             :disabled="isSaveDisabled"
             size="small"
@@ -1696,23 +1555,3 @@ onBeforeUnmount(() => {
     </Dialog>
   </div>
 </template>
-
-<style scoped>
-:deep(.employee-table .p-datatable-thead > tr > th) {
-  padding: 0.72rem 0.9rem !important;
-}
-
-:deep(.employee-table .p-datatable-tbody > tr > td) {
-  padding: 0.72rem 0.9rem !important;
-  height: 72px !important;
-}
-
-:deep(.employee-table .p-tag.ot-status-tag) {
-  min-height: 1.35rem !important;
-  padding: 0.12rem 0.45rem !important;
-  font-size: 0.7rem !important;
-  font-weight: 600 !important;
-  line-height: 1 !important;
-  border-radius: 999px !important;
-}
-</style>
