@@ -25,12 +25,13 @@ import {
 import HolidayDatePicker from '@/modules/calendar/components/HolidayDatePicker.vue'
 import HolidayImportDialog from '@/modules/calendar/components/HolidayImportDialog.vue'
 import { useAuthStore } from '@/modules/auth/auth.store'
+import AppTableLoading from '@/shared/components/AppTableLoading.vue'
 import { buildSaveErrorMessage, getApiErrorMessage } from '@/shared/utils/apiError'
 import { formatDateTime } from '@/shared/utils/dateFormat'
 
 const toast = useToast()
 const auth = useAuthStore()
-const { t } = useI18n()
+const { t, te } = useI18n()
 
 const PAGE_SIZE = 10
 const SEARCH_DEBOUNCE_MS = 250
@@ -89,6 +90,7 @@ const totalHolidays = computed(() => Number(totalRecords.value || 0))
 const loadedCount = computed(() => rows.value.filter(Boolean).length)
 const hasAnyData = computed(() => rows.value.some(Boolean))
 const useVirtualScroll = computed(() => totalHolidays.value > PAGE_SIZE)
+const isFirstLoading = computed(() => !bootstrapped.value && backgroundLoading.value)
 
 const loadedLabel = computed(() =>
   t('common.loaded', {
@@ -138,6 +140,18 @@ const previewSelectedHoliday = computed(() => {
   return previewHolidayMap.value.get(previewSelectedYmd.value) || null
 })
 
+const previewSelectedDayLabel = computed(() => {
+  if (previewSelectedHoliday.value) return previewSelectedHoliday.value.name
+  if (previewSelectedDate.value.getDay() === 0) return label('calendar.holidayPicker.sunday', 'Sunday')
+  return label('calendar.holidayPicker.workingDay', 'Working Day')
+})
+
+const previewSelectedDaySeverity = computed(() => {
+  if (previewSelectedHoliday.value) return 'danger'
+  if (previewSelectedDate.value.getDay() === 0) return 'warning'
+  return 'success'
+})
+
 const previewSortedHolidays = computed(() => {
   return [...previewHolidayRows.value].sort((a, b) =>
     String(a.date || '').localeCompare(String(b.date || '')),
@@ -179,6 +193,10 @@ const previewCalendarDays = computed(() => {
 
 let searchTimer = null
 let currentRequestId = 0
+
+function label(key, fallback) {
+  return te(key) ? t(key) : fallback
+}
 
 function normalizePayload(res) {
   return res?.data?.data || res?.data || {}
@@ -367,6 +385,7 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
   try {
     const res = await getHolidays(buildQuery(page))
+
     if (requestId !== currentRequestId) return
 
     const payload = normalizePayload(res)
@@ -402,6 +421,8 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
     bootstrapped.value = true
   } catch (error) {
+    bootstrapped.value = true
+
     showToast(
       'error',
       t('common.loadFailed'),
@@ -417,6 +438,7 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
     rows.value = []
     totalRecords.value = 0
     loadedPages.value = new Set()
+    bootstrapped.value = false
   }
 
   await fetchPage(1, {
@@ -566,10 +588,22 @@ async function submitHoliday() {
 
     if (editingHolidayId.value) {
       await updateHoliday(editingHolidayId.value, payload)
-      showToast('success', t('common.updated'), t('calendar.holiday.updatedSuccess'), 2500)
+
+      showToast(
+        'success',
+        t('common.updated'),
+        t('calendar.holiday.updatedSuccess'),
+        2500,
+      )
     } else {
       await createHoliday(payload)
-      showToast('success', t('common.created'), t('calendar.holiday.createdSuccess'), 2500)
+
+      showToast(
+        'success',
+        t('common.created'),
+        t('calendar.holiday.createdSuccess'),
+        2500,
+      )
     }
 
     holidayDialogVisible.value = false
@@ -702,23 +736,73 @@ onBeforeUnmount(() => {
       @success="handleImportSuccess"
     />
 
-    <section class="ot-page-header">
-      <div class="ot-page-header-main">
-        <div class="ot-page-kicker">
-          <i class="pi pi-calendar" />
-          {{ t('nav.calendar') }}
-        </div>
+    <section class="ot-filter-bar ot-filter-bar-5">
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('common.search') }}
+        </label>
 
-        <h1 class="ot-page-title">
-          {{ t('nav.holidayMaster') }}
-        </h1>
+        <IconField>
+          <InputIcon class="pi pi-search" />
 
-        <p class="ot-page-subtitle">
-          {{ t('calendar.holiday.subtitle') }}
-        </p>
+          <InputText
+            v-model="filters.search"
+            :placeholder="t('calendar.holiday.searchPlaceholder')"
+            class="w-full"
+            size="small"
+            @input="onSearchInput"
+          />
+        </IconField>
       </div>
 
-      <div class="ot-page-actions">
+      <div class="ot-field">
+        <HolidayDatePicker
+          v-model="filters.fromDate"
+          :label="t('common.fromDate')"
+          :placeholder="t('common.fromDate')"
+          @change="onFilterChange"
+        />
+      </div>
+
+      <div class="ot-field">
+        <HolidayDatePicker
+          v-model="filters.toDate"
+          :label="t('common.toDate')"
+          :placeholder="t('common.toDate')"
+          @change="onFilterChange"
+        />
+      </div>
+
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('common.status') }}
+        </label>
+
+        <Select
+          v-model="filters.isActive"
+          :options="statusOptions"
+          option-label="label"
+          option-value="value"
+          class="w-full"
+          size="small"
+          @change="onFilterChange"
+        />
+      </div>
+
+      <div class="ot-filter-actions xl:col-span-5">
+        <span class="ot-loaded-badge">
+          {{ loadedLabel }}
+        </span>
+
+        <Button
+          :label="t('common.clear')"
+          icon="pi pi-filter-slash"
+          severity="secondary"
+          outlined
+          size="small"
+          @click="clearFilters"
+        />
+
         <Button
           v-if="canCreate"
           :label="t('calendar.holiday.importExcel')"
@@ -749,426 +833,376 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <section class="grid grid-cols-1 gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
-      <div class="ot-table-card">
+    <section class="grid grid-cols-1 gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
+      <aside class="ot-table-card holiday-preview-card">
         <div class="ot-table-toolbar">
           <div>
             <h2 class="ot-table-title">
-              Calendar Preview
+              {{ label('calendar.holiday.previewTitle', 'Calendar Preview') }}
             </h2>
 
-            <p class="ot-table-subtitle">
-              Sundays and active holidays are highlighted.
-            </p>
-          </div>
-
-          <Tag
-            :value="`${previewHolidayRows.length} holidays`"
-            severity="info"
-          />
-        </div>
-
-        <div class="rounded-2xl bg-[color:var(--ot-bg)] p-4">
-          <div class="mb-4 flex items-center justify-between gap-3">
-            <button
-              type="button"
-              class="holiday-preview-nav"
-              @click="previousPreviewMonth"
-            >
-              <i class="pi pi-chevron-left" />
-            </button>
-
-            <div class="min-w-0 text-center">
-              <div class="text-lg font-bold text-[color:var(--ot-text)]">
-                {{ previewMonthTitle }}
-              </div>
-
-              <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
-                <span v-if="previewLoading">Loading...</span>
-                <span v-else>{{ previewHolidayRows.length }} active holiday{{ previewHolidayRows.length === 1 ? '' : 's' }}</span>
-              </div>
+            <div class="ot-table-subtitle">
+              {{ previewMonthTitle }}
             </div>
-
-            <button
-              type="button"
-              class="holiday-preview-nav"
-              @click="nextPreviewMonth"
-            >
-              <i class="pi pi-chevron-right" />
-            </button>
           </div>
 
-          <div class="grid grid-cols-7 gap-2">
-            <div
-              v-for="label in weekLabels"
-              :key="label"
-              class="pb-1 text-center text-xs font-bold text-[color:var(--ot-text-muted)]"
-            >
-              {{ label }}
-            </div>
-
-            <button
-              v-for="cell in previewCalendarDays"
-              :key="cell.key"
-              type="button"
-              class="holiday-preview-cell"
-              :class="{
-                'is-outside': !cell.inCurrentMonth,
-                'is-today': cell.isToday,
-                'is-selected': cell.isSelected,
-                'is-sunday': cell.isSunday,
-                'is-holiday': cell.isHoliday,
-              }"
-              :title="cell.holiday?.name || (cell.isSunday ? 'Sunday' : '')"
-              @click="selectPreviewCell(cell)"
-            >
-              <span>{{ cell.day }}</span>
-              <span
-                v-if="cell.isHoliday"
-                class="holiday-preview-dot"
-              />
-            </button>
-          </div>
-        </div>
-
-        <div class="mt-3 rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-bg)] px-4 py-3">
-          <div class="text-[11px] font-bold uppercase tracking-[0.14em] text-[color:var(--ot-text-muted)]">
-            Selected Date
-          </div>
-
-          <div class="mt-1 text-sm font-semibold text-[color:var(--ot-text)]">
-            {{ formatPrettyDate(previewSelectedDate) }}
-          </div>
-
-          <div class="mt-3 flex flex-wrap items-center gap-2">
+          <div class="ot-table-actions">
             <Tag
-              v-if="previewSelectedHoliday"
-              :value="previewSelectedHoliday.name"
-              severity="danger"
-            />
-
-            <Tag
-              v-else-if="previewSelectedDate.getDay() === 0"
-              value="Sunday"
-              severity="warning"
-            />
-
-            <Tag
-              v-else
-              value="Working Day"
-              severity="success"
-            />
-          </div>
-
-          <div class="mt-4 flex flex-wrap justify-end gap-2">
-            <Button
-              label="Today"
-              icon="pi pi-calendar"
-              severity="secondary"
-              outlined
-              size="small"
-              @click="goPreviewToday"
-            />
-
-            <Button
-              v-if="canCreate && !previewSelectedHoliday"
-              label="Create on selected date"
-              icon="pi pi-plus"
-              size="small"
-              @click="openCreateDialog(previewSelectedYmd)"
-            />
-
-            <Button
-              v-if="canUpdate && previewSelectedHoliday"
-              label="Edit holiday"
-              icon="pi pi-pencil"
-              outlined
-              size="small"
-              @click="openEditDialog(previewSelectedHoliday)"
+              :value="label('calendar.holiday.previewCount', `${previewHolidayRows.length} holidays`)"
+              severity="info"
             />
           </div>
         </div>
 
-        <div
-          v-if="previewSortedHolidays.length"
-          class="mt-3 space-y-2"
-        >
-          <button
-            v-for="item in previewSortedHolidays"
-            :key="item.id || item._id || item.date"
-            type="button"
-            class="holiday-summary-row"
-            @click="previewSelectedDate = ymdToDate(item.date)"
-          >
-            <div class="min-w-0">
-              <div class="truncate text-sm font-bold text-[color:var(--ot-text)]">
-                {{ item.name }}
-              </div>
-
-              <div class="mt-0.5 text-xs text-[color:var(--ot-text-muted)]">
-                {{ formatDate(item.date) }}
-              </div>
-            </div>
-
-            <Tag
-              :value="item.code || 'No Code'"
-              severity="secondary"
-            />
-          </button>
-        </div>
-      </div>
-
-      <div class="flex min-w-0 flex-col gap-4">
-        <section class="ot-filter-bar">
-          <div class="ot-field">
-            <label class="ot-field-label">
-              {{ t('common.search') }}
-            </label>
-
-            <IconField>
-              <InputIcon class="pi pi-search" />
-
-              <InputText
-                v-model="filters.search"
-                :placeholder="t('calendar.holiday.searchPlaceholder')"
-                class="w-full"
-                size="small"
-                @input="onSearchInput"
-              />
-            </IconField>
-          </div>
-
-          <div class="ot-field">
-            <HolidayDatePicker
-              v-model="filters.fromDate"
-              :label="t('common.fromDate')"
-              :placeholder="t('common.fromDate')"
-              @change="onFilterChange"
-            />
-          </div>
-
-          <div class="ot-field">
-            <HolidayDatePicker
-              v-model="filters.toDate"
-              :label="t('common.toDate')"
-              :placeholder="t('common.toDate')"
-              @change="onFilterChange"
-            />
-          </div>
-
-          <div class="ot-field">
-            <label class="ot-field-label">
-              {{ t('common.status') }}
-            </label>
-
-            <Select
-              v-model="filters.isActive"
-              :options="statusOptions"
-              option-label="label"
-              option-value="value"
-              class="w-full"
-              size="small"
-              @change="onFilterChange"
-            />
-          </div>
-
-          <div class="ot-filter-actions">
-            <span class="ot-loaded-badge">
-              {{ loadedLabel }}
-            </span>
-
-            <Button
-              :label="t('common.clear')"
-              icon="pi pi-filter-slash"
-              severity="secondary"
-              outlined
-              size="small"
-              @click="clearFilters"
-            />
-          </div>
-        </section>
-
-        <section class="ot-table-card">
-          <div class="ot-table-toolbar">
-            <div>
-              <h2 class="ot-table-title">
-                {{ t('calendar.holiday.tableTitle') }}
-              </h2>
-
-              <p class="ot-table-subtitle">
-                {{ t('calendar.holiday.tableSubtitle') }}
-              </p>
-            </div>
-
-            <div class="ot-table-actions">
-              <span
-                v-if="backgroundLoading && hasAnyData"
-                class="ot-loaded-badge"
+        <div class="holiday-preview-body">
+          <div class="holiday-calendar-box">
+            <div class="holiday-calendar-top">
+              <button
+                type="button"
+                class="holiday-preview-nav"
+                @click="previousPreviewMonth"
               >
-                <i class="pi pi-spin pi-spinner" />
-                {{ t('common.updating') }}
-              </span>
-            </div>
-          </div>
+                <i class="pi pi-chevron-left" />
+              </button>
 
-          <div class="ot-table-wrapper">
-            <DataTable
-              :value="rows"
-              lazy
-              removable-sort
-              scrollable
-              scroll-height="500px"
-              :sort-field="filters.sortField"
-              :sort-order="filters.sortOrder"
-              table-style="min-width: max-content"
-              class="ot-data-table ot-data-table-compact"
-              :virtual-scroller-options="useVirtualScroll ? {
-                lazy: true,
-                onLazyLoad: onVirtualLazyLoad,
-                itemSize: 72,
-                delay: 0,
-                showLoader: false,
-                loading: false,
-                numToleratedItems: 12,
-              } : null"
-              @sort="onSort"
-            >
-              <template #empty>
-                <div
-                  v-if="bootstrapped"
-                  class="ot-empty-state"
-                >
-                  <div class="ot-empty-icon">
-                    <i class="pi pi-calendar" />
-                  </div>
-
-                  <div class="ot-empty-title">
-                    {{ t('common.noData') }}
-                  </div>
-
-                  <div class="ot-empty-text">
-                    {{ t('calendar.holiday.noData') }}
-                  </div>
+              <div class="min-w-0 text-center">
+                <div class="holiday-month-title">
+                  {{ previewMonthTitle }}
                 </div>
-              </template>
 
-              <Column
-                field="date"
-                :header="t('common.date')"
-                sortable
-                style="min-width: 8.5rem"
-              >
-                <template #body="{ data }">
-                  <span
-                    v-if="data"
-                    class="font-bold"
-                  >
-                    {{ formatDate(data.date) }}
+                <div class="holiday-month-subtitle">
+                  <span v-if="previewLoading">{{ t('common.loading') }}</span>
+                  <span v-else>
+                    {{ previewHolidayRows.length }}
+                    {{ label('calendar.holiday.activeHolidays', 'active holiday(s)') }}
                   </span>
-                </template>
-              </Column>
+                </div>
+              </div>
 
-              <Column
-                field="code"
-                :header="t('common.code')"
-                sortable
-                style="min-width: 8rem"
+              <button
+                type="button"
+                class="holiday-preview-nav"
+                @click="nextPreviewMonth"
               >
-                <template #body="{ data }">
-                  <Tag
-                    v-if="data"
-                    :value="data.code || t('calendar.holiday.noCode')"
-                    severity="secondary"
-                  />
-                </template>
-              </Column>
+                <i class="pi pi-chevron-right" />
+              </button>
+            </div>
 
-              <Column
-                field="name"
-                :header="t('common.name')"
-                sortable
-                style="min-width: 14rem"
+            <div class="grid grid-cols-7 gap-1.5">
+              <div
+                v-for="weekLabel in weekLabels"
+                :key="weekLabel"
+                class="holiday-week-label"
               >
-                <template #body="{ data }">
-                  <span v-if="data">{{ data.name || '-' }}</span>
-                </template>
-              </Column>
+                {{ weekLabel }}
+              </div>
 
-              <Column
-                field="description"
-                :header="t('common.description')"
-                style="min-width: 18rem"
+              <button
+                v-for="cell in previewCalendarDays"
+                :key="cell.key"
+                type="button"
+                class="holiday-preview-cell"
+                :class="{
+                  'is-outside': !cell.inCurrentMonth,
+                  'is-today': cell.isToday,
+                  'is-selected': cell.isSelected,
+                  'is-sunday': cell.isSunday,
+                  'is-holiday': cell.isHoliday,
+                }"
+                :title="cell.holiday?.name || (cell.isSunday ? label('calendar.holidayPicker.sunday', 'Sunday') : '')"
+                @click="selectPreviewCell(cell)"
               >
-                <template #body="{ data }">
-                  <span
-                    v-if="data"
-                    class="ot-truncate-2"
-                  >
-                    {{ data.description || '-' }}
-                  </span>
-                </template>
-              </Column>
+                <span>{{ cell.day }}</span>
 
-              <Column
-                field="isPaidHoliday"
-                :header="t('calendar.holiday.paidHoliday')"
-                sortable
-                style="min-width: 9rem"
-              >
-                <template #body="{ data }">
-                  <Tag
-                    v-if="data"
-                    :value="data.isPaidHoliday ? t('calendar.holiday.paid') : t('calendar.holiday.unpaid')"
-                    :severity="paidSeverity(data.isPaidHoliday)"
-                  />
-                </template>
-              </Column>
-
-              <Column
-                field="isActive"
-                :header="t('common.status')"
-                sortable
-                style="min-width: 7rem"
-              >
-                <template #body="{ data }">
-                  <Tag
-                    v-if="data"
-                    :value="data.isActive ? t('common.active') : t('common.inactive')"
-                    :severity="statusSeverity(data.isActive)"
-                  />
-                </template>
-              </Column>
-
-              <Column
-                field="createdAt"
-                :header="t('common.createdAt')"
-                sortable
-                style="min-width: 13rem"
-              >
-                <template #body="{ data }">
-                  <span v-if="data">{{ formatDateTime(data.createdAt) }}</span>
-                </template>
-              </Column>
-
-              <Column
-                :header="t('common.actions')"
-                style="width: 7rem; min-width: 7rem"
-              >
-                <template #body="{ data }">
-                  <Button
-                    v-if="data && canUpdate"
-                    :label="t('common.edit')"
-                    icon="pi pi-pencil"
-                    size="small"
-                    outlined
-                    @click="openEditDialog(data)"
-                  />
-                </template>
-              </Column>
-            </DataTable>
+                <span
+                  v-if="cell.isHoliday"
+                  class="holiday-preview-dot"
+                />
+              </button>
+            </div>
           </div>
-        </section>
-      </div>
+
+          <div class="holiday-selected-card">
+            <div class="flex flex-col gap-3">
+              <div class="min-w-0">
+                <div class="holiday-selected-label">
+                  {{ label('calendar.holiday.selectedDate', 'Selected Date') }}
+                </div>
+
+                <div class="holiday-selected-title">
+                  {{ formatPrettyDate(previewSelectedDate) }}
+                </div>
+              </div>
+
+              <div class="flex flex-wrap items-center gap-2">
+                <Tag
+                  :value="previewSelectedDayLabel"
+                  :severity="previewSelectedDaySeverity"
+                />
+
+                <Tag
+                  v-if="previewSelectedHoliday?.code"
+                  :value="previewSelectedHoliday.code"
+                  severity="secondary"
+                />
+              </div>
+
+              <div class="flex flex-wrap justify-end gap-2">
+                <Button
+                  :label="label('calendar.holidayPicker.today', 'Today')"
+                  icon="pi pi-calendar"
+                  severity="secondary"
+                  outlined
+                  size="small"
+                  @click="goPreviewToday"
+                />
+
+                <Button
+                  v-if="canCreate && !previewSelectedHoliday"
+                  :label="label('calendar.holiday.createOnSelectedDate', 'Create')"
+                  icon="pi pi-plus"
+                  size="small"
+                  @click="openCreateDialog(previewSelectedYmd)"
+                />
+
+                <Button
+                  v-if="canUpdate && previewSelectedHoliday"
+                  :label="label('calendar.holiday.editHoliday', 'Edit')"
+                  icon="pi pi-pencil"
+                  outlined
+                  size="small"
+                  @click="openEditDialog(previewSelectedHoliday)"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div
+            v-if="previewSortedHolidays.length"
+            class="holiday-month-list"
+          >
+            <button
+              v-for="item in previewSortedHolidays"
+              :key="item.id || item._id || item.date"
+              type="button"
+              class="holiday-summary-row"
+              @click="previewSelectedDate = ymdToDate(item.date)"
+            >
+              <div class="min-w-0">
+                <div class="truncate text-sm font-medium text-[color:var(--ot-text)]">
+                  {{ item.name }}
+                </div>
+
+                <div class="mt-0.5 text-xs text-[color:var(--ot-text-muted)]">
+                  {{ formatDate(item.date) }}
+                </div>
+              </div>
+
+              <Tag
+                :value="item.code || t('calendar.holiday.noCode')"
+                severity="secondary"
+              />
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      <section class="ot-table-card">
+        <div class="ot-table-toolbar">
+          <div>
+            <h2 class="ot-table-title">
+              {{ t('calendar.holiday.tableTitle') }}
+            </h2>
+          </div>
+
+          <div class="ot-table-actions">
+            <span
+              v-if="backgroundLoading && hasAnyData"
+              class="ot-loaded-badge"
+            >
+              <i class="pi pi-spin pi-spinner" />
+              {{ t('common.updating') }}
+            </span>
+          </div>
+        </div>
+
+        <div class="ot-table-wrapper">
+          <AppTableLoading
+            v-if="isFirstLoading"
+            :title="label('common.loadingData', 'Loading data')"
+            :message="label('common.fetchingRecords', 'Fetching records')"
+            :rows="7"
+            :columns="8"
+            icon="pi pi-calendar"
+          />
+
+          <DataTable
+            v-else
+            :value="rows"
+            lazy
+            removable-sort
+            scrollable
+            scroll-height="500px"
+            :sort-field="filters.sortField"
+            :sort-order="filters.sortOrder"
+            table-style="min-width: 82rem"
+            class="ot-data-table ot-data-table-compact"
+            :virtual-scroller-options="useVirtualScroll ? {
+              lazy: true,
+              onLazyLoad: onVirtualLazyLoad,
+              itemSize: 72,
+              delay: 0,
+              showLoader: false,
+              loading: false,
+              numToleratedItems: 12,
+            } : null"
+            @sort="onSort"
+          >
+            <template #empty>
+              <div
+                v-if="bootstrapped"
+                class="ot-empty-state"
+              >
+                <div class="ot-empty-icon">
+                  <i class="pi pi-calendar" />
+                </div>
+
+                <div class="ot-empty-title">
+                  {{ t('common.noData') }}
+                </div>
+
+                <div class="ot-empty-text">
+                  {{ t('calendar.holiday.noData') }}
+                </div>
+              </div>
+            </template>
+
+            <Column
+              field="date"
+              :header="t('common.date')"
+              sortable
+              style="min-width: 8.5rem"
+            >
+              <template #body="{ data }">
+                <span
+                  v-if="data"
+                  class="font-medium text-[color:var(--ot-text)]"
+                >
+                  {{ formatDate(data.date) }}
+                </span>
+              </template>
+            </Column>
+
+            <Column
+              field="code"
+              :header="t('common.code')"
+              sortable
+              style="min-width: 8rem"
+            >
+              <template #body="{ data }">
+                <Tag
+                  v-if="data"
+                  :value="data.code || t('calendar.holiday.noCode')"
+                  severity="secondary"
+                />
+              </template>
+            </Column>
+
+            <Column
+              field="name"
+              :header="t('common.name')"
+              sortable
+              style="min-width: 14rem"
+            >
+              <template #body="{ data }">
+                <span
+                  v-if="data"
+                  class="text-[color:var(--ot-text)]"
+                >
+                  {{ data.name || '-' }}
+                </span>
+              </template>
+            </Column>
+
+            <Column
+              field="description"
+              :header="t('common.description')"
+              style="min-width: 18rem"
+            >
+              <template #body="{ data }">
+                <span
+                  v-if="data"
+                  class="ot-truncate-2 text-[color:var(--ot-text-muted)]"
+                >
+                  {{ data.description || '-' }}
+                </span>
+              </template>
+            </Column>
+
+            <Column
+              field="isPaidHoliday"
+              :header="t('calendar.holiday.paidHoliday')"
+              sortable
+              style="min-width: 9rem"
+            >
+              <template #body="{ data }">
+                <Tag
+                  v-if="data"
+                  :value="data.isPaidHoliday ? t('calendar.holiday.paid') : t('calendar.holiday.unpaid')"
+                  :severity="paidSeverity(data.isPaidHoliday)"
+                />
+              </template>
+            </Column>
+
+            <Column
+              field="isActive"
+              :header="t('common.status')"
+              sortable
+              style="min-width: 7.5rem"
+            >
+              <template #body="{ data }">
+                <Tag
+                  v-if="data"
+                  :value="data.isActive ? t('common.active') : t('common.inactive')"
+                  :severity="statusSeverity(data.isActive)"
+                />
+              </template>
+            </Column>
+
+            <Column
+              field="createdAt"
+              :header="t('common.createdAt')"
+              sortable
+              style="min-width: 13rem"
+            >
+              <template #body="{ data }">
+                <span
+                  v-if="data"
+                  class="text-sm text-[color:var(--ot-text-muted)]"
+                >
+                  {{ formatDateTime(data.createdAt) }}
+                </span>
+              </template>
+            </Column>
+
+            <Column
+              :header="t('common.actions')"
+              style="width: 7rem; min-width: 7rem"
+            >
+              <template #body="{ data }">
+                <Button
+                  v-if="data && canUpdate"
+                  :label="t('common.edit')"
+                  icon="pi pi-pencil"
+                  size="small"
+                  outlined
+                  @click="openEditDialog(data)"
+                />
+              </template>
+            </Column>
+          </DataTable>
+        </div>
+      </section>
     </section>
 
     <Dialog
@@ -1208,7 +1242,7 @@ onBeforeUnmount(() => {
           class="rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-bg)] px-4 py-3"
         >
           <div class="flex flex-wrap items-center gap-2">
-            <span class="text-sm font-semibold text-[color:var(--ot-text)]">
+            <span class="text-sm font-medium text-[color:var(--ot-text)]">
               {{ t('calendar.holiday.selectedDayType') }}
             </span>
 
@@ -1252,9 +1286,9 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="ot-form-grid">
-          <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] px-4 py-3">
+          <div class="holiday-switch-card">
             <div>
-              <div class="text-sm font-semibold text-[color:var(--ot-text)]">
+              <div class="text-sm font-medium text-[color:var(--ot-text)]">
                 {{ t('calendar.holiday.paidHoliday') }}
               </div>
 
@@ -1266,7 +1300,7 @@ onBeforeUnmount(() => {
             <InputSwitch v-model="form.isPaidHoliday" />
           </div>
 
-          <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] px-4 py-3">
+          <div class="holiday-switch-card">
             <div>
               <div class="text-sm font-semibold text-[color:var(--ot-text)]">
                 {{ t('common.active') }}
@@ -1305,10 +1339,35 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.holiday-preview-card {
+  align-self: start;
+}
+
+.holiday-preview-body {
+  display: grid;
+  gap: 0.85rem;
+  padding: 0.85rem;
+}
+
+.holiday-calendar-box {
+  border: 1px solid var(--ot-border);
+  border-radius: var(--ot-radius-md);
+  background: var(--ot-bg);
+  padding: 0.85rem;
+}
+
+.holiday-calendar-top {
+  margin-bottom: 0.85rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
 .holiday-preview-nav {
   display: inline-flex;
-  width: 2.15rem;
-  height: 2.15rem;
+  width: 2rem;
+  height: 2rem;
   align-items: center;
   justify-content: center;
   border: 1px solid var(--ot-border);
@@ -1318,24 +1377,56 @@ onBeforeUnmount(() => {
   transition: 0.18s ease;
 }
 
-.holiday-preview-nav:hover {
-  background: var(--ot-hover, rgba(148, 163, 184, 0.1));
+.holiday-month-title {
+  color: var(--ot-text);
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+
+.holiday-month-subtitle {
+  margin-top: 0.12rem;
+  color: var(--ot-text-muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+.holiday-week-label {
+  padding-bottom: 0.15rem;
+  text-align: center;
+  color: var(--ot-text-muted);
+  font-size: 0.7rem;
+  font-weight: 600;
 }
 
 .holiday-preview-cell {
   position: relative;
   display: inline-flex;
-  min-height: 2.45rem;
+  min-height: 2.15rem;
   align-items: center;
   justify-content: center;
   border: 0;
   border-radius: 9999px;
   background: transparent;
   color: var(--ot-text);
-  font-size: 0.88rem;
-  font-weight: 700;
+  font-size: 0.82rem;
+  font-weight: 500;
   cursor: pointer;
   transition: 0.18s ease;
+}
+
+.holiday-selected-label {
+  color: var(--ot-text-muted);
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.holiday-selected-title {
+  margin-top: 0.2rem;
+  color: var(--ot-text);
+  font-size: 0.9rem;
+  font-weight: 600;
 }
 
 .holiday-preview-cell:hover {
@@ -1352,19 +1443,15 @@ onBeforeUnmount(() => {
 }
 
 .holiday-preview-cell.is-sunday {
-  color: #dc2626;
+  color: var(--ot-danger);
 }
 
 .holiday-preview-cell.is-holiday {
-  background: rgba(220, 38, 38, 0.12);
-  color: #dc2626;
+  background: var(--ot-danger-soft);
+  color: var(--ot-danger);
 }
 
-.holiday-preview-cell.is-selected {
-  background: var(--p-primary-500);
-  color: #ffffff;
-}
-
+.holiday-preview-cell.is-selected,
 .holiday-preview-cell.is-selected.is-sunday,
 .holiday-preview-cell.is-selected.is-holiday {
   background: var(--p-primary-500);
@@ -1373,12 +1460,39 @@ onBeforeUnmount(() => {
 
 .holiday-preview-dot {
   position: absolute;
-  right: 0.48rem;
-  bottom: 0.38rem;
-  width: 0.32rem;
-  height: 0.32rem;
+  right: 0.43rem;
+  bottom: 0.34rem;
+  width: 0.28rem;
+  height: 0.28rem;
   border-radius: 9999px;
   background: currentColor;
+}
+
+.holiday-selected-card {
+  border: 1px solid var(--ot-border);
+  border-radius: var(--ot-radius-md);
+  background: var(--ot-bg);
+  padding: 0.85rem;
+}
+
+.holiday-selected-label {
+  color: var(--ot-text-muted);
+  font-size: 0.68rem;
+  font-weight: 850;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+
+.holiday-selected-title {
+  margin-top: 0.2rem;
+  color: var(--ot-text);
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.holiday-month-list {
+  display: grid;
+  gap: 0.5rem;
 }
 
 .holiday-summary-row {
@@ -1388,14 +1502,36 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 0.75rem;
   border: 1px solid var(--ot-border);
-  border-radius: 0.95rem;
+  border-radius: var(--ot-radius-md);
   background: var(--ot-surface);
-  padding: 0.7rem 0.8rem;
+  padding: 0.65rem 0.75rem;
   text-align: left;
   transition: 0.18s ease;
 }
 
 .holiday-summary-row:hover {
   background: var(--ot-hover, rgba(148, 163, 184, 0.08));
+}
+
+.holiday-switch-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border: 1px solid var(--ot-border);
+  border-radius: var(--ot-radius-md);
+  background: var(--ot-bg);
+  padding: 0.85rem 1rem;
+}
+
+@media (max-width: 640px) {
+  .holiday-preview-body {
+    padding: 0.75rem;
+  }
+
+  .holiday-preview-cell {
+    min-height: 2rem;
+    font-size: 0.78rem;
+  }
 }
 </style>

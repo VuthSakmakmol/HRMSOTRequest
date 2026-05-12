@@ -27,6 +27,7 @@ import {
 import { getDepartmentLookupOptions } from '@/modules/org/department.api'
 import PositionImportDialog from '@/modules/org/components/PositionImportDialog.vue'
 import { useAuthStore } from '@/modules/auth/auth.store'
+import AppTableLoading from '@/shared/components/AppTableLoading.vue'
 import { buildSaveErrorMessage, getApiErrorMessage } from '@/shared/utils/apiError'
 import { formatDateTime } from '@/shared/utils/dateFormat'
 
@@ -104,6 +105,7 @@ const totalPositions = computed(() => Number(totalRecords.value || 0))
 const loadedCount = computed(() => rows.value.filter(Boolean).length)
 const hasAnyData = computed(() => rows.value.some(Boolean))
 const useVirtualScroll = computed(() => totalPositions.value > PAGE_SIZE)
+const isFirstLoading = computed(() => !bootstrapped.value && backgroundLoading.value)
 
 const loadedLabel = computed(() =>
   t('common.loaded', {
@@ -124,7 +126,8 @@ const isSaveDisabled = computed(() => {
   return (
     saving.value ||
     !String(form.code || '').trim() ||
-    !String(form.name || '').trim()
+    !String(form.name || '').trim() ||
+    !String(form.departmentId || '').trim()
   )
 })
 
@@ -174,9 +177,9 @@ function buildQuery(page) {
     page,
     limit: PAGE_SIZE,
     search: String(filters.search || '').trim(),
-    isActive: filters.isActive,
-    departmentId: filters.departmentId,
-    hierarchyScope: filters.hierarchyScope,
+    isActive: String(filters.isActive || '').trim(),
+    departmentId: String(filters.departmentId || '').trim(),
+    hierarchyScope: String(filters.hierarchyScope || '').trim(),
     sortField: filters.sortField,
     sortOrder: filters.sortOrder,
   }
@@ -253,6 +256,7 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
   try {
     const res = await getPositions(buildQuery(page))
+
     if (requestId !== currentRequestId) return
 
     const payload = normalizePayload(res)
@@ -288,6 +292,8 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
     bootstrapped.value = true
   } catch (error) {
+    bootstrapped.value = true
+
     showToast(
       'error',
       t('common.loadFailed'),
@@ -304,6 +310,7 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
     rows.value = []
     totalRecords.value = 0
     loadedPages.value = new Set()
+    bootstrapped.value = false
   }
 
   await fetchPage(1, {
@@ -493,9 +500,9 @@ async function handleExport() {
   try {
     const res = await exportPositionsExcel({
       search: String(filters.search || '').trim(),
-      isActive: filters.isActive,
-      departmentId: filters.departmentId,
-      hierarchyScope: filters.hierarchyScope,
+      isActive: String(filters.isActive || '').trim(),
+      departmentId: String(filters.departmentId || '').trim(),
+      hierarchyScope: String(filters.hierarchyScope || '').trim(),
       sortField: filters.sortField,
       sortOrder: filters.sortOrder,
     })
@@ -559,7 +566,7 @@ onBeforeUnmount(() => {
       @success="handleImportSuccess"
     />
 
-    <section class="ot-filter-bar">
+    <section class="ot-filter-bar ot-filter-bar-6">
       <div class="ot-field">
         <label class="ot-field-label">
           {{ t('common.search') }}
@@ -567,6 +574,7 @@ onBeforeUnmount(() => {
 
         <IconField>
           <InputIcon class="pi pi-search" />
+
           <InputText
             v-model="filters.search"
             :placeholder="t('org.position.searchPlaceholder')"
@@ -631,7 +639,7 @@ onBeforeUnmount(() => {
         />
       </div>
 
-      <div class="ot-filter-actions">
+      <div class="ot-filter-actions xl:col-span-2">
         <span class="ot-loaded-badge">
           {{ loadedLabel }}
         </span>
@@ -644,8 +652,8 @@ onBeforeUnmount(() => {
           size="small"
           @click="clearFilters"
         />
-      </div>
-      <Button
+
+        <Button
           v-if="canCreate"
           :label="t('org.position.importExcel')"
           icon="pi pi-upload"
@@ -672,6 +680,7 @@ onBeforeUnmount(() => {
           size="small"
           @click="openCreateDialog"
         />
+      </div>
     </section>
 
     <section class="ot-table-card">
@@ -694,7 +703,17 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="ot-table-wrapper">
+        <AppTableLoading
+          v-if="isFirstLoading"
+          :title="t('common.loadingData')"
+          :message="t('common.fetchingRecords')"
+          :rows="7"
+          :columns="9"
+          icon="pi pi-briefcase"
+        />
+
         <DataTable
+          v-else
           :value="rows"
           lazy
           removable-sort
@@ -854,7 +873,9 @@ onBeforeUnmount(() => {
             style="min-width: 13rem"
           >
             <template #body="{ data }">
-              <span v-if="data">{{ formatDateTime(data.createdAt) }}</span>
+              <span v-if="data">
+                {{ formatDateTime(data.createdAt) }}
+              </span>
             </template>
           </Column>
 

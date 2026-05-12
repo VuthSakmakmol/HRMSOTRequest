@@ -14,6 +14,10 @@ const props = defineProps({
     type: Number,
     default: 4,
   },
+  expanded: {
+    type: Boolean,
+    default: false,
+  },
 })
 
 const { t } = useI18n()
@@ -30,11 +34,21 @@ const normalizedGroups = computed(() => {
 })
 
 function visibleItems(items) {
+  if (props.expanded) return items
   return items.slice(0, props.maxPerModule)
 }
 
 function hiddenCount(items) {
+  if (props.expanded) return 0
   return Math.max(0, items.length - props.maxPerModule)
+}
+
+function permissionLabel(item) {
+  const code = String(item?.code || '').trim()
+  const name = String(item?.name || '').trim()
+
+  if (props.expanded && code && name) return `${code} — ${name}`
+  return code || name || '-'
 }
 </script>
 
@@ -61,8 +75,8 @@ function hiddenCount(items) {
       <div class="flex flex-wrap gap-1.5">
         <Tag
           v-for="item in visibleItems(group.items)"
-          :key="item.id || item.code"
-          :value="item.code || '-'"
+          :key="item.id || item.value || item.code"
+          :value="permissionLabel(item)"
           severity="info"
         />
 

@@ -471,23 +471,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="ot-page-shell">
-    <section class="ot-page-header">
-      <div class="ot-page-header-main">
-        <div class="ot-page-kicker">
-          <i class="pi pi-upload" />
-          {{ t('attendance.page.importKicker') }}
-        </div>
-
-        <h1 class="ot-page-title">
-          {{ t('attendance.importTitle') }}
-        </h1>
-
-        <p class="ot-page-subtitle">
-          {{ t('attendance.page.importSubtitle') }}
-        </p>
-      </div>
-
-      <div class="ot-page-actions">
+    <div class="ot-page-actions">
         <Button
           v-if="canImportAttendance"
           :label="t('attendance.import.importAttendance')"
@@ -515,7 +499,6 @@ onBeforeUnmount(() => {
           @click="clearFilters"
         />
       </div>
-    </section>
 
     <section
       v-if="latestImportInfo"
@@ -681,10 +664,6 @@ onBeforeUnmount(() => {
           <h2 class="ot-table-title">
             {{ t('attendance.import.importHistory') }}
           </h2>
-
-          <p class="ot-table-subtitle">
-            {{ t('attendance.import.importHistorySubtitle') }}
-          </p>
         </div>
 
         <div class="ot-table-actions">

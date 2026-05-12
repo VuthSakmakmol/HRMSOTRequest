@@ -140,6 +140,7 @@ async function handleDownloadSample() {
 
   try {
     const res = await downloadLineImportSample()
+
     const blob = new Blob([res.data], {
       type:
         res?.headers?.['content-type'] ||
@@ -287,10 +288,6 @@ async function handleImport() {
         :value="uploadProgress"
         style="height: 6px"
       />
-
-      <div class="ot-inline-info">
-        {{ t('org.line.importNote') }}
-      </div>
     </div>
 
     <template #footer>

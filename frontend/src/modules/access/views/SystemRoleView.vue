@@ -23,6 +23,7 @@ import {
   getSystemRoles,
   updateSystemRole,
 } from '@/modules/access/systemRole.api'
+import AppTableLoading from '@/shared/components/AppTableLoading.vue'
 import { buildSaveErrorMessage, getApiErrorMessage } from '@/shared/utils/apiError'
 import { formatDateTime } from '@/shared/utils/dateFormat'
 
@@ -39,6 +40,7 @@ const permissionLoading = ref(false)
 const rows = ref([])
 const totalRecords = ref(0)
 const loadedPages = ref(new Set())
+const expandedRows = ref({})
 
 const bootstrapped = ref(false)
 const backgroundLoading = ref(false)
@@ -73,6 +75,7 @@ const totalRoles = computed(() => Number(totalRecords.value || 0))
 const loadedCount = computed(() => rows.value.filter(Boolean).length)
 const hasAnyData = computed(() => rows.value.some(Boolean))
 const useVirtualScroll = computed(() => totalRoles.value > PAGE_SIZE)
+const isFirstLoading = computed(() => !bootstrapped.value && backgroundLoading.value)
 
 const loadedLabel = computed(() =>
   t('common.loaded', {
@@ -124,9 +127,10 @@ function mapPermissionOption(item) {
   const id = normalizeId(item)
   const code = String(item?.code || '').trim()
   const name = String(item?.name || '').trim()
-  const module = String(item?.module || '').trim()
+  const module = String(item?.module || '').trim() || 'GENERAL'
 
   return {
+    id,
     value: id,
     code,
     name,
@@ -150,6 +154,15 @@ function normalizeRolePermissionIds(row) {
   return []
 }
 
+function normalizeRoleRow(item) {
+  const id = normalizeId(item)
+
+  return {
+    ...item,
+    id,
+  }
+}
+
 function buildQuery(page) {
   return {
     page,
@@ -168,6 +181,29 @@ function showToast(severity, summary, detail, life = 3000) {
     detail,
     life,
   })
+}
+
+function permissionPreviewItems(row) {
+  const groups = Array.isArray(row?.permissionGroups) ? row.permissionGroups : []
+  const items = []
+
+  for (const group of groups) {
+    const groupItems = Array.isArray(group?.items) ? group.items : []
+
+    for (const item of groupItems) {
+      items.push({
+        id: item.id || item.value || item.code,
+        code: item.code || item.name || '-',
+      })
+    }
+  }
+
+  return items.slice(0, 4)
+}
+
+function hiddenPermissionCount(row) {
+  const total = Number(row?.permissionCount || 0)
+  return Math.max(0, total - permissionPreviewItems(row).length)
 }
 
 async function fetchAllPermissions() {
@@ -201,9 +237,10 @@ async function fetchAllPermissions() {
       }
     }
 
-    permissionOptions.value = allItems.map(mapPermissionOption)
+    permissionOptions.value = allItems.map(mapPermissionOption).filter((item) => item.value)
   } catch (error) {
     permissionOptions.value = []
+
     showToast(
       'error',
       t('access.permission.loadFailed'),
@@ -230,10 +267,11 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
   try {
     const res = await getSystemRoles(buildQuery(page))
+
     if (requestId !== currentRequestId) return
 
     const payload = normalizePayload(res)
-    const items = normalizeItems(payload)
+    const items = normalizeItems(payload).map(normalizeRoleRow)
     const total = normalizePaginationTotal(payload)
     const startIndex = (page - 1) * PAGE_SIZE
 
@@ -248,6 +286,7 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
       rows.value = nextRows
       loadedPages.value = new Set([page])
+      expandedRows.value = {}
     } else {
       if (!rows.value.length && total > 0) {
         rows.value = Array.from({ length: total }, () => null)
@@ -265,6 +304,8 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
     bootstrapped.value = true
   } catch (error) {
+    bootstrapped.value = true
+
     showToast(
       'error',
       t('common.loadFailed'),
@@ -280,6 +321,8 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
     rows.value = []
     totalRecords.value = 0
     loadedPages.value = new Set()
+    expandedRows.value = {}
+    bootstrapped.value = false
   }
 
   await fetchPage(1, {
@@ -309,12 +352,14 @@ function clearFilters() {
   filters.isActive = ''
   filters.sortField = 'createdAt'
   filters.sortOrder = -1
+
   reloadFirstPage({ keepVisible: true })
 }
 
 function onSort(event) {
   filters.sortField = event.sortField || 'createdAt'
   filters.sortOrder = typeof event.sortOrder === 'number' ? event.sortOrder : -1
+
   reloadFirstPage({ keepVisible: true })
 }
 
@@ -375,11 +420,9 @@ async function submitRole() {
 
     if (editingRoleId.value) {
       await updateSystemRole(editingRoleId.value, payload)
-
       showToast('success', t('common.updated'), t('access.role.updatedSuccess'), 2500)
     } else {
       await createSystemRole(payload)
-
       showToast('success', t('common.created'), t('access.role.createdSuccess'), 2500)
     }
 
@@ -397,6 +440,23 @@ async function submitRole() {
   } finally {
     saving.value = false
   }
+}
+
+function expandAllVisible() {
+  const next = {}
+
+  for (const row of rows.value) {
+    if (!row) continue
+
+    const id = normalizeId(row)
+    if (id) next[id] = true
+  }
+
+  expandedRows.value = next
+}
+
+function collapseAll() {
+  expandedRows.value = {}
 }
 
 function statusSeverity(active) {
@@ -417,8 +477,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="ot-page-shell">
-
-    <section class="ot-filter-bar">
+    <section class="ot-filter-bar ot-filter-bar-5">
       <div class="ot-field">
         <label class="ot-field-label">
           {{ t('common.search') }}
@@ -426,6 +485,7 @@ onBeforeUnmount(() => {
 
         <IconField>
           <InputIcon class="pi pi-search" />
+
           <InputText
             v-model="filters.search"
             :placeholder="t('access.role.searchPlaceholder')"
@@ -452,7 +512,7 @@ onBeforeUnmount(() => {
         />
       </div>
 
-      <div class="ot-filter-actions">
+      <div class="ot-filter-actions xl:col-span-3">
         <span class="ot-loaded-badge">
           {{ loadedLabel }}
         </span>
@@ -464,6 +524,31 @@ onBeforeUnmount(() => {
           outlined
           size="small"
           @click="clearFilters"
+        />
+
+        <Button
+          :label="t('access.role.expandAll')"
+          icon="pi pi-angle-double-down"
+          severity="secondary"
+          outlined
+          size="small"
+          @click="expandAllVisible"
+        />
+
+        <Button
+          :label="t('access.role.collapseAll')"
+          icon="pi pi-angle-double-up"
+          severity="secondary"
+          outlined
+          size="small"
+          @click="collapseAll"
+        />
+
+        <Button
+          :label="t('access.role.newRole')"
+          icon="pi pi-plus"
+          size="small"
+          @click="openCreateDialog"
         />
       </div>
     </section>
@@ -488,20 +573,32 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="ot-table-wrapper">
+        <AppTableLoading
+          v-if="isFirstLoading"
+          :title="t('common.loadingData')"
+          :message="t('common.fetchingRecords')"
+          :rows="7"
+          :columns="7"
+          icon="pi pi-id-card"
+        />
+
         <DataTable
+          v-else
+          v-model:expanded-rows="expandedRows"
           :value="rows"
+          data-key="id"
           lazy
           removable-sort
           scrollable
           scroll-height="500px"
           :sort-field="filters.sortField"
           :sort-order="filters.sortOrder"
-          table-style="min-width: 74rem"
+          table-style="min-width: 78rem"
           class="ot-data-table ot-data-table-compact"
           :virtual-scroller-options="useVirtualScroll ? {
             lazy: true,
             onLazyLoad: onVirtualLazyLoad,
-            itemSize: 76,
+            itemSize: 60,
             delay: 0,
             showLoader: false,
             loading: false,
@@ -517,14 +614,21 @@ onBeforeUnmount(() => {
               <div class="ot-empty-icon">
                 <i class="pi pi-id-card" />
               </div>
+
               <div class="ot-empty-title">
                 {{ t('common.noData') }}
               </div>
+
               <div class="ot-empty-text">
                 {{ t('access.role.noData') }}
               </div>
             </div>
           </template>
+
+          <Column
+            expander
+            style="width: 3rem"
+          />
 
           <Column
             field="code"
@@ -549,7 +653,9 @@ onBeforeUnmount(() => {
             style="min-width: 15rem"
           >
             <template #body="{ data }">
-              <span v-if="data">{{ data.displayName || '-' }}</span>
+              <span v-if="data">
+                {{ data.displayName || '-' }}
+              </span>
             </template>
           </Column>
 
@@ -558,11 +664,30 @@ onBeforeUnmount(() => {
             style="min-width: 28rem"
           >
             <template #body="{ data }">
-              <RolePermissionSummary
+              <div
                 v-if="data"
-                :groups="data.permissionGroups || []"
-                :max-per-module="4"
-              />
+                class="flex flex-wrap items-center gap-1.5"
+              >
+                <Tag
+                  v-for="item in permissionPreviewItems(data)"
+                  :key="item.id || item.code"
+                  :value="item.code"
+                  severity="info"
+                />
+
+                <Tag
+                  v-if="hiddenPermissionCount(data)"
+                  :value="t('access.role.morePermissions', { count: hiddenPermissionCount(data) })"
+                  severity="secondary"
+                />
+
+                <span
+                  v-if="!permissionPreviewItems(data).length"
+                  class="text-sm text-[color:var(--ot-text-muted)]"
+                >
+                  -
+                </span>
+              </div>
             </template>
           </Column>
 
@@ -601,7 +726,9 @@ onBeforeUnmount(() => {
             style="min-width: 13rem"
           >
             <template #body="{ data }">
-              <span v-if="data">{{ formatDateTime(data.createdAt) }}</span>
+              <span v-if="data">
+                {{ formatDateTime(data.createdAt) }}
+              </span>
             </template>
           </Column>
 
@@ -620,6 +747,33 @@ onBeforeUnmount(() => {
               />
             </template>
           </Column>
+
+          <template #expansion="{ data }">
+            <div class="p-4">
+              <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div class="text-sm font-bold text-[color:var(--ot-text)]">
+                    {{ t('access.role.fullPermissions') }}
+                  </div>
+
+                  <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
+                    {{ data.code || '-' }} · {{ data.displayName || '-' }}
+                  </div>
+                </div>
+
+                <Tag
+                  :value="t('access.role.selectedCount', { count: data.permissionCount || 0 })"
+                  severity="secondary"
+                />
+              </div>
+
+              <RolePermissionSummary
+                :groups="data.permissionGroups || []"
+                :expanded="true"
+                :max-per-module="999"
+              />
+            </div>
+          </template>
         </DataTable>
       </div>
     </section>
@@ -641,7 +795,7 @@ onBeforeUnmount(() => {
             <InputText
               v-model="form.code"
               class="w-full"
-              placeholder="SYSTEM_ADMIN"
+              :placeholder="t('access.role.roleCodeExample')"
             />
           </div>
 
@@ -668,15 +822,9 @@ onBeforeUnmount(() => {
 
         <div class="space-y-3">
           <div class="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <label class="ot-field-label">
-                {{ t('access.role.permissionsByModule') }}
-              </label>
-
-              <p class="ot-field-help">
-                {{ t('access.role.permissionHelp') }}
-              </p>
-            </div>
+            <label class="ot-field-label">
+              {{ t('access.role.permissionsByModule') }}
+            </label>
 
             <Tag
               :value="t('access.role.selectedCount', { count: selectedPermissionCount })"

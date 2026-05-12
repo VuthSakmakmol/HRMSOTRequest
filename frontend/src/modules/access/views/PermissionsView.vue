@@ -14,6 +14,7 @@ import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 
 import { getPermissions } from '@/modules/access/permission.api'
+import AppTableLoading from '@/shared/components/AppTableLoading.vue'
 import { getApiErrorMessage } from '@/shared/utils/apiError'
 import { formatDateTime } from '@/shared/utils/dateFormat'
 
@@ -50,6 +51,7 @@ const totalPermissions = computed(() => Number(totalRecords.value || 0))
 const loadedCount = computed(() => rows.value.filter(Boolean).length)
 const hasAnyData = computed(() => rows.value.some(Boolean))
 const useVirtualScroll = computed(() => totalPermissions.value > PAGE_SIZE)
+const isFirstLoading = computed(() => !bootstrapped.value && backgroundLoading.value)
 
 const loadedLabel = computed(() =>
   t('common.loaded', {
@@ -113,6 +115,7 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
   try {
     const res = await getPermissions(buildQuery(page))
+
     if (requestId !== currentRequestId) return
 
     const payload = normalizePayload(res)
@@ -151,6 +154,8 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
     bootstrapped.value = true
   } catch (error) {
+    bootstrapped.value = true
+
     showToast(
       'error',
       t('common.loadFailed'),
@@ -166,6 +171,7 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
     rows.value = []
     totalRecords.value = 0
     loadedPages.value = new Set()
+    bootstrapped.value = false
   }
 
   await fetchPage(1, {
@@ -200,12 +206,14 @@ function clearFilters() {
   filters.isActive = ''
   filters.sortField = 'module'
   filters.sortOrder = 1
+
   reloadFirstPage({ keepVisible: true })
 }
 
 function onSort(event) {
   filters.sortField = event.sortField || 'module'
   filters.sortOrder = typeof event.sortOrder === 'number' ? event.sortOrder : 1
+
   reloadFirstPage({ keepVisible: true })
 }
 
@@ -240,7 +248,6 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="ot-page-shell">
-
     <section class="ot-filter-bar ot-filter-bar-5">
       <div class="ot-field">
         <label class="ot-field-label">
@@ -249,6 +256,7 @@ onBeforeUnmount(() => {
 
         <IconField>
           <InputIcon class="pi pi-search" />
+
           <InputText
             v-model="filters.search"
             :placeholder="t('access.permission.searchPlaceholder')"
@@ -291,7 +299,7 @@ onBeforeUnmount(() => {
         />
       </div>
 
-      <div class="ot-filter-actions">
+      <div class="ot-filter-actions xl:col-span-2">
         <span class="ot-loaded-badge">
           {{ loadedLabel }}
         </span>
@@ -327,7 +335,17 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="ot-table-wrapper">
+        <AppTableLoading
+          v-if="isFirstLoading"
+          :title="t('common.loadingData')"
+          :message="t('common.fetchingRecords')"
+          :rows="7"
+          :columns="6"
+          icon="pi pi-shield"
+        />
+
         <DataTable
+          v-else
           :value="rows"
           lazy
           removable-sort
@@ -340,7 +358,7 @@ onBeforeUnmount(() => {
           :virtual-scroller-options="useVirtualScroll ? {
             lazy: true,
             onLazyLoad: onVirtualLazyLoad,
-            itemSize: 72,
+            itemSize: 60,
             delay: 0,
             showLoader: false,
             loading: false,
@@ -356,9 +374,11 @@ onBeforeUnmount(() => {
               <div class="ot-empty-icon">
                 <i class="pi pi-shield" />
               </div>
+
               <div class="ot-empty-title">
                 {{ t('common.noData') }}
               </div>
+
               <div class="ot-empty-text">
                 {{ t('access.permission.noData') }}
               </div>
@@ -372,7 +392,11 @@ onBeforeUnmount(() => {
             style="min-width: 11rem"
           >
             <template #body="{ data }">
-              <span v-if="data">{{ data.module || '-' }}</span>
+              <Tag
+                v-if="data"
+                :value="data.module || '-'"
+                severity="info"
+              />
             </template>
           </Column>
 
@@ -380,7 +404,7 @@ onBeforeUnmount(() => {
             field="code"
             :header="t('common.code')"
             sortable
-            style="min-width: 14rem"
+            style="min-width: 15rem"
           >
             <template #body="{ data }">
               <span
@@ -399,7 +423,9 @@ onBeforeUnmount(() => {
             style="min-width: 15rem"
           >
             <template #body="{ data }">
-              <span v-if="data">{{ data.name || '-' }}</span>
+              <span v-if="data">
+                {{ data.name || '-' }}
+              </span>
             </template>
           </Column>
 
@@ -440,7 +466,9 @@ onBeforeUnmount(() => {
             style="min-width: 13rem"
           >
             <template #body="{ data }">
-              <span v-if="data">{{ formatDateTime(data.createdAt) }}</span>
+              <span v-if="data">
+                {{ formatDateTime(data.createdAt) }}
+              </span>
             </template>
           </Column>
         </DataTable>

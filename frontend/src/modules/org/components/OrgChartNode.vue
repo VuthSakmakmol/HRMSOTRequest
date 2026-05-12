@@ -3,8 +3,6 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import Tag from 'primevue/tag'
-
 defineOptions({ name: 'OrgChartNode' })
 
 const props = defineProps({
@@ -57,10 +55,6 @@ function avatarText(name) {
     .toUpperCase()
 }
 
-function managerName(manager) {
-  return buildLabel(manager?.employeeCode, manager?.displayName)
-}
-
 const nodeKey = computed(() => s(props.node?.key || props.node?.data?.id))
 const nodeData = computed(() => props.node?.data || {})
 const children = computed(() =>
@@ -89,48 +83,16 @@ const employeeCode = computed(() =>
   s(nodeData.value.employeeCode || nodeData.value.employeeNo),
 )
 
-const displayName = computed(() => s(nodeData.value.name || nodeData.value.displayName))
-const positionTitle = computed(() => s(nodeData.value.title || nodeData.value.positionName))
-const departmentName = computed(() =>
-  s(nodeData.value.department || nodeData.value.departmentName),
+const displayName = computed(() =>
+  s(nodeData.value.name || nodeData.value.displayName),
 )
 
-const lineManagers = computed(() =>
-  Array.isArray(nodeData.value.lineManagers) ? nodeData.value.lineManagers : [],
+const positionTitle = computed(() =>
+  s(nodeData.value.title || nodeData.value.positionName),
 )
-
-const lineManagerText = computed(() => {
-  return lineManagers.value
-    .map(managerName)
-    .filter(Boolean)
-    .join(', ')
-})
 
 const lineText = computed(() => {
   return buildLabel(nodeData.value.lineCode, nodeData.value.lineName)
-})
-
-const shiftText = computed(() => {
-  const code = s(nodeData.value.shiftCode)
-  const name = s(nodeData.value.shiftName)
-  const type = s(nodeData.value.shiftType)
-  const time =
-    nodeData.value.shiftStartTime && nodeData.value.shiftEndTime
-      ? `${nodeData.value.shiftStartTime}-${nodeData.value.shiftEndTime}`
-      : ''
-
-  return [buildLabel(code, name), type, time].filter(Boolean).join(' · ')
-})
-
-const lineManagerCount = computed(() => lineManagers.value.length)
-
-const lineManagerTagLabel = computed(() => {
-  if (!lineManagerCount.value) return ''
-  if (lineManagerCount.value === 1) return t('org.orgChart.oneLineSupervisor')
-
-  return t('org.orgChart.lineSupervisorCount', {
-    count: lineManagerCount.value,
-  })
 })
 
 function toggleOpen() {
@@ -149,101 +111,43 @@ function toggleOpen() {
           compact ? 'org-node-card--compact' : '',
         ]"
       >
-        <div class="flex items-start gap-3">
+        <div class="org-node-main">
           <div
-            class="flex shrink-0 items-center justify-center rounded-full font-bold text-white"
-            :class="[
-              isMatched ? 'bg-[color:var(--ot-primary)]' : 'bg-sky-500',
-              compact ? 'h-10 w-10 text-sm' : 'h-14 w-14 text-base',
-            ]"
+            class="org-node-avatar"
+            :class="{ 'org-node-avatar--matched': isMatched }"
           >
             {{ avatarText(displayName) }}
           </div>
 
-          <div class="min-w-0 flex-1">
+          <div class="org-node-content">
             <div
-              class="truncate font-bold text-[color:var(--ot-text)]"
-              :class="compact ? 'text-base' : 'text-xl'"
+              class="org-node-name"
               :title="displayName || t('common.unknown')"
             >
               {{ displayName || t('common.unknown') }}
             </div>
 
             <div
-              class="truncate text-[color:var(--ot-text-soft)]"
-              :class="compact ? 'text-sm' : 'text-lg'"
+              class="org-node-id"
+              :title="employeeCode || t('org.orgChart.noEmployeeCode')"
+            >
+              {{ employeeCode || t('org.orgChart.noEmployeeCode') }}
+            </div>
+
+            <div
+              class="org-node-position"
               :title="positionTitle || t('org.orgChart.noPosition')"
             >
               {{ positionTitle || t('org.orgChart.noPosition') }}
             </div>
 
             <div
-              class="mt-1 truncate text-xs text-[color:var(--ot-text-muted)]"
-              :title="departmentName || t('org.orgChart.noDepartment')"
-            >
-              {{ departmentName || t('org.orgChart.noDepartment') }}
-            </div>
-
-            <div
               v-if="lineText"
-              class="org-node-meta"
+              class="org-node-line"
               :title="lineText"
             >
               <i class="pi pi-sitemap" />
               <span>{{ lineText }}</span>
-            </div>
-
-            <div
-              v-if="shiftText"
-              class="org-node-meta"
-              :title="shiftText"
-            >
-              <i class="pi pi-clock" />
-              <span>{{ shiftText }}</span>
-            </div>
-
-            <div
-              v-if="lineManagerText"
-              class="org-line-managers"
-              :title="lineManagerText"
-            >
-              <i class="pi pi-users" />
-              <span>{{ lineManagerText }}</span>
-            </div>
-
-            <div class="mt-2 flex flex-wrap items-center gap-2">
-              <Tag
-                :value="employeeCode || t('org.orgChart.noEmployeeCode')"
-                severity="contrast"
-                class="org-node-tag"
-              />
-
-              <Tag
-                :value="nodeData.isActive ? t('common.active') : t('common.inactive')"
-                :severity="nodeData.isActive ? 'success' : 'secondary'"
-                class="org-node-tag"
-              />
-
-              <Tag
-                v-if="lineManagerCount"
-                :value="lineManagerTagLabel"
-                severity="info"
-                class="org-node-tag"
-              />
-
-              <Tag
-                v-if="lineManagerCount > 1"
-                :value="t('org.orgChart.multiSupervisor')"
-                severity="warning"
-                class="org-node-tag"
-              />
-
-              <Tag
-                v-if="isMatched"
-                :value="t('org.orgChart.matched')"
-                severity="warning"
-                class="org-node-tag"
-              />
             </div>
           </div>
         </div>
@@ -303,13 +207,13 @@ function toggleOpen() {
 }
 
 .org-node-card {
-  width: 300px;
-  min-height: 142px;
-  padding: 1rem;
-  border-radius: 1rem;
+  width: 280px;
+  min-height: 112px;
   border: 1px solid var(--ot-border);
+  border-radius: 1rem;
   background: var(--ot-surface);
   box-shadow: var(--ot-shadow-sm);
+  padding: 0.85rem;
   transition:
     transform 0.16s ease,
     box-shadow 0.16s ease,
@@ -317,9 +221,9 @@ function toggleOpen() {
 }
 
 .org-node-card--compact {
-  width: 270px;
-  min-height: 136px;
-  padding: 0.85rem;
+  width: 255px;
+  min-height: 104px;
+  padding: 0.78rem;
 }
 
 .org-node-card:hover {
@@ -332,57 +236,88 @@ function toggleOpen() {
   box-shadow: 0 0 0 1px var(--ot-primary);
 }
 
-.org-node-meta {
+.org-node-main {
   display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  margin-top: 0.35rem;
   min-width: 0;
-  color: var(--ot-text-muted);
-  font-size: 0.72rem;
-  line-height: 1.15;
+  align-items: flex-start;
+  gap: 0.7rem;
 }
 
-.org-node-meta i {
+.org-node-avatar {
+  display: inline-flex;
+  width: 2.35rem;
+  height: 2.35rem;
   flex: 0 0 auto;
-  font-size: 0.7rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #0ea5e9;
+  color: #ffffff;
+  font-size: 0.8rem;
+  font-weight: 800;
 }
 
-.org-node-meta span {
+.org-node-avatar--matched {
+  background: var(--ot-primary);
+}
+
+.org-node-content {
   min-width: 0;
+  flex: 1;
+}
+
+.org-node-name {
   overflow: hidden;
+  color: var(--ot-text);
+  font-size: 0.95rem;
+  font-weight: 800;
+  line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.org-line-managers {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.35rem;
-  margin-top: 0.4rem;
-  min-width: 0;
-  border-radius: 0.7rem;
-  border: 1px solid color-mix(in srgb, #38bdf8 28%, var(--ot-border));
-  background: color-mix(in srgb, #38bdf8 8%, var(--ot-surface));
-  padding: 0.35rem 0.5rem;
+.org-node-id {
+  margin-top: 0.18rem;
+  overflow: hidden;
+  color: var(--ot-text-muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.org-node-position {
+  margin-top: 0.3rem;
+  overflow: hidden;
   color: var(--ot-text);
-  font-size: 0.72rem;
-  font-weight: 500;
+  font-size: 0.8rem;
+  font-weight: 600;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.org-node-line {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+  color: var(--ot-text-muted);
+  font-size: 0.73rem;
   line-height: 1.2;
 }
 
-.org-line-managers i {
+.org-node-line i {
   flex: 0 0 auto;
-  margin-top: 0.08rem;
-  color: #0284c7;
   font-size: 0.72rem;
 }
 
-.org-line-managers span {
-  display: -webkit-box;
+.org-node-line span {
   overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .org-toggle-wrap {
@@ -396,8 +331,8 @@ function toggleOpen() {
   justify-content: center;
   width: 1.8rem;
   height: 1.8rem;
-  border-radius: 9999px;
   border: 1px solid var(--ot-border);
+  border-radius: 9999px;
   background: var(--ot-surface);
   color: var(--ot-text-muted);
   box-shadow: var(--ot-shadow-sm);
@@ -405,8 +340,8 @@ function toggleOpen() {
 }
 
 .org-toggle-btn:hover {
-  color: var(--ot-text);
   border-color: var(--ot-primary);
+  color: var(--ot-text);
 }
 
 .org-line-down {
@@ -425,13 +360,13 @@ function toggleOpen() {
 }
 
 .org-children-row::before {
-  content: '';
   position: absolute;
   top: 0;
-  left: 1.2rem;
   right: 1.2rem;
+  left: 1.2rem;
   height: 2px;
   background: var(--ot-border);
+  content: '';
 }
 
 .org-child-col {
@@ -447,22 +382,13 @@ function toggleOpen() {
   background: var(--ot-border);
 }
 
-:deep(.p-tag.org-node-tag) {
-  min-height: 1.25rem !important;
-  padding: 0.1rem 0.4rem !important;
-  font-size: 0.66rem !important;
-  font-weight: 600 !important;
-  line-height: 1 !important;
-  border-radius: 999px !important;
-}
-
 @media (max-width: 1024px) {
   .org-node-card {
-    width: 260px;
+    width: 250px;
   }
 
   .org-node-card--compact {
-    width: 240px;
+    width: 230px;
   }
 
   .org-children-row {

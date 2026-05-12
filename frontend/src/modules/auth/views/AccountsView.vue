@@ -541,23 +541,8 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="ot-page-shell">
-    <section class="ot-page-header">
-      <div class="ot-page-header-main">
-        <div class="ot-page-kicker">
-          <i class="pi pi-user-edit" />
-          {{ t('nav.accessControl') }}
-        </div>
 
-        <h1 class="ot-page-title">
-          {{ t('nav.accounts') }}
-        </h1>
-
-        <p class="ot-page-subtitle">
-          {{ t('auth.account.subtitle') }}
-        </p>
-      </div>
-
-      <div class="ot-page-actions">
+    <div class="ot-page-actions">
         <Button
           :label="t('auth.account.newAccount')"
           icon="pi pi-plus"
@@ -565,7 +550,6 @@ onBeforeUnmount(() => {
           @click="openCreateDialog"
         />
       </div>
-    </section>
 
     <section class="ot-filter-bar">
       <div class="ot-field">
@@ -623,10 +607,6 @@ onBeforeUnmount(() => {
           <h2 class="ot-table-title">
             {{ t('auth.account.tableTitle') }}
           </h2>
-
-          <p class="ot-table-subtitle">
-            {{ t('auth.account.tableSubtitle') }}
-          </p>
         </div>
 
         <div class="ot-table-actions">

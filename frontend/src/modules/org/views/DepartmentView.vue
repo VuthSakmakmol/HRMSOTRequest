@@ -24,6 +24,7 @@ import {
 } from '@/modules/org/department.api'
 import DepartmentImportDialog from '@/modules/org/components/DepartmentImportDialog.vue'
 import { useAuthStore } from '@/modules/auth/auth.store'
+import AppTableLoading from '@/shared/components/AppTableLoading.vue'
 import { buildSaveErrorMessage, getApiErrorMessage } from '@/shared/utils/apiError'
 import { formatDateTime } from '@/shared/utils/dateFormat'
 
@@ -76,6 +77,7 @@ const totalDepartments = computed(() => Number(totalRecords.value || 0))
 const loadedCount = computed(() => rows.value.filter(Boolean).length)
 const hasAnyData = computed(() => rows.value.some(Boolean))
 const useVirtualScroll = computed(() => totalDepartments.value > PAGE_SIZE)
+const isFirstLoading = computed(() => !bootstrapped.value && backgroundLoading.value)
 
 const loadedLabel = computed(() =>
   t('common.loaded', {
@@ -150,6 +152,7 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
   try {
     const res = await getDepartments(buildQuery(page))
+
     if (requestId !== currentRequestId) return
 
     const payload = normalizePayload(res)
@@ -185,6 +188,8 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
     bootstrapped.value = true
   } catch (error) {
+    bootstrapped.value = true
+
     showToast(
       'error',
       t('common.loadFailed'),
@@ -200,6 +205,7 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
     rows.value = []
     totalRecords.value = 0
     loadedPages.value = new Set()
+    bootstrapped.value = false
   }
 
   await fetchPage(1, {
@@ -399,14 +405,15 @@ onBeforeUnmount(() => {
       @success="handleImportSuccess"
     />
 
-    <section class="ot-filter-bar">
-      <div class="ot-field">
+    <section class="ot-filter-bar department-filter-bar">
+      <div class="ot-field department-filter-bar__search">
         <label class="ot-field-label">
           {{ t('common.search') }}
         </label>
 
         <IconField>
           <InputIcon class="pi pi-search" />
+
           <InputText
             v-model="filters.search"
             :placeholder="t('org.department.searchPlaceholder')"
@@ -417,7 +424,7 @@ onBeforeUnmount(() => {
         </IconField>
       </div>
 
-      <div class="ot-field">
+      <div class="ot-field department-filter-bar__status">
         <label class="ot-field-label">
           {{ t('common.status') }}
         </label>
@@ -433,7 +440,7 @@ onBeforeUnmount(() => {
         />
       </div>
 
-      <div class="ot-filter-actions">
+      <div class="ot-filter-actions department-filter-bar__meta">
         <span class="ot-loaded-badge">
           {{ loadedLabel }}
         </span>
@@ -447,7 +454,8 @@ onBeforeUnmount(() => {
           @click="clearFilters"
         />
       </div>
-      <div class="ot-page-actions">
+
+      <div class="ot-page-actions department-filter-bar__actions">
         <Button
           v-if="canCreate"
           :label="t('org.department.importExcel')"
@@ -498,7 +506,17 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="ot-table-wrapper">
+        <AppTableLoading
+          v-if="isFirstLoading"
+          :title="t('common.loadingData')"
+          :message="t('common.fetchingRecords')"
+          :rows="7"
+          :columns="6"
+          icon="pi pi-building"
+        />
+
         <DataTable
+          v-else
           :value="rows"
           lazy
           removable-sort
@@ -527,9 +545,11 @@ onBeforeUnmount(() => {
               <div class="ot-empty-icon">
                 <i class="pi pi-building" />
               </div>
+
               <div class="ot-empty-title">
                 {{ t('common.noData') }}
               </div>
+
               <div class="ot-empty-text">
                 {{ t('org.department.noData') }}
               </div>
@@ -700,3 +720,58 @@ onBeforeUnmount(() => {
     </Dialog>
   </div>
 </template>
+
+<style scoped>
+.department-filter-bar {
+  grid-template-columns: 1fr;
+}
+
+.department-filter-bar__search,
+.department-filter-bar__status,
+.department-filter-bar__meta,
+.department-filter-bar__actions {
+  min-width: 0;
+}
+
+.department-filter-bar__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.5rem;
+}
+
+.department-filter-bar__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: flex-start;
+  gap: 0.5rem;
+}
+
+.department-filter-bar__actions :deep(.p-button) {
+  white-space: nowrap;
+}
+
+@media (min-width: 1280px) {
+  .department-filter-bar {
+    grid-template-columns: minmax(320px, 1.45fr) minmax(180px, 0.9fr) auto auto;
+    align-items: end;
+  }
+
+  .department-filter-bar__meta {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+  }
+
+  .department-filter-bar__actions {
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+  }
+}
+
+@media (min-width: 1440px) {
+  .department-filter-bar {
+    grid-template-columns: minmax(360px, 1.6fr) minmax(200px, 1fr) auto auto;
+  }
+}
+</style>

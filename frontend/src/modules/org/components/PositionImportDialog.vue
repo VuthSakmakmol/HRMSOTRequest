@@ -288,7 +288,6 @@ async function handleImport() {
         :value="uploadProgress"
         style="height: 6px"
       />
-
     </div>
 
     <template #footer>

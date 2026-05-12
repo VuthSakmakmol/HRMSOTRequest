@@ -45,6 +45,8 @@ const loading = ref(false)
 const holidays = ref([])
 const currentMonth = ref(getInitialMonth())
 
+let currentRequestId = 0
+
 const weekLabels = computed(() => [
   t('calendar.holidayPicker.week.sun'),
   t('calendar.holidayPicker.week.mon'),
@@ -56,7 +58,6 @@ const weekLabels = computed(() => [
 ])
 
 const selectedYmd = computed(() => normalizeYmd(props.modelValue))
-
 const displayValue = computed(() => formatDdMmYyyy(selectedYmd.value))
 
 const inputPlaceholder = computed(() => {
@@ -84,7 +85,33 @@ const holidayMap = computed(() => {
 
 const selectedHoliday = computed(() => {
   if (!selectedYmd.value) return null
+
   return holidayMap.value.get(selectedYmd.value) || null
+})
+
+const selectedDayTag = computed(() => {
+  if (!selectedYmd.value) return null
+
+  const date = ymdToLocalDate(selectedYmd.value)
+
+  if (selectedHoliday.value) {
+    return {
+      label: t('calendar.holidayPicker.holiday'),
+      severity: 'danger',
+    }
+  }
+
+  if (isSunday(date)) {
+    return {
+      label: t('calendar.holidayPicker.sunday'),
+      severity: 'warning',
+    }
+  }
+
+  return {
+    label: t('calendar.holidayPicker.workingDay'),
+    severity: 'success',
+  }
 })
 
 const calendarDays = computed(() => {
@@ -97,8 +124,8 @@ const calendarDays = computed(() => {
 
   const cells = []
 
-  for (let i = 0; i < firstDayIndex; i += 1) {
-    const day = daysInPrevMonth - firstDayIndex + i + 1
+  for (let index = 0; index < firstDayIndex; index += 1) {
+    const day = daysInPrevMonth - firstDayIndex + index + 1
     const date = new Date(year, month - 1, day)
 
     cells.push(buildCell(date, false))
@@ -125,10 +152,13 @@ watch(
   (value) => {
     const ymd = normalizeYmd(value)
 
-    if (ymd) {
-      const date = ymdToLocalDate(ymd)
-      currentMonth.value = new Date(date.getFullYear(), date.getMonth(), 1)
-      fetchMonthHolidays()
+    if (!ymd) return
+
+    const date = ymdToLocalDate(ymd)
+    const nextMonth = new Date(date.getFullYear(), date.getMonth(), 1)
+
+    if (formatYmd(nextMonth) !== formatYmd(currentMonth.value)) {
+      currentMonth.value = nextMonth
     }
   },
 )
@@ -136,7 +166,9 @@ watch(
 watch(
   currentMonth,
   () => {
-    fetchMonthHolidays()
+    if (open.value) {
+      fetchMonthHolidays()
+    }
   },
   { deep: false },
 )
@@ -242,6 +274,8 @@ function normalizeItems(payload) {
 }
 
 async function fetchMonthHolidays() {
+  const requestId = ++currentRequestId
+
   loading.value = true
 
   try {
@@ -255,18 +289,25 @@ async function fetchMonthHolidays() {
       limit: 100,
     })
 
+    if (requestId !== currentRequestId) return
+
     const payload = normalizePayload(res)
 
     holidays.value = normalizeItems(payload)
   } catch (error) {
-    holidays.value = []
+    if (requestId === currentRequestId) {
+      holidays.value = []
+    }
   } finally {
-    loading.value = false
+    if (requestId === currentRequestId) {
+      loading.value = false
+    }
   }
 }
 
 function toggleCalendar() {
   if (props.disabled) return
+
   open.value = !open.value
 
   if (open.value) {
@@ -296,6 +337,7 @@ function nextMonth() {
 
 function goToday() {
   const today = new Date()
+
   currentMonth.value = new Date(today.getFullYear(), today.getMonth(), 1)
   selectDate(formatYmd(today))
 }
@@ -304,6 +346,7 @@ function clearDate() {
   emit('update:modelValue', '')
   emit('change', '')
   emit('selectedInfo', null)
+
   closeCalendar()
 }
 
@@ -355,13 +398,20 @@ function onDocumentClick(event) {
   }
 }
 
+function onKeydown(event) {
+  if (event.key === 'Escape') {
+    closeCalendar()
+  }
+}
+
 onMounted(() => {
-  fetchMonthHolidays()
   document.addEventListener('click', onDocumentClick)
+  document.addEventListener('keydown', onKeydown)
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', onDocumentClick)
+  document.removeEventListener('keydown', onKeydown)
 })
 </script>
 
@@ -381,7 +431,7 @@ onBeforeUnmount(() => {
       <InputText
         :model-value="displayValue"
         readonly
-        class="w-full"
+        class="w-full holiday-picker-input"
         :placeholder="inputPlaceholder"
         :disabled="disabled"
         size="small"
@@ -417,8 +467,14 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="holiday-month-subtitle">
-            <span v-if="loading">{{ t('calendar.holidayPicker.loadingHolidays') }}</span>
-            <span v-else>{{ t('calendar.holidayPicker.activeHolidayCount', { count: holidays.length }) }}</span>
+            <span v-if="loading">
+              <i class="pi pi-spin pi-spinner" />
+              {{ t('calendar.holidayPicker.loadingHolidays') }}
+            </span>
+
+            <span v-else>
+              {{ t('calendar.holidayPicker.activeHolidayCount', { count: holidays.length }) }}
+            </span>
           </div>
         </div>
 
@@ -456,6 +512,7 @@ onBeforeUnmount(() => {
           @click="onCellClick(cell)"
         >
           <span>{{ cell.day }}</span>
+
           <span
             v-if="cell.isHoliday"
             class="holiday-dot"
@@ -464,22 +521,23 @@ onBeforeUnmount(() => {
       </div>
 
       <div
-        v-if="selectedHoliday"
+        v-if="selectedYmd"
         class="holiday-selected-info"
       >
         <div class="min-w-0">
           <div class="holiday-selected-title">
-            {{ selectedHoliday.name }}
+            {{ selectedHoliday?.name || formatDdMmYyyy(selectedYmd) }}
           </div>
 
           <div class="holiday-selected-date">
-            {{ formatDdMmYyyy(selectedHoliday.date) }}
+            {{ formatDdMmYyyy(selectedYmd) }}
           </div>
         </div>
 
         <Tag
-          :value="t('calendar.holidayPicker.holiday')"
-          severity="danger"
+          v-if="selectedDayTag"
+          :value="selectedDayTag.label"
+          :severity="selectedDayTag.severity"
         />
       </div>
 
@@ -517,13 +575,18 @@ onBeforeUnmount(() => {
   position: relative;
 }
 
+.holiday-picker-input {
+  cursor: pointer;
+  padding-right: 2.4rem !important;
+}
+
 .holiday-picker-icon {
   position: absolute;
   top: 50%;
   right: 0.55rem;
   display: inline-flex;
-  height: 1.8rem;
-  width: 1.8rem;
+  height: 1.75rem;
+  width: 1.75rem;
   transform: translateY(-50%);
   align-items: center;
   justify-content: center;
@@ -531,7 +594,12 @@ onBeforeUnmount(() => {
   border-radius: 9999px;
   background: transparent;
   color: var(--ot-text-muted);
-  cursor: pointer;
+  transition: 0.18s ease;
+}
+
+.holiday-picker-icon:hover {
+  background: var(--ot-bg);
+  color: var(--ot-text);
 }
 
 .holiday-picker-icon:disabled {
@@ -541,14 +609,14 @@ onBeforeUnmount(() => {
 
 .holiday-picker-panel {
   position: absolute;
-  z-index: 50;
-  top: calc(100% + 0.5rem);
+  z-index: 80;
+  top: calc(100% + 0.45rem);
   left: 0;
-  width: min(22rem, 92vw);
+  width: min(21.5rem, 92vw);
   border: 1px solid var(--ot-border);
-  border-radius: 1rem;
+  border-radius: var(--ot-radius-lg);
   background: var(--ot-surface);
-  box-shadow: 0 20px 45px rgba(15, 23, 42, 0.16);
+  box-shadow: var(--ot-shadow-lg);
   padding: 0.85rem;
 }
 
@@ -557,7 +625,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  margin-bottom: 0.75rem;
+  margin-bottom: 0.8rem;
 }
 
 .holiday-nav-btn {
@@ -570,51 +638,59 @@ onBeforeUnmount(() => {
   border: 1px solid var(--ot-border);
   background: var(--ot-bg);
   color: var(--ot-text);
-  transition: 0.2s ease;
+  transition: 0.18s ease;
 }
 
 .holiday-nav-btn:hover {
-  background: var(--ot-hover, rgba(148, 163, 184, 0.08));
+  background: var(--ot-surface-2);
 }
 
 .holiday-month-title {
-  font-size: 0.95rem;
-  font-weight: 800;
+  font-size: 0.94rem;
+  font-weight: 600;
   color: var(--ot-text);
 }
 
 .holiday-month-subtitle {
   margin-top: 0.1rem;
   font-size: 0.72rem;
+  font-weight: 400;
   color: var(--ot-text-muted);
+}
+
+.holiday-month-subtitle span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
 }
 
 .holiday-week-grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 0.35rem;
+  gap: 0.32rem;
 }
 
 .holiday-week-label {
   padding-bottom: 0.15rem;
   text-align: center;
-  font-size: 0.72rem;
-  font-weight: 700;
+  font-size: 0.7rem;
+  font-weight: 500;
   color: var(--ot-text-muted);
 }
 
 .holiday-day-cell {
   position: relative;
   display: inline-flex;
-  min-height: 2.2rem;
+  min-height: 2.12rem;
   align-items: center;
   justify-content: center;
   border: 0;
   border-radius: 9999px;
   background: transparent;
   color: var(--ot-text);
-  font-size: 0.84rem;
-  font-weight: 650;
+  font-size: 0.82rem;
+  font-weight: 400;
   cursor: pointer;
   transition: 0.18s ease;
 }
@@ -625,7 +701,7 @@ onBeforeUnmount(() => {
 
 .holiday-day-cell.is-outside {
   color: var(--ot-text-muted);
-  opacity: 0.45;
+  opacity: 0.42;
 }
 
 .holiday-day-cell.is-today {
@@ -633,19 +709,15 @@ onBeforeUnmount(() => {
 }
 
 .holiday-day-cell.is-sunday {
-  color: #dc2626;
+  color: var(--ot-danger);
 }
 
 .holiday-day-cell.is-holiday {
-  background: rgba(220, 38, 38, 0.12);
-  color: #dc2626;
+  background: var(--ot-danger-soft);
+  color: var(--ot-danger);
 }
 
-.holiday-day-cell.is-selected {
-  background: var(--p-primary-500);
-  color: #ffffff;
-}
-
+.holiday-day-cell.is-selected,
 .holiday-day-cell.is-selected.is-sunday,
 .holiday-day-cell.is-selected.is-holiday {
   background: var(--p-primary-500);
@@ -654,10 +726,10 @@ onBeforeUnmount(() => {
 
 .holiday-dot {
   position: absolute;
-  right: 0.43rem;
-  bottom: 0.36rem;
-  width: 0.3rem;
-  height: 0.3rem;
+  right: 0.42rem;
+  bottom: 0.33rem;
+  width: 0.28rem;
+  height: 0.28rem;
   border-radius: 9999px;
   background: currentColor;
 }
@@ -669,7 +741,7 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 0.75rem;
   border: 1px solid var(--ot-border);
-  border-radius: 0.85rem;
+  border-radius: var(--ot-radius-md);
   background: var(--ot-bg);
   padding: 0.65rem 0.75rem;
 }
@@ -679,13 +751,14 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 0.82rem;
-  font-weight: 800;
+  font-weight: 500;
   color: var(--ot-text);
 }
 
 .holiday-selected-date {
   margin-top: 0.1rem;
-  font-size: 0.75rem;
+  font-size: 0.74rem;
+  font-weight: 400;
   color: var(--ot-text-muted);
 }
 
@@ -694,5 +767,16 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: space-between;
   gap: 0.5rem;
+}
+
+@media (max-width: 640px) {
+  .holiday-picker-panel {
+    width: min(20rem, calc(100vw - 2rem));
+  }
+
+  .holiday-day-cell {
+    min-height: 2rem;
+    font-size: 0.78rem;
+  }
 }
 </style>

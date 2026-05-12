@@ -28,6 +28,7 @@ import {
 } from '@/modules/org/employee.api'
 import { getShiftLookupOptions } from '@/modules/shift/shift.api'
 import { useAuthStore } from '@/modules/auth/auth.store'
+import AppTableLoading from '@/shared/components/AppTableLoading.vue'
 import { buildSaveErrorMessage, getApiErrorMessage } from '@/shared/utils/apiError'
 import { formatDate, formatDateTime, toApiDate } from '@/shared/utils/dateFormat'
 
@@ -132,7 +133,6 @@ const otWorkflowRoleOptions = computed(() => [
   { label: t('org.employee.otWorkflowRole.acknowledge'), value: 'ACKNOWLEDGE' },
 ])
 
-
 const generatedAccountLoginId = computed(() =>
   String(form.accountLoginId || form.employeeCode || '').trim().toLowerCase(),
 )
@@ -152,9 +152,7 @@ const generatedAccountPassword = computed(() => {
 
 const accountPreviewText = computed(() => {
   if (form.hasAccount) {
-    return t('org.employee.accountAlreadyExistsPreview', {
-      loginId: form.currentAccountLoginId || '-',
-    })
+    return t('org.employee.accountAlreadyExists')
   }
 
   if (!form.createAccount) return t('org.employee.accountDefaultNoAccount')
@@ -172,6 +170,7 @@ const totalEmployees = computed(() => Number(totalRecords.value || 0))
 const loadedCount = computed(() => rows.value.filter(Boolean).length)
 const hasAnyData = computed(() => rows.value.some(Boolean))
 const useVirtualScroll = computed(() => totalEmployees.value > PAGE_SIZE)
+const isFirstLoading = computed(() => !bootstrapped.value && backgroundLoading.value)
 
 const loadedLabel = computed(() =>
   t('common.loaded', {
@@ -179,28 +178,6 @@ const loadedLabel = computed(() =>
     total: totalEmployees.value,
   }),
 )
-
-const selectedPosition = computed(() =>
-  positionOptions.value.find((item) => String(item.value) === String(form.positionId)),
-)
-
-const managerRuleHint = computed(() => {
-  const position = selectedPosition.value
-
-  if (!position?.reportsToPositionId) {
-    return t('org.employee.manualManagerHelp')
-  }
-
-  if ((position.hierarchyScope || position.managerScope) === 'GLOBAL') {
-    return t('org.employee.globalManagerHelp', {
-      position: position.reportsToPositionName || t('org.position.reportsToPosition'),
-    })
-  }
-
-  return t('org.employee.sameLineManagerHelp', {
-    position: position.reportsToPositionName || t('org.position.reportsToPosition'),
-  })
-})
 
 const dialogTitle = computed(() =>
   isEditMode.value ? t('org.employee.editTitle') : t('org.employee.createTitle'),
@@ -509,6 +486,7 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
   try {
     const res = await getEmployees(buildQuery(page))
+
     if (requestId !== currentRequestId) return
 
     const payload = normalizePayload(res)
@@ -544,6 +522,8 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
     bootstrapped.value = true
   } catch (error) {
+    bootstrapped.value = true
+
     showToast(
       'error',
       t('common.loadFailed'),
@@ -559,6 +539,7 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
     rows.value = []
     totalRecords.value = 0
     loadedPages.value = new Set()
+    bootstrapped.value = false
   }
 
   await fetchPage(1, {
@@ -607,7 +588,7 @@ function onStatusChange() {
   reloadFirstPage({ keepVisible: true })
 }
 
-function clearFilters() {
+async function clearFilters() {
   filters.search = ''
   filters.departmentId = ''
   filters.positionId = ''
@@ -617,12 +598,12 @@ function clearFilters() {
   filters.sortBy = 'createdAt'
   filters.sortOrder = -1
 
-  Promise.all([
+  await Promise.all([
     fetchPositionsForDropdown(''),
     fetchLinesForDropdown(''),
   ])
 
-  reloadFirstPage({ keepVisible: true })
+  await reloadFirstPage({ keepVisible: true })
 }
 
 function onSort(event) {
@@ -770,6 +751,7 @@ async function submitEmployee() {
 
     if (editingEmployeeId.value) {
       await updateEmployee(editingEmployeeId.value, payload)
+
       showToast(
         'success',
         t('common.updated'),
@@ -780,6 +762,7 @@ async function submitEmployee() {
       )
     } else {
       await createEmployee(payload)
+
       showToast(
         'success',
         t('common.created'),
@@ -982,6 +965,7 @@ onBeforeUnmount(() => {
 
         <IconField>
           <InputIcon class="pi pi-search" />
+
           <InputText
             v-model="filters.search"
             :placeholder="t('org.employee.searchPlaceholder')"
@@ -1076,7 +1060,7 @@ onBeforeUnmount(() => {
         />
       </div>
 
-      <div class="ot-filter-actions">
+      <div class="ot-filter-actions xl:col-span-6">
         <span class="ot-loaded-badge">
           {{ loadedLabel }}
         </span>
@@ -1140,7 +1124,17 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="ot-table-wrapper">
+        <AppTableLoading
+          v-if="isFirstLoading"
+          :title="t('common.loadingData')"
+          :message="t('common.fetchingRecords')"
+          :rows="7"
+          :columns="12"
+          icon="pi pi-users"
+        />
+
         <DataTable
+          v-else
           :value="rows"
           lazy
           removable-sort
@@ -1203,7 +1197,9 @@ onBeforeUnmount(() => {
             style="min-width: 14rem"
           >
             <template #body="{ data }">
-              <span v-if="data">{{ data.displayName || '-' }}</span>
+              <span v-if="data">
+                {{ data.displayName || '-' }}
+              </span>
             </template>
           </Column>
 
@@ -1314,7 +1310,9 @@ onBeforeUnmount(() => {
             style="min-width: 10rem"
           >
             <template #body="{ data }">
-              <span v-if="data">{{ data.phone || '-' }}</span>
+              <span v-if="data">
+                {{ data.phone || '-' }}
+              </span>
             </template>
           </Column>
 
@@ -1377,7 +1375,9 @@ onBeforeUnmount(() => {
             style="min-width: 14rem"
           >
             <template #body="{ data }">
-              <span v-if="data">{{ formatDateTime(data.createdAt) }}</span>
+              <span v-if="data">
+                {{ formatDateTime(data.createdAt) }}
+              </span>
             </template>
           </Column>
 
@@ -1419,10 +1419,6 @@ onBeforeUnmount(() => {
               class="w-full"
               :placeholder="t('org.employee.employeeCodeExample')"
             />
-
-            <p class="ot-field-help">
-              {{ t('org.employee.employeeCodeHelp') }}
-            </p>
           </div>
 
           <div class="ot-field">
@@ -1492,10 +1488,6 @@ onBeforeUnmount(() => {
               :disabled="!form.departmentId"
               @change="onFormLineChange"
             />
-
-            <p class="ot-field-help">
-              {{ t('org.employee.lineHelp') }}
-            </p>
           </div>
 
           <div class="ot-field">
@@ -1532,10 +1524,6 @@ onBeforeUnmount(() => {
             show-clear
             :loading="loadingManagers"
           />
-
-          <p class="ot-field-help">
-            {{ managerRuleHint }}
-          </p>
         </div>
 
         <div class="ot-form-grid">
@@ -1551,10 +1539,6 @@ onBeforeUnmount(() => {
               option-value="value"
               class="w-full"
             />
-
-            <p class="ot-field-help">
-              {{ t('org.employee.otRoleHelp') }}
-            </p>
           </div>
 
           <div class="ot-field">
@@ -1594,23 +1578,13 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div class="ot-inline-info">
-          {{ t('org.employee.accountInfo') }}
-        </div>
-
         <div class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface-2)] p-4">
           <div
             v-if="form.hasAccount"
             class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
           >
-            <div>
-              <div class="text-sm font-semibold text-[color:var(--ot-text)]">
-                {{ t('org.employee.employeeHasAccount') }}
-              </div>
-
-              <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
-                {{ t('org.employee.employeeHasAccountHelp', { loginId: form.currentAccountLoginId || '-' }) }}
-              </div>
+            <div class="text-sm font-semibold text-[color:var(--ot-text)]">
+              {{ t('org.employee.accountAlreadyExists') }}
             </div>
 
             <Tag
@@ -1621,14 +1595,8 @@ onBeforeUnmount(() => {
 
           <template v-else>
             <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <div class="text-sm font-semibold text-[color:var(--ot-text)]">
-                  {{ t('org.employee.createLoginAccount') }}
-                </div>
-
-                <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
-                  {{ t('org.employee.createLoginAccountHelp') }}
-                </div>
+              <div class="text-sm font-semibold text-[color:var(--ot-text)]">
+                {{ t('org.employee.createLoginAccount') }}
               </div>
 
               <InputSwitch v-model="form.createAccount" />
@@ -1649,10 +1617,6 @@ onBeforeUnmount(() => {
                     class="w-full"
                     :placeholder="t('org.employee.accountLoginIdPlaceholder')"
                   />
-
-                  <p class="ot-field-help">
-                    {{ t('org.employee.accountLoginIdHelp', { loginId: generatedAccountLoginId || '-' }) }}
-                  </p>
                 </div>
 
                 <div class="ot-field">
@@ -1665,41 +1629,28 @@ onBeforeUnmount(() => {
                     class="w-full"
                     :placeholder="t('org.employee.defaultPasswordPlaceholder')"
                   />
-
-                  <p class="ot-field-help">
-                    {{ t('org.employee.defaultPasswordHelp', { password: generatedAccountPassword || '-' }) }}
-                  </p>
                 </div>
               </div>
 
-              <div class="ot-inline-error" v-if="!String(form.phone || '').trim()">
-                {{ t('org.employee.phoneRequiredForAccount') }}
+              <div
+                v-if="!String(form.phone || '').trim()"
+                class="ot-inline-error"
+              >
+                {{ t('org.employee.accountPhoneRequired') }}
               </div>
 
               <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-4 py-3">
-                  <div>
-                    <div class="text-sm font-semibold text-[color:var(--ot-text)]">
-                      {{ t('auth.account.forcePasswordChange') }}
-                    </div>
-
-                    <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
-                      {{ t('org.employee.mustChangePasswordHelp') }}
-                    </div>
+                  <div class="text-sm font-semibold text-[color:var(--ot-text)]">
+                    {{ t('auth.account.forcePasswordChange') }}
                   </div>
 
                   <InputSwitch v-model="form.accountMustChangePassword" />
                 </div>
 
                 <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-4 py-3">
-                  <div>
-                    <div class="text-sm font-semibold text-[color:var(--ot-text)]">
-                      {{ t('org.employee.accountActive') }}
-                    </div>
-
-                    <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
-                      {{ t('org.employee.accountActiveHelp') }}
-                    </div>
+                  <div class="text-sm font-semibold text-[color:var(--ot-text)]">
+                    {{ t('org.employee.accountActive') }}
                   </div>
 
                   <InputSwitch v-model="form.accountIsActive" />

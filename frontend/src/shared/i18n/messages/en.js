@@ -53,6 +53,44 @@ export default {
     updateFailed: 'Update failed',
     created: 'Created',
     updated: 'Updated',
+    loadingData: 'Loading data',
+    fetchingRecords: 'Fetching records from the server.',
+
+    unknown: 'Unknown',
+    refresh: 'Refresh',
+    loadFailed: 'Load failed',
+    active: 'Active',
+    inactive: 'Inactive',
+    search: 'Search',
+      search: 'Search',
+  fromDate: 'From Date',
+  toDate: 'To Date',
+  status: 'Status',
+  allStatus: 'All Status',
+  active: 'Active',
+  inactive: 'Inactive',
+  clear: 'Clear',
+  import: 'Import',
+  cancel: 'Cancel',
+  save: 'Save',
+  edit: 'Edit',
+  actions: 'Actions',
+  date: 'Date',
+  code: 'Code',
+  name: 'Name',
+  description: 'Description',
+  createdAt: 'Created At',
+  noData: 'No Data',
+  loadFailed: 'Load Failed',
+  createFailed: 'Create Failed',
+  updateFailed: 'Update Failed',
+  created: 'Created',
+  updated: 'Updated',
+  updating: 'Updating',
+  loading: 'Loading...',
+  loadingData: 'Loading data',
+  fetchingRecords: 'Fetching records...',
+  loaded: 'Loaded {loaded} of {total}',
   },
 
   auth: {
@@ -74,7 +112,6 @@ export default {
     },
 
     account: {
-      subtitle: 'Manage system login accounts, roles, and direct permissions.',
       tableTitle: 'Account List',
       tableSubtitle: 'Server-side account list with lazy loading.',
       newAccount: 'New Account',
@@ -121,6 +158,9 @@ export default {
       searchPlaceholder: 'Search code, name, or description',
 
       newDepartment: 'New Department',
+      importExcel: 'Import Excel',
+      exportExcel: 'Export Excel',
+
       createTitle: 'Create Department',
       editTitle: 'Edit Department',
       departmentCode: 'Department Code',
@@ -129,8 +169,6 @@ export default {
       nameExample: 'Example: Human Resources',
       descriptionPlaceholder: 'Optional department description',
 
-      importExcel: 'Import Excel',
-      exportExcel: 'Export Excel',
       exported: 'Exported',
       exportedSuccess: 'Department Excel exported successfully.',
       exportFailed: 'Export failed',
@@ -161,13 +199,26 @@ export default {
     },
 
     position: {
-      subtitle: 'Manage position master data, reporting hierarchy, and manager scope rules.',
+      // Table / filter
       tableTitle: 'Position List',
       searchPlaceholder: 'Search code, name, or description',
 
       department: 'Department',
       allDepartments: 'All Departments',
+
+      hierarchyScope: 'Hierarchy Scope',
+      allScopes: 'All Scopes',
+      selectHierarchyScope: 'Select hierarchy scope',
+      scopeSameLine: 'Same Line',
+      scopeGlobal: 'Global',
+      scopeCrossDepartment: 'Cross Department',
+
+      // Actions
       newPosition: 'New Position',
+      importExcel: 'Import Excel',
+      exportExcel: 'Export Excel',
+
+      // Create / edit form
       createTitle: 'Create Position',
       editTitle: 'Edit Position',
       positionCode: 'Position Code',
@@ -178,39 +229,39 @@ export default {
 
       reportsToPosition: 'Reports To Position',
       selectReportsToPosition: 'Optional: select parent/supervisor position',
-      reportsToHelp: 'Example: Sewer reports to Sewer Supervisor. Cross-department reporting is allowed.',
+      reportsToHelp:
+        'Example: Sewer reports to Sewer Supervisor. Cross-department reporting is allowed.',
 
-      hierarchyScope: 'Hierarchy Scope',
-      allScopes: 'All Scopes',
-      selectHierarchyScope: 'Select hierarchy scope',
-      scopeSameLine: 'Same Line',
-      scopeGlobal: 'Global',
-      scopeCrossDepartment: 'Cross Department',
       managerScope: 'Manager Scope',
       sameLine: 'Same Line',
       global: 'Global',
-      managerScopeHelp: 'Same Line = find manager in the same production line. Global = find manager by parent position across departments.',
+      managerScopeHelp:
+        'Same Line = find manager in the same production line. Global = find manager by parent position across departments.',
 
       level: 'Level',
       activeHelp: 'Inactive positions will be hidden from normal employee assignment selectors.',
       descriptionPlaceholder: 'Optional position description',
 
-      importExcel: 'Import Excel',
-      exportExcel: 'Export Excel',
+      // Export
       exported: 'Exported',
       exportedSuccess: 'Position Excel exported successfully.',
       exportFailed: 'Export failed',
 
+      // Import
       imported: 'Imported',
-      importedSuccess: 'Import completed. Created: {created}, Updated: {updated}, Failed: {failed}.',
+      importedSuccess:
+        'Import completed. Created: {created}, Updated: {updated}, Failed: {failed}.',
       importTitle: 'Import Position Excel',
       importGuideTitle: 'Import guide',
       importGuideStep1: 'Download the sample file.',
       importGuideStep2: 'Fill your position data using readable codes only.',
       importGuideStep3: 'Department Code must already exist in Department master data.',
-      importGuideStep4: 'Reports To Position Code must already exist or be included in the same import file.',
+      importGuideStep4:
+        'Reports To Position Code must already exist or be included in the same import file.',
       importGuideStep5: 'Click Import to upload and process it.',
-      importNote: 'Users never need Mongo IDs in Excel. Use readable codes such as Department Code and Position Code.',
+      importNote:
+        'Users never need Mongo IDs in Excel. Use readable codes such as Department Code and Position Code.',
+
       downloadSample: 'Download Sample',
       downloadSampleFailed: 'Download sample failed',
       sampleDownloaded: 'Sample file downloaded successfully.',
@@ -218,9 +269,11 @@ export default {
       chooseFile: 'Choose File',
       noFileSelected: 'No file selected',
       importInvalidFileTitle: 'Invalid file type',
-      importInvalidFileMessage: 'Please choose an Excel file only: .xlsx, .xls, or .csv.',
+      importInvalidFileMessage:
+        'Please choose an Excel file only: .xlsx, .xls, or .csv.',
       importFailed: 'Import failed',
 
+      // Empty / error / success
       noData: 'No positions matched your filters.',
       loadFailed: 'Failed to load positions.',
       departmentLoadFailed: 'Failed to load departments.',
@@ -233,9 +286,8 @@ export default {
     },
 
     employee: {
-      subtitle: 'Manage employee master data, organization assignment, shift assignment, and account status.',
+      // Table / filter
       tableTitle: 'Employee List',
-      tableSubtitle: 'Server-side employee list with lazy loading, filters, import, and export.',
       searchPlaceholder: 'Search employee code, name, phone, email, or role',
 
       allDepartments: 'All Departments',
@@ -243,7 +295,12 @@ export default {
       allLines: 'All Lines',
       allShifts: 'All Shifts',
 
+      // Actions
       newEmployee: 'New Employee',
+      importExcel: 'Import Excel',
+      exportExcel: 'Export Excel',
+
+      // Create / edit form
       createTitle: 'Create Employee',
       editTitle: 'Edit Employee',
 
@@ -251,111 +308,103 @@ export default {
       displayName: 'Display Name',
       employeeCodeExample: 'Example: TRX001',
       displayNameExample: 'Example: John Smith',
-      employeeCodeHelp: 'Required business code used by users, Excel import, reports, and search.',
-      employeeCodeRequiredHelp: 'Employee Code is required because the system uses it as the human-readable employee key.',
 
       selectDepartment: 'Select department',
       selectPosition: 'Select position',
       selectLine: 'Select line',
       selectShift: 'Select shift',
-      selectManager: 'Optional: select manager/supervisor',
+      selectManager: 'Select manager/supervisor',
+
       manager: 'Manager',
       noManager: 'No Manager',
 
-      lineHelp: 'Optional. Use when the employee belongs to a production line.',
-      manualManagerHelp: 'No parent position rule found. You can manually select a manager if needed.',
-      globalManagerHelp: 'Manager can be found globally by parent position: {position}.',
-      sameLineManagerHelp: 'Manager should be found in the same line by parent position: {position}.',
-
       otRole: 'OT Role',
-      otRoleHelp: 'Use Approver/Acknowledge only for employees who participate in OT workflow.',
       otWorkflowRole: {
         none: 'None',
         approver: 'Approver',
         acknowledge: 'Acknowledge',
       },
 
-      createLoginAccount: 'Create Login Account',
-createLoginAccountHelp:
-  'Optional. Turn on only when this employee needs a login account.',
-createLoginAccountOnEditHelp:
-  'This employee has no login account yet. Turn on to create one now.',
-accountAlreadyExists: 'This employee already has a login account.',
-accountAlreadyExistsHelp:
-  'Login account already exists for this employee. Manage password or account status from the Account module.',
-
-accountDefaultNoAccount: 'Default: no login account will be created.',
-accountPreview: 'Login ID: {loginId} · Default Password: {password}',
-
-accountLoginIdPlaceholder: 'Default: employee code',
-accountLoginIdHelp: 'Default login ID will be: {loginId}',
-
-defaultPassword: 'Default Password',
-defaultPasswordPlaceholder: 'Default: employee code + phone number',
-defaultPasswordHelp: 'Default password will be: {password}',
-
-mustChangePasswordHelp:
-  'Recommended. The employee must change the password after first login.',
-accountActive: 'Account Active',
-accountActiveHelp: 'Inactive accounts cannot login.',
-
-createdWithAccountSuccess: 'Employee and login account created successfully.',
-updatedWithAccountSuccess: 'Employee updated and login account created successfully.',
-
-accountPhoneRequired:
-  'Phone number is required when creating a login account because the default password uses Employee Code + Phone Number.',
-accountCreateConflict:
-  'This employee or login ID already has an account. Please check the Account module.',
-
       joinDate: 'Join Date',
       email: 'Email',
       phone: 'Phone',
       phonePlaceholder: 'Example: 012345678',
-      accountInfo: 'Employee import and employee creation do not automatically create login accounts. Create login accounts from the Account module.',
 
+      // Account
       hasAccount: 'Has Account',
       noAccount: 'No Account',
+      accountAlreadyExists: 'This employee already has a login account.',
+      createLoginAccount: 'Create Login Account',
 
-      importExcel: 'Import Excel',
-      exportExcel: 'Export Excel',
+      accountDefaultNoAccount: 'Default: no login account will be created.',
+      accountPreview: 'Login ID: {loginId} · Default Password: {password}',
+
+      accountLoginIdPlaceholder: 'Default: employee code',
+      defaultPassword: 'Default Password',
+      defaultPasswordPlaceholder: 'Default: employee code + phone number',
+
+      accountPhoneRequired:
+        'Phone number is required when creating a login account because the default password uses Employee Code + Phone Number.',
+
+      accountActive: 'Account Active',
+
+      createdWithAccountSuccess: 'Employee and login account created successfully.',
+      updatedWithAccountSuccess: 'Employee updated and login account created successfully.',
+
+      // Export
       exported: 'Exported',
       exportedSuccess: 'Employee Excel exported successfully.',
       exportFailed: 'Export failed',
 
+      // Import
       imported: 'Imported',
       importedSuccess: 'Import completed. Created: {created}, Updated: {updated}.',
+
       importTitle: 'Import Employee Excel',
       importGuideTitle: 'Import guide',
       importGuideStep1: 'Download the sample file.',
       importGuideStep2: 'Fill your employee data using readable codes only.',
       importGuideStep3: 'Join Date format must be DD/MM/YYYY, for example 30/04/2026.',
-      importGuideStep4: 'Department Code, Position Code, Line Code, and Shift Code must already exist in master data.',
-      importGuideStep5: 'Use Reports To Employee Code for manager/supervisor, then click Import.',
-      importNote: 'Users never need Mongo IDs in Excel. Use readable codes such as Employee Code, Department Code, Position Code, Line Code, and Shift Code.',
+      importGuideStep4:
+        'Department Code, Position Code, Line Code, and Shift Code must already exist in master data.',
+      importGuideStep5:
+        'Use Reports To Employee Code for manager/supervisor, then click Import.',
+
       downloadSample: 'Download Sample',
       downloadSampleFailed: 'Download sample failed',
       sampleDownloaded: 'Sample file downloaded successfully.',
+
       excelFile: 'Excel file',
       chooseFile: 'Choose File',
       noFileSelected: 'No file selected',
+
       importInvalidFileTitle: 'Invalid file type',
-      importInvalidFileMessage: 'Please choose an Excel file only: .xlsx, .xls, or .csv.',
+      importInvalidFileMessage:
+        'Please choose an Excel file only: .xlsx, .xls, or .csv.',
       importFailed: 'Import failed',
 
+      // Import error titles
       invalidExcelData: 'Invalid Excel data',
       importApiNotFound: 'Import API not found',
       duplicateData: 'Duplicate data',
       serverError: 'Server error',
 
-      joinDateFormatHelp: 'Please use DD/MM/YYYY format, for example 30/04/2026.',
+      // Import friendly error details
+      employeeCodeRequiredHelp:
+        'Employee Code is required because the system uses it as the human-readable employee key.',
+      joinDateFormatHelp:
+        'Please use DD/MM/YYYY format, for example 30/04/2026.',
       checkDepartmentMaster: 'Please check Department master data.',
       checkPositionMaster: 'Please check Position master data.',
-      positionDepartmentMismatchHelp: 'The Position Code must belong to the selected Department Code.',
+      positionDepartmentMismatchHelp:
+        'The Position Code must belong to the selected Department Code.',
       checkLineMaster: 'Please check Line master data.',
       checkShiftMaster: 'Please check Shift master data.',
-      checkManagerEmployeeCode: 'Please import the manager first or use an existing manager Employee Code.',
+      checkManagerEmployeeCode:
+        'Please import the manager first or use an existing manager Employee Code.',
       uniqueEmailHelp: 'Email must be unique or left blank.',
 
+      // Empty / error / success
       noData: 'No employees matched your filters.',
       loadFailed: 'Failed to load employees.',
       departmentLoadFailed: 'Failed to load departments.',
@@ -369,145 +418,95 @@ accountCreateConflict:
     },
 
     line: {
-      subtitle: 'Manage production lines, department mapping, and allowed position restrictions.',
-      tableTitle: 'Production lines',
-      tableSubtitle: 'Server-side list with lazy loading, filters, and Excel tools.',
+      // Table / filter
+      tableTitle: 'Production Line List',
+      searchPlaceholder: 'Search code, name, or description',
+
+      department: 'Department',
+      allDepartments: 'All Departments',
 
       lineCode: 'Line Code',
       lineName: 'Line Name',
       allowedPositions: 'Allowed Positions',
       allPositionsInDepartment: 'All positions in department',
 
+      // Actions
       newLine: 'New Line',
-      createTitle: 'Create Production Line',
-      editTitle: 'Edit Production Line',
-
       importExcel: 'Import Excel',
       exportExcel: 'Export Excel',
 
-      searchPlaceholder: 'Search code, name, or description',
-      allDepartments: 'All Departments',
+      // Create / edit form
+      createTitle: 'Create Production Line',
+      editTitle: 'Edit Production Line',
       selectDepartment: 'Select department',
       selectAllowedPositions: 'Optional: select allowed positions',
-
-
       codeExample: 'Example: LINE-01',
       nameExample: 'Example: Sewing Line 01',
       descriptionPlaceholder: 'Optional production line description',
-      activeHelp: 'Inactive lines will be hidden from normal employee assignment selectors.',
 
-      createdSuccess: 'Production line created successfully.',
-      updatedSuccess: 'Production line updated successfully.',
-      saveFailed: 'Failed to save production line.',
-      loadFailed: 'Failed to load production lines.',
-      noData: 'No production lines found.',
-      departmentLoadFailed: 'Failed to load departments.',
-      positionLoadFailed: 'Failed to load positions.',
-
+      // Export
       exported: 'Exported',
       exportedSuccess: 'Production lines exported successfully.',
       exportFailed: 'Failed to export production lines.',
 
+      // Import
       imported: 'Imported',
       importedSuccess: 'Import completed. Created: {created}, Updated: {updated}.',
 
       importTitle: 'Import Production Lines',
-      importFailed: 'Import failed',
-      importInvalidFileTitle: 'Invalid file',
-      importInvalidFileMessage: 'Please choose an Excel file: .xlsx, .xls, or .csv.',
       importGuideTitle: 'Import guide',
-      importGuideStep1: 'Download the sample file first.',
-      importGuideStep2: 'Use Department Code to connect each line to a department.',
-      importGuideStep3:
-        'Use comma-separated Position Codes when the line only allows specific positions.',
-      importGuideStep4: 'Leave Position Codes blank to allow all positions in the department.',
-      importNote:
-        'Users never need Mongo IDs in Excel. Use readable codes such as Department Code and Position Codes.',
+      importGuideStep1: 'Download the sample file.',
+      importGuideStep2: 'Fill your production line data using readable codes only.',
+      importGuideStep3: 'Department Code must already exist in Department master data.',
+      importGuideStep4: 'Use Position Codes only when the line allows specific positions.',
+
       downloadSample: 'Download Sample',
-      downloadSampleFailed: 'Failed to download sample.',
-      sampleDownloaded: 'Sample downloaded.',
-      excelFile: 'Excel File',
-      noFileSelected: 'No file selected',
+      downloadSampleFailed: 'Download sample failed',
+      sampleDownloaded: 'Sample file downloaded successfully.',
+
+      excelFile: 'Excel file',
       chooseFile: 'Choose File',
+      noFileSelected: 'No file selected',
 
-      validation: {
-        codeRequired: 'Line code is required.',
-        codeTooLong: 'Line code is too long.',
-        nameRequired: 'Line name is required.',
-        nameTooLong: 'Line name is too long.',
-        descriptionTooLong: 'Description is too long.',
-        updatePayloadRequired: 'At least one field is required.',
-      },
+      importInvalidFileTitle: 'Invalid file type',
+      importInvalidFileMessage:
+        'Please choose an Excel file only: .xlsx, .xls, or .csv.',
+      importFailed: 'Import failed',
 
-      field: {
-        departmentId: {
-          required: 'Department is required.',
-          invalid: 'Invalid department.',
-        },
-        positionIds: {
-          invalid: 'Invalid position.',
-        },
-      },
-
-      error: {
-        notFound: 'Production line not found.',
-        codeExists: 'Line code already exists.',
-        excelFileRequired: 'Excel file is required.',
-        excelNoRows: 'Excel file has no rows.',
-        excelNoValidRows: 'Excel file has no valid rows.',
-        positionDepartmentMismatch:
-          'Selected position does not belong to selected department.',
-      },
-
-      import: {
-        success: {
-          completed: 'Production line import completed.',
-        },
-        error: {
-          codeRequired: 'Code is required.',
-          nameRequired: 'Name is required.',
-          departmentRequired: 'Department Code is required.',
-          departmentNotFound: 'Department Code not found.',
-          positionNotFound: 'Position Code not found.',
-          positionDepartmentMismatch: 'Position does not belong to Department.',
-          invalidStatus: 'Invalid status.',
-          duplicateCode: 'Duplicate line code in import file.',
-        },
-      },
+      // Empty / error / success
+      noData: 'No production lines matched your filters.',
+      loadFailed: 'Failed to load production lines.',
+      departmentLoadFailed: 'Failed to load departments.',
+      positionLoadFailed: 'Failed to load positions.',
+      saveFailed: 'Failed to save production line.',
+      createdSuccess: 'Production line created successfully.',
+      updatedSuccess: 'Production line updated successfully.',
     },
 
     orgChart: {
-      title: 'Organization Chart',
-      subtitle:
-        'View employee reporting lines, line supervisors, department, position, line, and shift information.',
-      treeTitle: 'Organization Tree',
-
-      visibleEmployees: 'Visible Employees',
-      searchResults: 'Search Results',
-      rootOptions: 'Root Options',
-
-      searchPlaceholder: 'Search employee code, name, department, position, line, or shift',
+      // Filter
+      searchPlaceholder: 'Search employee code or name',
       rootPerson: 'Root Person',
-      selectRootPerson: 'Select top/root person',
+      selectRootPerson: 'Select root person',
       includeInactive: 'Include inactive',
 
-      zoomLabel: 'Zoom {zoom}',
+      // Chart
+      treeTitle: 'Organization Chart',
+      zoomLabel: 'Zoom: {zoom}',
       zoomIn: 'Zoom In',
       zoomOut: 'Zoom Out',
       resetZoom: 'Reset',
 
-      noTreeData: 'No tree data available.',
-      loadFailed: 'Failed to load organization tree.',
+      // Node
+      noEmployeeCode: 'No ID',
+      noPosition: 'No Position',
+      noDepartment: 'No Department',
 
-      noPosition: 'No position',
-      noDepartment: 'No department',
-      noEmployeeCode: 'No code',
+      // Empty / error
+      noTreeData: 'No organization chart data found.',
+      loadFailed: 'Failed to load organization chart.',
 
-      oneLineSupervisor: '1 Line Sup',
-      lineSupervisorCount: '{count} Line Sup',
-      multiSupervisor: 'Multi Sup',
-      matched: 'Matched',
-
+      // Node action
       expandNode: 'Expand node',
       collapseNode: 'Collapse node',
     },
@@ -534,7 +533,6 @@ accountCreateConflict:
     accounts: 'Accounts',
 
     attendance: 'Attendance',
-    attendanceImport: 'Attendance Import',
     attendanceRecords: 'Attendance Records',
     otVerification: 'OT Verification',
 
@@ -552,109 +550,146 @@ accountCreateConflict:
 
   access: {
     permission: {
-      subtitle: 'Review system permission codes seeded by the backend.',
       tableTitle: 'Permission List',
-      tableSubtitle: 'Backend-managed permission registry with server-side filtering.',
-      searchPlaceholder: 'Search code, name, module, description',
+      searchPlaceholder: 'Search permission code, name, module, or description',
       module: 'Module',
       allModules: 'All Modules',
-      noData: 'No permissions matched your filters.',
+
       loading: 'Loading permissions...',
+      noData: 'No permissions matched your filters.',
       loadFailed: 'Failed to load permissions.',
     },
 
     role: {
-      subtitle: 'Manage system roles and assign permissions by module.',
+      // Table / filter
       tableTitle: 'Role List',
-      tableSubtitle: 'Server-side role list with permission summaries.',
       searchPlaceholder: 'Search role code or display name',
+
+      // Actions
       newRole: 'New Role',
+      expandAll: 'Expand All',
+      collapseAll: 'Collapse All',
+
+      // Form
       createTitle: 'Create Role',
       editTitle: 'Edit Role',
       roleCode: 'Role Code',
+      roleCodeExample: 'Example: SYSTEM_ADMIN',
       displayName: 'Display Name',
-      displayNameExample: 'Example: System Administrator',
+      displayNameExample: 'Example: System Admin',
+
+      // Permissions
       permissionsByModule: 'Permissions by Module',
-      permissionHelp: 'Select permissions clearly by module to avoid confusing role setup.',
+      fullPermissions: 'Full Permissions',
       count: 'Count',
       selectedCount: '{count} selected',
-      moduleSelectedCount: '{selected} / {total} selected',
+      moduleSelectedCount: '{selected} of {total} selected',
       morePermissions: '+{count} more',
+
+      // Empty / error / success
       noData: 'No roles matched your filters.',
       loadFailed: 'Failed to load roles.',
+      saveFailed: 'Failed to save role.',
       createdSuccess: 'Role created successfully.',
       updatedSuccess: 'Role updated successfully.',
-      saveFailed: 'Failed to save role.',
     },
   },
 
   calendar: {
-  holidayMaster: 'Holiday Master',
+    holidayPicker: {
+      selectDate: 'Select date',
+      loadingHolidays: 'Loading holidays...',
+      activeHolidayCount: '{count} active holiday(s)',
+      sunday: 'Sunday',
+      workingDay: 'Working Day',
+      holiday: 'Holiday',
+      today: 'Today',
+      clear: 'Clear',
 
-  holiday: {
-    subtitle:
-      'Manage holiday master data used by OT day type, attendance verification, payment, and date pickers.',
-    tableTitle: 'Holiday List',
-    tableSubtitle:
-      'Server-side holiday list with lazy loading, import, export, and holiday-aware date selection.',
-    searchPlaceholder: 'Search date, code, name, or description',
+      week: {
+        sun: 'Sun',
+        mon: 'Mon',
+        tue: 'Tue',
+        wed: 'Wed',
+        thu: 'Thu',
+        fri: 'Fri',
+        sat: 'Sat',
+      },
+    },
 
-    newHoliday: 'New Holiday',
-    createTitle: 'Create Holiday',
-    editTitle: 'Edit Holiday',
+    holiday: {
+      // Page / preview
+      tableTitle: 'Holiday Calendar',
+      previewTitle: 'Calendar Preview',
+      previewCount: 'Holidays',
+      activeHolidays: 'active holiday(s)',
+      selectedDate: 'Selected Date',
 
-    holidayCode: 'Holiday Code',
-    holidayName: 'Holiday Name',
-    codeExample: 'Example: KHNY',
-    nameExample: 'Example: Khmer New Year',
-    descriptionPlaceholder: 'Optional holiday description',
-    selectHolidayDate: 'Select holiday date',
+      // Filters
+      searchPlaceholder: 'Search code, name, or description',
+      noData: 'No holidays found.',
+      loadFailed: 'Failed to load holidays.',
 
-    paidHoliday: 'Paid Holiday',
-    paidHolidayHelp: 'Paid holidays can be used later for OT/payment calculation.',
-    activeHelp: 'Inactive holidays will not be used for day type classification.',
-    paid: 'Paid',
-    unpaid: 'Unpaid',
-    allPaidTypes: 'All Paid Types',
-    noCode: 'No Code',
-    selectedDayType: 'Selected day type',
+      // Actions
+      importExcel: 'Import Excel',
+      exportExcel: 'Export Excel',
+      newHoliday: 'New Holiday',
+      createTitle: 'Create Holiday',
+      editTitle: 'Edit Holiday',
+      createOnSelectedDate: 'Create',
+      editHoliday: 'Edit',
 
-    importExcel: 'Import Excel',
-    exportExcel: 'Export Excel',
+      // Form
+      selectHolidayDate: 'Select holiday date',
+      holidayCode: 'Holiday Code',
+      codeExample: 'Example: KHNY',
+      holidayName: 'Holiday Name',
+      nameExample: 'Example: Khmer New Year',
+      descriptionPlaceholder: 'Optional note or description',
+      selectedDayType: 'Selected day type',
 
-    exported: 'Exported',
-    exportedSuccess: 'Holiday Excel exported successfully.',
-    exportFailed: 'Export failed',
+      // Status / fields
+      paidHoliday: 'Paid Holiday',
+      paidHolidayHelp: 'Use this when the holiday is paid.',
+      activeHelp: 'Inactive holidays will not be used for day-type classification.',
+      paid: 'Paid',
+      unpaid: 'Unpaid',
+      noCode: 'No Code',
 
-    imported: 'Imported',
-    importedSuccess: 'Import completed. Created: {created}, Updated: {updated}.',
+      // Save messages
+      createdSuccess: 'Holiday created successfully.',
+      updatedSuccess: 'Holiday updated successfully.',
+      saveFailed: 'Failed to save holiday.',
 
-    importTitle: 'Import Holiday Excel',
-    importGuideTitle: 'Import guide',
-    importGuideStep1: 'Download the sample file.',
-    importGuideStep2: 'Fill holiday data using DD/MM/YYYY date format.',
-    importGuideStep3: 'Users only need readable data such as Date, Code, Name, and Status.',
-    importGuideStep4: 'Click Import to upload and process it.',
-    importNote:
-      'Users never need Mongo IDs in Excel. Holiday import updates existing records by Date.',
+      // Export
+      exported: 'Exported',
+      exportedSuccess: 'Holiday Excel exported successfully.',
+      exportFailed: 'Failed to export holidays.',
 
-    downloadSample: 'Download Sample',
-    downloadSampleFailed: 'Download sample failed',
-    sampleDownloaded: 'Sample file downloaded successfully.',
-    excelFile: 'Excel file',
-    chooseFile: 'Choose File',
-    noFileSelected: 'No file selected',
-    importInvalidFileTitle: 'Invalid file type',
-    importInvalidFileMessage: 'Please choose an Excel file only: .xlsx, .xls, or .csv.',
-    importFailed: 'Import failed',
+      // Import dialog
+      importTitle: 'Import Holidays',
+      importInvalidFileTitle: 'Invalid file',
+      importInvalidFileMessage: 'Please select an Excel or CSV file.',
+      importFailed: 'Failed to import holidays.',
+      imported: 'Imported',
+      importedSuccess: 'Import completed. Created: {created}, Updated: {updated}.',
 
-    noData: 'No holidays matched your filters.',
-    loadFailed: 'Failed to load holidays.',
-    saveFailed: 'Failed to save holiday.',
-    createdSuccess: 'Holiday created successfully.',
-    updatedSuccess: 'Holiday updated successfully.',
+      importGuideTitle: 'Import guide',
+      importGuideStep1: 'Download the sample file.',
+      importGuideStep2: 'Fill in holiday date, code, name, paid holiday, and active status.',
+      importGuideStep3: 'Use DD/MM/YYYY format for dates.',
+      importGuideStep4: 'Upload the completed file.',
+      importNote: 'Existing holidays with the same date or code may be updated depending on backend import rules.',
+
+      downloadSample: 'Download Sample',
+      sampleDownloaded: 'Sample downloaded.',
+      downloadSampleFailed: 'Failed to download sample.',
+
+      excelFile: 'Excel File',
+      noFileSelected: 'No file selected',
+      chooseFile: 'Choose File',
+    },
   },
-},
 
 attendance: {
   title: 'Attendance',

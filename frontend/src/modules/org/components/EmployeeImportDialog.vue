@@ -277,6 +277,7 @@ async function handleImport() {
       >
         <div class="flex items-start gap-3">
           <i class="pi pi-check-circle mt-0.5" />
+
           <div class="min-w-0">
             {{ successMessage }}
           </div>
@@ -346,10 +347,6 @@ async function handleImport() {
         :value="uploadProgress"
         style="height: 6px"
       />
-
-      <div class="ot-inline-info">
-        {{ t('org.employee.importNote') }}
-      </div>
     </div>
 
     <template #footer>

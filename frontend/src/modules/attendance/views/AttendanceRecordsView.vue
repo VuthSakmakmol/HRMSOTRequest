@@ -505,22 +505,6 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="ot-page-shell">
-    <section class="ot-page-header">
-      <div class="ot-page-header-main">
-        <div class="ot-page-kicker">
-          <i class="pi pi-clock" />
-          {{ t('attendance.page.recordsKicker') }}
-        </div>
-
-        <h1 class="ot-page-title">
-          {{ t('attendance.recordsTitle') }}
-        </h1>
-
-        <p class="ot-page-subtitle">
-          {{ t('attendance.page.recordsSubtitle') }}
-        </p>
-      </div>
-
       <div class="ot-page-actions">
         <Button
           :label="t('common.refresh')"
@@ -541,7 +525,6 @@ onBeforeUnmount(() => {
           @click="clearFilters"
         />
       </div>
-    </section>
 
     <section class="ot-filter-bar">
       <div class="ot-field">
