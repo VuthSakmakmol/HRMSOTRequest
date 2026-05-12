@@ -15,6 +15,9 @@ import Tag from 'primevue/tag'
 
 import HolidayDatePicker from '@/modules/calendar/components/HolidayDatePicker.vue'
 import { getAttendanceRecords } from '@/modules/attendance/attendance.api'
+import AppTableLoading from '@/shared/components/AppTableLoading.vue'
+import { getApiErrorMessage } from '@/shared/utils/apiError'
+import { formatDate } from '@/shared/utils/dateFormat'
 
 const toast = useToast()
 const { t } = useI18n()
@@ -78,14 +81,16 @@ const dayTypeOptions = computed(() => [
 
 const totalRows = computed(() => Number(totalRecords.value || 0))
 const loadedCount = computed(() => rows.value.filter(Boolean).length)
+const hasAnyData = computed(() => rows.value.some(Boolean))
+const useVirtualScroll = computed(() => totalRows.value > PAGE_SIZE)
+const isFirstLoading = computed(() => !bootstrapped.value && backgroundLoading.value)
+
 const loadedLabel = computed(() =>
   t('common.loaded', {
     loaded: loadedCount.value,
     total: totalRows.value,
   }),
 )
-const hasAnyData = computed(() => rows.value.some(Boolean))
-const useVirtualScroll = computed(() => totalRows.value > PAGE_SIZE)
 
 let searchTimer = null
 let currentRequestId = 0
@@ -98,6 +103,10 @@ function normalizeItems(payload) {
   return Array.isArray(payload?.items) ? payload.items : []
 }
 
+function normalizeTotal(payload) {
+  return Number(payload?.pagination?.total || payload?.total || 0)
+}
+
 function s(value) {
   return String(value ?? '').trim()
 }
@@ -107,23 +116,7 @@ function upper(value) {
 }
 
 function formatDateDMY(value) {
-  if (!value) return '-'
-
-  const raw = s(value)
-
-  const ymdMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/)
-  if (ymdMatch) {
-    return `${ymdMatch[3]}/${ymdMatch[2]}/${ymdMatch[1]}`
-  }
-
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return raw || '-'
-
-  const dd = String(date.getDate()).padStart(2, '0')
-  const mm = String(date.getMonth() + 1).padStart(2, '0')
-  const yyyy = date.getFullYear()
-
-  return `${dd}/${mm}/${yyyy}`
+  return formatDate(value) || '-'
 }
 
 function normalizeTimeValue(value) {
@@ -181,6 +174,15 @@ function buildQuery(page) {
   }
 }
 
+function showToast(severity, summary, detail, life = 3000) {
+  toast.add({
+    severity,
+    summary,
+    detail,
+    life,
+  })
+}
+
 async function fetchPage(page, { replace = false, silent = false } = {}) {
   if (!replace && loadedPages.value.has(page)) return
 
@@ -192,11 +194,12 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
   try {
     const res = await getAttendanceRecords(buildQuery(page))
+
     if (requestId !== currentRequestId) return
 
     const payload = normalizePayload(res)
     const items = normalizeItems(payload)
-    const total = Number(payload?.pagination?.total || 0)
+    const total = normalizeTotal(payload)
     const startIndex = (page - 1) * PAGE_SIZE
 
     totalRecords.value = total
@@ -204,8 +207,8 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
     if (replace) {
       const nextRows = total > 0 ? Array.from({ length: total }, () => null) : []
 
-      for (let i = 0; i < items.length; i += 1) {
-        nextRows[startIndex + i] = items[i]
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
       }
 
       rows.value = nextRows
@@ -217,8 +220,8 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
       const nextRows = [...rows.value]
 
-      for (let i = 0; i < items.length; i += 1) {
-        nextRows[startIndex + i] = items[i]
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
       }
 
       rows.value = nextRows
@@ -227,15 +230,13 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
     bootstrapped.value = true
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: t('attendance.message.loadFailed'),
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        t('attendance.records.loadFailed'),
-      life: 3000,
-    })
+    bootstrapped.value = true
+
+    showToast(
+      'error',
+      t('attendance.message.loadFailed'),
+      getApiErrorMessage(error, t('attendance.records.loadFailed')),
+    )
   } finally {
     backgroundLoading.value = false
   }
@@ -246,6 +247,7 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
     rows.value = []
     totalRecords.value = 0
     loadedPages.value = new Set()
+    bootstrapped.value = false
   }
 
   await fetchPage(1, {
@@ -505,7 +507,123 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="ot-page-shell">
-      <div class="ot-page-actions">
+    <section class="ot-filter-bar attendance-records-filter-bar">
+      <div class="ot-field attendance-filter-search">
+        <label class="ot-field-label">
+          {{ t('common.search') }}
+        </label>
+
+        <IconField>
+          <InputIcon class="pi pi-search" />
+
+          <InputText
+            v-model="filters.search"
+            :placeholder="t('attendance.field.searchRecordsPlaceholder')"
+            class="w-full"
+            size="small"
+            @input="onSearchInput"
+          />
+        </IconField>
+      </div>
+
+      <div class="ot-field attendance-filter-employee">
+        <label class="ot-field-label">
+          {{ t('attendance.field.employeeNo') }}
+        </label>
+
+        <InputText
+          v-model="filters.employeeNo"
+          :placeholder="t('attendance.field.employeeNo')"
+          class="w-full"
+          size="small"
+        />
+      </div>
+
+      <div class="ot-field attendance-filter-select">
+        <label class="ot-field-label">
+          {{ t('attendance.field.derivedStatus') }}
+        </label>
+
+        <Select
+          v-model="filters.status"
+          :options="statusOptions"
+          option-label="label"
+          option-value="value"
+          :placeholder="t('attendance.field.derivedStatus')"
+          class="w-full"
+          size="small"
+        />
+      </div>
+
+      <div class="ot-field attendance-filter-select">
+        <label class="ot-field-label">
+          {{ t('attendance.field.importedStatus') }}
+        </label>
+
+        <Select
+          v-model="filters.importedStatus"
+          :options="importedStatusOptions"
+          option-label="label"
+          option-value="value"
+          :placeholder="t('attendance.field.importedStatus')"
+          class="w-full"
+          size="small"
+        />
+      </div>
+
+      <div class="ot-field attendance-filter-select">
+        <label class="ot-field-label">
+          {{ t('attendance.field.shiftStatus') }}
+        </label>
+
+        <Select
+          v-model="filters.shiftMatchStatus"
+          :options="shiftMatchStatusOptions"
+          option-label="label"
+          option-value="value"
+          :placeholder="t('attendance.field.shiftStatus')"
+          class="w-full"
+          size="small"
+        />
+      </div>
+
+      <div class="ot-field attendance-filter-day">
+        <label class="ot-field-label">
+          {{ t('attendance.field.dayType') }}
+        </label>
+
+        <Select
+          v-model="filters.dayType"
+          :options="dayTypeOptions"
+          option-label="label"
+          option-value="value"
+          :placeholder="t('attendance.field.dayType')"
+          class="w-full"
+          size="small"
+        />
+      </div>
+
+      <div class="ot-field attendance-filter-date">
+        <HolidayDatePicker
+          v-model="filters.attendanceDateFrom"
+          :label="t('common.fromDate')"
+          :placeholder="t('common.fromDate')"
+        />
+      </div>
+
+      <div class="ot-field attendance-filter-date">
+        <HolidayDatePicker
+          v-model="filters.attendanceDateTo"
+          :label="t('common.toDate')"
+          :placeholder="t('common.toDate')"
+        />
+      </div>
+
+      <div class="ot-filter-actions attendance-records-filter-actions">
+        <span class="ot-loaded-badge whitespace-nowrap">
+          {{ loadedLabel }}
+        </span>
+
         <Button
           :label="t('common.refresh')"
           icon="pi pi-refresh"
@@ -525,121 +643,6 @@ onBeforeUnmount(() => {
           @click="clearFilters"
         />
       </div>
-
-    <section class="ot-filter-bar">
-      <div class="ot-field">
-        <label class="ot-field-label">{{ t('common.search') }}</label>
-
-        <IconField>
-          <InputIcon class="pi pi-search" />
-
-          <InputText
-            v-model="filters.search"
-            :placeholder="t('attendance.field.searchRecordsPlaceholder')"
-            class="w-full"
-            size="small"
-            @input="onSearchInput"
-          />
-        </IconField>
-      </div>
-
-      <div class="ot-field">
-        <label class="ot-field-label">{{ t('attendance.field.employeeNo') }}</label>
-
-        <InputText
-          v-model="filters.employeeNo"
-          :placeholder="t('attendance.field.employeeNo')"
-          class="w-full"
-          size="small"
-        />
-      </div>
-
-      <div class="ot-field">
-        <label class="ot-field-label">{{ t('attendance.field.derivedStatus') }}</label>
-
-        <Select
-          v-model="filters.status"
-          :options="statusOptions"
-          option-label="label"
-          option-value="value"
-          :placeholder="t('attendance.field.derivedStatus')"
-          class="w-full"
-          size="small"
-        />
-      </div>
-
-      <div class="ot-field">
-        <label class="ot-field-label">{{ t('attendance.field.importedStatus') }}</label>
-
-        <Select
-          v-model="filters.importedStatus"
-          :options="importedStatusOptions"
-          option-label="label"
-          option-value="value"
-          :placeholder="t('attendance.field.importedStatus')"
-          class="w-full"
-          size="small"
-        />
-      </div>
-
-      <div class="ot-field">
-        <label class="ot-field-label">{{ t('attendance.field.shiftStatus') }}</label>
-
-        <Select
-          v-model="filters.shiftMatchStatus"
-          :options="shiftMatchStatusOptions"
-          option-label="label"
-          option-value="value"
-          :placeholder="t('attendance.field.shiftStatus')"
-          class="w-full"
-          size="small"
-        />
-      </div>
-
-      <div class="ot-field">
-        <label class="ot-field-label">{{ t('attendance.field.dayType') }}</label>
-
-        <Select
-          v-model="filters.dayType"
-          :options="dayTypeOptions"
-          option-label="label"
-          option-value="value"
-          :placeholder="t('attendance.field.dayType')"
-          class="w-full"
-          size="small"
-        />
-      </div>
-
-      <div class="ot-field">
-        <HolidayDatePicker
-          v-model="filters.attendanceDateFrom"
-          :label="t('common.fromDate')"
-          :placeholder="t('common.fromDate')"
-        />
-      </div>
-
-      <div class="ot-field">
-        <HolidayDatePicker
-          v-model="filters.attendanceDateTo"
-          :label="t('common.toDate')"
-          :placeholder="t('common.toDate')"
-        />
-      </div>
-
-      <div class="ot-filter-actions">
-        <span class="ot-loaded-badge">
-          {{ loadedLabel }}
-        </span>
-
-        <Button
-          :label="t('common.clear')"
-          icon="pi pi-filter-slash"
-          severity="secondary"
-          outlined
-          size="small"
-          @click="clearFilters"
-        />
-      </div>
     </section>
 
     <section class="ot-table-card">
@@ -648,10 +651,6 @@ onBeforeUnmount(() => {
           <h2 class="ot-table-title">
             {{ t('attendance.records.attendanceList') }}
           </h2>
-
-          <p class="ot-table-subtitle">
-            {{ t('attendance.records.attendanceListSubtitle') }}
-          </p>
         </div>
 
         <div class="ot-table-actions">
@@ -660,18 +659,28 @@ onBeforeUnmount(() => {
             class="ot-loaded-badge"
           >
             <i class="pi pi-spin pi-spinner" />
-            {{ t('attendance.message.updating') }}
+            {{ t('common.updating') }}
           </span>
         </div>
       </div>
 
       <div class="ot-table-wrapper">
+        <AppTableLoading
+          v-if="isFirstLoading"
+          :title="t('common.loadingData')"
+          :message="t('common.fetchingRecords')"
+          :rows="7"
+          :columns="16"
+          icon="pi pi-clock"
+        />
+
         <DataTable
+          v-else
           :value="rows"
           lazy
           scrollable
           scroll-height="500px"
-          table-style="width: max-content; min-width: 100%;"
+          table-style="min-width: 145rem"
           class="ot-data-table ot-data-table-compact attendance-records-table"
           :virtual-scroller-options="useVirtualScroll ? {
             lazy: true,
@@ -693,7 +702,7 @@ onBeforeUnmount(() => {
               </div>
 
               <div class="ot-empty-title">
-                {{ t('attendance.message.noDataFound') }}
+                {{ t('common.noData') }}
               </div>
 
               <div class="ot-empty-text">
@@ -745,7 +754,10 @@ onBeforeUnmount(() => {
             style="min-width: 13rem"
           >
             <template #body="{ data }">
-              <span v-if="data">
+              <span
+                v-if="data"
+                class="ot-truncate-2"
+              >
                 {{ data.departmentName || data.importedDepartmentName || '-' }}
               </span>
             </template>
@@ -756,7 +768,10 @@ onBeforeUnmount(() => {
             style="min-width: 13rem"
           >
             <template #body="{ data }">
-              <span v-if="data">
+              <span
+                v-if="data"
+                class="ot-truncate-2"
+              >
                 {{ data.positionName || data.importedPositionName || '-' }}
               </span>
             </template>
@@ -767,7 +782,10 @@ onBeforeUnmount(() => {
             style="min-width: 12rem"
           >
             <template #body="{ data }">
-              <span v-if="data">
+              <span
+                v-if="data"
+                class="ot-truncate-2"
+              >
                 {{ formatLine(data) }}
               </span>
             </template>
@@ -969,7 +987,7 @@ onBeforeUnmount(() => {
   border-radius: 9999px;
   padding: 0.25rem 0.65rem;
   font-size: 0.78rem;
-  font-weight: 800;
+  font-weight: 700;
   white-space: nowrap;
 }
 
@@ -991,7 +1009,7 @@ onBeforeUnmount(() => {
   border-radius: 9999px;
   padding: 0.25rem 0.6rem;
   font-size: 0.76rem;
-  font-weight: 800;
+  font-weight: 700;
   white-space: nowrap;
 }
 
@@ -1008,5 +1026,110 @@ onBeforeUnmount(() => {
 .minute-chip.is-warning {
   background: rgba(245, 158, 11, 0.14);
   color: rgb(180, 83, 9);
+}
+
+/* =========================================================
+   Attendance Records responsive filter
+   - Wide: one row when enough space
+   - Medium: wraps naturally to 2 rows
+   - Mobile: one column
+   ========================================================= */
+
+.attendance-records-filter-bar {
+  display: flex !important;
+  grid-template-columns: none !important;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.75rem;
+}
+
+.attendance-records-filter-bar > .ot-field {
+  min-width: 0;
+}
+
+/* Search should be wider */
+.attendance-filter-search {
+  flex: 1 1 260px;
+  min-width: 220px;
+}
+
+/* Employee No can be compact */
+.attendance-filter-employee {
+  flex: 0 1 150px;
+  min-width: 130px;
+}
+
+/* Status dropdowns */
+.attendance-filter-select {
+  flex: 0 1 180px;
+  min-width: 155px;
+}
+
+/* Day Type */
+.attendance-filter-day {
+  flex: 0 1 150px;
+  min-width: 135px;
+}
+
+/* Date pickers */
+.attendance-filter-date {
+  flex: 0 1 190px;
+  min-width: 170px;
+}
+
+/* Action group stays at the right when there is enough space */
+.attendance-records-filter-actions {
+  flex: 0 0 auto;
+  min-width: max-content;
+  margin-left: auto;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+}
+
+/* If screen is not enough, actions go to new row */
+@media (max-width: 1440px) {
+  .attendance-records-filter-actions {
+    flex: 1 1 100%;
+    margin-left: 0;
+    justify-content: flex-end;
+  }
+}
+
+/* Tablet: 2-column style */
+@media (max-width: 768px) {
+  .attendance-filter-search,
+  .attendance-filter-employee,
+  .attendance-filter-select,
+  .attendance-filter-day,
+  .attendance-filter-date {
+    flex: 1 1 calc(50% - 0.75rem);
+    min-width: 0;
+  }
+
+  .attendance-records-filter-actions {
+    flex-wrap: wrap;
+  }
+}
+
+/* Mobile: 1-column style */
+@media (max-width: 520px) {
+  .attendance-filter-search,
+  .attendance-filter-employee,
+  .attendance-filter-select,
+  .attendance-filter-day,
+  .attendance-filter-date,
+  .attendance-records-filter-actions {
+    flex: 1 1 100%;
+  }
+
+  .attendance-records-filter-actions {
+    justify-content: stretch;
+  }
+
+  .attendance-records-filter-actions :deep(.p-button),
+  .attendance-records-filter-actions .ot-loaded-badge {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
 }
 </style>

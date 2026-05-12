@@ -25,6 +25,7 @@ import {
   resetAccountPassword,
   updateAccount,
 } from '@/modules/auth/account.api'
+import AppTableLoading from '@/shared/components/AppTableLoading.vue'
 import { buildSaveErrorMessage, getApiErrorMessage } from '@/shared/utils/apiError'
 import { formatDateTime } from '@/shared/utils/dateFormat'
 
@@ -100,15 +101,16 @@ const yesNoOptions = computed(() => [
 
 const totalAccounts = computed(() => Number(totalRecords.value || 0))
 const loadedCount = computed(() => rows.value.filter(Boolean).length)
+const hasAnyData = computed(() => rows.value.some(Boolean))
+const useVirtualScroll = computed(() => totalAccounts.value > PAGE_SIZE)
+const isFirstLoading = computed(() => !bootstrapped.value && backgroundLoading.value)
+
 const loadedLabel = computed(() =>
   t('common.loaded', {
     loaded: loadedCount.value,
     total: totalAccounts.value,
   }),
 )
-
-const hasAnyData = computed(() => rows.value.some(Boolean))
-const useVirtualScroll = computed(() => totalAccounts.value > PAGE_SIZE)
 
 const isCreateDisabled = computed(() => {
   return (
@@ -142,7 +144,7 @@ function normalizeItems(payload) {
   return Array.isArray(payload?.items) ? payload.items : []
 }
 
-function normalizePaginationTotal(payload) {
+function normalizeTotal(payload) {
   return Number(payload?.pagination?.total || payload?.total || 0)
 }
 
@@ -159,21 +161,34 @@ function normalizeRefId(value) {
 function employeeLabel(item = {}) {
   const employeeNo = String(item?.employeeNo || item?.code || '').trim()
   const displayName = String(item?.displayName || item?.name || '').trim()
-  return [employeeNo, displayName].filter(Boolean).join(' - ') || t('auth.account.unnamedEmployee')
+
+  return (
+    [employeeNo, displayName].filter(Boolean).join(' - ') ||
+    t('auth.account.unnamedEmployee')
+  )
 }
 
 function normalizeEmployeeOptions(payload) {
-  return normalizeItems(payload).map((item) => ({
-    label: employeeLabel(item),
-    value: normalizeId(item),
-  }))
+  return normalizeItems(payload)
+    .map((item) => ({
+      label: employeeLabel(item),
+      value: normalizeId(item),
+    }))
+    .filter((item) => item.value)
 }
 
 function normalizeRoleOptions(payload) {
-  return normalizeItems(payload).map((item) => ({
-    label: item?.displayName || item?.name || item?.title || item?.code || t('auth.account.unnamedRole'),
-    value: normalizeId(item),
-  }))
+  return normalizeItems(payload)
+    .map((item) => ({
+      label:
+        item?.displayName ||
+        item?.name ||
+        item?.title ||
+        item?.code ||
+        t('auth.account.unnamedRole'),
+      value: normalizeId(item),
+    }))
+    .filter((item) => item.value)
 }
 
 function normalizePermissionCodes(values) {
@@ -221,11 +236,12 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
   try {
     const res = await getAccounts(buildQuery(page))
+
     if (requestId !== currentRequestId) return
 
     const payload = normalizePayload(res)
     const items = normalizeItems(payload)
-    const total = normalizePaginationTotal(payload)
+    const total = normalizeTotal(payload)
     const startIndex = (page - 1) * PAGE_SIZE
 
     totalRecords.value = total
@@ -256,6 +272,8 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
     bootstrapped.value = true
   } catch (error) {
+    bootstrapped.value = true
+
     showToast(
       'error',
       t('common.loadFailed'),
@@ -271,6 +289,7 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
     rows.value = []
     totalRecords.value = 0
     loadedPages.value = new Set()
+    bootstrapped.value = false
   }
 
   await fetchPage(1, {
@@ -289,7 +308,9 @@ async function fetchOptions() {
     ])
 
     if (employeeResult.status === 'fulfilled') {
-      employeeOptions.value = normalizeEmployeeOptions(normalizePayload(employeeResult.value))
+      employeeOptions.value = normalizeEmployeeOptions(
+        normalizePayload(employeeResult.value),
+      )
     } else {
       employeeOptions.value = []
       showToast('warn', t('common.warning'), t('auth.account.employeeOptionsLoadFailed'))
@@ -325,6 +346,7 @@ function onStatusChange() {
 function clearFilters() {
   filters.search = ''
   filters.isActive = ''
+
   reloadFirstPage({ keepVisible: true })
 }
 
@@ -485,7 +507,12 @@ async function submitResetPassword() {
     resetDialogVisible.value = false
     resetResetForm()
 
-    showToast('success', t('auth.account.passwordReset'), t('auth.account.passwordResetSuccess'), 2500)
+    showToast(
+      'success',
+      t('auth.account.passwordReset'),
+      t('auth.account.passwordResetSuccess'),
+      2500,
+    )
 
     await reloadFirstPage({ keepVisible: true })
   } catch (error) {
@@ -524,6 +551,7 @@ function formatEmployeeName(employeeValue) {
   }
 
   const found = employeeOptions.value.find((item) => item.value === employeeValue)
+
   return found?.label || '-'
 }
 
@@ -541,17 +569,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="ot-page-shell">
-
-    <div class="ot-page-actions">
-        <Button
-          :label="t('auth.account.newAccount')"
-          icon="pi pi-plus"
-          size="small"
-          @click="openCreateDialog"
-        />
-      </div>
-
-    <section class="ot-filter-bar">
+    <section class="ot-filter-bar accounts-filter-bar">
       <div class="ot-field">
         <label class="ot-field-label">
           {{ t('common.search') }}
@@ -559,6 +577,7 @@ onBeforeUnmount(() => {
 
         <IconField>
           <InputIcon class="pi pi-search" />
+
           <InputText
             v-model="filters.search"
             :placeholder="t('auth.account.searchPlaceholder')"
@@ -585,8 +604,8 @@ onBeforeUnmount(() => {
         />
       </div>
 
-      <div class="ot-filter-actions">
-        <span class="ot-loaded-badge">
+      <div class="ot-filter-actions accounts-filter-actions">
+        <span class="ot-loaded-badge whitespace-nowrap">
           {{ loadedLabel }}
         </span>
 
@@ -597,6 +616,14 @@ onBeforeUnmount(() => {
           outlined
           size="small"
           @click="clearFilters"
+        />
+
+        <Button
+          :label="t('auth.account.newAccount')"
+          icon="pi pi-plus"
+          size="small"
+          class="whitespace-nowrap"
+          @click="openCreateDialog"
         />
       </div>
     </section>
@@ -621,7 +648,17 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="ot-table-wrapper">
+        <AppTableLoading
+          v-if="isFirstLoading"
+          :title="t('common.loadingData')"
+          :message="t('common.fetchingRecords')"
+          :rows="7"
+          :columns="9"
+          icon="pi pi-users"
+        />
+
         <DataTable
+          v-else
           :value="rows"
           lazy
           scrollable
@@ -646,9 +683,11 @@ onBeforeUnmount(() => {
               <div class="ot-empty-icon">
                 <i class="pi pi-users" />
               </div>
+
               <div class="ot-empty-title">
                 {{ t('common.noData') }}
               </div>
+
               <div class="ot-empty-text">
                 {{ t('auth.account.noData') }}
               </div>
@@ -661,7 +700,12 @@ onBeforeUnmount(() => {
             style="min-width: 10rem"
           >
             <template #body="{ data }">
-              <span v-if="data">{{ data.loginId || '-' }}</span>
+              <span
+                v-if="data"
+                class="font-bold"
+              >
+                {{ data.loginId || '-' }}
+              </span>
             </template>
           </Column>
 
@@ -671,7 +715,12 @@ onBeforeUnmount(() => {
             style="min-width: 12rem"
           >
             <template #body="{ data }">
-              <span v-if="data">{{ data.displayName || '-' }}</span>
+              <span
+                v-if="data"
+                class="ot-truncate-2"
+              >
+                {{ data.displayName || '-' }}
+              </span>
             </template>
           </Column>
 
@@ -680,7 +729,12 @@ onBeforeUnmount(() => {
             style="min-width: 16rem"
           >
             <template #body="{ data }">
-              <span v-if="data">{{ formatEmployeeName(data.employeeId) }}</span>
+              <span
+                v-if="data"
+                class="ot-truncate-2"
+              >
+                {{ formatEmployeeName(data.employeeId) }}
+              </span>
             </template>
           </Column>
 
@@ -714,13 +768,14 @@ onBeforeUnmount(() => {
                   severity="info"
                 />
               </div>
+
               <span v-else-if="data">-</span>
             </template>
           </Column>
 
           <Column
             :header="t('auth.account.mustChangePassword')"
-            style="min-width: 9rem"
+            style="min-width: 10rem"
           >
             <template #body="{ data }">
               <Tag
@@ -746,10 +801,12 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('common.createdAt')"
-            style="min-width: 12rem"
+            style="min-width: 13rem"
           >
             <template #body="{ data }">
-              <span v-if="data">{{ formatDateTime(data.createdAt) }}</span>
+              <span v-if="data">
+                {{ formatDateTime(data.createdAt) }}
+              </span>
             </template>
           </Column>
 
@@ -769,6 +826,7 @@ onBeforeUnmount(() => {
                   outlined
                   @click="openEditDialog(data)"
                 />
+
                 <Button
                   :label="t('auth.account.reset')"
                   icon="pi pi-key"
@@ -797,6 +855,7 @@ onBeforeUnmount(() => {
             <label class="ot-field-label">
               {{ t('auth.loginId') }}
             </label>
+
             <InputText
               v-model="createForm.loginId"
               class="w-full"
@@ -808,6 +867,7 @@ onBeforeUnmount(() => {
             <label class="ot-field-label">
               {{ t('auth.account.displayName') }}
             </label>
+
             <InputText
               v-model="createForm.displayName"
               class="w-full"
@@ -819,6 +879,7 @@ onBeforeUnmount(() => {
             <label class="ot-field-label">
               {{ t('auth.password') }}
             </label>
+
             <Password
               v-model="createForm.password"
               class="w-full"
@@ -832,6 +893,7 @@ onBeforeUnmount(() => {
             <label class="ot-field-label">
               {{ t('nav.employees') }}
             </label>
+
             <Select
               v-model="createForm.employeeId"
               :options="employeeOptions"
@@ -850,6 +912,7 @@ onBeforeUnmount(() => {
           <label class="ot-field-label">
             {{ t('nav.roles') }}
           </label>
+
           <MultiSelect
             v-model="createForm.roleIds"
             :options="roleOptions"
@@ -867,11 +930,13 @@ onBeforeUnmount(() => {
           <label class="ot-field-label">
             {{ t('auth.account.directPermissions') }}
           </label>
+
           <InputText
             v-model="directPermissionInput"
             class="w-full"
             placeholder="ACCOUNT_VIEW, ACCOUNT_CREATE"
           />
+
           <p class="ot-field-help">
             {{ t('auth.account.directPermissionHelp') }}
           </p>
@@ -882,6 +947,7 @@ onBeforeUnmount(() => {
             <span class="text-sm font-semibold text-[color:var(--ot-text)]">
               {{ t('auth.account.mustChangePassword') }}
             </span>
+
             <InputSwitch v-model="createForm.mustChangePassword" />
           </div>
 
@@ -889,6 +955,7 @@ onBeforeUnmount(() => {
             <span class="text-sm font-semibold text-[color:var(--ot-text)]">
               {{ t('common.active') }}
             </span>
+
             <InputSwitch v-model="createForm.isActive" />
           </div>
         </div>
@@ -902,6 +969,7 @@ onBeforeUnmount(() => {
             size="small"
             @click="createDialogVisible = false"
           />
+
           <Button
             :label="t('auth.account.createTitle')"
             :loading="saving"
@@ -926,6 +994,7 @@ onBeforeUnmount(() => {
             <label class="ot-field-label">
               {{ t('auth.loginId') }}
             </label>
+
             <InputText
               v-model="editForm.loginId"
               class="w-full"
@@ -936,6 +1005,7 @@ onBeforeUnmount(() => {
             <label class="ot-field-label">
               {{ t('auth.account.displayName') }}
             </label>
+
             <InputText
               v-model="editForm.displayName"
               class="w-full"
@@ -946,6 +1016,7 @@ onBeforeUnmount(() => {
             <label class="ot-field-label">
               {{ t('nav.employees') }}
             </label>
+
             <Select
               v-model="editForm.employeeId"
               :options="employeeOptions"
@@ -963,6 +1034,7 @@ onBeforeUnmount(() => {
             <label class="ot-field-label">
               {{ t('auth.account.mustChangePassword') }}
             </label>
+
             <Select
               v-model="editForm.mustChangePassword"
               :options="yesNoOptions"
@@ -977,6 +1049,7 @@ onBeforeUnmount(() => {
           <label class="ot-field-label">
             {{ t('nav.roles') }}
           </label>
+
           <MultiSelect
             v-model="editForm.roleIds"
             :options="roleOptions"
@@ -994,6 +1067,7 @@ onBeforeUnmount(() => {
           <label class="ot-field-label">
             {{ t('auth.account.directPermissions') }}
           </label>
+
           <InputText
             v-model="editDirectPermissionInput"
             class="w-full"
@@ -1005,6 +1079,7 @@ onBeforeUnmount(() => {
           <span class="text-sm font-semibold text-[color:var(--ot-text)]">
             {{ t('common.active') }}
           </span>
+
           <InputSwitch v-model="editForm.isActive" />
         </div>
       </div>
@@ -1017,6 +1092,7 @@ onBeforeUnmount(() => {
             size="small"
             @click="editDialogVisible = false"
           />
+
           <Button
             :label="t('common.save')"
             :loading="saving"
@@ -1038,13 +1114,16 @@ onBeforeUnmount(() => {
       <div class="ot-dialog-form">
         <div class="ot-inline-error">
           {{ t('auth.account.resettingFor') }}
-          <strong>{{ selectedAccount?.loginId }}</strong>
+          <span class="font-semibold">
+            {{ selectedAccount?.loginId || '-' }}
+          </span>
         </div>
 
         <div class="ot-field">
           <label class="ot-field-label">
             {{ t('auth.account.newPassword') }}
           </label>
+
           <Password
             v-model="resetForm.newPassword"
             class="w-full"
@@ -1058,6 +1137,7 @@ onBeforeUnmount(() => {
           <span class="text-sm font-semibold text-[color:var(--ot-text)]">
             {{ t('auth.account.forcePasswordChange') }}
           </span>
+
           <InputSwitch v-model="resetForm.mustChangePassword" />
         </div>
       </div>
@@ -1070,6 +1150,7 @@ onBeforeUnmount(() => {
             size="small"
             @click="resetDialogVisible = false"
           />
+
           <Button
             :label="t('auth.account.resetPassword')"
             severity="danger"
@@ -1083,3 +1164,18 @@ onBeforeUnmount(() => {
     </Dialog>
   </div>
 </template>
+
+<style scoped>
+@media (min-width: 1280px) {
+  .accounts-filter-bar {
+    grid-template-columns: minmax(280px, 1fr) minmax(220px, 360px) auto;
+    align-items: end;
+  }
+
+  .accounts-filter-actions {
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    min-width: max-content;
+  }
+}
+</style>

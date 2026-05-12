@@ -11,17 +11,19 @@ import Dialog from 'primevue/dialog'
 import IconField from 'primevue/iconfield'
 import InputIcon from 'primevue/inputicon'
 import InputText from 'primevue/inputtext'
-import Message from 'primevue/message'
 import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 
 import AttendanceImportDialog from '@/modules/attendance/components/AttendanceImportDialog.vue'
 import HolidayDatePicker from '@/modules/calendar/components/HolidayDatePicker.vue'
+import AppTableLoading from '@/shared/components/AppTableLoading.vue'
 import { useAuthStore } from '@/modules/auth/auth.store'
 import {
   getAttendanceImportById,
   getAttendanceImports,
 } from '@/modules/attendance/attendance.api'
+import { getApiErrorMessage } from '@/shared/utils/apiError'
+import { formatDate, formatDateTime } from '@/shared/utils/dateFormat'
 
 const toast = useToast()
 const auth = useAuthStore()
@@ -63,14 +65,16 @@ const statusOptions = computed(() => [
 
 const totalImports = computed(() => Number(totalRecords.value || 0))
 const loadedCount = computed(() => rows.value.filter(Boolean).length)
+const hasAnyData = computed(() => rows.value.some(Boolean))
+const useVirtualScroll = computed(() => totalImports.value > PAGE_SIZE)
+const isFirstLoading = computed(() => !bootstrapped.value && backgroundLoading.value)
+
 const loadedLabel = computed(() =>
   t('common.loaded', {
     loaded: loadedCount.value,
     total: totalImports.value,
   }),
 )
-const hasAnyData = computed(() => rows.value.some(Boolean))
-const useVirtualScroll = computed(() => totalImports.value > PAGE_SIZE)
 
 const canImportAttendance = computed(() => {
   if (auth.user?.isRootAdmin || auth.isRootAdmin) return true
@@ -137,6 +141,10 @@ function normalizeItems(payload) {
   return Array.isArray(payload?.items) ? payload.items : []
 }
 
+function normalizeTotal(payload) {
+  return Number(payload?.pagination?.total || payload?.total || 0)
+}
+
 function s(value) {
   return String(value ?? '').trim()
 }
@@ -146,45 +154,17 @@ function upper(value) {
 }
 
 function formatDateDMY(value) {
-  if (!value) return '—'
-
-  const raw = s(value)
-
-  const ymdMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/)
-  if (ymdMatch) {
-    return `${ymdMatch[3]}/${ymdMatch[2]}/${ymdMatch[1]}`
-  }
-
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return raw || '—'
-
-  const dd = String(date.getDate()).padStart(2, '0')
-  const mm = String(date.getMonth() + 1).padStart(2, '0')
-  const yyyy = date.getFullYear()
-
-  return `${dd}/${mm}/${yyyy}`
-}
-
-function formatDateTime(value) {
-  if (!value) return '—'
-
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return s(value) || '—'
-
-  const dd = String(date.getDate()).padStart(2, '0')
-  const mm = String(date.getMonth() + 1).padStart(2, '0')
-  const yyyy = date.getFullYear()
-  const hh = String(date.getHours()).padStart(2, '0')
-  const min = String(date.getMinutes()).padStart(2, '0')
-
-  return `${dd}/${mm}/${yyyy} ${hh}:${min}`
+  return formatDate(value) || '—'
 }
 
 function formatPeriod(row) {
   const from = s(row?.periodFrom)
   const to = s(row?.periodTo)
 
-  if (from && to && from !== to) return `${formatDateDMY(from)} → ${formatDateDMY(to)}`
+  if (from && to && from !== to) {
+    return `${formatDateDMY(from)} → ${formatDateDMY(to)}`
+  }
+
   if (from) return formatDateDMY(from)
   if (to) return formatDateDMY(to)
 
@@ -261,6 +241,10 @@ function formatFileName(row) {
   return s(row?.fileName) || '—'
 }
 
+function rowCount(row, field) {
+  return Number(row?.[field] || 0)
+}
+
 function buildQuery(page) {
   return {
     page,
@@ -274,6 +258,15 @@ function buildQuery(page) {
   }
 }
 
+function showToast(severity, summary, detail, life = 3000) {
+  toast.add({
+    severity,
+    summary,
+    detail,
+    life,
+  })
+}
+
 async function fetchPage(page, { replace = false, silent = false } = {}) {
   if (!replace && loadedPages.value.has(page)) return
 
@@ -285,11 +278,12 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
   try {
     const res = await getAttendanceImports(buildQuery(page))
+
     if (requestId !== currentRequestId) return
 
     const payload = normalizePayload(res)
     const items = normalizeItems(payload)
-    const total = Number(payload?.pagination?.total || 0)
+    const total = normalizeTotal(payload)
     const startIndex = (page - 1) * PAGE_SIZE
 
     totalRecords.value = total
@@ -297,8 +291,8 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
     if (replace) {
       const nextRows = total > 0 ? Array.from({ length: total }, () => null) : []
 
-      for (let i = 0; i < items.length; i += 1) {
-        nextRows[startIndex + i] = items[i]
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
       }
 
       rows.value = nextRows
@@ -310,8 +304,8 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
       const nextRows = [...rows.value]
 
-      for (let i = 0; i < items.length; i += 1) {
-        nextRows[startIndex + i] = items[i]
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
       }
 
       rows.value = nextRows
@@ -320,15 +314,13 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
     bootstrapped.value = true
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: t('attendance.message.loadFailed'),
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        t('attendance.import.noImports'),
-      life: 3000,
-    })
+    bootstrapped.value = true
+
+    showToast(
+      'error',
+      t('attendance.message.loadFailed'),
+      getApiErrorMessage(error, t('attendance.import.noImports')),
+    )
   } finally {
     backgroundLoading.value = false
   }
@@ -339,6 +331,7 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
     rows.value = []
     totalRecords.value = 0
     loadedPages.value = new Set()
+    bootstrapped.value = false
   }
 
   await fetchPage(1, {
@@ -417,12 +410,12 @@ async function openImportDetail(row) {
   const importId = s(row?.id || row?._id)
 
   if (!importId) {
-    toast.add({
-      severity: 'warn',
-      summary: t('attendance.message.missingImportId'),
-      detail: t('attendance.message.missingImportIdDetail'),
-      life: 2500,
-    })
+    showToast(
+      'warn',
+      t('attendance.message.missingImportId'),
+      t('attendance.message.missingImportIdDetail'),
+      2500,
+    )
     return
   }
 
@@ -434,15 +427,11 @@ async function openImportDetail(row) {
     const res = await getAttendanceImportById(importId)
     selectedImportDetail.value = normalizePayload(res)
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: t('attendance.message.detailLoadFailed'),
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        t('attendance.import.detailLoadFailed'),
-      life: 3000,
-    })
+    showToast(
+      'error',
+      t('attendance.message.detailLoadFailed'),
+      getApiErrorMessage(error, t('attendance.import.detailLoadFailed')),
+    )
   } finally {
     detailLoading.value = false
   }
@@ -450,6 +439,22 @@ async function openImportDetail(row) {
 
 function onImportSuccess(payload) {
   latestImportResult.value = payload
+
+  const info =
+    payload?.import ||
+    payload?.item ||
+    payload ||
+    null
+
+  showToast(
+    'success',
+    t('attendance.importDialog.importCompleted'),
+    info?.status === 'PARTIAL_SUCCESS'
+      ? t('attendance.importDialog.importCompletedPartial')
+      : t('attendance.importDialog.importCompletedSuccess'),
+    3500,
+  )
+
   reloadFirstPage({ keepVisible: false })
 }
 
@@ -471,133 +476,93 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="ot-page-shell">
-    <div class="ot-page-actions">
-        <Button
-          v-if="canImportAttendance"
-          :label="t('attendance.import.importAttendance')"
-          icon="pi pi-upload"
-          size="small"
-          @click="importDialogVisible = true"
-        />
-
-        <Button
-          :label="t('common.refresh')"
-          icon="pi pi-refresh"
-          severity="secondary"
-          outlined
-          size="small"
-          :loading="backgroundLoading"
-          @click="refresh"
-        />
-
-        <Button
-          :label="t('common.clear')"
-          icon="pi pi-filter-slash"
-          severity="secondary"
-          outlined
-          size="small"
-          @click="clearFilters"
-        />
-      </div>
-
     <section
       v-if="latestImportInfo"
-      class="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4 shadow-sm dark:border-emerald-800 dark:bg-emerald-950/20"
+      class="ot-table-card"
     >
-      <div class="flex flex-col gap-4">
-        <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <div class="flex items-center gap-2 text-base font-bold text-[color:var(--ot-text)]">
-              <i class="pi pi-check-circle text-emerald-500" />
-              <span>{{ t('attendance.import.latestImportResult') }}</span>
-            </div>
+      <div class="ot-table-toolbar">
+        <div>
+          <h2 class="ot-table-title">
+            {{ t('attendance.import.latestImportResult') }}
+          </h2>
+        </div>
 
-            <p class="mt-1 text-sm text-[color:var(--ot-text-muted)]">
-              {{ t('attendance.import.latestImportDescription') }}
-            </p>
-          </div>
-
+        <div class="ot-table-actions">
           <Tag
             :value="formatImportStatusLabel(latestImportInfo.status)"
             :severity="getImportStatusSeverity(latestImportInfo.status)"
           />
         </div>
+      </div>
 
-        <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-          <div class="attendance-stat-box">
-            <div class="attendance-stat-label">{{ t('attendance.field.importNo') }}</div>
-            <div class="attendance-stat-value text-sm">
-              {{ latestImportInfo.importNo || '—' }}
-            </div>
-          </div>
-
-          <div class="attendance-stat-box">
-            <div class="attendance-stat-label">{{ t('attendance.field.totalRows') }}</div>
-            <div class="attendance-stat-value">
-              {{ Number(latestImportInfo.rowCount || 0) }}
-            </div>
-          </div>
-
-          <div class="attendance-stat-box border-emerald-200 dark:border-emerald-800">
-            <div class="attendance-stat-label">{{ t('attendance.field.successRows') }}</div>
-            <div class="attendance-stat-value text-emerald-600 dark:text-emerald-400">
-              {{ Number(latestImportInfo.successRowCount || 0) }}
-            </div>
-          </div>
-
-          <div class="attendance-stat-box border-amber-200 dark:border-amber-800">
-            <div class="attendance-stat-label">{{ t('attendance.field.failedRows') }}</div>
-            <div class="attendance-stat-value text-amber-600 dark:text-amber-400">
-              {{ Number(latestImportInfo.failedRowCount || 0) }}
-            </div>
-          </div>
-
-          <div class="attendance-stat-box border-sky-200 dark:border-sky-800">
-            <div class="attendance-stat-label">{{ t('attendance.field.duplicateRows') }}</div>
-            <div class="attendance-stat-value text-sky-600 dark:text-sky-400">
-              {{ Number(latestImportInfo.duplicateRowCount || 0) }}
-            </div>
+      <div class="grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-5">
+        <div class="ot-panel">
+          <div class="ot-field-label">{{ t('attendance.field.importNo') }}</div>
+          <div class="mt-1 text-sm font-semibold text-[color:var(--ot-text)]">
+            {{ latestImportInfo.importNo || '—' }}
           </div>
         </div>
 
-        <Message
-          v-if="latestImportInfo.status === 'PARTIAL_SUCCESS'"
-          severity="warn"
-          :closable="false"
-        >
-          {{ t('attendance.message.partialImportWarning') }}
-        </Message>
-
-        <div
-          v-if="latestFailedRowsPreview.length"
-          class="rounded-2xl border border-amber-200 bg-white/80 p-3 dark:border-amber-800 dark:bg-surface-900"
-        >
-          <div class="mb-2 text-xs font-bold uppercase tracking-[0.12em] text-amber-700 dark:text-amber-300">
-            {{ t('attendance.import.failedRowPreview') }}
+        <div class="ot-panel">
+          <div class="ot-field-label">{{ t('attendance.field.totalRows') }}</div>
+          <div class="mt-1 text-sm font-semibold text-[color:var(--ot-text)]">
+            {{ Number(latestImportInfo.rowCount || 0) }}
           </div>
+        </div>
 
-          <div class="grid gap-2 md:grid-cols-2">
-            <div
-              v-for="row in latestFailedRowsPreview"
-              :key="`${row.rawRowNo || row.rowNo || row.row || ''}-${row.message || row.reason || ''}`"
-              class="rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-3 py-2 text-sm"
-            >
-              <div class="font-bold text-[color:var(--ot-text)]">
-                {{ t('attendance.field.row') }} {{ row.rawRowNo || row.rowNo || row.row || '—' }}
-              </div>
+        <div class="ot-panel">
+          <div class="ot-field-label">{{ t('attendance.field.successRows') }}</div>
+          <div class="mt-1 text-sm font-semibold text-[color:var(--ot-text)]">
+            {{ Number(latestImportInfo.successRowCount || 0) }}
+          </div>
+        </div>
 
-              <div class="mt-0.5 text-xs text-[color:var(--ot-text-muted)]">
-                {{ row.message || row.reason || formatIssues(row.issues) }}
-              </div>
+        <div class="ot-panel">
+          <div class="ot-field-label">{{ t('attendance.field.failedRows') }}</div>
+          <div class="mt-1 text-sm font-semibold text-[color:var(--ot-text)]">
+            {{ Number(latestImportInfo.failedRowCount || 0) }}
+          </div>
+        </div>
+
+        <div class="ot-panel">
+          <div class="ot-field-label">{{ t('attendance.field.duplicateRows') }}</div>
+          <div class="mt-1 text-sm font-semibold text-[color:var(--ot-text)]">
+            {{ Number(latestImportInfo.duplicateRowCount || 0) }}
+          </div>
+        </div>
+      </div>
+
+      <div
+        v-if="latestFailedRowsPreview.length"
+        class="border-t border-[color:var(--ot-border)] p-3"
+      >
+        <div class="mb-2 text-sm font-semibold text-[color:var(--ot-text)]">
+          {{ t('attendance.import.failedRowPreview') }}
+        </div>
+
+        <div class="grid gap-2 md:grid-cols-2">
+          <div
+            v-for="row in latestFailedRowsPreview"
+            :key="`${row.rawRowNo || row.rowNo || row.row || ''}-${row.message || row.reason || ''}`"
+            class="ot-panel"
+          >
+            <div class="text-sm font-semibold text-[color:var(--ot-text)]">
+              {{ t('attendance.field.row') }} {{ row.rawRowNo || row.rowNo || row.row || '—' }}
+            </div>
+
+            <div class="mt-1 text-xs leading-5 text-[color:var(--ot-text-muted)]">
+              {{ row.message || row.reason || formatIssues(row.issues) }}
             </div>
           </div>
         </div>
       </div>
     </section>
 
-    <section class="ot-filter-bar">
+    <section class="ot-filter-bar attendance-import-filter-bar">
       <div class="ot-field">
-        <label class="ot-field-label">{{ t('common.search') }}</label>
+        <label class="ot-field-label">
+          {{ t('common.search') }}
+        </label>
 
         <IconField>
           <InputIcon class="pi pi-search" />
@@ -613,7 +578,9 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="ot-field">
-        <label class="ot-field-label">{{ t('common.status') }}</label>
+        <label class="ot-field-label">
+          {{ t('common.status') }}
+        </label>
 
         <Select
           v-model="filters.status"
@@ -642,10 +609,29 @@ onBeforeUnmount(() => {
         />
       </div>
 
-      <div class="ot-filter-actions">
-        <span class="ot-loaded-badge">
+      <div class="ot-filter-actions attendance-import-filter-actions">
+        <span class="ot-loaded-badge whitespace-nowrap">
           {{ loadedLabel }}
         </span>
+
+        <Button
+          v-if="canImportAttendance"
+          :label="t('attendance.import.importAttendance')"
+          icon="pi pi-upload"
+          size="small"
+          class="whitespace-nowrap"
+          @click="importDialogVisible = true"
+        />
+
+        <Button
+          :label="t('common.refresh')"
+          icon="pi pi-refresh"
+          severity="secondary"
+          outlined
+          size="small"
+          :loading="backgroundLoading"
+          @click="refresh"
+        />
 
         <Button
           :label="t('common.clear')"
@@ -672,13 +658,23 @@ onBeforeUnmount(() => {
             class="ot-loaded-badge"
           >
             <i class="pi pi-spin pi-spinner" />
-            {{ t('attendance.message.updating') }}
+            {{ t('common.updating') }}
           </span>
         </div>
       </div>
 
       <div class="ot-table-wrapper">
+        <AppTableLoading
+          v-if="isFirstLoading"
+          :title="t('common.loadingData')"
+          :message="t('common.fetchingRecords')"
+          :rows="7"
+          :columns="7"
+          icon="pi pi-upload"
+        />
+
         <DataTable
+          v-else
           :value="rows"
           lazy
           removable-sort
@@ -686,7 +682,7 @@ onBeforeUnmount(() => {
           scroll-height="500px"
           :sort-field="filters.sortField"
           :sort-order="filters.sortOrder"
-          table-style="width: max-content; min-width: 100%;"
+          table-style="min-width: 96rem"
           class="ot-data-table ot-data-table-compact"
           :virtual-scroller-options="useVirtualScroll ? {
             lazy: true,
@@ -709,7 +705,7 @@ onBeforeUnmount(() => {
               </div>
 
               <div class="ot-empty-title">
-                {{ t('attendance.message.noDataFound') }}
+                {{ t('common.noData') }}
               </div>
 
               <div class="ot-empty-text">
@@ -747,6 +743,7 @@ onBeforeUnmount(() => {
                 :title="formatFileName(data)"
               >
                 <i class="pi pi-file-excel text-emerald-500" />
+
                 <span class="truncate">
                   {{ formatFileName(data) }}
                 </span>
@@ -759,10 +756,7 @@ onBeforeUnmount(() => {
             style="min-width: 12rem"
           >
             <template #body="{ data }">
-              <span
-                v-if="data"
-                class="text-sm text-[color:var(--ot-text)]"
-              >
+              <span v-if="data">
                 {{ formatPeriod(data) }}
               </span>
             </template>
@@ -770,28 +764,32 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('attendance.field.rows')"
-            style="min-width: 25rem"
+            style="min-width: 21rem"
           >
             <template #body="{ data }">
               <div
                 v-if="data"
                 class="flex flex-wrap items-center gap-1.5"
               >
-                <span class="count-pill is-total">
-                  {{ t('attendance.field.totalRows') }} {{ Number(data.rowCount || 0) }}
-                </span>
+                <Tag
+                  :value="`${t('attendance.field.totalRows')} ${rowCount(data, 'rowCount')}`"
+                  severity="secondary"
+                />
 
-                <span class="count-pill is-success">
-                  {{ t('attendance.field.successRows') }} {{ Number(data.successRowCount || 0) }}
-                </span>
+                <Tag
+                  :value="`${t('attendance.field.successRows')} ${rowCount(data, 'successRowCount')}`"
+                  severity="success"
+                />
 
-                <span class="count-pill is-failed">
-                  {{ t('attendance.field.failedRows') }} {{ Number(data.failedRowCount || 0) }}
-                </span>
+                <Tag
+                  :value="`${t('attendance.field.failedRows')} ${rowCount(data, 'failedRowCount')}`"
+                  severity="warning"
+                />
 
-                <span class="count-pill is-duplicate">
-                  {{ t('attendance.field.duplicateRows') }} {{ Number(data.duplicateRowCount || 0) }}
-                </span>
+                <Tag
+                  :value="`${t('attendance.field.duplicateRows')} ${rowCount(data, 'duplicateRowCount')}`"
+                  severity="info"
+                />
               </div>
             </template>
           </Column>
@@ -818,10 +816,7 @@ onBeforeUnmount(() => {
             style="min-width: 13rem"
           >
             <template #body="{ data }">
-              <span
-                v-if="data"
-                class="text-sm text-[color:var(--ot-text)]"
-              >
+              <span v-if="data">
                 {{ formatDateTime(data.importedAt || data.createdAt) }}
               </span>
             </template>
@@ -867,21 +862,21 @@ onBeforeUnmount(() => {
 
       <div
         v-else-if="detailImport"
-        class="flex flex-col gap-4"
+        class="ot-dialog-form"
       >
         <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <div class="attendance-metric-box">
-            <div class="attendance-metric-label">{{ t('attendance.field.importNo') }}</div>
+          <div class="ot-panel">
+            <div class="ot-field-label">{{ t('attendance.field.importNo') }}</div>
 
-            <div class="attendance-metric-value">
+            <div class="mt-1 text-sm font-semibold text-[color:var(--ot-text)]">
               {{ detailImport.importNo || '—' }}
             </div>
           </div>
 
-          <div class="attendance-metric-box">
-            <div class="attendance-metric-label">{{ t('common.status') }}</div>
+          <div class="ot-panel">
+            <div class="ot-field-label">{{ t('common.status') }}</div>
 
-            <div class="mt-1">
+            <div class="mt-2">
               <Tag
                 :value="formatImportStatusLabel(detailImport.status)"
                 :severity="getImportStatusSeverity(detailImport.status)"
@@ -889,73 +884,65 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <div class="attendance-metric-box">
-            <div class="attendance-metric-label">{{ t('attendance.field.period') }}</div>
+          <div class="ot-panel">
+            <div class="ot-field-label">{{ t('attendance.field.period') }}</div>
 
-            <div class="attendance-metric-value">
+            <div class="mt-1 text-sm font-semibold text-[color:var(--ot-text)]">
               {{ formatPeriod(detailImport) }}
             </div>
           </div>
 
-          <div class="attendance-metric-box">
-            <div class="attendance-metric-label">{{ t('attendance.field.importedAt') }}</div>
+          <div class="ot-panel">
+            <div class="ot-field-label">{{ t('attendance.field.importedAt') }}</div>
 
-            <div class="attendance-metric-value">
+            <div class="mt-1 text-sm font-semibold text-[color:var(--ot-text)]">
               {{ formatDateTime(detailImport.importedAt || detailImport.createdAt) }}
             </div>
           </div>
         </div>
 
         <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-          <div class="attendance-stat-box">
-            <div class="attendance-stat-label">{{ t('attendance.field.totalRows') }}</div>
-            <div class="attendance-stat-value">
+          <div class="ot-panel">
+            <div class="ot-field-label">{{ t('attendance.field.totalRows') }}</div>
+            <div class="mt-1 text-sm font-semibold text-[color:var(--ot-text)]">
               {{ Number(detailImport.rowCount || 0) }}
             </div>
           </div>
 
-          <div class="attendance-stat-box">
-            <div class="attendance-stat-label">{{ t('attendance.field.successRows') }}</div>
-            <div class="attendance-stat-value text-emerald-600">
+          <div class="ot-panel">
+            <div class="ot-field-label">{{ t('attendance.field.successRows') }}</div>
+            <div class="mt-1 text-sm font-semibold text-[color:var(--ot-text)]">
               {{ Number(detailImport.successRowCount || 0) }}
             </div>
           </div>
 
-          <div class="attendance-stat-box">
-            <div class="attendance-stat-label">{{ t('attendance.field.failedRows') }}</div>
-            <div class="attendance-stat-value text-amber-600">
+          <div class="ot-panel">
+            <div class="ot-field-label">{{ t('attendance.field.failedRows') }}</div>
+            <div class="mt-1 text-sm font-semibold text-[color:var(--ot-text)]">
               {{ Number(detailImport.failedRowCount || 0) }}
             </div>
           </div>
 
-          <div class="attendance-stat-box">
-            <div class="attendance-stat-label">{{ t('attendance.field.duplicateRows') }}</div>
-            <div class="attendance-stat-value text-sky-600">
+          <div class="ot-panel">
+            <div class="ot-field-label">{{ t('attendance.field.duplicateRows') }}</div>
+            <div class="mt-1 text-sm font-semibold text-[color:var(--ot-text)]">
               {{ Number(detailImport.duplicateRowCount || 0) }}
             </div>
           </div>
 
-          <div class="attendance-stat-box">
-            <div class="attendance-stat-label">{{ t('attendance.field.overriddenRows') }}</div>
-            <div class="attendance-stat-value">
+          <div class="ot-panel">
+            <div class="ot-field-label">{{ t('attendance.field.overriddenRows') }}</div>
+            <div class="mt-1 text-sm font-semibold text-[color:var(--ot-text)]">
               {{ Number(detailImport.overriddenRowCount || 0) }}
             </div>
           </div>
         </div>
 
-        <Message
-          v-if="detailFailedRows.length"
-          severity="warn"
-          :closable="false"
-        >
-          {{ t('attendance.message.failedRowsWarning') }}
-        </Message>
-
         <div
           v-if="detailFailedRows.length"
-          class="rounded-2xl border border-[color:var(--ot-border)] p-3"
+          class="ot-panel"
         >
-          <div class="mb-3 text-sm font-bold text-[color:var(--ot-text)]">
+          <div class="mb-3 text-sm font-semibold text-[color:var(--ot-text)]">
             {{ t('attendance.field.failedRows') }}
           </div>
 
@@ -965,11 +952,11 @@ onBeforeUnmount(() => {
               :key="`${row.rawRowNo || row.rowNo || row.row || ''}-${row.message || row.reason || ''}`"
               class="rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-bg)] px-3 py-2 text-sm"
             >
-              <div class="font-bold text-[color:var(--ot-text)]">
+              <div class="font-semibold text-[color:var(--ot-text)]">
                 {{ t('attendance.field.row') }} {{ row.rawRowNo || row.rowNo || row.row || '—' }}
               </div>
 
-              <div class="mt-0.5 text-xs text-[color:var(--ot-text-muted)]">
+              <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
                 {{ row.message || row.reason || formatIssues(row.issues) }}
               </div>
             </div>
@@ -980,12 +967,22 @@ onBeforeUnmount(() => {
           :value="detailRecords"
           scrollable
           scroll-height="420px"
-          table-style="width: max-content; min-width: 100%;"
+          table-style="min-width: 76rem"
           class="ot-data-table ot-data-table-compact"
         >
           <template #empty>
-            <div class="py-8 text-center text-sm text-[color:var(--ot-text-muted)]">
-              {{ t('attendance.import.noImportRecords') }}
+            <div class="ot-empty-state">
+              <div class="ot-empty-icon">
+                <i class="pi pi-list" />
+              </div>
+
+              <div class="ot-empty-title">
+                {{ t('common.noData') }}
+              </div>
+
+              <div class="ot-empty-text">
+                {{ t('attendance.import.noImportRecords') }}
+              </div>
             </div>
           </template>
 
@@ -1004,7 +1001,7 @@ onBeforeUnmount(() => {
           >
             <template #body="{ data }">
               <div class="flex flex-col">
-                <span class="font-bold text-[color:var(--ot-text)]">
+                <span class="font-semibold text-[color:var(--ot-text)]">
                   {{ data.employeeNo || data.importedEmployeeId || '—' }}
                 </span>
 
@@ -1069,67 +1066,40 @@ onBeforeUnmount(() => {
 
       <div
         v-else
-        class="py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
+        class="ot-empty-state"
       >
-        {{ t('attendance.import.noImportDetail') }}
+        <div class="ot-empty-icon">
+          <i class="pi pi-info-circle" />
+        </div>
+
+        <div class="ot-empty-title">
+          {{ t('common.noData') }}
+        </div>
+
+        <div class="ot-empty-text">
+          {{ t('attendance.import.noImportDetail') }}
+        </div>
       </div>
     </Dialog>
   </div>
 </template>
 
 <style scoped>
-.attendance-stat-box,
-.attendance-metric-box {
-  border: 1px solid var(--ot-border);
-  border-radius: 1rem;
-  background: var(--ot-surface);
-  padding: 0.85rem 1rem;
-}
+@media (min-width: 1280px) {
+  .attendance-import-filter-bar {
+    grid-template-columns:
+      minmax(260px, 1fr)
+      minmax(180px, 220px)
+      minmax(180px, 220px)
+      minmax(180px, 220px)
+      auto;
+    align-items: end;
+  }
 
-.attendance-stat-label,
-.attendance-metric-label {
-  font-size: 0.72rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  color: var(--ot-text-muted);
-}
-
-.attendance-stat-value,
-.attendance-metric-value {
-  margin-top: 0.25rem;
-  font-size: 1.1rem;
-  font-weight: 800;
-  color: var(--ot-text);
-}
-
-.count-pill {
-  display: inline-flex;
-  align-items: center;
-  border-radius: 9999px;
-  padding: 0.2rem 0.55rem;
-  font-size: 0.72rem;
-  font-weight: 800;
-  white-space: nowrap;
-}
-
-.count-pill.is-total {
-  background: rgba(100, 116, 139, 0.12);
-  color: rgb(71, 85, 105);
-}
-
-.count-pill.is-success {
-  background: rgba(16, 185, 129, 0.12);
-  color: rgb(4, 120, 87);
-}
-
-.count-pill.is-failed {
-  background: rgba(245, 158, 11, 0.14);
-  color: rgb(180, 83, 9);
-}
-
-.count-pill.is-duplicate {
-  background: rgba(14, 165, 233, 0.12);
-  color: rgb(3, 105, 161);
+  .attendance-import-filter-actions {
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    min-width: max-content;
+  }
 }
 </style>

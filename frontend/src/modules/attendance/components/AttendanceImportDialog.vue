@@ -2,18 +2,20 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import ProgressBar from 'primevue/progressbar'
 
 import HolidayDatePicker from '@/modules/calendar/components/HolidayDatePicker.vue'
-
 import {
   downloadAttendanceImportSample,
   importAttendanceExcel,
 } from '@/modules/attendance/attendance.api'
+import {
+  getApiErrorMessage,
+  getApiErrorStatus,
+} from '@/shared/utils/apiError'
 
 const props = defineProps({
   visible: {
@@ -24,7 +26,6 @@ const props = defineProps({
 
 const emit = defineEmits(['update:visible', 'success'])
 
-const toast = useToast()
 const { t } = useI18n()
 
 const fileInputRef = ref(null)
@@ -48,13 +49,11 @@ const canImport = computed(() => {
 watch(
   () => props.visible,
   (value) => {
-    if (!value) {
-      resetForm()
-    }
+    if (!value) resetState()
   },
 )
 
-function resetForm() {
+function resetState() {
   selectedFile.value = null
   attendanceDate.value = ''
   uploadProgress.value = 0
@@ -72,7 +71,7 @@ function closeDialog() {
   emit('update:visible', false)
 }
 
-function clearMessages() {
+function clearMessage() {
   errorTitle.value = ''
   errorMessage.value = ''
   successMessage.value = ''
@@ -80,17 +79,20 @@ function clearMessages() {
 
 function triggerChooseFile() {
   if (importing.value) return
-  clearMessages()
+  clearMessage()
   fileInputRef.value?.click()
 }
 
 function validateFile(file) {
   if (!file) return t('attendance.importDialog.chooseExcelFile')
 
-  const name = String(file.name || '').toLowerCase()
-  const isExcel = name.endsWith('.xlsx') || name.endsWith('.xls') || name.endsWith('.csv')
+  const lowerName = String(file.name || '').toLowerCase()
+  const isValidFile =
+    lowerName.endsWith('.xlsx') ||
+    lowerName.endsWith('.xls') ||
+    lowerName.endsWith('.csv')
 
-  if (!isExcel) {
+  if (!isValidFile) {
     return t('attendance.importDialog.invalidExcelFile')
   }
 
@@ -104,7 +106,7 @@ function validateFile(file) {
 }
 
 function onFileChange(event) {
-  clearMessages()
+  clearMessage()
 
   const file = event?.target?.files?.[0] || null
   const message = validateFile(file)
@@ -118,7 +120,6 @@ function onFileChange(event) {
 
     errorTitle.value = t('attendance.importDialog.invalidFile')
     errorMessage.value = message
-
     return
   }
 
@@ -127,6 +128,50 @@ function onFileChange(event) {
 
 function normalizePayload(res) {
   return res?.data?.data || res?.data || {}
+}
+
+function normalizeImportPayload(res) {
+  const payload = normalizePayload(res)
+  return payload.item || payload.import || payload
+}
+
+function getErrorTitle(error) {
+  const status = getApiErrorStatus(error)
+
+  if (status === 400) return t('attendance.importDialog.invalidExcelData')
+  if (status === 401) return t('auth.accessDenied')
+  if (status === 403) return t('auth.noPermission')
+  if (status === 404) return t('attendance.importDialog.importApiNotFound')
+  if (status === 409) return t('attendance.importDialog.duplicateData')
+  if (status >= 500) return t('attendance.importDialog.serverError')
+
+  return t('attendance.importDialog.importFailed')
+}
+
+function makeFriendlyImportMessage(error) {
+  const text = getApiErrorMessage(error, t('attendance.importDialog.failedImportFile'))
+
+  if (/attendanceDate|attendance date/i.test(text)) {
+    return `${text}. ${t('attendance.importDialog.selectAttendanceDate')}`
+  }
+
+  if (/employee|employeeNo|employee code/i.test(text)) {
+    return `${text}. ${t('attendance.importDialog.checkEmployeeMaster')}`
+  }
+
+  if (/shift|shift code/i.test(text)) {
+    return `${text}. ${t('attendance.importDialog.checkShiftMaster')}`
+  }
+
+  if (/date|Invalid Date/i.test(text)) {
+    return `${text}. ${t('attendance.importDialog.dateFormatHelp')}`
+  }
+
+  if (/clock|time|HH:mm/i.test(text)) {
+    return `${text}. ${t('attendance.importDialog.timeFormatHelp')}`
+  }
+
+  return text
 }
 
 function getFilenameFromHeader(res, fallback) {
@@ -154,7 +199,7 @@ async function handleDownloadSample() {
   if (downloading.value) return
 
   downloading.value = true
-  clearMessages()
+  clearMessage()
 
   try {
     const res = await downloadAttendanceImportSample()
@@ -172,11 +217,8 @@ async function handleDownloadSample() {
 
     successMessage.value = t('attendance.importDialog.sampleDownloaded')
   } catch (error) {
-    errorTitle.value = t('attendance.importDialog.downloadFailed')
-    errorMessage.value =
-      error?.response?.data?.message ||
-      error?.message ||
-      t('attendance.importDialog.failedDownloadSample')
+    errorTitle.value = getErrorTitle(error)
+    errorMessage.value = makeFriendlyImportMessage(error)
   } finally {
     downloading.value = false
   }
@@ -185,7 +227,7 @@ async function handleDownloadSample() {
 async function handleImport() {
   if (importing.value) return
 
-  clearMessages()
+  clearMessage()
 
   if (!attendanceDate.value) {
     errorTitle.value = t('attendance.importDialog.validation')
@@ -216,27 +258,11 @@ async function handleImport() {
       },
     })
 
-    const payload = normalizePayload(res)
-    const importInfo = payload?.import || payload?.item || payload || null
-
-    toast.add({
-      severity: 'success',
-      summary: t('attendance.importDialog.importCompleted'),
-      detail:
-        importInfo?.status === 'PARTIAL_SUCCESS'
-          ? t('attendance.importDialog.importCompletedPartial')
-          : t('attendance.importDialog.importCompletedSuccess'),
-      life: 3000,
-    })
-
-    emit('success', payload)
+    emit('success', normalizeImportPayload(res))
     closeDialog()
   } catch (error) {
-    errorTitle.value = t('attendance.importDialog.importFailed')
-    errorMessage.value =
-      error?.response?.data?.message ||
-      error?.message ||
-      t('attendance.importDialog.failedImportFile')
+    errorTitle.value = getErrorTitle(error)
+    errorMessage.value = makeFriendlyImportMessage(error)
   } finally {
     importing.value = false
   }
@@ -248,7 +274,7 @@ async function handleImport() {
     :visible="visible"
     modal
     :header="t('attendance.importDialog.title')"
-    :style="{ width: '34rem', maxWidth: '96vw' }"
+    :style="{ width: '36rem', maxWidth: '96vw' }"
     :closable="!importing"
     :dismissable-mask="!importing"
     @update:visible="emit('update:visible', $event)"
@@ -296,10 +322,6 @@ async function handleImport() {
           <div>2. {{ t('attendance.importDialog.guideStep2') }}</div>
           <div>3. {{ t('attendance.importDialog.guideStep3') }}</div>
           <div>4. {{ t('attendance.importDialog.guideStep4') }}</div>
-        </div>
-
-        <div class="mt-3 rounded-xl bg-[color:var(--ot-bg)] px-3 py-2 text-xs leading-5 text-[color:var(--ot-text-muted)]">
-          {{ t('attendance.importDialog.note') }}
         </div>
 
         <div class="mt-4">

@@ -1,13 +1,11 @@
 <!-- frontend/src/modules/attendance/views/OTAttendanceVerificationView.vue -->
 <script setup>
-// frontend/src/modules/attendance/views/OTAttendanceVerificationView.vue
-
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
-import Card from 'primevue/card'
 import Column from 'primevue/column'
 import DataTable from 'primevue/datatable'
 import IconField from 'primevue/iconfield'
@@ -16,9 +14,9 @@ import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
 import Select from 'primevue/select'
 import Tag from 'primevue/tag'
-import { useToast } from 'primevue/usetoast'
 
 import HolidayDatePicker from '@/modules/calendar/components/HolidayDatePicker.vue'
+import AppTableLoading from '@/shared/components/AppTableLoading.vue'
 
 import {
   searchOTVerificationRequests,
@@ -48,7 +46,7 @@ const requestStatusOptions = computed(() => [
   { label: t('attendance.statusLabel.pending'), value: 'PENDING' },
   { label: t('common.approve'), value: 'APPROVED' },
   { label: t('common.reject'), value: 'REJECTED' },
-  { label: t('attendance.statusLabel.cancelled') || 'Cancelled', value: 'CANCELLED' },
+  { label: t('attendance.statusLabel.cancelled'), value: 'CANCELLED' },
 ])
 
 const categoryOptions = computed(() => [
@@ -237,44 +235,30 @@ const summaryCards = computed(() => [
         verification.value?.requestedEmployeeCount ||
         0,
     ),
-    icon: 'pi pi-users',
-    tone: 'blue',
   },
   {
     label: t('attendance.verification.matched'),
     value: verificationRows.value.filter((row) => row.result === 'MATCH').length,
-    icon: 'pi pi-check-circle',
-    tone: 'green',
   },
   {
     label: t('attendance.verification.needsCheck'),
     value: needsCheckVerificationRows.value.length,
-    icon: 'pi pi-times-circle',
-    tone: 'red',
   },
   {
     label: t('attendance.verification.forgetIn'),
     value: forgetScanInRows.value.length,
-    icon: 'pi pi-sign-in',
-    tone: 'violet',
   },
   {
     label: t('attendance.verification.forgetOut'),
     value: forgetScanOutRows.value.length,
-    icon: 'pi pi-sign-out',
-    tone: 'violet',
   },
   {
     label: t('attendance.verification.absent'),
     value: Number(verification.value?.absentFromApprovedCount || 0),
-    icon: 'pi pi-user-minus',
-    tone: 'amber',
   },
   {
     label: t('attendance.verification.notInOt'),
     value: Number(verification.value?.attendedButNotApprovedCount || 0),
-    icon: 'pi pi-exclamation-triangle',
-    tone: 'cyan',
   },
 ])
 
@@ -305,6 +289,13 @@ const filteredVerificationRows = computed(() => {
       .includes(keyword)
   })
 })
+
+const resultLoadedLabel = computed(() =>
+  t('common.loaded', {
+    loaded: filteredVerificationRows.value.length,
+    total: verificationRows.value.length,
+  }),
+)
 
 function asArray(value) {
   return Array.isArray(value) ? value : []
@@ -585,8 +576,8 @@ function requestStatusLabel(value) {
   if (normalized === 'PENDING') return t('attendance.statusLabel.pending')
   if (normalized === 'APPROVED') return t('common.approve')
   if (normalized === 'REJECTED') return t('common.reject')
-  if (normalized === 'CANCELLED') return t('attendance.statusLabel.cancelled') || 'Cancelled'
-  if (normalized === 'DRAFT') return t('attendance.statusLabel.draft') || 'Draft'
+  if (normalized === 'CANCELLED') return t('attendance.statusLabel.cancelled')
+  if (normalized === 'DRAFT') return t('attendance.statusLabel.draft')
 
   return normalized || '-'
 }
@@ -873,210 +864,266 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="mx-auto flex w-full max-w-7xl flex-col gap-4 p-4 md:p-5">
-    <section
-      class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] shadow-sm"
-    >
-      <div class="ot-filter-row">
-        <div class="filter-field">
-          <HolidayDatePicker
-            v-model="verificationDate"
-            :label="t('attendance.verification.otDate')"
-            :placeholder="t('attendance.verification.selectOtDate')"
-          />
-        </div>
+  <div class="ot-page-shell">
+    <section class="ot-filter-bar ot-verification-filter-bar">
+      <div class="ot-field">
+        <HolidayDatePicker
+          v-model="verificationDate"
+          :label="t('attendance.verification.otDate')"
+          :placeholder="t('attendance.verification.selectOtDate')"
+        />
+      </div>
 
-        <div class="filter-field">
-          <label class="filter-label">
-            {{ t('attendance.verification.searchOtRequest') }}
-          </label>
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('attendance.verification.searchOtRequest') }}
+        </label>
 
-          <Select
-            v-model="selectedOtRequestId"
-            :options="requestOptions"
-            option-label="optionLabel"
-            option-value="id"
-            class="w-full"
-            :placeholder="t('attendance.verification.selectOtRequest')"
-            :loading="searchLoading"
-            :disabled="!requestOptions.length || searchLoading"
-            filter
-            @change="onRequestSelected"
-          />
-        </div>
+        <Select
+          v-model="selectedOtRequestId"
+          :options="requestOptions"
+          option-label="optionLabel"
+          option-value="id"
+          class="w-full"
+          :placeholder="t('attendance.verification.selectOtRequest')"
+          :loading="searchLoading"
+          :disabled="!requestOptions.length || searchLoading"
+          filter
+          size="small"
+          @change="onRequestSelected"
+        />
+      </div>
 
-        <div class="filter-field">
-          <label class="filter-label">
-            {{ t('attendance.verification.requestStatus') }}
-          </label>
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('attendance.verification.requestStatus') }}
+        </label>
 
-          <Select
-            v-model="selectedRequestStatus"
-            :options="requestStatusOptions"
-            option-label="label"
-            option-value="value"
-            class="w-full"
-            :placeholder="t('common.allStatus')"
-          />
-        </div>
+        <Select
+          v-model="selectedRequestStatus"
+          :options="requestStatusOptions"
+          option-label="label"
+          option-value="value"
+          class="w-full"
+          :placeholder="t('common.allStatus')"
+          size="small"
+        />
+      </div>
 
+      <div class="ot-filter-actions ot-verification-filter-actions">
         <Button
           :label="t('common.clear')"
           icon="pi pi-filter-slash"
           severity="secondary"
           outlined
           size="small"
-          class="filter-button"
           @click="clearAll"
         />
       </div>
     </section>
 
-    <template v-if="payload">
-      <Message
-        v-if="!isFinalApprovedRequest"
-        severity="warn"
-        :closable="false"
-        class="verification-warning"
-      >
-        {{
-          t('attendance.verification.nonFinalWarning', {
-            status: requestStatusLabel(otRequest.status),
-          })
-        }}
-      </Message>
+    <Message
+      v-if="payload && !isFinalApprovedRequest"
+      severity="warn"
+      :closable="false"
+    >
+      {{
+        t('attendance.verification.nonFinalWarning', {
+          status: requestStatusLabel(otRequest.status),
+        })
+      }}
+    </Message>
 
-      <section class="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-7">
+    <AppTableLoading
+      v-if="loading"
+      :title="t('common.loadingData')"
+      :message="t('attendance.verification.loadingVerification')"
+      :rows="6"
+      :columns="8"
+      icon="pi pi-check-circle"
+    />
+
+    <template v-else-if="payload">
+      <section class="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
         <div
           v-for="card in summaryCards"
           :key="card.label"
-          class="verification-stat-card"
-          :class="`tone-${card.tone}`"
+          class="ot-panel"
         >
-          <div class="flex items-center justify-between gap-2">
-            <div class="text-[11px] font-medium uppercase tracking-[0.1em] opacity-75">
-              {{ card.label }}
-            </div>
-
-            <i
-              :class="card.icon"
-              class="text-xs opacity-70"
-            />
+          <div class="ot-field-label">
+            {{ card.label }}
           </div>
 
-          <div class="mt-1 text-xl font-medium leading-none">
+          <div class="mt-1 text-xl font-semibold text-[color:var(--ot-text)]">
             {{ card.value }}
           </div>
         </div>
       </section>
 
-      <section
-        class="grid grid-cols-1 gap-3 rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] p-3 shadow-sm md:grid-cols-2 xl:grid-cols-7"
-      >
-        <div class="info-box xl:col-span-1">
-          <div class="info-label">{{ t('attendance.verification.requestNo') }}</div>
-          <div class="info-value">{{ otRequest.requestNo || '-' }}</div>
-        </div>
+      <section class="ot-table-card">
+        <div class="ot-table-toolbar">
+          <div>
+            <h2 class="ot-table-title">
+              {{ otRequest.requestNo || t('attendance.verification.requestNo') }}
+            </h2>
+          </div>
 
-        <div class="info-box xl:col-span-1">
-          <div class="info-label">{{ t('common.status') }}</div>
-          <div class="info-value">
+          <div class="ot-table-actions">
             <Tag
               :value="requestStatusLabel(otRequest.status)"
               :severity="requestStatusSeverity(otRequest.status)"
-              class="verify-tag"
             />
           </div>
         </div>
 
-        <div class="info-box xl:col-span-1">
-          <div class="info-label">{{ t('attendance.verification.requester') }}</div>
-          <div class="info-value">
-            {{ otRequest.requesterEmployeeNo || '-' }} · {{ otRequest.requesterName || '-' }}
+        <div class="grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-6">
+          <div class="ot-panel">
+            <div class="ot-field-label">
+              {{ t('attendance.verification.requester') }}
+            </div>
+
+            <div class="mt-1 truncate text-sm font-semibold text-[color:var(--ot-text)]">
+              {{ otRequest.requesterEmployeeNo || '-' }} · {{ otRequest.requesterName || '-' }}
+            </div>
           </div>
-        </div>
 
-        <div class="info-box">
-          <div class="info-label">{{ t('attendance.verification.shift') }}</div>
-          <div class="info-value">{{ requestShiftTime }}</div>
-        </div>
+          <div class="ot-panel">
+            <div class="ot-field-label">
+              {{ t('attendance.verification.shift') }}
+            </div>
 
-        <div class="info-box">
-          <div class="info-label">{{ t('attendance.verification.expectedOt') }}</div>
-          <div class="info-value">{{ requestExpectedOtTime }}</div>
-        </div>
+            <div class="mt-1 text-sm font-semibold text-[color:var(--ot-text)]">
+              {{ requestShiftTime }}
+            </div>
+          </div>
 
-        <div class="info-box">
-          <div class="info-label">{{ t('attendance.verification.requested') }}</div>
-          <div class="info-value">{{ requestRequestedOtLabel }}</div>
-        </div>
+          <div class="ot-panel">
+            <div class="ot-field-label">
+              {{ t('attendance.verification.expectedOt') }}
+            </div>
 
-        <div class="info-box">
-          <div class="info-label">{{ t('attendance.verification.policy') }}</div>
-          <div
-            class="info-value truncate"
-            :title="requestPolicyLabel"
-          >
-            {{ requestPolicyLabel }}
+            <div class="mt-1 text-sm font-semibold text-[color:var(--ot-text)]">
+              {{ requestExpectedOtTime }}
+            </div>
+          </div>
+
+          <div class="ot-panel">
+            <div class="ot-field-label">
+              {{ t('attendance.verification.requested') }}
+            </div>
+
+            <div class="mt-1 text-sm font-semibold text-[color:var(--ot-text)]">
+              {{ requestRequestedOtLabel }}
+            </div>
+          </div>
+
+          <div class="ot-panel">
+            <div class="ot-field-label">
+              {{ t('attendance.verification.policy') }}
+            </div>
+
+            <div
+              class="mt-1 truncate text-sm font-semibold text-[color:var(--ot-text)]"
+              :title="requestPolicyLabel"
+            >
+              {{ requestPolicyLabel }}
+            </div>
+          </div>
+
+          <div class="ot-panel">
+            <div class="ot-field-label">
+              {{ t('attendance.verification.otType') }}
+            </div>
+
+            <div class="mt-2">
+              <Tag
+                :value="timingModeLabel(requestTimingMode)"
+                :severity="timingModeSeverity(requestTimingMode)"
+              />
+            </div>
           </div>
         </div>
       </section>
 
-      <Card class="overflow-hidden rounded-2xl shadow-sm">
-        <template #content>
-          <div class="mb-3 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-            <div class="flex flex-wrap items-center gap-2">
-              <div class="text-base font-medium text-[color:var(--ot-text)]">
-                {{ t('attendance.verification.verificationResult') }}
-              </div>
-
-              <Tag
-                :value="t('attendance.verification.rowCount', { count: filteredVerificationRows.length })"
-                severity="secondary"
-                rounded
-              />
-            </div>
-
-            <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <IconField class="w-full sm:w-72">
-                <InputIcon class="pi pi-search" />
-
-                <InputText
-                  v-model="tableSearch"
-                  size="small"
-                  class="w-full"
-                  :placeholder="t('attendance.verification.searchPlaceholder')"
-                />
-              </IconField>
-
-              <Select
-                v-model="tableCategory"
-                :options="categoryOptions"
-                option-label="label"
-                option-value="value"
-                size="small"
-                class="w-full sm:w-56"
-                :placeholder="t('attendance.verification.result')"
-              />
-            </div>
+      <section class="ot-table-card">
+        <div class="ot-table-toolbar">
+          <div>
+            <h2 class="ot-table-title">
+              {{ t('attendance.verification.verificationResult') }}
+            </h2>
           </div>
 
+          <div class="ot-table-actions">
+            <span class="ot-loaded-badge">
+              {{ resultLoadedLabel }}
+            </span>
+          </div>
+        </div>
+
+        <section class="ot-filter-bar ot-verification-result-filter-bar">
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('common.search') }}
+            </label>
+
+            <IconField>
+              <InputIcon class="pi pi-search" />
+
+              <InputText
+                v-model="tableSearch"
+                size="small"
+                class="w-full"
+                :placeholder="t('attendance.verification.searchPlaceholder')"
+              />
+            </IconField>
+          </div>
+
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('attendance.verification.result') }}
+            </label>
+
+            <Select
+              v-model="tableCategory"
+              :options="categoryOptions"
+              option-label="label"
+              option-value="value"
+              size="small"
+              class="w-full"
+              :placeholder="t('attendance.verification.result')"
+            />
+          </div>
+        </section>
+
+        <div class="ot-table-wrapper">
           <DataTable
             :value="filteredVerificationRows"
             data-key="rowKey"
             scrollable
             scroll-height="520px"
-            table-style="width: max-content; min-width: 100%;"
-            class="verification-table"
-            striped-rows
+            table-style="min-width: 104rem"
+            class="ot-data-table ot-data-table-compact verification-table"
           >
             <template #empty>
-              <div class="py-8 text-center text-sm text-[color:var(--ot-text-muted)]">
-                {{ t('attendance.verification.noVerificationRows') }}
+              <div class="ot-empty-state">
+                <div class="ot-empty-icon">
+                  <i class="pi pi-check-circle" />
+                </div>
+
+                <div class="ot-empty-title">
+                  {{ t('common.noData') }}
+                </div>
+
+                <div class="ot-empty-text">
+                  {{ t('attendance.verification.noVerificationRows') }}
+                </div>
               </div>
             </template>
 
-            <Column :header="t('attendance.verification.meaning')">
+            <Column
+              :header="t('attendance.verification.meaning')"
+              style="min-width: 18rem"
+            >
               <template #body="{ data }">
                 <div
                   class="result-meaning-label"
@@ -1088,29 +1135,37 @@ onBeforeUnmount(() => {
               </template>
             </Column>
 
-            <Column :header="t('attendance.verification.employee')">
+            <Column
+              :header="t('attendance.verification.employee')"
+              style="min-width: 15rem"
+            >
               <template #body="{ data }">
-                <div class="font-medium text-[color:var(--ot-text)]">
+                <div class="font-semibold text-[color:var(--ot-text)]">
                   {{ data.employeeNo || '-' }}
                 </div>
 
-                <div class="mt-0.5 text-xs text-[color:var(--ot-text-muted)]">
+                <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
                   {{ data.employeeName || '-' }}
                 </div>
               </template>
             </Column>
 
-            <Column :header="t('attendance.verification.otType')">
+            <Column
+              :header="t('attendance.verification.otType')"
+              style="min-width: 11rem"
+            >
               <template #body="{ data }">
                 <Tag
                   :value="data.isFixed ? t('attendance.verification.fixedOt') : timingModeLabel(data.timingMode)"
                   :severity="timingModeSeverity(data.timingMode)"
-                  class="verify-tag"
                 />
               </template>
             </Column>
 
-            <Column :header="t('attendance.verification.scanIn')">
+            <Column
+              :header="t('attendance.verification.scanIn')"
+              style="min-width: 8rem"
+            >
               <template #body="{ data }">
                 <span
                   class="scan-time-chip"
@@ -1121,7 +1176,10 @@ onBeforeUnmount(() => {
               </template>
             </Column>
 
-            <Column :header="t('attendance.verification.scanOut')">
+            <Column
+              :header="t('attendance.verification.scanOut')"
+              style="min-width: 8rem"
+            >
               <template #body="{ data }">
                 <span
                   class="scan-time-chip"
@@ -1132,56 +1190,70 @@ onBeforeUnmount(() => {
               </template>
             </Column>
 
-            <Column :header="t('attendance.verification.status')">
+            <Column
+              :header="t('attendance.verification.status')"
+              style="min-width: 11rem"
+            >
               <template #body="{ data }">
                 <Tag
                   :value="attendanceStatusLabel(data.attendanceStatus)"
                   :severity="statusSeverity(data.attendanceStatus)"
-                  class="verify-tag"
                 />
               </template>
             </Column>
 
-            <Column :header="t('attendance.verification.expectedOt')">
+            <Column
+              :header="t('attendance.verification.expectedOt')"
+              style="min-width: 13rem"
+            >
               <template #body="{ data }">
-                <div class="font-medium text-[color:var(--ot-text)]">
+                <div class="font-semibold text-[color:var(--ot-text)]">
                   {{ data.expectedOtTime }}
                 </div>
 
-                <div class="mt-0.5 text-xs text-[color:var(--ot-text-muted)]">
+                <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
                   {{ t('attendance.verification.requested') }}: {{ formatMinutesLabel(data.requestedMinutes) }}
                 </div>
               </template>
             </Column>
 
-            <Column :header="t('attendance.verification.creditedOt')">
+            <Column
+              :header="t('attendance.verification.creditedOt')"
+              style="min-width: 11rem"
+            >
               <template #body="{ data }">
-                <div class="font-medium text-[color:var(--ot-text)]">
+                <div class="font-semibold text-[color:var(--ot-text)]">
                   {{ formatMinutesLabel(data.roundedOtMinutes) }}
                 </div>
 
-                <div class="mt-0.5 text-xs text-[color:var(--ot-text-muted)]">
+                <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
                   {{ t('attendance.verification.actual') }}: {{ formatMinutesLabel(data.actualOtMinutes) }}
                 </div>
               </template>
             </Column>
 
-            <Column :header="t('attendance.verification.shift')">
+            <Column
+              :header="t('attendance.verification.shift')"
+              style="min-width: 13rem"
+            >
               <template #body="{ data }">
-                <div class="font-medium text-[color:var(--ot-text)]">
+                <div class="font-semibold text-[color:var(--ot-text)]">
                   {{ data.shiftName || '-' }}
                 </div>
 
-                <div class="mt-0.5 text-xs text-[color:var(--ot-text-muted)]">
+                <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
                   {{ data.shiftTime }}
                 </div>
               </template>
             </Column>
 
-            <Column :header="t('attendance.verification.reason')">
+            <Column
+              :header="t('attendance.verification.reason')"
+              style="min-width: 18rem"
+            >
               <template #body="{ data }">
                 <div
-                  class="reason-cell line-clamp-2 text-sm text-[color:var(--ot-text-muted)]"
+                  class="ot-truncate-2 text-sm text-[color:var(--ot-text-muted)]"
                   :title="data.reason"
                 >
                   {{ data.reason || data.rawDecision || '-' }}
@@ -1189,134 +1261,61 @@ onBeforeUnmount(() => {
               </template>
             </Column>
           </DataTable>
-        </template>
-      </Card>
+        </div>
+      </section>
     </template>
 
     <div
       v-else
-      class="rounded-2xl border border-dashed border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-4 py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
+      class="ot-empty-state rounded-2xl border border-dashed border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]"
     >
-      {{ t('attendance.verification.emptyInstruction') }}
+      <div class="ot-empty-icon">
+        <i class="pi pi-check-circle" />
+      </div>
+
+      <div class="ot-empty-title">
+        {{ t('attendance.verification.verificationResult') }}
+      </div>
+
+      <div class="ot-empty-text">
+        {{ t('attendance.verification.emptyInstruction') }}
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-.ot-filter-row {
-  display: grid;
-  grid-template-columns: minmax(160px, 190px) minmax(260px, 1fr) minmax(170px, 200px) auto;
-  gap: 0.75rem;
-  align-items: end;
-  padding: 0.75rem;
-}
-
-.filter-field {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-}
-
-.filter-label {
-  font-size: 0.68rem;
-  font-weight: 500;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--ot-text-muted);
-}
-
-.filter-button {
-  min-height: 2.4rem;
+.scan-time-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 4.5rem;
+  border-radius: 999px;
+  padding: 0.24rem 0.65rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1;
   white-space: nowrap;
 }
 
-.verification-warning {
-  border-radius: 1rem;
+.scan-time-chip.is-complete {
+  background: rgba(16, 185, 129, 0.12);
+  color: rgb(4, 120, 87);
 }
 
-.verification-stat-card {
-  border: 1px solid var(--ot-border);
-  border-radius: 1rem;
-  padding: 0.8rem 0.9rem;
-  background: var(--ot-surface);
-  color: var(--ot-text);
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-}
-
-.tone-blue {
-  background: color-mix(in srgb, #3b82f6 9%, var(--ot-surface));
-  color: #1d4ed8;
-}
-
-.tone-green {
-  background: color-mix(in srgb, #22c55e 10%, var(--ot-surface));
-  color: #15803d;
-}
-
-.tone-red {
-  background: color-mix(in srgb, #ef4444 9%, var(--ot-surface));
-  color: #b91c1c;
-}
-
-.tone-violet {
-  background: color-mix(in srgb, #8b5cf6 10%, var(--ot-surface));
-  color: #6d28d9;
-}
-
-.tone-amber {
-  background: color-mix(in srgb, #f59e0b 12%, var(--ot-surface));
-  color: #b45309;
-}
-
-.tone-cyan {
-  background: color-mix(in srgb, #06b6d4 10%, var(--ot-surface));
-  color: #0e7490;
-}
-
-:global(.dark) .tone-blue,
-:global(.dark) .tone-green,
-:global(.dark) .tone-red,
-:global(.dark) .tone-violet,
-:global(.dark) .tone-amber,
-:global(.dark) .tone-cyan {
-  color: var(--ot-text);
-}
-
-.info-box {
-  min-width: 0;
-  border: 1px solid var(--ot-border);
-  border-radius: 0.9rem;
-  background: var(--ot-bg);
-  padding: 0.75rem 0.85rem;
-}
-
-.info-label {
-  font-size: 0.68rem;
-  font-weight: 500;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--ot-text-muted);
-}
-
-.info-value {
-  margin-top: 0.2rem;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.86rem;
-  font-weight: 500;
-  color: var(--ot-text);
+.scan-time-chip.is-missing {
+  background: rgba(239, 68, 68, 0.12);
+  color: rgb(185, 28, 28);
 }
 
 .result-meaning-label {
   width: fit-content;
+  max-width: 17rem;
   overflow: hidden;
   border-radius: 999px;
-  padding: 0.22rem 0.65rem;
+  padding: 0.24rem 0.65rem;
   font-size: 0.72rem;
-  font-weight: 500;
+  font-weight: 700;
   line-height: 1.1;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1342,81 +1341,28 @@ onBeforeUnmount(() => {
   color: rgb(109, 40, 217);
 }
 
-.scan-time-chip {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  padding: 0.2rem 0.55rem;
-  font-size: 0.76rem;
-  font-weight: 500;
-  line-height: 1;
-  white-space: nowrap;
-}
-
-.scan-time-chip.is-complete {
-  background: rgba(16, 185, 129, 0.12);
-  color: rgb(4, 120, 87);
-}
-
-.scan-time-chip.is-missing {
-  background: rgba(239, 68, 68, 0.12);
-  color: rgb(185, 28, 28);
-}
-
-.reason-cell {
-  max-width: clamp(14rem, 28vw, 30rem);
-}
-
-:deep(.verification-table .p-datatable-table) {
-  width: max-content !important;
-  min-width: 100% !important;
-  table-layout: auto !important;
-}
-
-:deep(.verification-table .p-datatable-thead > tr > th) {
-  width: auto !important;
-  padding: 0.65rem 0.8rem !important;
-  white-space: nowrap !important;
-}
-
-:deep(.verification-table .p-datatable-tbody > tr > td) {
-  width: auto !important;
-  height: 68px !important;
-  padding: 0.55rem 0.8rem !important;
-  vertical-align: middle !important;
-  white-space: nowrap !important;
-}
-
-:deep(.p-tag.verify-tag) {
-  min-height: 1.3rem !important;
-  padding: 0.1rem 0.5rem !important;
-  font-size: 0.7rem !important;
-  font-weight: 500 !important;
-  line-height: 1 !important;
-  border-radius: 999px !important;
-}
-
-.line-clamp-2 {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-@media (max-width: 1100px) {
-  .ot-filter-row {
-    grid-template-columns: 1fr 1fr;
+@media (min-width: 1280px) {
+  .ot-verification-filter-bar {
+    grid-template-columns:
+      minmax(180px, 220px)
+      minmax(320px, 1fr)
+      minmax(180px, 220px)
+      auto;
+    align-items: end;
   }
 
-  .filter-button {
-    width: 100%;
+  .ot-verification-filter-actions {
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    min-width: max-content;
   }
-}
 
-@media (max-width: 640px) {
-  .ot-filter-row {
-    grid-template-columns: 1fr;
+  .ot-verification-result-filter-bar {
+    grid-template-columns: minmax(260px, 1fr) minmax(220px, 280px);
+    border-radius: 0;
+    border-left: 0;
+    border-right: 0;
+    box-shadow: none;
   }
 }
 </style>

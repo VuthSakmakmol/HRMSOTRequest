@@ -446,7 +446,7 @@ async function createShift(payload) {
     isActive: data.isActive ?? true,
   })
 
-  return getShiftById(doc._id)
+  return getShiftById(String(doc._id))
 }
 
 async function updateShift(shiftId, payload) {
@@ -496,7 +496,7 @@ async function updateShift(shiftId, payload) {
 
   await existing.save()
 
-  return getShiftById(existing._id)
+  return getShiftById(String(existing._id))
 }
 
 function autoFitColumns(rows = []) {
