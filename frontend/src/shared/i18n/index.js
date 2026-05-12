@@ -18,12 +18,21 @@ export const i18n = createI18n({
   },
 })
 
+function applyDocumentLanguage(language) {
+  const normalized = normalizeLanguage(language)
+
+  document.documentElement.lang = normalized
+  document.documentElement.setAttribute('data-app-lang', normalized)
+
+  return normalized
+}
+
 export function setAppLanguage(language) {
   const normalized = normalizeLanguage(language)
 
   i18n.global.locale.value = normalized
   saveLanguage(normalized)
-  document.documentElement.lang = normalized
+  applyDocumentLanguage(normalized)
 
   return normalized
 }

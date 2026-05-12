@@ -4,6 +4,7 @@
 
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
 
 import OTDetailView from '@/modules/ot/components/OTDetailView.vue'
@@ -18,6 +19,7 @@ import {
 
 const router = useRouter()
 const toast = useToast()
+const { t } = useI18n()
 
 const submitting = ref(false)
 const loadingRequester = ref(false)
@@ -35,17 +37,11 @@ let unavailableRequestSeq = 0
 
 const form = reactive({
   otDate: null,
-
-  // SHIFT_OPTION = use admin preset time.
-  // CUSTOM_FIXED = user enters custom default time but still selects option for policy/template.
   otTimingSource: 'SHIFT_OPTION',
-
   shiftOtOptionId: '',
-
   customStartTime: '',
   customEndTime: '',
   customBreakMinutes: 0,
-
   reason: '',
 })
 
@@ -142,6 +138,68 @@ const pickerRequestPreview = computed(() => ({
   requestedHours: defaultTiming.value.totalHours,
 }))
 
+const selectedShiftState = computed(() => {
+  if (!selectedEmployees.value.length) {
+    return {
+      mode: 'none',
+      shift: null,
+      message: '',
+    }
+  }
+
+  const shiftInfos = selectedEmployees.value.map(extractShiftInfo)
+  const missingShiftCount = shiftInfos.filter((item) => !item?.shiftId).length
+
+  if (missingShiftCount > 0) {
+    return {
+      mode: 'missing',
+      shift: null,
+      message: t('ot.requests.create.missingShift'),
+    }
+  }
+
+  const uniqueShiftIds = Array.from(new Set(shiftInfos.map((item) => item.shiftId)))
+
+  if (uniqueShiftIds.length > 1) {
+    return {
+      mode: 'mixed',
+      shift: null,
+      message: t('ot.requests.create.mixedShift'),
+    }
+  }
+
+  return {
+    mode: 'ready',
+    shift: shiftInfos[0],
+    message: '',
+  }
+})
+
+const sharedShift = computed(() => selectedShiftState.value.shift || null)
+
+const sharedShiftIdForPicker = computed(() => {
+  return selectedShiftState.value.mode === 'ready'
+    ? String(sharedShift.value?.shiftId || '').trim()
+    : ''
+})
+
+const sharedShiftLabelForPicker = computed(() => {
+  if (selectedShiftState.value.mode !== 'ready') return ''
+
+  return [sharedShift.value?.code, sharedShift.value?.name]
+    .filter(Boolean)
+    .join(' · ')
+})
+
+function showToast(severity, summary, detail, life = 3000) {
+  toast.add({
+    severity,
+    summary,
+    detail,
+    life,
+  })
+}
+
 function getEmployeeId(employee) {
   return String(employee?._id || employee?.id || employee?.employeeId || '').trim()
 }
@@ -168,59 +226,6 @@ function extractShiftInfo(employee) {
     name: String(employee?.shiftName || shift?.name || '').trim(),
   }
 }
-
-const selectedShiftState = computed(() => {
-  if (!selectedEmployees.value.length) {
-    return {
-      mode: 'none',
-      shift: null,
-      message: '',
-    }
-  }
-
-  const shiftInfos = selectedEmployees.value.map(extractShiftInfo)
-  const missingShiftCount = shiftInfos.filter((item) => !item?.shiftId).length
-
-  if (missingShiftCount > 0) {
-    return {
-      mode: 'missing',
-      shift: null,
-      message: 'Some selected employees do not have assigned shift information.',
-    }
-  }
-
-  const uniqueShiftIds = Array.from(new Set(shiftInfos.map((item) => item.shiftId)))
-
-  if (uniqueShiftIds.length > 1) {
-    return {
-      mode: 'mixed',
-      shift: null,
-      message: 'Selected employees belong to different shifts. Please select one shift only.',
-    }
-  }
-
-  return {
-    mode: 'ready',
-    shift: shiftInfos[0],
-    message: '',
-  }
-})
-
-const sharedShift = computed(() => selectedShiftState.value.shift || null)
-
-const sharedShiftIdForPicker = computed(() => {
-  return selectedShiftState.value.mode === 'ready'
-    ? String(sharedShift.value?.shiftId || '').trim()
-    : ''
-})
-
-const sharedShiftLabelForPicker = computed(() => {
-  if (selectedShiftState.value.mode !== 'ready') return ''
-
-  return [sharedShift.value?.code, sharedShift.value?.name]
-    .filter(Boolean)
-    .join(' · ')
-})
 
 function normalizeMeResponse(res) {
   const root =
@@ -394,14 +399,20 @@ function calculateTimeWindowMinutes(startTime, endTime, breakMinutes = 0) {
 function formatMinutesLabel(value) {
   const minutes = Number(value || 0)
 
-  if (!minutes) return '0 min'
+  if (!minutes) return t('ot.common.minuteValue', { value: 0 })
 
   const hh = Math.floor(minutes / 60)
   const mm = minutes % 60
 
-  if (hh && mm) return `${hh}h ${mm}m`
-  if (hh) return `${hh}h`
-  return `${mm}m`
+  if (hh && mm) {
+    return t('ot.common.hourMinuteValue', {
+      hours: hh,
+      minutes: mm,
+    })
+  }
+
+  if (hh) return t('ot.common.hourValue', { value: hh })
+  return t('ot.common.minuteValue', { value: mm })
 }
 
 function clearShiftOptions() {
@@ -423,31 +434,30 @@ function removeUnavailableSelectedEmployees() {
   const removedCount = beforeCount - selectedEmployees.value.length
 
   if (removedCount > 0) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Employees removed',
-      detail: `${removedCount} employee(s) already have OT request on this date and were removed from selection.`,
-      life: 5000,
-    })
+    showToast(
+      'warn',
+      t('ot.requests.create.employeesRemoved'),
+      t('ot.requests.create.employeesRemovedDetail', { count: removedCount }),
+      5000,
+    )
   }
 }
 
 async function loadRequesterEmployee() {
+  loadingRequester.value = true
+
   try {
-    loadingRequester.value = true
     const res = await api.get('/auth/me')
     requesterEmployee.value = normalizeMeResponse(res)
   } catch (error) {
     requesterEmployee.value = null
-    toast.add({
-      severity: 'error',
-      summary: 'Profile load failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Unable to load your profile.',
-      life: 3000,
-    })
+
+    showToast(
+      'error',
+      t('ot.requests.create.profileLoadFailed'),
+      buildApiErrorMessage(error, t('ot.requests.create.profileLoadFailedDetail')),
+      3500,
+    )
   } finally {
     loadingRequester.value = false
   }
@@ -475,15 +485,12 @@ async function loadUnavailableEmployeesForDate() {
   } catch (error) {
     unavailableEmployees.value = []
 
-    toast.add({
-      severity: 'warn',
-      summary: 'OT availability check failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Unable to check existing OT employees for this date.',
-      life: 3500,
-    })
+    showToast(
+      'warn',
+      t('ot.requests.create.availabilityFailed'),
+      buildApiErrorMessage(error, t('ot.requests.create.availabilityFailedDetail')),
+      3500,
+    )
   } finally {
     if (requestSeq === unavailableRequestSeq) {
       loadingUnavailableEmployees.value = false
@@ -527,28 +534,26 @@ async function loadShiftOptionsForSharedShift() {
     }
 
     if (!rows.length) {
-      toast.add({
-        severity: 'warn',
-        summary: 'No OT option',
-        detail:
-          selectedOptionDayType.value
-            ? `No active OT option found for ${selectedOptionDayType.value}. Please ask admin to create one.`
-            : 'No active OT option found for this shift/date.',
-        life: 4500,
-      })
+      showToast(
+        'warn',
+        t('ot.requests.create.noOptionTitle'),
+        selectedOptionDayType.value
+          ? t('ot.requests.create.noOptionForDayType', {
+              dayType: selectedOptionDayType.value,
+            })
+          : t('ot.requests.create.noOptionGeneric'),
+        4500,
+      )
     }
   } catch (error) {
     clearShiftOptions()
 
-    toast.add({
-      severity: 'error',
-      summary: 'OT options failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Unable to load OT options for the selected shift and date.',
-      life: 3500,
-    })
+    showToast(
+      'error',
+      t('ot.requests.create.optionsFailed'),
+      buildApiErrorMessage(error, t('ot.requests.create.optionsFailedDetail')),
+      3500,
+    )
   } finally {
     loadingShiftOptions.value = false
   }
@@ -649,11 +654,6 @@ function buildPayload() {
 
   return {
     employeeIds: selectedEmployeeIds.value,
-
-    // New clean structure from MultiPicker.
-    employees,
-
-    // Old backend-compatible override structure.
     employeeTimeOverrides: buildEmployeeTimeOverridesPayload(),
 
     otDate: selectedDateYMD.value,
@@ -664,8 +664,6 @@ function buildPayload() {
 
     shiftOtOptionId: String(form.shiftOtOptionId || '').trim(),
 
-    // Backend-compatible root timing fields.
-    // Even SHIFT_OPTION sends these because backend currently requires customStartTime.
     customStartTime: rootStartTime,
     customEndTime: rootEndTime,
     customBreakMinutes: rootBreakMinutes,
@@ -685,21 +683,26 @@ function buildPayload() {
 
 function validateEmployeeTimingRows(employeeRows = []) {
   for (const row of employeeRows) {
-    const label = row.employeeId
+    const employeeLabel = findSelectedEmployeeLabel(row.employeeId)
 
-    if (!row.requestStartTime) return `Missing OT start time for employee ${label}.`
-    if (!row.requestEndTime) return `Missing OT end time for employee ${label}.`
+    if (!row.requestStartTime) {
+      return t('ot.requests.create.missingEmployeeStart', { employee: employeeLabel })
+    }
+
+    if (!row.requestEndTime) {
+      return t('ot.requests.create.missingEmployeeEnd', { employee: employeeLabel })
+    }
 
     if (!isHHmm(row.requestStartTime)) {
-      return `Invalid OT start time for employee ${label}.`
+      return t('ot.requests.create.employeeStartInvalid', { employee: employeeLabel })
     }
 
     if (!isHHmm(row.requestEndTime)) {
-      return `Invalid OT end time for employee ${label}.`
+      return t('ot.requests.create.employeeEndInvalid', { employee: employeeLabel })
     }
 
     if (row.requestStartTime === row.requestEndTime) {
-      return `OT start time and end time cannot be the same for employee ${label}.`
+      return t('ot.requests.create.employeeTimeSame', { employee: employeeLabel })
     }
 
     const rawMinutes = calculateRawTimeWindowMinutes(
@@ -708,7 +711,7 @@ function validateEmployeeTimingRows(employeeRows = []) {
     )
 
     if (Number(row.breakMinutes || 0) >= rawMinutes) {
-      return `Break minutes cannot be greater than or equal to OT duration for employee ${label}.`
+      return t('ot.requests.create.employeeBreakTooLong', { employee: employeeLabel })
     }
   }
 
@@ -717,40 +720,42 @@ function validateEmployeeTimingRows(employeeRows = []) {
 
 function validateBeforeSubmit(payload) {
   if (loadingUnavailableEmployees.value) {
-    return 'Please wait until OT availability check finishes.'
+    return t('ot.requests.create.waitAvailability')
   }
 
-  if (!payload.otDate) return 'Please select OT date first.'
-  if (!payload.employeeIds.length) return 'Please select at least 1 employee.'
+  if (!payload.otDate) return t('ot.requests.create.selectDateFirst')
+  if (!payload.employeeIds.length) return t('ot.requests.create.selectAtLeastOneEmployee')
 
   if (selectedShiftState.value.mode === 'missing') {
-    return 'Some selected employees do not have assigned shift information.'
+    return t('ot.requests.create.missingShift')
   }
 
   if (selectedShiftState.value.mode === 'mixed') {
-    return 'Please select employees from one shift only before creating OT request.'
+    return t('ot.requests.create.mixedShift')
   }
 
   if (!payload.shiftOtOptionId) {
     return selectedOptionDayType.value
-      ? `Please select OT option for ${selectedOptionDayType.value}.`
-      : 'Please select OT option.'
+      ? t('ot.requests.create.selectOtOptionForDayType', {
+          dayType: selectedOptionDayType.value,
+        })
+      : t('ot.requests.create.selectOtOptionRequired')
   }
 
   if (payload.otTimingSource === 'CUSTOM_FIXED') {
-    if (!payload.customStartTime) return 'Please enter custom start time.'
-    if (!payload.customEndTime) return 'Please enter custom end time.'
+    if (!payload.customStartTime) return t('ot.requests.create.enterCustomStartTime')
+    if (!payload.customEndTime) return t('ot.requests.create.enterCustomEndTime')
 
     if (!isHHmm(payload.customStartTime)) {
-      return 'Custom start time must be HH:mm, for example 18:00.'
+      return t('ot.requests.create.customStartInvalid')
     }
 
     if (!isHHmm(payload.customEndTime)) {
-      return 'Custom end time must be HH:mm, for example 20:00.'
+      return t('ot.requests.create.customEndInvalid')
     }
 
     if (payload.customStartTime === payload.customEndTime) {
-      return 'Custom start time and end time cannot be the same.'
+      return t('ot.requests.create.customTimeSame')
     }
 
     const rawMinutes = calculateRawTimeWindowMinutes(
@@ -759,15 +764,15 @@ function validateBeforeSubmit(payload) {
     )
 
     if (Number(payload.customBreakMinutes || 0) >= rawMinutes) {
-      return 'Custom break minutes cannot be greater than or equal to OT duration.'
+      return t('ot.requests.create.breakTooLong')
     }
   }
 
   if (!defaultTiming.value.startTime || !defaultTiming.value.endTime) {
-    return 'Please select valid OT timing before submitting.'
+    return t('ot.requests.create.selectValidTiming')
   }
 
-  const employeeTimingError = validateEmployeeTimingRows(payload.employees)
+  const employeeTimingError = validateEmployeeTimingRows(payload.employees || [])
   if (employeeTimingError) return employeeTimingError
 
   return ''
@@ -777,13 +782,70 @@ function getErrorPayload(error) {
   return error?.response?.data || {}
 }
 
+function getErrorObject(error) {
+  const payload = getErrorPayload(error)
+
+  return (
+    payload?.error ||
+    payload?.data?.error ||
+    {}
+  )
+}
+
+function getErrorParams(error) {
+  const payload = getErrorPayload(error)
+  const errorObject = getErrorObject(error)
+
+  return (
+    payload?.params ||
+    payload?.details?.params ||
+    payload?.data?.params ||
+    payload?.data?.details?.params ||
+    errorObject?.params ||
+    errorObject?.details?.params ||
+    {}
+  )
+}
+
+function getErrorCode(error) {
+  const payload = getErrorPayload(error)
+  const errorObject = getErrorObject(error)
+
+  return String(
+    payload?.code ||
+      payload?.data?.code ||
+      errorObject?.code ||
+      '',
+  ).trim().toUpperCase()
+}
+
+function getErrorMessageText(error) {
+  const payload = getErrorPayload(error)
+  const errorObject = getErrorObject(error)
+
+  return String(
+    payload?.message ||
+      payload?.data?.message ||
+      errorObject?.message ||
+      error?.message ||
+      '',
+  ).trim()
+}
+
 function normalizeDuplicateEmployees(error) {
   const payload = getErrorPayload(error)
+  const errorObject = getErrorObject(error)
+  const params = getErrorParams(error)
 
   const duplicates =
     payload?.duplicates ||
     payload?.details?.duplicates ||
     payload?.data?.duplicates ||
+    payload?.data?.details?.duplicates ||
+    errorObject?.duplicates ||
+    errorObject?.details?.duplicates ||
+    errorObject?.params?.duplicates ||
+    params?.duplicates ||
     []
 
   if (!Array.isArray(duplicates)) return []
@@ -803,11 +865,18 @@ function normalizeDuplicateEmployees(error) {
 
 function normalizeMissingClockInEmployees(error) {
   const payload = getErrorPayload(error)
+  const errorObject = getErrorObject(error)
+  const params = getErrorParams(error)
 
   const rows =
     payload?.details?.missingEmployees ||
     payload?.data?.missingEmployees ||
+    payload?.data?.details?.missingEmployees ||
     payload?.missingEmployees ||
+    errorObject?.missingEmployees ||
+    errorObject?.details?.missingEmployees ||
+    errorObject?.params?.missingEmployees ||
+    params?.missingEmployees ||
     []
 
   if (!Array.isArray(rows)) return []
@@ -815,11 +884,75 @@ function normalizeMissingClockInEmployees(error) {
   return rows
     .map((item) => ({
       employeeId: String(item?.employeeId || '').trim(),
-      employeeNo: String(item?.employeeNo || '').trim(),
+      employeeNo: String(item?.employeeNo || item?.employeeCode || '').trim(),
+      employeeCode: String(item?.employeeCode || item?.employeeNo || '').trim(),
       employeeName: String(item?.employeeName || '').trim(),
       employeeLabel: String(item?.employeeLabel || '').trim(),
     }))
     .filter((item) => item.employeeId)
+}
+
+function buildApiErrorMessage(error, fallback = '') {
+  const payload = getErrorPayload(error)
+  const errorObject = getErrorObject(error)
+
+  const details =
+    payload?.details ||
+    payload?.errors ||
+    payload?.data?.details ||
+    payload?.data?.errors ||
+    errorObject?.details ||
+    errorObject?.errors
+
+  if (Array.isArray(details) && details.length) {
+    return details
+      .map((item) => {
+        if (typeof item === 'string') return item
+
+        const path = Array.isArray(item?.path)
+          ? item.path.join('.')
+          : item?.path || item?.field || ''
+
+        const message = item?.message || item?.msg || t('common.somethingWentWrong')
+
+        return path ? `${path}: ${message}` : message
+      })
+      .join('\n')
+  }
+
+  const code = getErrorCode(error)
+  const message = getErrorMessageText(error)
+
+  if (code === 'ACCOUNT_EMPLOYEE_LINK_REQUIRED') {
+    return t('ot.requests.create.accountEmployeeLinkRequired')
+  }
+
+  if (code === 'OT_APPROVER_NOT_FOUND') {
+    return t('ot.requests.create.approverNotFound')
+  }
+
+  if (code === 'OT_TODAY_ATTENDANCE_TIME_IN_REQUIRED') {
+    return t('ot.requests.create.todayAttendanceRequired')
+  }
+
+  if (code === 'OT_EMPLOYEE_DUPLICATE_DATE') {
+    return t('ot.requests.create.duplicateGeneric')
+  }
+
+  return message || fallback || t('ot.requests.create.createFailedDetail')
+}
+
+function findSelectedEmployeeLabel(employeeId) {
+  const targetId = String(employeeId || '').trim()
+  const employee = selectedEmployees.value.find((item) => getEmployeeId(item) === targetId)
+
+  if (!employee) return targetId || t('common.unknown')
+
+  return (
+    employee.employeeLabel ||
+    [employee.employeeNo, employee.displayName].filter(Boolean).join(' - ') ||
+    targetId
+  )
 }
 
 function removeEmployeesFromSelectionByIds(employeeIds = []) {
@@ -836,75 +969,46 @@ function removeEmployeesFromSelectionByIds(employeeIds = []) {
   return beforeCount - selectedEmployees.value.length
 }
 
-function buildDuplicateToastMessage(duplicates = []) {
-  const preview = duplicates
-    .slice(0, 5)
-    .map((item) => {
-      const employeeLabel =
-        item.employeeLabel ||
-        [item.employeeCode, item.employeeName].filter(Boolean).join(' - ') ||
-        item.employeeId
-
-      return item.requestNo ? `${employeeLabel} (${item.requestNo})` : employeeLabel
-    })
-    .join(', ')
-
-  const moreText = duplicates.length > 5 ? ` and ${duplicates.length - 5} more` : ''
-
-  return `These employees already have OT request on this date. Removed from selection: ${preview}${moreText}.`
-}
-
-function buildMissingClockInToastMessage(missing = []) {
-  const preview = missing
+function buildEmployeePreview(rows = []) {
+  return rows
     .slice(0, 5)
     .map((item) => {
       return (
         item.employeeLabel ||
-        [item.employeeNo, item.employeeName].filter(Boolean).join(' - ') ||
+        [item.employeeCode || item.employeeNo, item.employeeName].filter(Boolean).join(' - ') ||
         item.employeeId
       )
     })
+    .filter(Boolean)
     .join(', ')
-
-  const moreText = missing.length > 5 ? ` and ${missing.length - 5} more` : ''
-
-  return `Today OT requires attendance time-in. Removed from selection: ${preview}${moreText}.`
 }
 
-function buildApiErrorMessage(error) {
-  const data = error?.response?.data
+function buildDuplicateToastMessage(duplicates = []) {
+  const preview = buildEmployeePreview(duplicates)
+  const moreCount = Math.max(0, duplicates.length - 5)
 
-  if (!data) {
-    return error?.message || 'Unknown error.'
-  }
-
-  const details =
-    data?.details ||
-    data?.errors ||
-    data?.data?.details ||
-    data?.data?.errors
-
-  if (Array.isArray(details) && details.length) {
-    return details
-      .map((item) => {
-        if (typeof item === 'string') return item
-
-        const path = Array.isArray(item?.path)
-          ? item.path.join('.')
-          : item?.path || item?.field || ''
-
-        const message = item?.message || item?.msg || 'Invalid value'
-
-        return path ? `${path}: ${message}` : message
+  return moreCount
+    ? t('ot.requests.create.duplicateDetailMore', {
+        preview,
+        more: moreCount,
       })
-      .join('\n')
-  }
+    : t('ot.requests.create.duplicateDetail', {
+        preview,
+      })
+}
 
-  if (typeof details === 'object' && details) {
-    return JSON.stringify(details, null, 2)
-  }
+function buildMissingClockInToastMessage(missing = []) {
+  const preview = buildEmployeePreview(missing)
+  const moreCount = Math.max(0, missing.length - 5)
 
-  return data?.message || error?.message || 'Unable to create OT request.'
+  return moreCount
+    ? t('ot.requests.create.missingClockInDetailMore', {
+        preview,
+        more: moreCount,
+      })
+    : t('ot.requests.create.missingClockInDetail', {
+        preview,
+      })
 }
 
 async function submit() {
@@ -912,25 +1016,26 @@ async function submit() {
   const message = validateBeforeSubmit(payload)
 
   if (message) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Validation',
-      detail: message,
-      life: 2500,
-    })
+    showToast(
+      'warn',
+      t('ot.requests.create.validationTitle'),
+      message,
+      3500,
+    )
     return
   }
 
+  submitting.value = true
+
   try {
-    submitting.value = true
     await createOTRequest(payload)
 
-    toast.add({
-      severity: 'success',
-      summary: 'Success',
-      detail: 'OT request created successfully.',
-      life: 2500,
-    })
+    showToast(
+      'success',
+      t('ot.requests.create.successTitle'),
+      t('ot.requests.create.successMessage'),
+      2500,
+    )
 
     router.push('/ot/requests')
   } catch (error) {
@@ -941,16 +1046,14 @@ async function submit() {
         duplicates.map((item) => item.employeeId),
       )
 
-      toast.add({
-        severity: 'warn',
-        summary: 'Duplicate OT employees',
-        detail:
-          removedCount > 0
-            ? buildDuplicateToastMessage(duplicates)
-            : error?.response?.data?.message ||
-              buildDuplicateToastMessage(duplicates),
-        life: 8000,
-      })
+      showToast(
+        'warn',
+        t('ot.requests.create.duplicateTitle'),
+        removedCount > 0
+          ? buildDuplicateToastMessage(duplicates)
+          : buildApiErrorMessage(error, buildDuplicateToastMessage(duplicates)),
+        8000,
+      )
 
       await loadUnavailableEmployeesForDate()
       return
@@ -963,28 +1066,26 @@ async function submit() {
         missingClockInEmployees.map((item) => item.employeeId),
       )
 
-      toast.add({
-        severity: 'warn',
-        summary: 'Attendance time-in required',
-        detail:
-          removedCount > 0
-            ? buildMissingClockInToastMessage(missingClockInEmployees)
-            : error?.response?.data?.message ||
-              buildMissingClockInToastMessage(missingClockInEmployees),
-        life: 8000,
-      })
+      showToast(
+        'warn',
+        t('ot.requests.create.missingClockInTitle'),
+        removedCount > 0
+          ? buildMissingClockInToastMessage(missingClockInEmployees)
+          : buildApiErrorMessage(error, buildMissingClockInToastMessage(missingClockInEmployees)),
+        9000,
+      )
 
       return
     }
 
     console.error('Create OT failed:', error?.response?.data || error)
 
-    toast.add({
-      severity: 'error',
-      summary: 'Create failed',
-      detail: buildApiErrorMessage(error),
-      life: 8000,
-    })
+    showToast(
+      'error',
+      t('common.createFailed'),
+      buildApiErrorMessage(error, t('ot.requests.create.createFailedDetail')),
+      8000,
+    )
   } finally {
     submitting.value = false
   }

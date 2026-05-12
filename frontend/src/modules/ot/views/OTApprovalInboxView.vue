@@ -3,6 +3,7 @@
 // frontend/src/modules/ot/views/OTApprovalInboxView.vue
 
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
@@ -18,12 +19,14 @@ import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 import Textarea from 'primevue/textarea'
 
+import AppTableLoading from '@/shared/components/AppTableLoading.vue'
 import {
   decideOTRequest,
   exportOTApprovalInboxExcel,
   getOTApprovalInbox,
 } from '@/modules/ot/ot.api'
 
+const { t } = useI18n()
 const toast = useToast()
 
 const PAGE_SIZE = 10
@@ -62,29 +65,41 @@ const bulkDialog = reactive({
   rows: [],
 })
 
-const statusOptions = [
-  { label: 'All Status', value: '' },
-  { label: 'Pending', value: 'PENDING' },
-  { label: 'Pending Requester Confirmation', value: 'PENDING_REQUESTER_CONFIRMATION' },
-  { label: 'Approved', value: 'APPROVED' },
-  { label: 'Rejected', value: 'REJECTED' },
-  { label: 'Requester Disagreed', value: 'REQUESTER_DISAGREED' },
-  { label: 'Cancelled', value: 'CANCELLED' },
-]
+const statusOptions = computed(() => [
+  { label: t('common.allStatus'), value: '' },
+  { label: t('ot.status.pending'), value: 'PENDING' },
+  {
+    label: t('ot.status.pendingRequesterConfirmation'),
+    value: 'PENDING_REQUESTER_CONFIRMATION',
+  },
+  { label: t('ot.status.approved'), value: 'APPROVED' },
+  { label: t('ot.status.rejected'), value: 'REJECTED' },
+  { label: t('ot.status.requesterDisagreed'), value: 'REQUESTER_DISAGREED' },
+  { label: t('ot.status.cancelled'), value: 'CANCELLED' },
+])
 
-const dayTypeOptions = [
-  { label: 'All Day Types', value: '' },
-  { label: 'Working Day', value: 'WORKING_DAY' },
-  { label: 'Sunday', value: 'SUNDAY' },
-  { label: 'Holiday', value: 'HOLIDAY' },
-]
+const dayTypeOptions = computed(() => [
+  { label: t('ot.requests.allDayTypes'), value: '' },
+  { label: t('ot.dayType.workingDay'), value: 'WORKING_DAY' },
+  { label: t('ot.dayType.sunday'), value: 'SUNDAY' },
+  { label: t('ot.dayType.holiday'), value: 'HOLIDAY' },
+])
 
 const totalInbox = computed(() => Number(totalRecords.value || 0))
 const loadedCount = computed(() => rows.value.filter(Boolean).length)
-const summaryText = computed(() => `${loadedCount.value} of ${totalInbox.value}`)
+const summaryText = computed(() =>
+  t('common.loaded', {
+    loaded: loadedCount.value,
+    total: totalInbox.value,
+  }),
+)
 
 const hasAnyData = computed(() => rows.value.some(Boolean))
 const useVirtualScroll = computed(() => totalInbox.value > PAGE_SIZE)
+
+const firstLoading = computed(() => {
+  return backgroundLoading.value && !bootstrapped.value && !hasAnyData.value
+})
 
 const actionableLoadedRows = computed(() =>
   rows.value.filter((row) => canSelectForBulk(row)),
@@ -93,7 +108,9 @@ const actionableLoadedRows = computed(() =>
 const selectedBulkRows = computed(() => {
   const selected = new Set(selectedRequestIds.value)
 
-  return rows.value.filter((row) => row && selected.has(rowIdOf(row)) && canSelectForBulk(row))
+  return rows.value.filter(
+    (row) => row && selected.has(rowIdOf(row)) && canSelectForBulk(row),
+  )
 })
 
 const selectedBulkCount = computed(() => selectedBulkRows.value.length)
@@ -111,6 +128,9 @@ const bulkRequestCount = computed(() => bulkDialog.rows.length)
 const bulkEmployeeCount = computed(() =>
   bulkDialog.rows.reduce((total, row) => total + getEmployeeCount(row), 0),
 )
+
+const decisionIsApprove = computed(() => decisionDialog.action === 'APPROVE')
+const decisionIsReject = computed(() => decisionDialog.action === 'REJECT')
 
 let searchTimer = null
 let currentRequestId = 0
@@ -140,14 +160,6 @@ function upper(value) {
   return String(value || '').trim().toUpperCase()
 }
 
-function normalizeClassKey(value) {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/_/g, '-')
-    .replace(/\s+/g, '-')
-}
-
 function firstText(...values) {
   for (const value of values) {
     const text = String(value || '').trim()
@@ -157,69 +169,27 @@ function firstText(...values) {
   return ''
 }
 
-function dayTypeClass(value) {
-  return `ot-day-${normalizeClassKey(value || 'unknown')}`
+function normalizeClassKey(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, '-')
+    .replace(/\s+/g, '-')
 }
 
-function approvalDisplay(row) {
-  return row?.approvalDisplay || {
-    type: row?.approvalDisplayType || row?.status || 'UNKNOWN',
-    label: row?.approvalDisplayLabel || row?.status || '-',
-    subLabel: row?.approvalDisplaySubLabel || '',
-    severity: row?.approvalDisplaySeverity || statusSeverity(row?.status),
-  }
-}
-
-function approvalDisplayClass(row) {
-  return `ot-approval-${normalizeClassKey(approvalDisplay(row).type || 'unknown')}`
-}
-
-function approvalDisplaySeverity(row) {
-  const severity = approvalDisplay(row).severity
-
-  if (severity) return severity
-
-  const type = upper(approvalDisplay(row).type)
-
-  if (type === 'APPROVED') return 'success'
-  if (type === 'REJECTED' || type === 'REQUESTER_DISAGREED') return 'danger'
-  if (type === 'WAITING' || type === 'REQUESTER_CONFIRMATION') return 'warning'
-  if (type === 'CANCELLED') return 'secondary'
-
-  return 'secondary'
-}
-
-function getTimingMode(row) {
-  return upper(
-    row?.shiftOtOptionTimingMode ||
-      row?.timingMode ||
-      row?.otTimingMode ||
-      row?.shiftOtOption?.timingMode ||
-      '',
+function errorMessage(error, fallback = '') {
+  return (
+    error?.response?.data?.message ||
+    error?.response?.data?.messageKey ||
+    error?.response?.data?.error ||
+    error?.message ||
+    fallback ||
+    t('common.somethingWentWrong')
   )
 }
 
-function timingModeLabel(value) {
-  const normalized = upper(value)
-
-  if (normalized === 'FIXED_TIME') return 'Fixed Time'
-  if (normalized === 'AFTER_SHIFT_END') return 'After Shift End'
-
-  return 'Timing N/A'
-}
-
-function timingSourceLabel(row) {
-  const source = upper(row?.otTimingSource || row?.timingSource || 'SHIFT_OPTION')
-
-  if (source === 'CUSTOM_FIXED') return 'Custom Fixed'
-  return 'Preset'
-}
-
-function timingSourceSeverity(row) {
-  const source = upper(row?.otTimingSource || row?.timingSource || 'SHIFT_OPTION')
-
-  if (source === 'CUSTOM_FIXED') return 'info'
-  return 'secondary'
+function pad2(value) {
+  return String(value).padStart(2, '0')
 }
 
 function formatDateYMD(value) {
@@ -238,11 +208,7 @@ function formatDateYMD(value) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return undefined
 
-  const yyyy = date.getFullYear()
-  const mm = String(date.getMonth() + 1).padStart(2, '0')
-  const dd = String(date.getDate()).padStart(2, '0')
-
-  return `${yyyy}-${mm}-${dd}`
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
 }
 
 function formatDateDMY(value) {
@@ -258,11 +224,7 @@ function formatDateDMY(value) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return raw || '-'
 
-  const dd = String(date.getDate()).padStart(2, '0')
-  const mm = String(date.getMonth() + 1).padStart(2, '0')
-  const yyyy = date.getFullYear()
-
-  return `${dd}/${mm}/${yyyy}`
+  return `${pad2(date.getDate())}/${pad2(date.getMonth() + 1)}/${date.getFullYear()}`
 }
 
 function formatDateTimeDMY(value) {
@@ -271,12 +233,11 @@ function formatDateTimeDMY(value) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return String(value || '-')
 
-  const dd = String(date.getDate()).padStart(2, '0')
-  const mm = String(date.getMonth() + 1).padStart(2, '0')
+  const dd = pad2(date.getDate())
+  const mm = pad2(date.getMonth() + 1)
   const yyyy = date.getFullYear()
-
-  const hh = String(date.getHours()).padStart(2, '0')
-  const min = String(date.getMinutes()).padStart(2, '0')
+  const hh = pad2(date.getHours())
+  const min = pad2(date.getMinutes())
 
   return `${dd}/${mm}/${yyyy}, ${hh}:${min}`
 }
@@ -303,14 +264,21 @@ function buildExportQuery() {
   }
 }
 
-function dayTypeSeverity(value) {
+function statusLabel(value, key = '') {
+  if (key) return t(key)
+
   const normalized = upper(value)
 
-  if (normalized === 'HOLIDAY') return 'danger'
-  if (normalized === 'SUNDAY') return 'warning'
-  if (normalized === 'WORKING_DAY') return 'success'
+  if (normalized === 'PENDING') return t('ot.status.pending')
+  if (normalized === 'PENDING_REQUESTER_CONFIRMATION') {
+    return t('ot.status.pendingRequesterConfirmation')
+  }
+  if (normalized === 'APPROVED') return t('ot.status.approved')
+  if (normalized === 'REJECTED') return t('ot.status.rejected')
+  if (normalized === 'REQUESTER_DISAGREED') return t('ot.status.requesterDisagreed')
+  if (normalized === 'CANCELLED') return t('ot.status.cancelled')
 
-  return 'secondary'
+  return normalized || t('common.unknown')
 }
 
 function statusSeverity(value) {
@@ -326,6 +294,63 @@ function statusSeverity(value) {
   return 'secondary'
 }
 
+function statusClass(value) {
+  return `ot-status-${normalizeClassKey(value || 'unknown')}`
+}
+
+function dayTypeLabel(value, key = '') {
+  if (key) return t(key)
+
+  const normalized = upper(value)
+
+  if (normalized === 'HOLIDAY') return t('ot.dayType.holiday')
+  if (normalized === 'SUNDAY') return t('ot.dayType.sunday')
+  if (normalized === 'WORKING_DAY') return t('ot.dayType.workingDay')
+
+  return normalized || t('common.unknown')
+}
+
+function dayTypeSeverity(value) {
+  const normalized = upper(value)
+
+  if (normalized === 'HOLIDAY') return 'danger'
+  if (normalized === 'SUNDAY') return 'warning'
+  if (normalized === 'WORKING_DAY') return 'success'
+
+  return 'secondary'
+}
+
+function dayTypeClass(value) {
+  return `ot-day-${normalizeClassKey(value || 'unknown')}`
+}
+
+function approvalDisplay(row) {
+  const display = row?.approvalDisplay || {}
+
+  return {
+    type: firstText(display.type, row?.approvalDisplayType, row?.status, 'UNKNOWN'),
+    label: firstText(
+      display.label,
+      row?.approvalDisplayLabel,
+      statusLabel(row?.status, row?.statusKey),
+    ),
+    subLabel: firstText(display.subLabel, row?.approvalDisplaySubLabel, ''),
+    severity: firstText(
+      display.severity,
+      row?.approvalDisplaySeverity,
+      statusSeverity(row?.status),
+    ),
+  }
+}
+
+function approvalDisplayClass(row) {
+  return `ot-approval-${normalizeClassKey(approvalDisplay(row).type || 'unknown')}`
+}
+
+function approvalDisplaySeverity(row) {
+  return approvalDisplay(row).severity || statusSeverity(row?.status)
+}
+
 function isLegacyManualMode(row) {
   const shiftId = String(row?.shiftId || '').trim()
   const shiftOtOptionId = String(row?.shiftOtOptionId || '').trim()
@@ -334,7 +359,23 @@ function isLegacyManualMode(row) {
 }
 
 function requestModeLabel(row) {
-  return isLegacyManualMode(row) ? 'LEGACY MANUAL' : 'SHIFT OPTION'
+  return isLegacyManualMode(row)
+    ? t('ot.approval.legacyManual')
+    : t('ot.approval.shiftOption')
+}
+
+function timingSourceLabel(row) {
+  const source = upper(row?.otTimingSource || row?.timingSource || 'SHIFT_OPTION')
+
+  if (source === 'CUSTOM_FIXED') return t('ot.requests.customFixed')
+  return t('ot.requests.preset')
+}
+
+function timingSourceSeverity(row) {
+  const source = upper(row?.otTimingSource || row?.timingSource || 'SHIFT_OPTION')
+
+  if (source === 'CUSTOM_FIXED') return 'info'
+  return 'secondary'
 }
 
 function formatTimeRange(row) {
@@ -351,41 +392,27 @@ function formatOtOptionLabel(row) {
 
   if (label) return label
 
-  return isLegacyManualMode(row) ? 'Legacy manual' : '-'
-}
-
-function formatRequestedMinutes(row) {
-  const requestedMinutes = Number(row?.requestedMinutes || 0)
-
-  if (requestedMinutes > 0) return `${requestedMinutes} min`
-
-  const totalMinutes = Number(row?.totalMinutes || 0)
-
-  if (totalMinutes > 0) return `${totalMinutes} min`
-
-  return '-'
+  return isLegacyManualMode(row) ? t('ot.approval.legacyManual') : '-'
 }
 
 function formatMinutesLabel(value) {
   const minutes = Number(value || 0)
 
-  if (!minutes) return '0 min'
+  if (!minutes) return t('ot.common.minuteValue', { value: 0 })
 
   const hours = Math.floor(minutes / 60)
   const mins = minutes % 60
 
-  if (hours && mins) return `${hours}h ${mins}m`
-  if (hours) return `${hours}h`
+  if (hours && mins) {
+    return t('ot.common.hourMinuteValue', {
+      hours,
+      minutes: mins,
+    })
+  }
 
-  return `${mins}m`
-}
+  if (hours) return t('ot.common.hourValue', { value: hours })
 
-function formatHours(row) {
-  const totalHours = Number(row?.totalHours || 0)
-
-  if (!Number.isFinite(totalHours) || totalHours <= 0) return '-'
-
-  return totalHours
+  return t('ot.common.minuteValue', { value: mins })
 }
 
 function formatRequester(row) {
@@ -399,6 +426,7 @@ function formatRequester(row) {
 
   const employeeNo = String(
     row?.requesterEmployeeNo ||
+      row?.requesterEmployeeCode ||
       row?.createdByEmployeeNo ||
       row?.employeeNo ||
       '',
@@ -413,6 +441,7 @@ function formatRequester(row) {
 function getTargetEmployees(row) {
   if (Array.isArray(row?.employees)) return row.employees
   if (Array.isArray(row?.approvedEmployees)) return row.approvedEmployees
+  if (Array.isArray(row?.requestedEmployees)) return row.requestedEmployees
   if (Array.isArray(row?.employeeItems)) return row.employeeItems
   if (Array.isArray(row?.targetEmployees)) return row.targetEmployees
   if (Array.isArray(row?.employeeList)) return row.employeeList
@@ -421,30 +450,17 @@ function getTargetEmployees(row) {
 }
 
 function getEmployeeCount(row) {
-  const explicitCount = Number(row?.employeeCount || row?.approvedEmployeeCount || row?.totalEmployees || 0)
+  const explicitCount = Number(
+    row?.employeeCount ||
+      row?.approvedEmployeeCount ||
+      row?.requestedEmployeeCount ||
+      row?.totalEmployees ||
+      0,
+  )
 
   if (explicitCount > 0) return explicitCount
 
   return getTargetEmployees(row).length
-}
-
-function canDecide(row) {
-  return row?.canDecide === true
-}
-
-function canSelectForBulk(row) {
-  if (!row) return false
-  if (!canDecide(row)) return false
-
-  return getTargetEmployees(row).some((employee) => employeeIdOf(employee))
-}
-
-function resetDecisionDialog() {
-  decisionDialog.visible = false
-  decisionDialog.loading = false
-  decisionDialog.action = 'APPROVE'
-  decisionDialog.remark = ''
-  decisionDialog.row = null
 }
 
 function employeeIdOf(employee) {
@@ -636,11 +652,32 @@ function employeeTimeModeOf(employee) {
 }
 
 function employeeTimeModeLabel(employee) {
-  return employeeTimeModeOf(employee) === 'CUSTOM' ? 'Custom' : 'Default'
+  return employeeTimeModeOf(employee) === 'CUSTOM'
+    ? t('ot.requests.timeMode.custom')
+    : t('ot.requests.timeMode.default')
 }
 
 function employeeTimeModeSeverity(employee) {
   return employeeTimeModeOf(employee) === 'CUSTOM' ? 'warn' : 'success'
+}
+
+function canDecide(row) {
+  return row?.canDecide === true
+}
+
+function canSelectForBulk(row) {
+  if (!row) return false
+  if (!canDecide(row)) return false
+
+  return getTargetEmployees(row).some((employee) => employeeIdOf(employee))
+}
+
+function resetDecisionDialog() {
+  decisionDialog.visible = false
+  decisionDialog.loading = false
+  decisionDialog.action = 'APPROVE'
+  decisionDialog.remark = ''
+  decisionDialog.row = null
 }
 
 function openDecision(row, action) {
@@ -719,8 +756,8 @@ function openBulkApproveSelected() {
   if (!selectedBulkRows.value.length) {
     toast.add({
       severity: 'warn',
-      summary: 'No selected requests',
-      detail: 'Please select at least one actionable OT request.',
+      summary: t('ot.approval.noSelectedRequests'),
+      detail: t('ot.approval.selectAtLeastOne'),
       life: 2500,
     })
     return
@@ -776,12 +813,14 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
         rows.value = Array.from({ length: total }, () => null)
       }
 
+      const nextRows = [...rows.value]
       const startIndex = (page - 1) * PAGE_SIZE
 
       for (let i = 0; i < items.length; i += 1) {
-        rows.value[startIndex + i] = items[i]
+        nextRows[startIndex + i] = items[i]
       }
 
+      rows.value = nextRows
       loadedPages.value.add(page)
     }
 
@@ -789,11 +828,8 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
   } catch (error) {
     toast.add({
       severity: 'error',
-      summary: 'Load failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to load approval inbox',
+      summary: t('common.loadFailed'),
+      detail: errorMessage(error, t('ot.approval.loadFailed')),
       life: 3000,
     })
   } finally {
@@ -810,6 +846,7 @@ async function reloadFirstPage({ keepVisible = true, resetState = false } = {}) 
     rows.value = []
     totalRecords.value = 0
     loadedPages.value = new Set()
+    bootstrapped.value = false
   }
 
   await fetchPage(1, {
@@ -899,18 +936,15 @@ async function onExportExcel() {
 
     toast.add({
       severity: 'success',
-      summary: 'Export ready',
-      detail: 'Excel exported successfully.',
+      summary: t('ot.approval.exported'),
+      detail: t('ot.approval.exportedSuccess'),
       life: 2500,
     })
   } catch (error) {
     toast.add({
       severity: 'error',
-      summary: 'Export failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Unable to export Excel.',
+      summary: t('ot.approval.exportFailed'),
+      detail: errorMessage(error, t('ot.approval.exportFailed')),
       life: 3000,
     })
   } finally {
@@ -927,8 +961,8 @@ async function submitDecision() {
   if (decisionDialog.action === 'REJECT' && !String(decisionDialog.remark || '').trim()) {
     toast.add({
       severity: 'warn',
-      summary: 'Validation',
-      detail: 'Please enter rejection remark.',
+      summary: t('common.warning'),
+      detail: t('ot.approval.rejectionRemarkRequired'),
       life: 2500,
     })
     return
@@ -944,11 +978,10 @@ async function submitDecision() {
 
     toast.add({
       severity: 'success',
-      summary: 'Success',
-      detail:
-        decisionDialog.action === 'APPROVE'
-          ? 'OT request processed successfully.'
-          : 'OT request rejected successfully.',
+      summary: t('ot.approval.decisionSuccess'),
+      detail: decisionIsApprove.value
+        ? t('ot.approval.approveSuccess')
+        : t('ot.approval.rejectSuccess'),
       life: 2500,
     })
 
@@ -957,11 +990,8 @@ async function submitDecision() {
   } catch (error) {
     toast.add({
       severity: 'error',
-      summary: 'Decision failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Unable to process decision.',
+      summary: t('ot.approval.decisionFailed'),
+      detail: errorMessage(error, t('ot.approval.decisionFailed')),
       life: 4000,
     })
 
@@ -1001,18 +1031,18 @@ async function submitBulkApproval() {
     if (successCount > 0) {
       toast.add({
         severity: 'success',
-        summary: 'Bulk approval completed',
+        summary: t('ot.approval.bulkCompleted'),
         detail:
           failedCount > 0
-            ? `${successCount} approved, ${failedCount} failed.`
-            : `${successCount} request(s) approved successfully.`,
+            ? t('ot.approval.bulkPartial', { success: successCount, failed: failedCount })
+            : t('ot.approval.bulkSuccess', { count: successCount }),
         life: 3500,
       })
     } else {
       toast.add({
         severity: 'error',
-        summary: 'Bulk approval failed',
-        detail: 'No request was approved.',
+        summary: t('ot.approval.bulkFailed'),
+        detail: t('ot.approval.bulkNoApproved'),
         life: 3500,
       })
     }
@@ -1023,11 +1053,8 @@ async function submitBulkApproval() {
   } catch (error) {
     toast.add({
       severity: 'error',
-      summary: 'Bulk approval failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Unable to approve selected requests.',
+      summary: t('ot.approval.bulkFailed'),
+      detail: errorMessage(error, t('ot.approval.bulkFailed')),
       life: 4000,
     })
 
@@ -1049,7 +1076,7 @@ onBeforeUnmount(() => {
     <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
       <div class="flex flex-wrap items-center gap-2">
         <Button
-          label="Export Excel"
+          :label="t('ot.approval.exportExcel')"
           icon="pi pi-file-excel"
           severity="success"
           outlined
@@ -1059,7 +1086,11 @@ onBeforeUnmount(() => {
         />
 
         <Button
-          :label="`Approve Selected${selectedBulkCount ? ` (${selectedBulkCount})` : ''}`"
+          :label="
+            selectedBulkCount
+              ? t('ot.approval.approveSelectedWithCount', { count: selectedBulkCount })
+              : t('ot.approval.approveSelected')
+          "
           icon="pi pi-check"
           size="small"
           :disabled="!selectedBulkCount"
@@ -1068,7 +1099,7 @@ onBeforeUnmount(() => {
 
         <Button
           v-if="selectedRequestIds.length"
-          label="Clear Selection"
+          :label="t('ot.approval.clearSelection')"
           icon="pi pi-times"
           severity="secondary"
           text
@@ -1080,13 +1111,13 @@ onBeforeUnmount(() => {
 
     <div class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]">
       <div class="border-b border-[color:var(--ot-border)] px-3 py-3">
-        <div class="flex flex-col gap-2 xl:flex-row xl:items-center">
+        <div class="ot-approval-filter-row">
           <IconField class="w-full xl:w-[220px] xl:shrink-0">
             <InputIcon class="pi pi-search" />
 
             <InputText
               v-model="filters.search"
-              placeholder="Search"
+              :placeholder="t('common.search')"
               class="w-full"
               size="small"
               @input="onSearchInput"
@@ -1099,7 +1130,7 @@ onBeforeUnmount(() => {
               :options="statusOptions"
               optionLabel="label"
               optionValue="value"
-              placeholder="Status"
+              :placeholder="t('common.status')"
               class="w-full"
               size="small"
               @change="onStatusChange"
@@ -1112,7 +1143,7 @@ onBeforeUnmount(() => {
               :options="dayTypeOptions"
               optionLabel="label"
               optionValue="value"
-              placeholder="Day Type"
+              :placeholder="t('ot.requests.dayType')"
               class="w-full"
               size="small"
               @change="onDayTypeChange"
@@ -1127,7 +1158,7 @@ onBeforeUnmount(() => {
               showButtonBar
               class="w-full"
               inputClass="w-full"
-              placeholder="OT Date From"
+              :placeholder="t('ot.requests.otDateFrom')"
               @date-select="onDateChange"
               @clear-click="onDateChange"
             />
@@ -1141,19 +1172,19 @@ onBeforeUnmount(() => {
               showButtonBar
               class="w-full"
               inputClass="w-full"
-              placeholder="OT Date To"
+              :placeholder="t('ot.requests.otDateTo')"
               @date-select="onDateChange"
               @clear-click="onDateChange"
             />
           </div>
 
-          <div class="flex items-center gap-2 xl:ml-auto xl:shrink-0">
+          <div class="flex flex-wrap items-center gap-2 xl:ml-auto xl:shrink-0">
             <div class="rounded-lg border border-[color:var(--ot-border)] px-3 py-1.5 text-xs font-medium text-[color:var(--ot-text-muted)]">
-              Loaded {{ summaryText }}
+              {{ summaryText }}
             </div>
 
             <Button
-              label="Clear"
+              :label="t('common.clear')"
               icon="pi pi-refresh"
               severity="secondary"
               outlined
@@ -1164,7 +1195,16 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
+      <AppTableLoading
+        v-if="firstLoading"
+        :title="t('ot.approval.loading')"
+        :message="t('ot.approval.fetchingRecords')"
+        :rows="8"
+        :columns="12"
+      />
+
       <DataTable
+        v-else
         v-model:expandedRows="expandedRows"
         :value="rows"
         dataKey="id"
@@ -1188,7 +1228,7 @@ onBeforeUnmount(() => {
             v-if="bootstrapped"
             class="py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
           >
-            No OT approval requests found.
+            {{ t('ot.approval.noData') }}
           </div>
         </template>
 
@@ -1225,17 +1265,26 @@ onBeforeUnmount(() => {
           </template>
         </Column>
 
-        <Column field="requestNo" header="Request No">
+        <Column
+          field="requestNo"
+          :header="t('ot.requests.requestNo')"
+        >
           <template #body="{ data }">
-            <span v-if="data" class="font-medium">
+            <span
+              v-if="data"
+              class="font-medium"
+            >
               {{ data.requestNo || '-' }}
             </span>
           </template>
         </Column>
 
-        <Column header="Requester">
+        <Column :header="t('ot.requests.requester')">
           <template #body="{ data }">
-            <div v-if="data" class="requester-cell">
+            <div
+              v-if="data"
+              class="requester-cell"
+            >
               <div class="font-medium text-[color:var(--ot-text)]">
                 {{ formatRequester(data).name }}
               </div>
@@ -1247,9 +1296,15 @@ onBeforeUnmount(() => {
           </template>
         </Column>
 
-        <Column field="status" header="Approval Status">
+        <Column
+          field="status"
+          :header="t('ot.requests.approvalStatus')"
+        >
           <template #body="{ data }">
-            <div v-if="data" class="approval-status-cell">
+            <div
+              v-if="data"
+              class="approval-status-cell"
+            >
               <Tag
                 :value="approvalDisplay(data).label"
                 :severity="approvalDisplaySeverity(data)"
@@ -1260,63 +1315,79 @@ onBeforeUnmount(() => {
           </template>
         </Column>
 
-        <Column header="Requested Staff">
+        <Column :header="t('ot.approval.requestedStaff')">
           <template #body="{ data }">
             <Tag
               v-if="data"
-              :value="`${Number(data?.requestedEmployeeCount || 0)} staff`"
+              :value="t('ot.requests.staffCount', { count: Number(data?.requestedEmployeeCount || getEmployeeCount(data)) })"
               severity="secondary"
               class="ot-status-tag ot-count-requested"
             />
           </template>
         </Column>
 
-        <Column field="otDate" header="OT Date">
+        <Column
+          field="otDate"
+          :header="t('ot.requests.otDate')"
+        >
           <template #body="{ data }">
             <span v-if="data">{{ formatDateDMY(data.otDate) }}</span>
           </template>
         </Column>
 
-        <Column header="OT Time">
+        <Column :header="t('ot.requests.otTime')">
           <template #body="{ data }">
             <span v-if="data">{{ formatTimeRange(data) }}</span>
           </template>
         </Column>
 
-        <Column header="OT Option">
+        <Column :header="t('ot.requests.otOption')">
           <template #body="{ data }">
-            <div v-if="data" class="ot-option-cell">
+            <div
+              v-if="data"
+              class="ot-option-cell"
+            >
               <div class="font-medium text-[color:var(--ot-text)]">
                 {{ formatOtOptionLabel(data) }}
               </div>
 
               <div class="text-xs text-[color:var(--ot-text-muted)]">
-                Request: {{ formatMinutesLabel(data.requestedMinutes) }}
+                {{ t('ot.approval.requested') }}:
+                {{ formatMinutesLabel(data.requestedMinutes) }}
               </div>
             </div>
           </template>
         </Column>
 
-        <Column header="Break Time">
+        <Column :header="t('ot.approval.breakTime')">
           <template #body="{ data }">
-            <span v-if="data" class="font-medium">
+            <span
+              v-if="data"
+              class="font-medium"
+            >
               {{ formatMinutesLabel(data.breakMinutes) }}
             </span>
           </template>
         </Column>
 
-        <Column header="Total Request Paid">
+        <Column :header="t('ot.approval.totalRequestPaid')">
           <template #body="{ data }">
             <Tag
               v-if="data"
               :value="formatMinutesLabel(data.totalMinutes)"
               severity="success"
-              class="ot-status-tag ot-paid-tag"
+              class="ot-status-tag ot-status-approved"
             />
           </template>
         </Column>
 
-        <Column header="Timing">
+        <Column :header="t('nav.lines')">
+          <template #body="{ data }">
+            <span v-if="data">{{ lineSummaryOfRow(data) }}</span>
+          </template>
+        </Column>
+
+        <Column :header="t('ot.requests.timing')">
           <template #body="{ data }">
             <Tag
               v-if="data"
@@ -1327,11 +1398,14 @@ onBeforeUnmount(() => {
           </template>
         </Column>
 
-        <Column field="dayType" header="Day Type">
+        <Column
+          field="dayType"
+          :header="t('ot.requests.dayType')"
+        >
           <template #body="{ data }">
             <Tag
               v-if="data"
-              :value="data.dayType || '-'"
+              :value="dayTypeLabel(data.dayType, data.dayTypeKey)"
               :severity="dayTypeSeverity(data.dayType)"
               class="ot-status-tag"
               :class="dayTypeClass(data.dayType)"
@@ -1339,18 +1413,30 @@ onBeforeUnmount(() => {
           </template>
         </Column>
 
-        <Column field="createdAt" header="Created At">
+        <Column
+          field="createdAt"
+          :header="t('common.createdAt')"
+        >
           <template #body="{ data }">
             <span v-if="data">{{ formatDateTimeDMY(data.createdAt) }}</span>
           </template>
         </Column>
 
-        <Column header="Actions">
+        <Column
+          :header="t('common.actions')"
+          frozen
+          alignFrozen="right"
+          headerClass="ot-action-column-header"
+          bodyClass="ot-action-column-body"
+        >
           <template #body="{ data }">
-            <div v-if="data" class="action-row">
+            <div
+              v-if="data"
+              class="action-row"
+            >
               <Button
                 v-if="canDecide(data)"
-                label="Approve"
+                :label="t('common.approve')"
                 icon="pi pi-check"
                 size="small"
                 class="action-btn"
@@ -1359,7 +1445,7 @@ onBeforeUnmount(() => {
 
               <Button
                 v-if="canDecide(data)"
-                label="Reject"
+                :label="t('common.reject')"
                 icon="pi pi-times"
                 size="small"
                 severity="danger"
@@ -1380,11 +1466,14 @@ onBeforeUnmount(() => {
               <div class="ot-expanded-header">
                 <div>
                   <div class="ot-expanded-title">
-                    Employee OT time detail
+                    {{ t('ot.requests.employeeOtTimeDetail') }}
                   </div>
 
                   <div class="ot-expanded-subtitle">
-                    Time: {{ formatTimeRange(data) }} · Option: {{ formatOtOptionLabel(data) }} · Break: {{ formatMinutesLabel(data.breakMinutes) }} · Paid: {{ formatMinutesLabel(data.totalMinutes) }}
+                    {{ t('ot.requests.time') }}: {{ formatTimeRange(data) }}
+                    · {{ t('ot.requests.otOption') }}: {{ formatOtOptionLabel(data) }}
+                    · {{ t('ot.requests.break') }}: {{ formatMinutesLabel(data.breakMinutes) }}
+                    · {{ t('ot.approval.paid') }}: {{ formatMinutesLabel(data.totalMinutes) }}
                   </div>
                 </div>
 
@@ -1397,15 +1486,16 @@ onBeforeUnmount(() => {
 
               <div class="ot-expanded-responsive-table">
                 <div class="ot-expanded-grid-row is-head">
-                  <div>No</div>
-                  <div>ID</div>
-                  <div>Name</div>
-                  <div>Position</div>
-                  <div>OT Time</div>
-                  <div>Break</div>
-                  <div>Total Paid</div>
-                  <div>Mode</div>
-                  <div>Line</div>
+                  <div>{{ t('common.no') }}</div>
+                  <div>{{ t('ot.requests.employeeId') }}</div>
+                  <div>{{ t('common.name') }}</div>
+                  <div>{{ t('nav.positions') }}</div>
+                  <div>{{ t('ot.requests.otTime') }}</div>
+                  <div>{{ t('ot.requests.break') }}</div>
+                  <div>{{ t('ot.approval.totalPaid') }}</div>
+                  <div>{{ t('ot.requests.mode') }}</div>
+                  <div>{{ t('nav.departments') }}</div>
+                  <div>{{ t('nav.lines') }}</div>
                 </div>
 
                 <div
@@ -1434,7 +1524,7 @@ onBeforeUnmount(() => {
                   </div>
 
                   <div class="cell-center cell-mono">
-                    {{ employeeBreakMinutesOf(employee, data) }}m
+                    {{ employeeBreakMinutesOf(employee, data) }}{{ t('ot.common.minShort') }}
                   </div>
 
                   <div class="cell-center cell-mono">
@@ -1450,14 +1540,21 @@ onBeforeUnmount(() => {
                   </div>
 
                   <div class="cell-center cell-wrap">
+                    {{ employeeDepartmentOf(employee) }}
+                  </div>
+
+                  <div class="cell-center cell-wrap">
                     {{ employeeLineOf(employee, data) || '-' }}
                   </div>
                 </div>
               </div>
             </div>
 
-            <div v-else class="ot-expanded-empty">
-              No employee data found for this request.
+            <div
+              v-else
+              class="ot-expanded-empty"
+            >
+              {{ t('ot.requests.noEmployeeData') }}
             </div>
           </div>
         </template>
@@ -1467,7 +1564,7 @@ onBeforeUnmount(() => {
         v-if="backgroundLoading && hasAnyData"
         class="flex items-center justify-center border-t border-[color:var(--ot-border)] px-3 py-2 text-xs text-[color:var(--ot-text-muted)]"
       >
-        Updating...
+        {{ t('common.updating') }}
       </div>
     </div>
 
@@ -1482,11 +1579,11 @@ onBeforeUnmount(() => {
         <div class="ot-decision-header">
           <div class="min-w-0">
             <div class="ot-decision-eyebrow">
-              OT approval decision
+              {{ t('ot.approval.decisionEyebrow') }}
             </div>
 
             <div class="ot-decision-title">
-              {{ decisionDialog.action === 'APPROVE' ? 'Confirm Approval' : 'Reject OT Request' }}
+              {{ decisionIsApprove ? t('ot.approval.confirmApproval') : t('ot.approval.rejectRequest') }}
             </div>
           </div>
 
@@ -1509,18 +1606,16 @@ onBeforeUnmount(() => {
           class="ot-confirm-box"
         >
           <div class="ot-confirm-icon">
-            <i :class="decisionDialog.action === 'APPROVE' ? 'pi pi-check-circle' : 'pi pi-times-circle'" />
+            <i :class="decisionIsApprove ? 'pi pi-check-circle' : 'pi pi-times-circle'" />
           </div>
 
           <div class="min-w-0">
             <div class="ot-confirm-title">
-              {{ decisionDialog.action === 'APPROVE' ? 'Are you sure you want to approve?' : 'Are you sure you want to reject?' }}
+              {{ decisionIsApprove ? t('ot.approval.approveQuestion') : t('ot.approval.rejectQuestion') }}
             </div>
 
             <div class="ot-confirm-help">
-              {{ decisionDialog.action === 'APPROVE'
-                ? 'This will approve all employees inside this OT request.'
-                : 'This will reject the whole OT request.' }}
+              {{ decisionIsApprove ? t('ot.approval.approveHelp') : t('ot.approval.rejectHelp') }}
             </div>
           </div>
         </div>
@@ -1530,41 +1625,41 @@ onBeforeUnmount(() => {
           class="ot-confirm-info-grid"
         >
           <div class="ot-confirm-info-item">
-            <span>OT Date</span>
+            <span>{{ t('ot.requests.otDate') }}</span>
             <strong>{{ formatDateDMY(decisionDialog.row.otDate) }}</strong>
           </div>
 
           <div class="ot-confirm-info-item">
-            <span>OT Time</span>
+            <span>{{ t('ot.requests.otTime') }}</span>
             <strong>{{ formatTimeRange(decisionDialog.row) }}</strong>
           </div>
 
           <div class="ot-confirm-info-item">
-            <span>OT Option</span>
+            <span>{{ t('ot.requests.otOption') }}</span>
             <strong>{{ formatOtOptionLabel(decisionDialog.row) }}</strong>
           </div>
 
           <div class="ot-confirm-info-item">
-            <span>Break Time</span>
+            <span>{{ t('ot.approval.breakTime') }}</span>
             <strong>{{ formatMinutesLabel(decisionDialog.row.breakMinutes) }}</strong>
           </div>
 
           <div class="ot-confirm-info-item">
-            <span>Total Request Paid</span>
+            <span>{{ t('ot.approval.totalRequestPaid') }}</span>
             <strong>{{ formatMinutesLabel(decisionDialog.row.totalMinutes) }}</strong>
           </div>
 
           <div class="ot-confirm-info-item">
-            <span>Line</span>
+            <span>{{ t('nav.lines') }}</span>
             <strong>{{ lineSummaryOfRow(decisionDialog.row) }}</strong>
           </div>
         </div>
 
         <div class="ot-remark-box">
           <label class="ot-remark-label">
-            Remark
+            {{ t('ot.approval.remark') }}
             <span
-              v-if="decisionDialog.action === 'REJECT'"
+              v-if="decisionIsReject"
               class="text-red-500"
             >*</span>
           </label>
@@ -1574,17 +1669,13 @@ onBeforeUnmount(() => {
             rows="3"
             autoResize
             class="w-full"
-            :placeholder="
-              decisionDialog.action === 'APPROVE'
-                ? 'Optional approval remark'
-                : 'Please enter rejection reason'
-            "
+            :placeholder="decisionIsApprove ? t('ot.approval.optionalApprovalRemark') : t('ot.approval.rejectionReasonPlaceholder')"
           />
         </div>
 
         <div class="ot-decision-footer">
           <Button
-            label="Cancel"
+            :label="t('common.cancel')"
             text
             size="small"
             :disabled="decisionDialog.loading"
@@ -1592,9 +1683,9 @@ onBeforeUnmount(() => {
           />
 
           <Button
-            :label="decisionDialog.action === 'APPROVE' ? 'Yes, Approve' : 'Reject'"
-            :icon="decisionDialog.action === 'APPROVE' ? 'pi pi-check' : 'pi pi-times'"
-            :severity="decisionDialog.action === 'APPROVE' ? undefined : 'danger'"
+            :label="decisionIsApprove ? t('ot.approval.yesApprove') : t('common.reject')"
+            :icon="decisionIsApprove ? 'pi pi-check' : 'pi pi-times'"
+            :severity="decisionIsApprove ? undefined : 'danger'"
             :loading="decisionDialog.loading"
             size="small"
             @click="submitDecision"
@@ -1614,23 +1705,23 @@ onBeforeUnmount(() => {
         <div class="ot-decision-header">
           <div class="min-w-0">
             <div class="ot-decision-eyebrow">
-              Bulk approval
+              {{ t('ot.approval.bulkApproval') }}
             </div>
 
             <div class="ot-decision-title">
-              Approve multiple OT requests
+              {{ t('ot.approval.approveMultiple') }}
             </div>
           </div>
 
           <div class="ot-decision-header-tags">
             <Tag
-              :value="`${bulkRequestCount} request(s)`"
+              :value="t('ot.approval.requestCount', { count: bulkRequestCount })"
               severity="info"
               class="ot-status-tag"
             />
 
             <Tag
-              :value="`${bulkEmployeeCount} staff`"
+              :value="t('ot.requests.staffCount', { count: bulkEmployeeCount })"
               severity="success"
               class="ot-status-tag ot-status-approved"
             />
@@ -1640,13 +1731,12 @@ onBeforeUnmount(() => {
 
       <div class="ot-bulk-body">
         <div class="ot-bulk-warning">
-          Are you sure you want to approve the selected OT requests?
-          This will approve all employees inside each selected request.
+          {{ t('ot.approval.bulkWarning') }}
         </div>
 
         <div class="ot-remark-box">
           <label class="ot-remark-label">
-            Remark
+            {{ t('ot.approval.remark') }}
           </label>
 
           <Textarea
@@ -1654,13 +1744,13 @@ onBeforeUnmount(() => {
             rows="3"
             autoResize
             class="w-full"
-            placeholder="Optional remark for all selected approvals"
+            :placeholder="t('ot.approval.bulkRemarkPlaceholder')"
           />
         </div>
 
         <div class="ot-decision-footer">
           <Button
-            label="Cancel"
+            :label="t('common.cancel')"
             text
             size="small"
             :disabled="bulkDialog.loading"
@@ -1668,7 +1758,7 @@ onBeforeUnmount(() => {
           />
 
           <Button
-            label="Approve All Selected"
+            :label="t('ot.approval.approveAllSelected')"
             icon="pi pi-check"
             size="small"
             :loading="bulkDialog.loading"
@@ -1682,6 +1772,19 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.ot-approval-filter-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+@media (min-width: 1280px) {
+  .ot-approval-filter-row {
+    flex-direction: row;
+    align-items: center;
+  }
+}
+
 :deep(.ot-approval-table .p-datatable-table) {
   width: max-content !important;
   min-width: 100% !important;
@@ -1704,6 +1807,33 @@ onBeforeUnmount(() => {
   padding: 0.5rem 0.72rem !important;
   vertical-align: middle !important;
   white-space: nowrap !important;
+}
+
+:deep(.ot-approval-table .p-row-toggler) {
+  width: 1.75rem !important;
+  height: 1.75rem !important;
+}
+
+:deep(.ot-approval-table .ot-action-column-header),
+:deep(.ot-approval-table .ot-action-column-body) {
+  position: sticky !important;
+  right: 0 !important;
+  z-index: 8 !important;
+  width: 10rem !important;
+  min-width: 10rem !important;
+  max-width: 10rem !important;
+  background: var(--ot-surface) !important;
+  box-shadow: -8px 0 18px rgba(15, 23, 42, 0.06) !important;
+}
+
+:deep(.ot-approval-table .ot-action-column-header) {
+  z-index: 10 !important;
+  background: linear-gradient(180deg, var(--ot-surface-2), var(--ot-surface-3)) !important;
+}
+
+:global(.dark) :deep(.ot-approval-table .ot-action-column-header),
+:global(.dark) :deep(.ot-approval-table .ot-action-column-body) {
+  box-shadow: -8px 0 18px rgba(0, 0, 0, 0.22) !important;
 }
 
 /* Expanded employee area */
@@ -1775,6 +1905,7 @@ onBeforeUnmount(() => {
     minmax(4.2rem, 0.42fr)
     minmax(4.8rem, 0.48fr)
     minmax(4.8rem, 0.46fr)
+    minmax(7rem, 0.8fr)
     minmax(7rem, 0.8fr);
   align-items: stretch;
 }
@@ -1836,152 +1967,6 @@ onBeforeUnmount(() => {
   color: var(--ot-text-muted);
 }
 
-@media (max-width: 1200px) {
-  .ot-expanded-box {
-    width: min(100%, 1060px);
-  }
-
-  .ot-expanded-grid-row {
-    grid-template-columns:
-      2.5rem
-      minmax(4.5rem, 0.52fr)
-      minmax(7rem, 1fr)
-      minmax(6.5rem, 0.75fr)
-      minmax(6.4rem, 0.62fr)
-      minmax(4rem, 0.4fr)
-      minmax(4.6rem, 0.46fr)
-      minmax(4.6rem, 0.44fr)
-      minmax(6.8rem, 0.76fr);
-  }
-
-  .ot-expanded-grid-row > div {
-    padding: 0.42rem 0.46rem;
-    font-size: 0.68rem;
-  }
-}
-
-@media (max-width: 768px) {
-  .ot-expanded-header {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .ot-expanded-box {
-    width: max-content;
-    min-width: 980px;
-    max-width: none;
-    padding: 0.6rem;
-  }
-
-  .ot-expanded-content {
-    width: max-content;
-    min-width: 980px;
-    max-width: none;
-    overflow: visible;
-  }
-
-  .ot-expanded-responsive-table {
-    width: max-content;
-    min-width: 980px;
-    max-width: none;
-    overflow: visible;
-  }
-
-  .ot-expanded-grid-row {
-    grid-template-columns:
-      2.4rem
-      5.8rem
-      8.8rem
-      8.2rem
-      7.4rem
-      4.4rem
-      5.2rem
-      5.2rem
-      10rem;
-  }
-
-  .ot-expanded-grid-row > div {
-    padding: 0.42rem 0.5rem;
-    font-size: 0.68rem;
-    line-height: 1.25;
-  }
-
-  .ot-expanded-grid-row.is-head > div {
-    font-size: 0.64rem;
-  }
-
-  .cell-wrap {
-    white-space: normal;
-    overflow-wrap: anywhere;
-    word-break: break-word;
-  }
-}
-
-@media (max-width: 420px) {
-  .ot-expanded-box {
-    width: max-content;
-    min-width: 980px;
-    max-width: none;
-    padding: 0.55rem;
-  }
-
-  .ot-expanded-content {
-    width: max-content;
-    min-width: 980px;
-    max-width: none;
-  }
-
-  .ot-expanded-responsive-table {
-    width: max-content;
-    min-width: 980px;
-    max-width: none;
-  }
-
-  .ot-expanded-grid-row {
-    grid-template-columns:
-      2.3rem
-      5.6rem
-      8.5rem
-      8rem
-      7.2rem
-      4.3rem
-      5.1rem
-      5.1rem
-      10rem;
-  }
-
-  .ot-expanded-grid-row > div {
-    padding: 0.4rem 0.46rem;
-    font-size: 0.66rem;
-    line-height: 1.25;
-  }
-
-  .ot-expanded-grid-row.is-head > div {
-    font-size: 0.62rem;
-  }
-}
-
-/* Main table compact styles */
-:deep(.ot-approval-table .p-column-header-content) {
-  width: max-content;
-  white-space: nowrap;
-}
-
-:deep(.ot-approval-table .p-row-toggler) {
-  width: 1.75rem !important;
-  height: 1.75rem !important;
-}
-
-:deep(.ot-approval-table .p-checkbox) {
-  width: 1rem !important;
-  height: 1rem !important;
-}
-
-:deep(.ot-approval-table .p-checkbox-box) {
-  width: 1rem !important;
-  height: 1rem !important;
-}
-
 .requester-cell,
 .ot-option-cell {
   min-width: max-content;
@@ -1990,45 +1975,37 @@ onBeforeUnmount(() => {
 .approval-status-cell {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
-  flex-wrap: nowrap;
-  white-space: nowrap;
+  min-width: 0;
 }
 
 .action-row {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
+  justify-content: flex-end;
+  gap: 0.4rem;
   flex-wrap: nowrap;
   white-space: nowrap;
 }
 
-:deep(.ot-approval-table .p-button.p-button-sm),
-:deep(.action-btn.p-button) {
-  min-height: 1.85rem !important;
-  padding: 0.3rem 0.52rem !important;
-  border-radius: 0.55rem !important;
-  font-size: 0.74rem !important;
+:deep(.ot-approval-table .p-button.p-button-sm) {
+  padding: 0.34rem 0.58rem !important;
+  font-size: 0.78rem !important;
 }
 
-:deep(.ot-approval-table .p-button.p-button-sm .p-button-icon),
-:deep(.action-btn .p-button-icon) {
-  font-size: 0.72rem !important;
-}
-
-:deep(.action-btn .p-button-label) {
-  font-weight: 500 !important;
+:deep(.ot-approval-table .p-button.p-button-sm .p-button-icon) {
+  font-size: 0.78rem !important;
 }
 
 :deep(.ot-approval-table .p-tag.ot-status-tag),
-:deep(.p-tag.ot-status-tag) {
+:deep(.ot-decision-dialog .p-tag.ot-status-tag),
+:deep(.ot-bulk-dialog .p-tag.ot-status-tag) {
   min-height: 1.35rem !important;
   padding: 0.12rem 0.48rem !important;
-  border: 1px solid transparent !important;
-  border-radius: 999px !important;
   font-size: 0.7rem !important;
   font-weight: 500 !important;
   line-height: 1 !important;
+  border-radius: 999px !important;
+  border: 1px solid transparent !important;
   white-space: nowrap !important;
 }
 
@@ -2042,39 +2019,27 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-/* Decision dialog */
-:deep(.ot-decision-dialog .p-dialog-header),
-:deep(.ot-bulk-dialog .p-dialog-header) {
-  border-bottom: 1px solid var(--ot-border);
-  padding: 0.9rem 1rem !important;
-}
-
-:deep(.ot-decision-dialog .p-dialog-content),
-:deep(.ot-bulk-dialog .p-dialog-content) {
-  background: var(--ot-bg) !important;
-  padding: 0.85rem !important;
-}
-
+/* Decision dialogs */
 .ot-decision-header {
   display: flex;
   width: 100%;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
 }
 
 .ot-decision-eyebrow {
-  font-size: 0.68rem;
-  font-weight: 500;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-size: 0.72rem;
+  font-weight: 700;
   color: var(--ot-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .ot-decision-title {
-  margin-top: 0.12rem;
+  margin-top: 0.15rem;
   font-size: 1rem;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--ot-text);
 }
 
@@ -2085,400 +2050,93 @@ onBeforeUnmount(() => {
   gap: 0.35rem;
 }
 
-.ot-decision-body {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.ot-decision-summary {
-  border: 1px solid var(--ot-border);
-  border-radius: 1rem;
-  background: var(--ot-surface);
-  padding: 0.8rem;
-}
-
-.ot-summary-main {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.75rem;
-  border-bottom: 1px solid var(--ot-border);
-  padding-bottom: 0.65rem;
-}
-
-.ot-summary-request-no {
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: var(--ot-text);
-}
-
-.ot-summary-owner {
-  text-align: right;
-  font-size: 0.82rem;
-  font-weight: 500;
-  color: var(--ot-text);
-}
-
-.ot-summary-owner span {
-  display: block;
-  margin-top: 0.08rem;
-  font-size: 0.72rem;
-  font-weight: 500;
-  color: var(--ot-text-muted);
-}
-
-.ot-summary-grid {
+.ot-decision-body,
+.ot-bulk-body {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 0.5rem;
-  margin-top: 0.65rem;
-}
-
-.ot-summary-item {
-  min-width: 0;
-  border: 1px solid var(--ot-border);
-  border-radius: 0.75rem;
-  background: var(--ot-bg);
-  padding: 0.55rem 0.65rem;
-}
-
-.ot-summary-item span {
-  display: block;
-  font-size: 0.66rem;
-  font-weight: 500;
-  color: var(--ot-text-muted);
-}
-
-.ot-summary-item strong {
-  display: block;
-  overflow: hidden;
-  margin-top: 0.15rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.78rem;
-  font-weight: 600;
-  color: var(--ot-text);
-}
-
-.ot-summary-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-  margin-top: 0.65rem;
-}
-
-.ot-adjust-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  border: 1px solid var(--ot-border);
-  border-radius: 1rem;
-  background: var(--ot-surface);
-  padding: 0.75rem 0.85rem;
-}
-
-.ot-adjust-title {
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--ot-text);
-}
-
-.ot-adjust-help {
-  margin-top: 0.12rem;
-  font-size: 0.74rem;
-  font-weight: 500;
-  color: var(--ot-text-muted);
-}
-
-.ot-adjust-split {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 0.75rem;
-  align-items: flex-start;
-}
-
-.ot-adjust-panel {
-  min-width: 0;
-  overflow: hidden;
-  border: 1px solid var(--ot-border);
-  border-radius: 1rem;
-  background: var(--ot-surface);
-  padding: 0.75rem;
-}
-
-.ot-adjust-panel.is-allowed {
-  border-color: color-mix(in srgb, #22c55e 34%, var(--ot-border));
-  background:
-    linear-gradient(135deg, rgba(34, 197, 94, 0.08), transparent),
-    var(--ot-surface);
-}
-
-.ot-adjust-panel.is-removed {
-  border-color: color-mix(in srgb, #f59e0b 45%, var(--ot-border));
-  background:
-    linear-gradient(135deg, rgba(245, 158, 11, 0.08), transparent),
-    var(--ot-surface);
-}
-
-.ot-adjust-panel-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.75rem;
-  border-bottom: 1px solid var(--ot-border);
-  padding-bottom: 0.6rem;
-}
-
-.ot-panel-title {
-  display: flex;
-  align-items: center;
-  gap: 0.38rem;
-  font-size: 0.84rem;
-  font-weight: 600;
-  color: var(--ot-text);
-}
-
-.ot-panel-title i {
-  font-size: 0.78rem;
-  color: var(--ot-text-muted);
-}
-
-.ot-adjust-panel-header p {
-  margin-top: 0.12rem;
-  font-size: 0.7rem;
-  font-weight: 500;
-  color: var(--ot-text-muted);
-}
-
-.ot-adjust-card-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
-  gap: 0.5rem;
-  margin-top: 0.65rem;
-  max-height: 22rem;
-  overflow: auto;
-  padding-right: 0.15rem;
-}
-
-.ot-adjust-card {
-  position: relative;
-  min-height: 7.2rem;
-  cursor: pointer;
-  border: 1px solid var(--ot-border);
-  border-radius: 0.85rem;
-  background: var(--ot-surface);
-  padding: 0.62rem 0.62rem 0.58rem;
-  text-align: left;
-  transition:
-    border-color 0.15s ease,
-    background 0.15s ease,
-    transform 0.15s ease,
-    box-shadow 0.15s ease;
-}
-
-.ot-adjust-card:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
-}
-
-.ot-adjust-card:disabled {
-  cursor: not-allowed;
-  opacity: 0.7;
-}
-
-.ot-adjust-card.is-allowed {
-  border-color: color-mix(in srgb, #22c55e 40%, var(--ot-border));
-}
-
-.ot-adjust-card.is-removed {
-  border-color: color-mix(in srgb, #f59e0b 45%, var(--ot-border));
-}
-
-.ot-adjust-card-icon {
-  position: absolute;
-  top: 0.52rem;
-  right: 0.52rem;
-  display: inline-flex;
-  width: 1.35rem;
-  height: 1.35rem;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  font-size: 0.62rem;
-}
-
-.ot-adjust-card.is-allowed .ot-adjust-card-icon {
-  background: rgba(34, 197, 94, 0.15);
-  color: #16a34a;
-}
-
-.ot-adjust-card.is-removed .ot-adjust-card-icon {
-  background: rgba(245, 158, 11, 0.18);
-  color: #b45309;
-}
-
-.ot-adjust-card-main {
-  display: block;
-  min-width: 0;
-  padding-right: 1.6rem;
-}
-
-.ot-adjust-card-main strong {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: var(--ot-text);
-}
-
-.ot-adjust-card-main em {
-  display: block;
-  margin-top: 0.12rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.68rem;
-  font-style: normal;
-  font-weight: 500;
-  color: var(--ot-text-muted);
-}
-
-.ot-adjust-card-meta {
-  display: block;
-  overflow: hidden;
-  margin-top: 0.22rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.68rem;
-  font-weight: 500;
-  color: var(--ot-text-muted);
-}
-
-.ot-adjust-card-action {
-  display: inline-flex;
-  margin-top: 0.48rem;
-  border-radius: 999px;
-  padding: 0.16rem 0.42rem;
-  font-size: 0.62rem;
-  font-weight: 600;
-}
-
-.ot-adjust-card.is-allowed .ot-adjust-card-action {
-  background: rgba(245, 158, 11, 0.12);
-  color: #b45309;
-}
-
-.ot-adjust-card.is-removed .ot-adjust-card-action {
-  background: rgba(34, 197, 94, 0.12);
-  color: #15803d;
-}
-
-.ot-adjust-empty {
-  display: flex;
-  min-height: 12rem;
-  align-items: center;
-  justify-content: center;
-  margin-top: 0.65rem;
-  border: 1px dashed var(--ot-border);
-  border-radius: 0.85rem;
-  padding: 1rem;
-  text-align: center;
-  font-size: 0.78rem;
-  font-weight: 500;
-  color: var(--ot-text-muted);
+  gap: 1rem;
 }
 
 .ot-confirm-box {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
+  display: flex;
+  align-items: flex-start;
   gap: 0.75rem;
-  border: 1px solid color-mix(in srgb, #22c55e 36%, var(--ot-border));
+  border: 1px solid var(--ot-border);
   border-radius: 1rem;
-  background:
-    linear-gradient(135deg, rgba(34, 197, 94, 0.1), transparent),
-    var(--ot-surface);
-  padding: 0.85rem;
+  background: var(--ot-surface-2);
+  padding: 1rem;
 }
 
 .ot-confirm-icon {
-  display: inline-flex;
+  display: flex;
   width: 2.25rem;
   height: 2.25rem;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  background: rgba(34, 197, 94, 0.14);
-  color: #16a34a;
-  font-size: 1rem;
+  background: var(--ot-primary-soft);
+  color: var(--ot-primary);
 }
 
 .ot-confirm-title {
   font-size: 0.95rem;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--ot-text);
 }
 
 .ot-confirm-help {
-  margin-top: 0.12rem;
-  font-size: 0.76rem;
-  font-weight: 500;
+  margin-top: 0.25rem;
+  font-size: 0.82rem;
   color: var(--ot-text-muted);
 }
 
 .ot-confirm-info-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 0.55rem;
+  gap: 0.75rem;
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+}
+
+@media (min-width: 640px) {
+  .ot-confirm-info-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .ot-confirm-info-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 .ot-confirm-info-item {
-  min-width: 0;
   border: 1px solid var(--ot-border);
   border-radius: 0.85rem;
   background: var(--ot-surface);
-  padding: 0.7rem 0.75rem;
+  padding: 0.75rem;
 }
 
 .ot-confirm-info-item span {
   display: block;
-  margin-bottom: 0.2rem;
-  font-size: 0.68rem;
-  font-weight: 600;
+  font-size: 0.72rem;
+  font-weight: 700;
   color: var(--ot-text-muted);
 }
 
 .ot-confirm-info-item strong {
   display: block;
-  font-size: 0.82rem;
-  font-weight: 600;
+  margin-top: 0.2rem;
+  font-size: 0.86rem;
   color: var(--ot-text);
-  line-height: 1.3;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
-:global(.dark) .ot-confirm-icon {
-  background: rgba(34, 197, 94, 0.2);
-  color: #86efac;
 }
 
 .ot-remark-box {
-  border: 1px solid var(--ot-border);
-  border-radius: 1rem;
-  background: var(--ot-surface);
-  padding: 0.8rem;
+  display: grid;
+  gap: 0.45rem;
 }
 
 .ot-remark-label {
-  display: block;
-  margin-bottom: 0.45rem;
-  font-size: 0.82rem;
-  font-weight: 600;
+  font-size: 0.8rem;
+  font-weight: 700;
   color: var(--ot-text);
 }
 
@@ -2488,67 +2146,33 @@ onBeforeUnmount(() => {
   gap: 0.5rem;
 }
 
-/* Bulk dialog */
-.ot-bulk-body {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
 .ot-bulk-warning {
-  border: 1px solid color-mix(in srgb, #f59e0b 42%, var(--ot-border));
+  border: 1px solid color-mix(in srgb, var(--ot-warning) 35%, transparent);
   border-radius: 0.9rem;
-  background: rgba(245, 158, 11, 0.08);
-  padding: 0.7rem 0.8rem;
-  font-size: 0.78rem;
-  font-weight: 500;
-  color: var(--ot-text);
-}
-
-.ot-bulk-list {
-  display: grid;
-  gap: 0.45rem;
-  max-height: 18rem;
-  overflow: auto;
-}
-
-.ot-bulk-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  border: 1px solid var(--ot-border);
-  border-radius: 0.85rem;
-  background: var(--ot-surface);
-  padding: 0.62rem 0.7rem;
-}
-
-.ot-bulk-item strong {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.82rem;
+  background: var(--ot-warning-soft);
+  padding: 0.85rem;
+  font-size: 0.85rem;
   font-weight: 600;
-  color: var(--ot-text);
+  color: var(--ot-warning);
 }
 
-.ot-bulk-item span {
-  display: block;
-  margin-top: 0.1rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.7rem;
-  font-weight: 500;
-  color: var(--ot-text-muted);
+/* Count colors */
+:deep(.p-tag.ot-count-requested) {
+  background: #f1f5f9 !important;
+  color: #475569 !important;
+  border-color: #cbd5e1 !important;
+}
+
+:deep(.p-tag.ot-count-approved),
+:deep(.p-tag.ot-status-approved) {
+  background: #dcfce7 !important;
+  color: #166534 !important;
+  border-color: #22c55e !important;
 }
 
 /* Status colors */
 :deep(.p-tag.ot-status-pending),
-:deep(.p-tag.ot-status-pending-requester-confirmation),
-:deep(.p-tag.ot-approval-waiting),
-:deep(.p-tag.ot-approval-requester-confirmation) {
+:deep(.p-tag.ot-approval-waiting) {
   background: #fef3c7 !important;
   color: #92400e !important;
   border-color: #f59e0b !important;
@@ -2596,115 +2220,72 @@ onBeforeUnmount(() => {
   border-color: #ef4444 !important;
 }
 
-/* Paid total color */
-:deep(.p-tag.ot-paid-tag) {
-  background: #dcfce7 !important;
-  color: #166534 !important;
-  border-color: #22c55e !important;
-}
-
-/* Count colors */
-:deep(.p-tag.ot-count-requested) {
-  background: #f1f5f9 !important;
-  color: #334155 !important;
-  border-color: #cbd5e1 !important;
-}
-
-:deep(.p-tag.ot-count-approved) {
-  background: #e0f2fe !important;
-  color: #075985 !important;
-  border-color: #38bdf8 !important;
-}
-
-/* Dark mode */
-:global(.dark) :deep(.p-tag.ot-paid-tag) {
-  background: rgba(34, 197, 94, 0.18) !important;
-  color: #86efac !important;
-  border-color: rgba(34, 197, 94, 0.45) !important;
-}
-
-:global(.dark) :deep(.p-tag.ot-status-pending),
-:global(.dark) :deep(.p-tag.ot-status-pending-requester-confirmation),
-:global(.dark) :deep(.p-tag.ot-approval-waiting),
-:global(.dark) :deep(.p-tag.ot-approval-requester-confirmation) {
-  background: rgba(245, 158, 11, 0.2) !important;
-  color: #fbbf24 !important;
-  border-color: rgba(245, 158, 11, 0.45) !important;
-}
-
-:global(.dark) :deep(.p-tag.ot-status-approved),
-:global(.dark) :deep(.p-tag.ot-approval-approved) {
-  background: rgba(34, 197, 94, 0.18) !important;
-  color: #86efac !important;
-  border-color: rgba(34, 197, 94, 0.45) !important;
-}
-
-:global(.dark) :deep(.p-tag.ot-status-rejected),
-:global(.dark) :deep(.p-tag.ot-status-requester-disagreed),
-:global(.dark) :deep(.p-tag.ot-approval-rejected),
-:global(.dark) :deep(.p-tag.ot-approval-requester-disagreed) {
-  background: rgba(239, 68, 68, 0.18) !important;
-  color: #fca5a5 !important;
-  border-color: rgba(239, 68, 68, 0.45) !important;
-}
-
-:global(.dark) :deep(.p-tag.ot-status-cancelled),
-:global(.dark) :deep(.p-tag.ot-approval-cancelled) {
-  background: rgba(148, 163, 184, 0.18) !important;
-  color: #cbd5e1 !important;
-  border-color: rgba(148, 163, 184, 0.45) !important;
-}
-
-:global(.dark) :deep(.p-tag.ot-day-working-day) {
-  background: rgba(34, 197, 94, 0.18) !important;
-  color: #86efac !important;
-  border-color: rgba(34, 197, 94, 0.45) !important;
-}
-
-:global(.dark) :deep(.p-tag.ot-day-sunday) {
-  background: rgba(249, 115, 22, 0.18) !important;
-  color: #fdba74 !important;
-  border-color: rgba(249, 115, 22, 0.45) !important;
-}
-
-:global(.dark) :deep(.p-tag.ot-day-holiday) {
-  background: rgba(239, 68, 68, 0.18) !important;
-  color: #fca5a5 !important;
-  border-color: rgba(239, 68, 68, 0.45) !important;
-}
-
-:global(.dark) :deep(.p-tag.ot-count-requested) {
-  background: rgba(148, 163, 184, 0.14) !important;
-  color: #cbd5e1 !important;
-  border-color: rgba(148, 163, 184, 0.35) !important;
-}
-
-:global(.dark) :deep(.p-tag.ot-count-approved) {
-  background: rgba(14, 165, 233, 0.18) !important;
-  color: #7dd3fc !important;
-  border-color: rgba(14, 165, 233, 0.45) !important;
-}
-
-:global(.dark) .ot-mobile-no {
-  background: rgba(59, 130, 246, 0.2);
-  color: #93c5fd;
-}
-
-:global(.dark) .ot-adjust-card:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.22);
-}
-
 @media (max-width: 1200px) {
-  .ot-summary-grid,
-  .ot-confirm-info-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+  .ot-expanded-box {
+    width: min(100%, 1120px);
+  }
+
+  .ot-expanded-grid-row > div {
+    padding: 0.42rem 0.46rem;
+    font-size: 0.68rem;
   }
 }
 
-@media (max-width: 520px) {
-  .ot-summary-grid,
-  .ot-confirm-info-grid {
-    grid-template-columns: 1fr;
+@media (max-width: 768px) {
+  .ot-expanded-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ot-expanded-box {
+    width: max-content;
+    min-width: 1080px;
+    max-width: none;
+    padding: 0.6rem;
+  }
+
+  .ot-expanded-content {
+    width: max-content;
+    min-width: 1080px;
+    max-width: none;
+    overflow: visible;
+  }
+
+  .ot-expanded-responsive-table {
+    width: max-content;
+    min-width: 1080px;
+    max-width: none;
+    overflow: visible;
+  }
+
+  .ot-expanded-grid-row {
+    grid-template-columns:
+      2.4rem
+      5.8rem
+      8.8rem
+      8.2rem
+      7.4rem
+      4.8rem
+      5.4rem
+      5.4rem
+      8.5rem
+      9.5rem;
+  }
+
+  .ot-expanded-grid-row > div {
+    padding: 0.42rem 0.5rem;
+    font-size: 0.68rem;
+    line-height: 1.25;
+  }
+
+  .ot-expanded-grid-row.is-head > div {
+    font-size: 0.64rem;
+  }
+
+  .cell-wrap {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 }
 </style>

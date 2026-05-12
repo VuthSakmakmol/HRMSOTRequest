@@ -1,5 +1,6 @@
 /* frontend/src/shared/styles.css */
 @import "tailwindcss";
+@import url("https://fonts.googleapis.com/css2?family=Kantumruy+Pro:wght@300;400;500;600;700;800&display=swap");
 
 /* =========================================================
    OTRequest_v2 - Shared Styles Baseline
@@ -13,6 +14,12 @@
 
 :root {
   color-scheme: light;
+
+  /* Fonts */
+  --ot-font-en: "Arial Nova", Arial, sans-serif;
+  --ot-font-km: "Kantumruy Pro", "Noto Sans Khmer", sans-serif;
+  --ot-font-th: "Arial Nova", Arial, sans-serif;
+  --ot-font-main: var(--ot-font-en);
 
   /* Brand palette */
   --ot-blue: #81A6C6;
@@ -100,6 +107,18 @@
   --ot-shadow-lg: 0 22px 50px rgba(0, 0, 0, 0.35);
 }
 
+html[data-app-lang="en"] {
+  --ot-font-main: var(--ot-font-en);
+}
+
+html[data-app-lang="km"] {
+  --ot-font-main: var(--ot-font-km);
+}
+
+html[data-app-lang="th"] {
+  --ot-font-main: var(--ot-font-th);
+}
+
 /* =========================================================
    Base
    ========================================================= */
@@ -120,15 +139,7 @@ html {
 body {
   min-height: 100vh;
   margin: 0;
-  font-family:
-    Inter,
-    "Be Vietnam Pro",
-    "Manrope",
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
+  font-family: var(--ot-font-main);
   background:
     radial-gradient(circle at top left, rgba(170, 205, 220, 0.24), transparent 32%),
     radial-gradient(circle at top right, rgba(243, 227, 208, 0.3), transparent 28%),
@@ -138,6 +149,7 @@ body {
 
 #app {
   min-height: 100vh;
+  font-family: var(--ot-font-main);
 }
 
 button,
@@ -210,41 +222,6 @@ svg {
   min-width: 0;
   flex-direction: column;
   gap: 1rem;
-}
-
-.ot-page-header {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 0.9rem;
-  border: 1px solid var(--ot-border);
-  border-radius: 24px;
-  padding: 1rem;
-  background:
-    radial-gradient(circle at top left, rgba(170, 205, 220, 0.42), transparent 32%),
-    radial-gradient(circle at bottom right, rgba(243, 227, 208, 0.4), transparent 28%),
-    linear-gradient(135deg, rgba(129, 166, 198, 0.18), rgba(255, 255, 255, 0.58));
-  box-shadow: var(--ot-shadow-sm);
-}
-
-.dark .ot-page-header {
-  background:
-    radial-gradient(circle at top left, rgba(170, 205, 220, 0.16), transparent 32%),
-    radial-gradient(circle at bottom right, rgba(243, 227, 208, 0.11), transparent 28%),
-    linear-gradient(135deg, rgba(22, 33, 48, 0.96), rgba(27, 40, 56, 0.9));
-}
-
-@media (min-width: 768px) {
-  .ot-page-header {
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
-    padding: 1.15rem 1.25rem;
-  }
-}
-
-.ot-page-header-main {
-  min-width: 0;
 }
 
 .ot-page-kicker {
@@ -485,7 +462,7 @@ svg {
 .ot-field-label {
   display: block;
   margin-bottom: 0.35rem;
-  font-size: 0.74rem;
+  font-size: 0.84rem;
   font-weight: 700;
   color: var(--ot-text-soft);
 }
@@ -508,6 +485,39 @@ svg {
   .ot-filter-actions > * {
     flex: 1 1 auto;
   }
+}
+
+/* =========================================================
+   Global Frozen Action Column
+   Use with:
+   <Column frozen alignFrozen="right" headerClass="ot-action-column-header" bodyClass="ot-action-column-body">
+   ========================================================= */
+
+.ot-data-table .p-datatable-thead > tr > th.ot-action-column-header,
+.ot-data-table .p-datatable-tbody > tr > td.ot-action-column-body {
+  position: sticky !important;
+  right: 0 !important;
+  z-index: 9 !important;
+  width: 7.5rem !important;
+  min-width: 7.5rem !important;
+  max-width: 7.5rem !important;
+  background: var(--ot-surface) !important;
+  box-shadow: -8px 0 18px rgba(15, 23, 42, 0.06) !important;
+}
+
+.ot-data-table .p-datatable-thead > tr > th.ot-action-column-header {
+  z-index: 11 !important;
+  background: linear-gradient(180deg, var(--ot-surface-2), var(--ot-surface-3)) !important;
+}
+
+.dark .ot-data-table .p-datatable-thead > tr > th.ot-action-column-header,
+.dark .ot-data-table .p-datatable-tbody > tr > td.ot-action-column-body {
+  box-shadow: -8px 0 18px rgba(0, 0, 0, 0.22) !important;
+}
+
+.ot-action-column-body .ot-row-actions {
+  width: 100%;
+  justify-content: flex-end;
 }
 
 /* =========================================================
@@ -1026,16 +1036,30 @@ svg {
    Keep PrimeVue look, only refine with project palette.
    ========================================================= */
 
-.p-component {
-  font-family:
-    Inter,
-    "Be Vietnam Pro",
-    "Manrope",
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
+.p-component,
+.p-inputtext,
+.p-button,
+.p-select,
+.p-multiselect,
+.p-datepicker,
+.p-datepicker-input,
+.p-password-input,
+.p-inputnumber,
+.p-inputnumber-input,
+.p-textarea,
+.p-dialog,
+.p-datatable,
+.p-toast,
+.p-menu,
+.p-menubar,
+.p-popover,
+.p-overlaypanel,
+.p-tieredmenu,
+.p-panel,
+.p-card,
+.p-drawer,
+.p-panelmenu {
+  font-family: var(--ot-font-main) !important;
 }
 
 .p-inputtext,

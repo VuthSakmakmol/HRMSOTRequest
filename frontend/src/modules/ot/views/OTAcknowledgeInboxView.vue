@@ -3,6 +3,7 @@
 // frontend/src/modules/ot/views/OTAcknowledgeInboxView.vue
 
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
@@ -18,6 +19,7 @@ import Tag from 'primevue/tag'
 import { getOTAcknowledgementInbox } from '@/modules/ot/ot.api'
 import AppTableLoading from '@/shared/components/AppTableLoading.vue'
 
+const { t } = useI18n()
 const toast = useToast()
 
 const PAGE_SIZE = 10
@@ -39,24 +41,30 @@ const filters = reactive({
   otDateTo: null,
 })
 
-const statusOptions = [
-  { label: 'All Status', value: '' },
-  { label: 'Pending', value: 'PENDING' },
-  { label: 'Approved', value: 'APPROVED' },
-  { label: 'Rejected', value: 'REJECTED' },
-  { label: 'Cancelled', value: 'CANCELLED' },
-]
+const statusOptions = computed(() => [
+  { label: t('common.allStatus'), value: '' },
+  { label: t('ot.status.pending'), value: 'PENDING' },
+  { label: t('ot.status.approved'), value: 'APPROVED' },
+  { label: t('ot.status.rejected'), value: 'REJECTED' },
+  { label: t('ot.status.cancelled'), value: 'CANCELLED' },
+])
 
-const dayTypeOptions = [
-  { label: 'All Day Types', value: '' },
-  { label: 'Working Day', value: 'WORKING_DAY' },
-  { label: 'Sunday', value: 'SUNDAY' },
-  { label: 'Holiday', value: 'HOLIDAY' },
-]
+const dayTypeOptions = computed(() => [
+  { label: t('ot.requests.allDayTypes'), value: '' },
+  { label: t('ot.dayType.workingDay'), value: 'WORKING_DAY' },
+  { label: t('ot.dayType.sunday'), value: 'SUNDAY' },
+  { label: t('ot.dayType.holiday'), value: 'HOLIDAY' },
+])
 
 const totalRequests = computed(() => Number(totalRecords.value || 0))
 const loadedCount = computed(() => rows.value.filter(Boolean).length)
-const summaryText = computed(() => `${loadedCount.value} of ${totalRequests.value}`)
+const summaryText = computed(() =>
+  t('common.loaded', {
+    loaded: loadedCount.value,
+    total: totalRequests.value,
+  }),
+)
+
 const hasAnyData = computed(() => rows.value.some(Boolean))
 const useVirtualScroll = computed(() => totalRequests.value > PAGE_SIZE)
 const firstLoading = computed(() => {
@@ -100,13 +108,22 @@ function firstText(...values) {
   return ''
 }
 
-function errorMessage(error, fallback = 'Something went wrong') {
+function errorMessage(error, fallback = '') {
   return (
     error?.response?.data?.message ||
+    error?.response?.data?.messageKey ||
     error?.response?.data?.error ||
     error?.message ||
-    fallback
+    fallback ||
+    t('common.somethingWentWrong')
   )
+}
+
+function translateBackendKey(key, fallback = '-') {
+  const value = String(key || '').trim()
+  if (!value) return fallback
+
+  return t(value)
 }
 
 function formatDateYMD(value) {
@@ -182,11 +199,23 @@ function normalizeClassKey(value) {
 function normalizeDisplayStatus(value) {
   const status = upper(value)
 
-  // Old requester-confirmation flow removed from UI.
   if (status === 'PENDING_REQUESTER_CONFIRMATION') return 'PENDING'
   if (status === 'REQUESTER_DISAGREED') return 'REJECTED'
 
   return status
+}
+
+function statusLabel(value, key = '') {
+  if (key) return translateBackendKey(key, value || '-')
+
+  const status = normalizeDisplayStatus(value)
+
+  if (status === 'PENDING') return t('ot.status.pending')
+  if (status === 'APPROVED') return t('ot.status.approved')
+  if (status === 'REJECTED') return t('ot.status.rejected')
+  if (status === 'CANCELLED') return t('ot.status.cancelled')
+
+  return status || t('common.unknown')
 }
 
 function statusSeverity(value) {
@@ -198,6 +227,18 @@ function statusSeverity(value) {
   if (status === 'PENDING') return 'warning'
 
   return 'secondary'
+}
+
+function dayTypeLabel(value, key = '') {
+  if (key) return translateBackendKey(key, value || '-')
+
+  const dayType = upper(value)
+
+  if (dayType === 'HOLIDAY') return t('ot.dayType.holiday')
+  if (dayType === 'SUNDAY') return t('ot.dayType.sunday')
+  if (dayType === 'WORKING_DAY') return t('ot.dayType.workingDay')
+
+  return dayType || t('common.unknown')
 }
 
 function dayTypeSeverity(value) {
@@ -218,6 +259,18 @@ function statusClass(value) {
   return `ot-status-${normalizeClassKey(normalizeDisplayStatus(value) || 'unknown')}`
 }
 
+function acknowledgementLabel(row) {
+  if (row?.acknowledgementKey) {
+    return translateBackendKey(row.acknowledgementKey, row?.acknowledgementLabel || 'FYI')
+  }
+
+  return row?.acknowledgementLabel || t('ot.acknowledge.fyi')
+}
+
+function acknowledgementSeverity(row) {
+  return row?.acknowledgementSeverity || 'info'
+}
+
 function formatRequester(row) {
   const name = String(
     row?.requesterName ||
@@ -229,6 +282,7 @@ function formatRequester(row) {
 
   const employeeNo = String(
     row?.requesterEmployeeNo ||
+      row?.requesterEmployeeCode ||
       row?.createdByEmployeeNo ||
       row?.employeeNo ||
       '',
@@ -279,32 +333,38 @@ function employeeIdOf(employee) {
 }
 
 function employeeNameOf(employee) {
-  return String(
-    employee?.employeeName ||
-      employee?.displayName ||
-      employee?.name ||
-      employee?.fullName ||
-      '-',
-  ).trim() || '-'
+  return (
+    String(
+      employee?.employeeName ||
+        employee?.displayName ||
+        employee?.name ||
+        employee?.fullName ||
+        '-',
+    ).trim() || '-'
+  )
 }
 
 function employeeCodeOf(employee) {
-  return String(
-    employee?.employeeCode ||
-      employee?.employeeNo ||
-      employee?.code ||
-      employee?.loginId ||
-      '-',
-  ).trim() || '-'
+  return (
+    String(
+      employee?.employeeCode ||
+        employee?.employeeNo ||
+        employee?.code ||
+        employee?.loginId ||
+        '-',
+    ).trim() || '-'
+  )
 }
 
 function employeePositionOf(employee) {
-  return String(
-    employee?.positionName ||
-      employee?.position?.name ||
-      employee?.positionTitle ||
-      '-',
-  ).trim() || '-'
+  return (
+    String(
+      employee?.positionName ||
+        employee?.position?.name ||
+        employee?.positionTitle ||
+        '-',
+    ).trim() || '-'
+  )
 }
 
 function employeeLineOf(employee, row = null) {
@@ -362,7 +422,7 @@ function employeeLineOf(employee, row = null) {
   if (code) return code
   if (name) return name
 
-  const fallback = firstText(
+  return firstText(
     employee?.lineNo,
     employee?.lineNumber,
     employee?.productionLineNo,
@@ -370,8 +430,6 @@ function employeeLineOf(employee, row = null) {
     employee?.line,
     employee?.productionLine,
   )
-
-  return fallback
 }
 
 function employeeOtTimeOf(employee, row) {
@@ -436,29 +494,32 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
         rows.value = Array.from({ length: total }, () => null)
       }
 
+      const nextRows = [...rows.value]
       const startIndex = (page - 1) * PAGE_SIZE
 
       for (let i = 0; i < items.length; i += 1) {
-        rows.value[startIndex + i] = items[i]
+        nextRows[startIndex + i] = items[i]
       }
 
+      rows.value = nextRows
       loadedPages.value.add(page)
     }
 
     bootstrapped.value = true
-  }catch (error) {
+  } catch (error) {
     bootstrapped.value = true
 
     toast.add({
       severity: 'error',
-      summary: 'Load failed',
-      detail: errorMessage(error, 'Failed to load acknowledgement inbox'),
+      summary: t('common.loadFailed'),
+      detail: errorMessage(error, t('ot.acknowledge.loadFailed')),
       life: 3000,
     })
   } finally {
     backgroundLoading.value = false
   }
 }
+
 async function reloadFirstPage({ keepVisible = true, resetExpanded = false } = {}) {
   if (resetExpanded) {
     expandedRows.value = {}
@@ -468,6 +529,7 @@ async function reloadFirstPage({ keepVisible = true, resetExpanded = false } = {
     rows.value = []
     totalRecords.value = 0
     loadedPages.value = new Set()
+    bootstrapped.value = false
   }
 
   await fetchPage(1, {
@@ -539,13 +601,13 @@ onBeforeUnmount(() => {
   <div class="flex flex-col gap-4">
     <div class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]">
       <div class="border-b border-[color:var(--ot-border)] px-3 py-3">
-        <div class="flex flex-col gap-2 xl:flex-row xl:items-center">
+        <div class="ot-ack-filter-row">
           <IconField class="w-full xl:w-[200px] xl:shrink-0">
             <InputIcon class="pi pi-search" />
 
             <InputText
               v-model="filters.search"
-              placeholder="Search"
+              :placeholder="t('common.search')"
               class="w-full"
               size="small"
               @input="onSearchInput"
@@ -558,7 +620,7 @@ onBeforeUnmount(() => {
               :options="statusOptions"
               optionLabel="label"
               optionValue="value"
-              placeholder="Status"
+              :placeholder="t('common.status')"
               class="w-full"
               size="small"
               @change="onStatusChange"
@@ -571,7 +633,7 @@ onBeforeUnmount(() => {
               :options="dayTypeOptions"
               optionLabel="label"
               optionValue="value"
-              placeholder="Day Type"
+              :placeholder="t('ot.requests.dayType')"
               class="w-full"
               size="small"
               @change="onDayTypeChange"
@@ -586,7 +648,7 @@ onBeforeUnmount(() => {
               showButtonBar
               class="w-full"
               inputClass="w-full"
-              placeholder="OT Date From"
+              :placeholder="t('ot.requests.otDateFrom')"
               @date-select="onDateChange"
               @clear-click="onDateChange"
             />
@@ -600,19 +662,19 @@ onBeforeUnmount(() => {
               showButtonBar
               class="w-full"
               inputClass="w-full"
-              placeholder="OT Date To"
+              :placeholder="t('ot.requests.otDateTo')"
               @date-select="onDateChange"
               @clear-click="onDateChange"
             />
           </div>
 
-          <div class="flex items-center gap-2 xl:ml-auto xl:shrink-0">
+          <div class="flex flex-wrap items-center gap-2 xl:ml-auto xl:shrink-0">
             <div class="rounded-lg border border-[color:var(--ot-border)] px-3 py-1.5 text-xs font-medium text-[color:var(--ot-text-muted)]">
-              Loaded {{ summaryText }}
+              {{ summaryText }}
             </div>
 
             <Button
-              label="Clear"
+              :label="t('common.clear')"
               icon="pi pi-refresh"
               severity="secondary"
               outlined
@@ -624,45 +686,48 @@ onBeforeUnmount(() => {
       </div>
 
       <AppTableLoading
-          v-if="firstLoading"
-          title="Loading acknowledgement inbox"
-          message="Fetching acknowledgement OT requests..."
-          :rows="8"
-          :columns="8"
-        />
+        v-if="firstLoading"
+        :title="t('ot.acknowledge.loading')"
+        :message="t('ot.acknowledge.fetchingRecords')"
+        :rows="8"
+        :columns="8"
+      />
 
-        <DataTable
-          v-else
-          v-model:expandedRows="expandedRows"
-          :value="rows"
-          dataKey="id"
-          lazy
-          scrollable
-          scrollHeight="500px"
-          tableStyle="width: max-content; min-width: 100%; table-layout: auto;"
-          class="ot-ack-table"
-          :virtualScrollerOptions="useVirtualScroll ? {
-            lazy: true,
-            onLazyLoad: onVirtualLazyLoad,
-            itemSize: 64,
-            delay: 0,
-            showLoader: false,
-            loading: false,
-            numToleratedItems: 12,
-          } : null"
-        >
+      <DataTable
+        v-else
+        v-model:expandedRows="expandedRows"
+        :value="rows"
+        dataKey="id"
+        lazy
+        scrollable
+        scrollHeight="500px"
+        tableStyle="width: max-content; min-width: 100%; table-layout: auto;"
+        class="ot-ack-table"
+        :virtualScrollerOptions="useVirtualScroll ? {
+          lazy: true,
+          onLazyLoad: onVirtualLazyLoad,
+          itemSize: 64,
+          delay: 0,
+          showLoader: false,
+          loading: false,
+          numToleratedItems: 12,
+        } : null"
+      >
         <template #empty>
           <div
             v-if="bootstrapped"
             class="py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
           >
-            No acknowledgement requests found.
+            {{ t('ot.acknowledge.noData') }}
           </div>
         </template>
 
         <Column expander />
 
-        <Column field="requestNo" header="Request No">
+        <Column
+          field="requestNo"
+          :header="t('ot.requests.requestNo')"
+        >
           <template #body="{ data }">
             <span
               v-if="data"
@@ -673,9 +738,12 @@ onBeforeUnmount(() => {
           </template>
         </Column>
 
-        <Column header="Requester">
+        <Column :header="t('ot.requests.requester')">
           <template #body="{ data }">
-            <div v-if="data" class="requester-cell">
+            <div
+              v-if="data"
+              class="requester-cell"
+            >
               <div class="font-medium text-[color:var(--ot-text)]">
                 {{ formatRequester(data).name }}
               </div>
@@ -687,45 +755,55 @@ onBeforeUnmount(() => {
           </template>
         </Column>
 
-        <Column header="Acknowledgement">
+        <Column :header="t('ot.acknowledge.acknowledgement')">
           <template #body="{ data }">
             <Tag
               v-if="data"
-              :value="data.acknowledgementLabel || 'FYI'"
-              :severity="data.acknowledgementSeverity || 'info'"
+              :value="acknowledgementLabel(data)"
+              :severity="acknowledgementSeverity(data)"
               class="ot-status-tag ot-ack-tag"
             />
           </template>
         </Column>
 
-        <Column header="Staff">
+        <Column :header="t('ot.requests.staff')">
           <template #body="{ data }">
             <Tag
               v-if="data"
-              :value="`${getEmployeeCount(data)} staff`"
+              :value="t('ot.requests.staffCount', { count: getEmployeeCount(data) })"
               severity="info"
               class="ot-status-tag ot-count-approved"
             />
           </template>
         </Column>
 
-        <Column field="otDate" header="OT Date">
+        <Column
+          field="otDate"
+          :header="t('ot.requests.otDate')"
+        >
           <template #body="{ data }">
-            <span v-if="data">{{ formatDateDMY(data.otDate) }}</span>
+            <span v-if="data">
+              {{ formatDateDMY(data.otDate) }}
+            </span>
           </template>
         </Column>
 
-        <Column header="OT Time">
+        <Column :header="t('ot.requests.otTime')">
           <template #body="{ data }">
-            <span v-if="data">{{ formatTimeRange(data) }}</span>
+            <span v-if="data">
+              {{ formatTimeRange(data) }}
+            </span>
           </template>
         </Column>
 
-        <Column field="dayType" header="Day Type">
+        <Column
+          field="dayType"
+          :header="t('ot.requests.dayType')"
+        >
           <template #body="{ data }">
             <Tag
               v-if="data"
-              :value="data.dayType || '-'"
+              :value="dayTypeLabel(data.dayType, data.dayTypeKey)"
               :severity="dayTypeSeverity(data.dayType)"
               class="ot-status-tag"
               :class="dayTypeClass(data.dayType)"
@@ -733,11 +811,14 @@ onBeforeUnmount(() => {
           </template>
         </Column>
 
-        <Column field="status" header="Request Status">
+        <Column
+          field="status"
+          :header="t('ot.acknowledge.requestStatus')"
+        >
           <template #body="{ data }">
             <Tag
               v-if="data"
-              :value="normalizeDisplayStatus(data.status) || '-'"
+              :value="statusLabel(data.status, data.statusKey)"
               :severity="statusSeverity(data.status)"
               class="ot-status-tag"
               :class="statusClass(data.status)"
@@ -745,28 +826,44 @@ onBeforeUnmount(() => {
           </template>
         </Column>
 
-        <Column field="createdAt" header="Created At">
+        <Column
+          field="createdAt"
+          :header="t('common.createdAt')"
+        >
           <template #body="{ data }">
-            <span v-if="data">{{ formatDateTimeDMY(data.createdAt) }}</span>
+            <span v-if="data">
+              {{ formatDateTimeDMY(data.createdAt) }}
+            </span>
           </template>
         </Column>
 
         <template #expansion="{ data }">
           <div class="ot-expanded-box">
-
             <div
               v-if="getTargetEmployees(data).length"
               class="ot-expanded-content"
             >
               <div class="ot-expanded-responsive-table">
-              <div class="ot-expanded-grid-row is-head">
-                <div class="cell-center">No</div>
-                <div class="cell-center">ID</div>
-                <div>Name</div>
-                <div>Position</div>
-                <div class="cell-center">OT Time</div>
-                <div class="cell-center">Line</div>
-              </div>
+                <div class="ot-expanded-grid-row is-head">
+                  <div class="cell-center">
+                    {{ t('common.no') }}
+                  </div>
+                  <div class="cell-center">
+                    {{ t('ot.requests.employeeId') }}
+                  </div>
+                  <div>
+                    {{ t('common.name') }}
+                  </div>
+                  <div>
+                    {{ t('nav.positions') }}
+                  </div>
+                  <div class="cell-center">
+                    {{ t('ot.requests.otTime') }}
+                  </div>
+                  <div class="cell-center">
+                    {{ t('nav.lines') }}
+                  </div>
+                </div>
 
                 <div
                   v-for="(employee, index) in getTargetEmployees(data)"
@@ -800,8 +897,11 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
-            <div v-else class="ot-expanded-empty">
-              No employee data found for this request.
+            <div
+              v-else
+              class="ot-expanded-empty"
+            >
+              {{ t('ot.requests.noEmployeeData') }}
             </div>
           </div>
         </template>
@@ -811,13 +911,26 @@ onBeforeUnmount(() => {
         v-if="backgroundLoading && hasAnyData"
         class="flex items-center justify-center border-t border-[color:var(--ot-border)] px-3 py-2 text-xs text-[color:var(--ot-text-muted)]"
       >
-        Updating...
+        {{ t('common.updating') }}
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
+.ot-ack-filter-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+@media (min-width: 1280px) {
+  .ot-ack-filter-row {
+    flex-direction: row;
+    align-items: center;
+  }
+}
+
 :deep(.ot-ack-table .p-datatable-table) {
   width: max-content !important;
   min-width: 100% !important;
@@ -882,27 +995,6 @@ onBeforeUnmount(() => {
     linear-gradient(135deg, rgba(59, 130, 246, 0.05), transparent),
     var(--ot-bg);
   padding: 0.75rem;
-}
-
-.ot-expanded-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.75rem;
-  margin-bottom: 0.55rem;
-}
-
-.ot-expanded-title {
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: var(--ot-text);
-}
-
-.ot-expanded-subtitle {
-  margin-top: 0.08rem;
-  font-size: 0.68rem;
-  font-weight: 500;
-  color: var(--ot-text-muted);
 }
 
 .ot-expanded-content {
@@ -1111,11 +1203,6 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 768px) {
-  .ot-expanded-header {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
   .ot-expanded-box {
     width: max-content;
     min-width: 760px;

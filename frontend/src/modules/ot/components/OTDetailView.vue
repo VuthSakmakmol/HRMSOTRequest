@@ -3,6 +3,7 @@
 // frontend/src/modules/ot/components/OTDetailView.vue
 
 import { computed, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
@@ -63,23 +64,32 @@ const props = defineProps({
 })
 
 const toast = useToast()
+const { t, locale } = useI18n()
 
 const loadingCalendar = ref(false)
 const monthHolidayRows = ref([])
 const currentMonth = ref(getMonthStart(props.form.otDate || new Date()))
 
-const weekLabels = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
+const weekLabels = computed(() => [
+  t('calendar.holidayPicker.week.sun'),
+  t('calendar.holidayPicker.week.mon'),
+  t('calendar.holidayPicker.week.tue'),
+  t('calendar.holidayPicker.week.wed'),
+  t('calendar.holidayPicker.week.thu'),
+  t('calendar.holidayPicker.week.fri'),
+  t('calendar.holidayPicker.week.sat'),
+])
 
-const timingSourceOptions = [
+const timingSourceOptions = computed(() => [
   {
-    label: 'Preset option',
+    label: t('ot.requests.create.presetOption'),
     value: 'SHIFT_OPTION',
   },
   {
-    label: 'Custom fixed time',
+    label: t('ot.requests.create.customFixedTime'),
     value: 'CUSTOM_FIXED',
   },
-]
+])
 
 const selectedOption = computed(() => {
   return props.selectedOTOption || props.selectedOtOption || null
@@ -87,22 +97,18 @@ const selectedOption = computed(() => {
 
 const selectedDateYMD = computed(() => formatYMD(props.form.otDate))
 
-const selectedDateLabel = computed(() => formatPrettyDate(props.form.otDate))
-
-const selectedShift = computed(() => {
-  return props.selectedShiftState?.shift || null
-})
-
-
-
 const selectedTimingSource = computed(() => {
   return String(props.form.otTimingSource || 'SHIFT_OPTION').trim().toUpperCase()
 })
 
 const isCustomFixedTime = computed(() => selectedTimingSource.value === 'CUSTOM_FIXED')
 
+const safeShiftOptions = computed(() => {
+  return Array.isArray(props.shiftOptions) ? props.shiftOptions : []
+})
+
 const monthTitle = computed(() => {
-  return currentMonth.value.toLocaleDateString('en-US', {
+  return currentMonth.value.toLocaleDateString(locale.value || 'en-US', {
     month: 'long',
     year: 'numeric',
   })
@@ -120,17 +126,6 @@ const holidayMap = computed(() => {
   }
 
   return map
-})
-
-const sortedMonthHolidays = computed(() => {
-  return [...monthHolidayRows.value].sort((a, b) => {
-    return String(normalizeDateKey(a?.date)).localeCompare(String(normalizeDateKey(b?.date)))
-  })
-})
-
-const selectedHoliday = computed(() => {
-  const key = selectedDateYMD.value
-  return key ? holidayMap.value.get(key) || null : null
 })
 
 const selectedDayType = computed(() => {
@@ -169,20 +164,23 @@ const calendarDays = computed(() => {
 
   const cells = []
 
-  for (let i = 0; i < firstDayIndex; i += 1) {
-    const day = daysInPrevMonth - firstDayIndex + i + 1
+  for (let index = 0; index < firstDayIndex; index += 1) {
+    const day = daysInPrevMonth - firstDayIndex + index + 1
     const date = new Date(year, month - 1, day)
+
     cells.push(buildCalendarCell(date, false))
   }
 
   for (let day = 1; day <= daysInMonth; day += 1) {
     const date = new Date(year, month, day)
+
     cells.push(buildCalendarCell(date, true))
   }
 
   while (cells.length < 42) {
     const nextDay = cells.length - (firstDayIndex + daysInMonth) + 1
     const date = new Date(year, month + 1, nextDay)
+
     cells.push(buildCalendarCell(date, false))
   }
 
@@ -222,24 +220,20 @@ const customTimeError = computed(() => {
   if (!startTime || !endTime) return ''
 
   if (!isHHmm(startTime) || !isHHmm(endTime)) {
-    return 'Custom start and end time must be HH:mm.'
+    return t('ot.requests.create.customTimeInvalid')
   }
 
   if (startTime === endTime) {
-    return 'Custom start time and end time cannot be the same.'
+    return t('ot.requests.create.customTimeSame')
   }
 
   const rawMinutes = calculateRawWindowMinutes(startTime, endTime)
 
   if (breakMinutes >= rawMinutes) {
-    return 'Break minutes cannot be greater than or equal to OT duration.'
+    return t('ot.requests.create.breakTooLong')
   }
 
   return ''
-})
-
-const selectedPolicy = computed(() => {
-  return selectedOption.value?.calculationPolicy || null
 })
 
 function pad2(value) {
@@ -274,20 +268,6 @@ function normalizeDateKey(value) {
   }
 
   return formatYMD(value)
-}
-
-function formatPrettyDate(value) {
-  if (!value) return 'No date selected'
-
-  const date = value instanceof Date ? value : new Date(value)
-  if (Number.isNaN(date.getTime())) return 'No date selected'
-
-  return date.toLocaleDateString('en-US', {
-    weekday: 'short',
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
-  })
 }
 
 function isSameDate(a, b) {
@@ -349,23 +329,29 @@ function calculateTimeWindowMinutes(startTime, endTime, breakMinutes = 0) {
 function formatMinutesLabel(value) {
   const minutes = Number(value || 0)
 
-  if (!minutes) return '0 min'
+  if (!minutes) return t('ot.common.minuteValue', { value: 0 })
 
-  const hh = Math.floor(minutes / 60)
-  const mm = minutes % 60
+  const hours = Math.floor(minutes / 60)
+  const mins = minutes % 60
 
-  if (hh && mm) return `${hh}h ${mm}m`
-  if (hh) return `${hh}h`
-  return `${mm}m`
+  if (hours && mins) {
+    return t('ot.common.hourMinuteValue', {
+      hours,
+      minutes: mins,
+    })
+  }
+
+  if (hours) return t('ot.common.hourValue', { value: hours })
+  return t('ot.common.minuteValue', { value: mins })
 }
 
 function timingModeLabel(value) {
   const normalized = String(value || '').trim().toUpperCase()
 
-  if (normalized === 'CUSTOM_FIXED') return 'Custom Fixed Time'
-  if (normalized === 'FIXED_TIME') return 'Fixed Time'
+  if (normalized === 'CUSTOM_FIXED') return t('ot.requests.create.timingMode.customFixed')
+  if (normalized === 'FIXED_TIME') return t('ot.requests.create.timingMode.fixedTime')
 
-  return 'After Shift End'
+  return t('ot.requests.create.timingMode.afterShiftEnd')
 }
 
 function normalizePayload(res) {
@@ -409,8 +395,10 @@ function nextMonth() {
 
 function setToday() {
   const now = new Date()
+
   props.form.otDate = now
   currentMonth.value = new Date(now.getFullYear(), now.getMonth(), 1)
+
   fetchMonthHolidays()
 }
 
@@ -452,11 +440,11 @@ async function fetchMonthHolidays() {
 
     toast.add({
       severity: 'warn',
-      summary: 'Holiday calendar unavailable',
+      summary: t('ot.requests.create.calendarUnavailableTitle'),
       detail:
         error?.response?.data?.message ||
         error?.message ||
-        'Unable to load internal holiday calendar.',
+        t('ot.requests.create.calendarUnavailableDetail'),
       life: 3000,
     })
   } finally {
@@ -510,7 +498,6 @@ onMounted(() => {
   <Card class="ot-setup-card">
     <template #content>
       <div class="ot-setup-head">
-
         <div class="ot-setup-tags">
           <Tag
             :value="selectedDayType"
@@ -519,7 +506,7 @@ onMounted(() => {
           />
 
           <Tag
-            :value="`${selectedEmployeeCount} selected`"
+            :value="t('ot.requests.create.selectedCount', { count: selectedEmployeeCount })"
             severity="info"
             class="ot-pill-tag"
           />
@@ -527,17 +514,17 @@ onMounted(() => {
       </div>
 
       <div class="ot-setup-grid">
-        <!-- LEFT: SAME HOLIDAY CALENDAR SOURCE -->
         <section class="ot-date-panel">
           <div class="ot-section-head">
             <div>
               <label class="ot-field-label">
-                1. Select OT Date <span class="ot-required-star">*</span>
+                {{ t('ot.requests.create.selectOtDate') }}
+                <span class="ot-required-star">*</span>
               </label>
             </div>
 
             <Button
-              label="Today"
+              :label="t('calendar.holidayPicker.today')"
               icon="pi pi-calendar"
               size="small"
               outlined
@@ -594,6 +581,7 @@ onMounted(() => {
                 @click="selectDate(cell)"
               >
                 <span class="calendar-number">{{ cell.day }}</span>
+
                 <span
                   v-if="cell.isHoliday"
                   class="calendar-dot"
@@ -601,112 +589,40 @@ onMounted(() => {
               </button>
             </div>
           </div>
-
-          <div class="ot-date-info-grid">
-            <div class="ot-info-card">
-              <span>Selected Date</span>
-              <strong>{{ selectedDateLabel }}</strong>
-            </div>
-
-            <div class="ot-info-card">
-              <span>Day Type</span>
-              <strong>{{ selectedDayType }}</strong>
-            </div>
-
-            <div
-              v-if="selectedHoliday"
-              class="ot-info-card is-holiday"
-            >
-              <span>Holiday</span>
-              <strong>{{ selectedHoliday.name }}</strong>
-              <small>{{ normalizeDateKey(selectedHoliday.date) }}</small>
-            </div>
-
-            <div
-              v-else-if="loadingCalendar"
-              class="ot-calendar-note"
-            >
-              Checking internal calendar...
-            </div>
-          </div>
-
-          <div class="ot-month-holidays">
-            <div class="ot-month-holidays-head">
-              <span>This month holidays</span>
-              <Tag
-                :value="`${sortedMonthHolidays.length}`"
-                severity="info"
-                class="ot-pill-tag"
-              />
-            </div>
-
-            <div
-              v-if="loadingCalendar"
-              class="ot-calendar-note"
-            >
-              Loading holidays...
-            </div>
-
-            <div
-              v-else-if="sortedMonthHolidays.length"
-              class="ot-holiday-list"
-            >
-              <button
-                v-for="item in sortedMonthHolidays"
-                :key="item.id || item._id || item.date"
-                type="button"
-                class="ot-holiday-row"
-                @click="props.form.otDate = new Date(normalizeDateKey(item.date))"
-              >
-                <span>{{ item.name }}</span>
-                <small>{{ normalizeDateKey(item.date) }}</small>
-              </button>
-            </div>
-
-            <div
-              v-else
-              class="ot-calendar-note"
-            >
-              No active holiday in this month.
-            </div>
-          </div>
         </section>
 
-        <!-- RIGHT: OT OPTION + CUSTOM TIME + REASON -->
         <section class="ot-detail-panel">
-          
-
-
           <div class="ot-field">
             <label class="ot-field-label">
-              3. Timing Type <span class="ot-required-star">*</span>
+              {{ t('ot.requests.create.timingType') }}
+              <span class="ot-required-star">*</span>
             </label>
 
             <Select
               v-model="props.form.otTimingSource"
               :options="timingSourceOptions"
-              optionLabel="label"
-              optionValue="value"
+              option-label="label"
+              option-value="value"
               class="w-full"
-              placeholder="Select timing type"
+              :placeholder="t('ot.requests.create.selectTimingType')"
             />
-
           </div>
 
           <div class="ot-field">
             <label class="ot-field-label">
-              4. OT Option / Policy <span class="ot-required-star">*</span>
+              {{ t('ot.requests.create.otOptionPolicy') }}
+              <span class="ot-required-star">*</span>
             </label>
 
             <Select
               v-model="props.form.shiftOtOptionId"
-              :options="shiftOptions"
-              optionLabel="optionLabel"
-              optionValue="id"
+              :options="safeShiftOptions"
+              option-label="optionLabel"
+              option-value="id"
               class="w-full"
-              placeholder="Select OT option"
+              :placeholder="t('ot.requests.create.selectOtOption')"
               :loading="loadingShiftOptions"
-              :disabled="selectedShiftState?.mode !== 'ready' || loadingShiftOptions || !shiftOptions.length"
+              :disabled="selectedShiftState?.mode !== 'ready' || loadingShiftOptions || !safeShiftOptions.length"
             />
           </div>
 
@@ -716,12 +632,12 @@ onMounted(() => {
           >
             <div class="ot-custom-time-head">
               <div>
-                <strong>Custom default OT time</strong>
-                <span>All selected employees use this time unless adjusted later.</span>
+                <strong>{{ t('ot.requests.create.customDefaultTime') }}</strong>
+                <span>{{ t('ot.requests.create.customDefaultTimeHelp') }}</span>
               </div>
 
               <Tag
-                value="Flexible"
+                :value="t('ot.requests.create.flexible')"
                 severity="info"
               />
             </div>
@@ -729,7 +645,8 @@ onMounted(() => {
             <div class="ot-custom-time-grid">
               <div class="ot-field">
                 <label class="ot-field-label">
-                  Start Time <span class="ot-required-star">*</span>
+                  {{ t('ot.requests.create.startTime') }}
+                  <span class="ot-required-star">*</span>
                 </label>
 
                 <InputText
@@ -742,7 +659,8 @@ onMounted(() => {
 
               <div class="ot-field">
                 <label class="ot-field-label">
-                  End Time <span class="ot-required-star">*</span>
+                  {{ t('ot.requests.create.endTime') }}
+                  <span class="ot-required-star">*</span>
                 </label>
 
                 <InputText
@@ -755,17 +673,17 @@ onMounted(() => {
 
               <div class="ot-field">
                 <label class="ot-field-label">
-                  Break Minutes
+                  {{ t('ot.requests.create.breakMinutes') }}
                 </label>
 
                 <InputNumber
                   v-model="props.form.customBreakMinutes"
                   class="w-full"
-                  inputClass="w-full"
+                  input-class="w-full"
                   :min="0"
                   :max="1440"
                   :step="5"
-                  showButtons
+                  show-buttons
                 />
               </div>
             </div>
@@ -784,37 +702,40 @@ onMounted(() => {
             class="ot-option-preview"
           >
             <div class="ot-preview-box">
-              <span>Timing</span>
+              <span>{{ t('ot.requests.create.timing') }}</span>
               <strong>{{ timingModeLabel(localRequestPreview.timingMode) }}</strong>
             </div>
 
             <div class="ot-preview-box">
-              <span>Start</span>
+              <span>{{ t('ot.requests.create.start') }}</span>
               <strong>{{ localRequestPreview.requestStartTime || '-' }}</strong>
             </div>
 
             <div class="ot-preview-box">
-              <span>End</span>
+              <span>{{ t('ot.requests.create.end') }}</span>
               <strong>{{ localRequestPreview.requestEndTime || '-' }}</strong>
             </div>
 
             <div class="ot-preview-box">
-              <span>Total</span>
+              <span>{{ t('ot.requests.create.total') }}</span>
               <strong>{{ formatMinutesLabel(localRequestPreview.requestedMinutes) }}</strong>
             </div>
           </div>
 
           <div class="ot-field">
             <label class="ot-field-label">
-              5. Reason <span class="ot-optional-text">Optional</span>
+              {{ t('ot.requests.create.reason') }}
+              <span class="ot-optional-text">
+                {{ t('ot.requests.create.optional') }}
+              </span>
             </label>
 
             <Textarea
               v-model.trim="props.form.reason"
               rows="5"
-              autoResize
+              auto-resize
               class="w-full"
-              placeholder="Example: urgent production order, shipment deadline..."
+              :placeholder="t('ot.requests.create.reasonPlaceholder')"
             />
           </div>
         </section>
@@ -835,15 +756,9 @@ onMounted(() => {
 .ot-setup-head {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 1rem;
   margin-bottom: 0.85rem;
-}
-
-.ot-setup-title {
-  font-size: 1.05rem;
-  font-weight: 600;
-  color: var(--ot-text);
 }
 
 .ot-setup-tags {
@@ -894,13 +809,6 @@ onMounted(() => {
   font-size: 0.88rem;
   font-weight: 600;
   color: var(--ot-text);
-}
-
-.ot-field-hint {
-  margin-top: 0.16rem;
-  font-size: 0.75rem;
-  line-height: 1.4;
-  color: var(--ot-text-muted);
 }
 
 .ot-required-star {
@@ -1039,125 +947,12 @@ onMounted(() => {
   opacity: 0.9;
 }
 
-.ot-date-info-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0.55rem;
-  margin-top: 0.75rem;
-}
-
-.ot-info-card,
-.ot-shift-summary,
 .ot-option-preview,
-.ot-policy-box,
-.ot-custom-time-box,
-.ot-month-holidays {
+.ot-custom-time-box {
   border: 1px solid var(--ot-border);
   border-radius: 1rem;
   background: var(--ot-bg);
   padding: 0.75rem;
-}
-
-.ot-info-card span,
-.ot-preview-box span,
-.ot-policy-item span,
-.ot-shift-summary span {
-  display: block;
-  margin-bottom: 0.15rem;
-  font-size: 0.66rem;
-  font-weight: 500;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ot-text-muted);
-}
-
-.ot-info-card strong,
-.ot-preview-box strong,
-.ot-policy-item strong,
-.ot-shift-summary strong {
-  display: block;
-  font-size: 0.84rem;
-  font-weight: 600;
-  color: var(--ot-text);
-}
-
-.ot-info-card small {
-  display: block;
-  margin-top: 0.14rem;
-  font-size: 0.72rem;
-  color: var(--ot-text-muted);
-}
-
-.ot-info-card.is-holiday {
-  border-color: rgba(220, 38, 38, 0.28);
-  background: rgba(220, 38, 38, 0.08);
-}
-
-.ot-info-card.is-holiday strong,
-.ot-info-card.is-holiday small {
-  color: #dc2626;
-}
-
-.ot-calendar-note {
-  font-size: 0.76rem;
-  color: var(--ot-text-muted);
-}
-
-.ot-month-holidays {
-  margin-top: 0.75rem;
-}
-
-.ot-month-holidays-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  margin-bottom: 0.55rem;
-}
-
-.ot-month-holidays-head span {
-  font-size: 0.84rem;
-  font-weight: 600;
-  color: var(--ot-text);
-}
-
-.ot-holiday-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
-}
-
-.ot-holiday-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  border: 1px solid var(--ot-border);
-  border-radius: 0.8rem;
-  background: var(--ot-surface);
-  padding: 0.55rem 0.65rem;
-  text-align: left;
-  transition: 0.2s ease;
-}
-
-.ot-holiday-row:hover {
-  background: var(--ot-hover, rgba(148, 163, 184, 0.08));
-}
-
-.ot-holiday-row span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--ot-text);
-}
-
-.ot-holiday-row small {
-  flex: 0 0 auto;
-  font-size: 0.72rem;
-  color: var(--ot-text-muted);
 }
 
 .ot-option-preview {
@@ -1171,6 +966,23 @@ onMounted(() => {
   border-radius: 0.85rem;
   background: var(--ot-surface);
   padding: 0.65rem;
+}
+
+.ot-preview-box span {
+  display: block;
+  margin-bottom: 0.15rem;
+  font-size: 0.66rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ot-text-muted);
+}
+
+.ot-preview-box strong {
+  display: block;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--ot-text);
 }
 
 .ot-custom-time-box {
@@ -1210,37 +1022,6 @@ onMounted(() => {
   gap: 0.65rem;
 }
 
-.ot-policy-box {
-  margin-top: 0.1rem;
-}
-
-.ot-policy-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  margin-bottom: 0.75rem;
-}
-
-.ot-policy-head span {
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--ot-text);
-}
-
-.ot-policy-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0.55rem;
-}
-
-.ot-policy-item {
-  border: 1px solid var(--ot-border);
-  border-radius: 0.85rem;
-  background: var(--ot-surface);
-  padding: 0.65rem;
-}
-
 :deep(.ot-pill-tag.p-tag) {
   min-height: 1.35rem !important;
   padding: 0.12rem 0.48rem !important;
@@ -1264,16 +1045,8 @@ onMounted(() => {
 }
 
 @media (min-width: 768px) {
-  .ot-date-info-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .ot-custom-time-grid {
     grid-template-columns: 1fr 1fr 180px;
-  }
-
-  .ot-policy-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -1285,10 +1058,6 @@ onMounted(() => {
 
   .ot-option-preview {
     grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-
-  .ot-policy-grid {
-    grid-template-columns: 1.4fr repeat(3, minmax(0, 1fr));
   }
 }
 </style>

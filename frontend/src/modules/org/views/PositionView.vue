@@ -29,7 +29,6 @@ import PositionImportDialog from '@/modules/org/components/PositionImportDialog.
 import { useAuthStore } from '@/modules/auth/auth.store'
 import AppTableLoading from '@/shared/components/AppTableLoading.vue'
 import { buildSaveErrorMessage, getApiErrorMessage } from '@/shared/utils/apiError'
-import { formatDateTime } from '@/shared/utils/dateFormat'
 
 const toast = useToast()
 const auth = useAuthStore()
@@ -62,8 +61,8 @@ const filters = reactive({
   isActive: '',
   departmentId: '',
   hierarchyScope: '',
-  sortField: 'createdAt',
-  sortOrder: -1,
+  sortField: 'code',
+  sortOrder: 1,
 })
 
 const form = reactive({
@@ -340,15 +339,15 @@ function clearFilters() {
   filters.isActive = ''
   filters.departmentId = ''
   filters.hierarchyScope = ''
-  filters.sortField = 'createdAt'
-  filters.sortOrder = -1
+  filters.sortField = 'code'
+  filters.sortOrder = 1
 
   reloadFirstPage({ keepVisible: true })
 }
 
 function onSort(event) {
-  filters.sortField = event.sortField || 'createdAt'
-  filters.sortOrder = typeof event.sortOrder === 'number' ? event.sortOrder : -1
+  filters.sortField = event.sortField || 'code'
+  filters.sortOrder = typeof event.sortOrder === 'number' ? event.sortOrder : 1
 
   reloadFirstPage({ keepVisible: true })
 }
@@ -708,7 +707,7 @@ onBeforeUnmount(() => {
           :title="t('common.loadingData')"
           :message="t('common.fetchingRecords')"
           :rows="7"
-          :columns="9"
+          :columns="8"
           icon="pi pi-briefcase"
         />
 
@@ -721,7 +720,7 @@ onBeforeUnmount(() => {
           scroll-height="500px"
           :sort-field="filters.sortField"
           :sort-order="filters.sortOrder"
-          table-style="min-width: 86rem"
+          table-style="min-width: 74rem"
           class="ot-data-table ot-data-table-compact"
           :virtual-scroller-options="useVirtualScroll ? {
             lazy: true,
@@ -829,6 +828,7 @@ onBeforeUnmount(() => {
             <template #body="{ data }">
               <Tag
                 v-if="data"
+                class="ot-scope-tag"
                 :value="scopeLabel(data.hierarchyScope)"
                 :severity="scopeSeverity(data.hierarchyScope)"
               />
@@ -867,26 +867,12 @@ onBeforeUnmount(() => {
           </Column>
 
           <Column
-            field="createdAt"
-            :header="t('common.createdAt')"
-            sortable
-            style="min-width: 13rem"
-          >
-            <template #body="{ data }">
-              <span v-if="data">
-                {{ formatDateTime(data.createdAt) }}
-              </span>
-            </template>
-          </Column>
-
-          <Column
             :header="t('common.actions')"
             style="width: 7rem; min-width: 7rem"
           >
             <template #body="{ data }">
               <Button
                 v-if="data && canUpdate"
-                :label="t('common.edit')"
                 icon="pi pi-pencil"
                 size="small"
                 outlined
@@ -1050,3 +1036,11 @@ onBeforeUnmount(() => {
     </Dialog>
   </div>
 </template>
+
+<style scoped>
+.ot-scope-tag {
+  font-size: 0.76rem;
+  font-weight: 900;
+  letter-spacing: 0.01em;
+}
+</style>

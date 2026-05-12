@@ -12,8 +12,8 @@ export default {
     selectAll: 'Select all',
     export: 'Export',
     import: 'Import',
+    download: 'Download',
     create: 'Create',
-    edit: 'Edit',
     update: 'Update',
     delete: 'Delete',
     save: 'Save',
@@ -24,14 +24,15 @@ export default {
     reject: 'Reject',
     view: 'View',
     detail: 'Detail',
+    action: 'Action',
     actions: 'Actions',
 
+    no: 'No.',
     status: 'Status',
     allStatus: 'All Status',
     active: 'Active',
     inactive: 'Inactive',
     yes: 'Yes',
-    no: 'No',
     none: 'None',
     unknown: 'Unknown',
     warning: 'Warning',
@@ -51,106 +52,163 @@ export default {
     loadFailed: 'Load failed',
     createFailed: 'Create failed',
     updateFailed: 'Update failed',
+    saveFailed: 'Save failed',
+    downloadFailed: 'Download failed',
     created: 'Created',
     updated: 'Updated',
+    downloaded: 'Downloaded',
     loadingData: 'Loading data',
     fetchingRecords: 'Fetching records from the server.',
 
-    unknown: 'Unknown',
-    refresh: 'Refresh',
-    loadFailed: 'Load failed',
-    active: 'Active',
-    inactive: 'Inactive',
-    search: 'Search',
-      search: 'Search',
-  fromDate: 'From Date',
-  toDate: 'To Date',
-  status: 'Status',
-  allStatus: 'All Status',
-  active: 'Active',
-  inactive: 'Inactive',
-  clear: 'Clear',
-  import: 'Import',
-  cancel: 'Cancel',
-  save: 'Save',
-  edit: 'Edit',
-  actions: 'Actions',
-  date: 'Date',
-  code: 'Code',
-  name: 'Name',
-  description: 'Description',
-  createdAt: 'Created At',
-  noData: 'No Data',
-  loadFailed: 'Load Failed',
-  createFailed: 'Create Failed',
-  updateFailed: 'Update Failed',
-  created: 'Created',
-  updated: 'Updated',
-  updating: 'Updating',
-  loading: 'Loading...',
-  loadingData: 'Loading data',
-  fetchingRecords: 'Fetching records...',
-  loaded: 'Loaded {loaded} of {total}',
+    openNavigation: 'Open navigation',
+    toggleDesktopSidebar: 'Toggle desktop sidebar',
+    toggleTheme: 'Toggle theme',
+    switchToLightMode: 'Switch to Light Mode',
+    switchToDarkMode: 'Switch to Dark Mode',
+    notifications: 'Notifications',
+    language: 'Language',
   },
 
   auth: {
-  login: 'Login',
-  logout: 'Logout',
-  username: 'Username',
-  loginId: 'Login ID',
-  password: 'Password',
-  profile: 'Profile',
-  accessDenied: 'Access denied',
-  noPermission: 'You do not have permission to access this page.',
-  loginSubtitle: 'Sign in with your company account to continue.',
-  loginIdPlaceholder: 'Enter login ID',
-  passwordPlaceholder: 'Enter password',
-  signingIn: 'Signing in...',
+    login: 'Login',
+    logout: 'Logout',
+    username: 'Username',
+    loginId: 'Login ID',
+    password: 'Password',
+    profile: 'Profile',
+    accessDenied: 'Access denied',
+    noPermission: 'You do not have permission to access this page.',
+    loginSubtitle: 'Sign in with your company account to continue.',
+    loginIdPlaceholder: 'Enter login ID',
+    passwordPlaceholder: 'Enter password',
+    signingIn: 'Signing in...',
 
-  error: {
-    loginFailed: 'Login failed. Please try again.',
+    error: {
+      loginFailed: 'Login failed. Please try again.',
+    },
+
+    account: {
+      tableTitle: 'Account List',
+      tableSubtitle: 'Server-side account list with lazy loading.',
+      newAccount: 'New Account',
+      searchPlaceholder: 'Search login ID, display name, employee, role, or permission',
+      noData: 'No accounts matched your filters.',
+      loadFailed: 'Failed to load accounts.',
+
+      displayName: 'Display Name',
+      directPermissions: 'Direct Permissions',
+      mustChangePassword: 'Must Change Password',
+      reset: 'Reset',
+
+      createTitle: 'Create Account',
+      editTitle: 'Edit Account',
+      resetPassword: 'Reset Password',
+      newPassword: 'New Password',
+      forcePasswordChange: 'Force password change after reset',
+      resettingFor: 'Resetting password for',
+
+      selectEmployee: 'Select employee',
+      selectRoles: 'Select roles',
+      directPermissionHelp: 'Separate permission codes with commas.',
+      loginIdExample: 'Example: john.smith',
+      displayNameExample: 'Example: John Smith',
+
+      unnamedEmployee: 'Unnamed Employee',
+      unnamedRole: 'Unnamed Role',
+      employeeOptionsLoadFailed: 'Employee options could not be loaded.',
+      roleOptionsLoadFailed: 'Role options could not be loaded.',
+
+      createdSuccess: 'Account created successfully.',
+      updatedSuccess: 'Account updated successfully.',
+      createFailed: 'Failed to create account.',
+      updateFailed: 'Failed to update account.',
+      passwordReset: 'Password reset',
+      passwordResetSuccess: 'Password reset successfully.',
+      resetFailed: 'Password reset failed.',
+    },
   },
 
-  account: {
-    tableTitle: 'Account List',
-    tableSubtitle: 'Server-side account list with lazy loading.',
-    newAccount: 'New Account',
-    searchPlaceholder: 'Search login ID, display name, employee, role, or permission',
-    noData: 'No accounts matched your filters.',
-    loadFailed: 'Failed to load accounts.',
+  nav: {
+    workspace: 'Workspace',
+    dashboard: 'Dashboard',
 
-    displayName: 'Display Name',
-    directPermissions: 'Direct Permissions',
-    mustChangePassword: 'Must Change Password',
-    reset: 'Reset',
+    organization: 'Organization',
+    permissions: 'Permissions',
+    roles: 'Roles',
+    departments: 'Departments',
+    positions: 'Positions',
+    lines: 'Lines',
+    employees: 'Employees',
+    orgChart: 'Organization Chart',
 
-    createTitle: 'Create Account',
-    editTitle: 'Edit Account',
-    resetPassword: 'Reset Password',
-    newPassword: 'New Password',
-    forcePasswordChange: 'Force password change after reset',
-    resettingFor: 'Resetting password for',
+    calendar: 'Calendar',
+    holidayMaster: 'Holiday Master',
 
-    selectEmployee: 'Select employee',
-    selectRoles: 'Select roles',
-    directPermissionHelp: 'Separate permission codes with commas.',
-    loginIdExample: 'Example: john.smith',
-    displayNameExample: 'Example: John Smith',
+    shift: 'Shift',
+    shiftMaster: 'Shift Master',
 
-    unnamedEmployee: 'Unnamed Employee',
-    unnamedRole: 'Unnamed Role',
-    employeeOptionsLoadFailed: 'Employee options could not be loaded.',
-    roleOptionsLoadFailed: 'Role options could not be loaded.',
+    accessControl: 'Access Control',
+    accounts: 'Accounts',
 
-    createdSuccess: 'Account created successfully.',
-    updatedSuccess: 'Account updated successfully.',
-    createFailed: 'Failed to create account.',
-    updateFailed: 'Failed to update account.',
-    passwordReset: 'Password reset',
-    passwordResetSuccess: 'Password reset successfully.',
-    resetFailed: 'Password reset failed.',
+    attendance: 'Attendance',
+    attendanceImport: 'Attendance Import',
+    attendanceRecords: 'Attendance Records',
+    otVerification: 'OT Verification',
+
+    overtime: 'Overtime',
+    otRequests: 'OT Requests',
+    approvalInbox: 'Approval Inbox',
+    acknowledgeInbox: 'Acknowledge Inbox',
+    otPolicies: 'OT Policies',
+    shiftOtOptions: 'Shift OT Options',
+
+    payment: 'Payment',
+    paymentProcess: 'Payment Process',
+    paymentFormulas: 'Payment Formulas',
   },
-},
+
+
+  access: {
+    permission: {
+      tableTitle: 'Permission List',
+      searchPlaceholder: 'Search',
+      module: 'Module',
+      allModules: 'All Modules',
+
+      loading: 'Loading permissions...',
+      noData: 'No permissions matched your filters.',
+      loadFailed: 'Failed to load permissions.',
+    },
+
+    role: {
+      tableTitle: 'Role List',
+      searchPlaceholder: 'Search',
+
+      newRole: 'New Role',
+      expandAll: 'Expand All',
+      collapseAll: 'Collapse All',
+
+      createTitle: 'Create Role',
+      editTitle: 'Edit Role',
+      roleCode: 'Role Code',
+      roleCodeExample: 'Example: SYSTEM_ADMIN',
+      displayName: 'Display Name',
+      displayNameExample: 'Example: System Admin',
+
+      permissionsByModule: 'Permissions by Module',
+      fullPermissions: 'Full Permissions',
+      count: 'Count',
+      selectedCount: '{count} selected',
+      moduleSelectedCount: '{selected} of {total} selected',
+      morePermissions: '+{count} more',
+
+      noData: 'No roles matched your filters.',
+      loadFailed: 'Failed to load roles.',
+      saveFailed: 'Failed to save role.',
+      createdSuccess: 'Role created successfully.',
+      updatedSuccess: 'Role updated successfully.',
+    },
+  },
 
   org: {
     department: {
@@ -199,7 +257,6 @@ export default {
     },
 
     position: {
-      // Table / filter
       tableTitle: 'Position List',
       searchPlaceholder: 'Search code, name, or description',
 
@@ -213,12 +270,10 @@ export default {
       scopeGlobal: 'Global',
       scopeCrossDepartment: 'Cross Department',
 
-      // Actions
       newPosition: 'New Position',
       importExcel: 'Import Excel',
       exportExcel: 'Export Excel',
 
-      // Create / edit form
       createTitle: 'Create Position',
       editTitle: 'Edit Position',
       positionCode: 'Position Code',
@@ -242,12 +297,10 @@ export default {
       activeHelp: 'Inactive positions will be hidden from normal employee assignment selectors.',
       descriptionPlaceholder: 'Optional position description',
 
-      // Export
       exported: 'Exported',
       exportedSuccess: 'Position Excel exported successfully.',
       exportFailed: 'Export failed',
 
-      // Import
       imported: 'Imported',
       importedSuccess:
         'Import completed. Created: {created}, Updated: {updated}, Failed: {failed}.',
@@ -273,7 +326,6 @@ export default {
         'Please choose an Excel file only: .xlsx, .xls, or .csv.',
       importFailed: 'Import failed',
 
-      // Empty / error / success
       noData: 'No positions matched your filters.',
       loadFailed: 'Failed to load positions.',
       departmentLoadFailed: 'Failed to load departments.',
@@ -286,7 +338,6 @@ export default {
     },
 
     employee: {
-      // Table / filter
       tableTitle: 'Employee List',
       searchPlaceholder: 'Search employee code, name, phone, email, or role',
 
@@ -295,12 +346,10 @@ export default {
       allLines: 'All Lines',
       allShifts: 'All Shifts',
 
-      // Actions
       newEmployee: 'New Employee',
       importExcel: 'Import Excel',
       exportExcel: 'Export Excel',
 
-      // Create / edit form
       createTitle: 'Create Employee',
       editTitle: 'Edit Employee',
 
@@ -330,7 +379,6 @@ export default {
       phone: 'Phone',
       phonePlaceholder: 'Example: 012345678',
 
-      // Account
       hasAccount: 'Has Account',
       noAccount: 'No Account',
       accountAlreadyExists: 'This employee already has a login account.',
@@ -351,12 +399,10 @@ export default {
       createdWithAccountSuccess: 'Employee and login account created successfully.',
       updatedWithAccountSuccess: 'Employee updated and login account created successfully.',
 
-      // Export
       exported: 'Exported',
       exportedSuccess: 'Employee Excel exported successfully.',
       exportFailed: 'Export failed',
 
-      // Import
       imported: 'Imported',
       importedSuccess: 'Import completed. Created: {created}, Updated: {updated}.',
 
@@ -383,13 +429,11 @@ export default {
         'Please choose an Excel file only: .xlsx, .xls, or .csv.',
       importFailed: 'Import failed',
 
-      // Import error titles
       invalidExcelData: 'Invalid Excel data',
       importApiNotFound: 'Import API not found',
       duplicateData: 'Duplicate data',
       serverError: 'Server error',
 
-      // Import friendly error details
       employeeCodeRequiredHelp:
         'Employee Code is required because the system uses it as the human-readable employee key.',
       joinDateFormatHelp:
@@ -404,7 +448,6 @@ export default {
         'Please import the manager first or use an existing manager Employee Code.',
       uniqueEmailHelp: 'Email must be unique or left blank.',
 
-      // Empty / error / success
       noData: 'No employees matched your filters.',
       loadFailed: 'Failed to load employees.',
       departmentLoadFailed: 'Failed to load departments.',
@@ -418,7 +461,6 @@ export default {
     },
 
     line: {
-      // Table / filter
       tableTitle: 'Production Line List',
       searchPlaceholder: 'Search code, name, or description',
 
@@ -430,12 +472,10 @@ export default {
       allowedPositions: 'Allowed Positions',
       allPositionsInDepartment: 'All positions in department',
 
-      // Actions
       newLine: 'New Line',
       importExcel: 'Import Excel',
       exportExcel: 'Export Excel',
 
-      // Create / edit form
       createTitle: 'Create Production Line',
       editTitle: 'Edit Production Line',
       selectDepartment: 'Select department',
@@ -444,12 +484,10 @@ export default {
       nameExample: 'Example: Sewing Line 01',
       descriptionPlaceholder: 'Optional production line description',
 
-      // Export
       exported: 'Exported',
       exportedSuccess: 'Production lines exported successfully.',
       exportFailed: 'Failed to export production lines.',
 
-      // Import
       imported: 'Imported',
       importedSuccess: 'Import completed. Created: {created}, Updated: {updated}.',
 
@@ -473,7 +511,6 @@ export default {
         'Please choose an Excel file only: .xlsx, .xls, or .csv.',
       importFailed: 'Import failed',
 
-      // Empty / error / success
       noData: 'No production lines matched your filters.',
       loadFailed: 'Failed to load production lines.',
       departmentLoadFailed: 'Failed to load departments.',
@@ -484,114 +521,26 @@ export default {
     },
 
     orgChart: {
-      // Filter
       searchPlaceholder: 'Search employee code or name',
       rootPerson: 'Root Person',
       selectRootPerson: 'Select root person',
       includeInactive: 'Include inactive',
 
-      // Chart
       treeTitle: 'Organization Chart',
       zoomLabel: 'Zoom: {zoom}',
       zoomIn: 'Zoom In',
       zoomOut: 'Zoom Out',
       resetZoom: 'Reset',
 
-      // Node
       noEmployeeCode: 'No ID',
       noPosition: 'No Position',
       noDepartment: 'No Department',
 
-      // Empty / error
       noTreeData: 'No organization chart data found.',
       loadFailed: 'Failed to load organization chart.',
 
-      // Node action
       expandNode: 'Expand node',
       collapseNode: 'Collapse node',
-    },
-  },
-
-  nav: {
-    workspace: 'Workspace',
-    dashboard: 'Dashboard',
-
-    organization: 'Organization',
-    permissions: 'Permissions',
-    roles: 'Roles',
-    departments: 'Departments',
-    positions: 'Positions',
-    lines: 'Lines',
-    employees: 'Employees',
-
-    calendar: 'Calendar',
-
-    shift: 'Shift',
-    shiftMaster: 'Shift Master',
-
-    accessControl: 'Access Control',
-    accounts: 'Accounts',
-
-    attendance: 'Attendance',
-    attendanceRecords: 'Attendance Records',
-    otVerification: 'OT Verification',
-
-    overtime: 'Overtime',
-    otRequests: 'OT Requests',
-    approvalInbox: 'Approval Inbox',
-    acknowledgeInbox: 'Acknowledge Inbox',
-    otPolicies: 'OT Policies',
-    shiftOtOptions: 'Shift OT Options',
-
-    payment: 'Payment',
-    paymentProcess: 'Payment Process',
-    paymentFormulas: 'Payment Formulas',
-  },
-
-  access: {
-    permission: {
-      tableTitle: 'Permission List',
-      searchPlaceholder: 'Search permission code, name, module, or description',
-      module: 'Module',
-      allModules: 'All Modules',
-
-      loading: 'Loading permissions...',
-      noData: 'No permissions matched your filters.',
-      loadFailed: 'Failed to load permissions.',
-    },
-
-    role: {
-      // Table / filter
-      tableTitle: 'Role List',
-      searchPlaceholder: 'Search role code or display name',
-
-      // Actions
-      newRole: 'New Role',
-      expandAll: 'Expand All',
-      collapseAll: 'Collapse All',
-
-      // Form
-      createTitle: 'Create Role',
-      editTitle: 'Edit Role',
-      roleCode: 'Role Code',
-      roleCodeExample: 'Example: SYSTEM_ADMIN',
-      displayName: 'Display Name',
-      displayNameExample: 'Example: System Admin',
-
-      // Permissions
-      permissionsByModule: 'Permissions by Module',
-      fullPermissions: 'Full Permissions',
-      count: 'Count',
-      selectedCount: '{count} selected',
-      moduleSelectedCount: '{selected} of {total} selected',
-      morePermissions: '+{count} more',
-
-      // Empty / error / success
-      noData: 'No roles matched your filters.',
-      loadFailed: 'Failed to load roles.',
-      saveFailed: 'Failed to save role.',
-      createdSuccess: 'Role created successfully.',
-      updatedSuccess: 'Role updated successfully.',
     },
   },
 
@@ -618,19 +567,16 @@ export default {
     },
 
     holiday: {
-      // Page / preview
       tableTitle: 'Holiday Calendar',
       previewTitle: 'Calendar Preview',
       previewCount: 'Holidays',
       activeHolidays: 'active holiday(s)',
       selectedDate: 'Selected Date',
 
-      // Filters
       searchPlaceholder: 'Search code, name, or description',
       noData: 'No holidays found.',
       loadFailed: 'Failed to load holidays.',
 
-      // Actions
       importExcel: 'Import Excel',
       exportExcel: 'Export Excel',
       newHoliday: 'New Holiday',
@@ -639,7 +585,6 @@ export default {
       createOnSelectedDate: 'Create',
       editHoliday: 'Edit',
 
-      // Form
       selectHolidayDate: 'Select holiday date',
       holidayCode: 'Holiday Code',
       codeExample: 'Example: KHNY',
@@ -648,7 +593,6 @@ export default {
       descriptionPlaceholder: 'Optional note or description',
       selectedDayType: 'Selected day type',
 
-      // Status / fields
       paidHoliday: 'Paid Holiday',
       paidHolidayHelp: 'Use this when the holiday is paid.',
       activeHelp: 'Inactive holidays will not be used for day-type classification.',
@@ -656,17 +600,14 @@ export default {
       unpaid: 'Unpaid',
       noCode: 'No Code',
 
-      // Save messages
       createdSuccess: 'Holiday created successfully.',
       updatedSuccess: 'Holiday updated successfully.',
       saveFailed: 'Failed to save holiday.',
 
-      // Export
       exported: 'Exported',
       exportedSuccess: 'Holiday Excel exported successfully.',
       exportFailed: 'Failed to export holidays.',
 
-      // Import dialog
       importTitle: 'Import Holidays',
       importInvalidFileTitle: 'Invalid file',
       importInvalidFileMessage: 'Please select an Excel or CSV file.',
@@ -679,7 +620,8 @@ export default {
       importGuideStep2: 'Fill in holiday date, code, name, paid holiday, and active status.',
       importGuideStep3: 'Use DD/MM/YYYY format for dates.',
       importGuideStep4: 'Upload the completed file.',
-      importNote: 'Existing holidays with the same date or code may be updated depending on backend import rules.',
+      importNote:
+        'Existing holidays with the same date or code may be updated depending on backend import rules.',
 
       downloadSample: 'Download Sample',
       sampleDownloaded: 'Sample downloaded.',
@@ -690,7 +632,8 @@ export default {
       chooseFile: 'Choose File',
     },
   },
-      shift: {
+
+  shift: {
     pageTitle: 'Shift Master',
     pageSubtitle: 'Manage working shifts, break time, cross-midnight rules, and Excel import/export.',
     tableTitle: 'Shift List',
@@ -1134,6 +1077,96 @@ export default {
   },
 
   ot: {
+    common: {
+      min: 'min',
+      minShort: 'm',
+      totalCount: '{total} total',
+      hourValue: '{value}h',
+      minuteValue: '{value} min',
+      hourMinuteValue: '{hours}h {minutes}m',
+    },
+
+    dayType: {
+      workingDay: 'Working Day',
+      sunday: 'Sunday',
+      holiday: 'Holiday',
+    },
+
+    status: {
+      pending: 'Pending',
+      pendingRequesterConfirmation: 'Pending Requester Confirmation',
+      approved: 'Approved',
+      rejected: 'Rejected',
+      requesterDisagreed: 'Requester Disagreed',
+      cancelled: 'Cancelled',
+    },
+
+    approval: {
+      approvalStatus: 'Approval Status',
+      staffCount: '{count} staff',
+      time: 'Time',
+
+      exportExcel: 'Export Excel',
+      approveSelected: 'Approve Selected',
+      approveSelectedWithCount: 'Approve Selected ({count})',
+      clearSelection: 'Clear Selection',
+
+      loading: 'Loading approval inbox',
+      fetchingRecords: 'Fetching OT approval requests...',
+      noData: 'No OT approval requests found.',
+      loadFailed: 'Failed to load approval inbox.',
+
+      exported: 'Export ready',
+      exportedSuccess: 'Excel exported successfully.',
+      exportFailed: 'Export failed',
+
+      requestedStaff: 'Requested Staff',
+      requested: 'Request',
+      breakTime: 'Break Time',
+      totalRequestPaid: 'Total Request Paid',
+      paid: 'Paid',
+      totalPaid: 'Total Paid',
+
+      legacyManual: 'Legacy Manual',
+      shiftOption: 'Shift Option',
+
+      noSelectedRequests: 'No selected requests',
+      selectAtLeastOne: 'Please select at least one actionable OT request.',
+
+      decisionEyebrow: 'OT approval decision',
+      confirmApproval: 'Confirm Approval',
+      rejectRequest: 'Reject OT Request',
+      approveQuestion: 'Are you sure you want to approve?',
+      rejectQuestion: 'Are you sure you want to reject?',
+      approveHelp: 'This will approve all employees inside this OT request.',
+      rejectHelp: 'This will reject the whole OT request.',
+
+      remark: 'Remark',
+      optionalApprovalRemark: 'Optional approval remark',
+      rejectionReasonPlaceholder: 'Please enter rejection reason',
+      rejectionRemarkRequired: 'Please enter rejection remark.',
+      yesApprove: 'Yes, Approve',
+
+      decisionSuccess: 'Success',
+      approveSuccess: 'OT request processed successfully.',
+      rejectSuccess: 'OT request rejected successfully.',
+      decisionFailed: 'Decision failed',
+
+      bulkApproval: 'Bulk approval',
+      approveMultiple: 'Approve multiple OT requests',
+      requestCount: '{count} request(s)',
+      bulkWarning:
+        'Are you sure you want to approve the selected OT requests? This will approve all employees inside each selected request.',
+      bulkRemarkPlaceholder: 'Optional remark for all selected approvals',
+      approveAllSelected: 'Approve All Selected',
+
+      bulkCompleted: 'Bulk approval completed',
+      bulkPartial: '{success} approved, {failed} failed.',
+      bulkSuccess: '{count} request(s) approved successfully.',
+      bulkFailed: 'Bulk approval failed',
+      bulkNoApproved: 'No request was approved.',
+    },
+
     requests: {
       title: 'OT Requests',
       createTitle: 'Create OT Request',
@@ -1142,16 +1175,445 @@ export default {
       approvalTitle: 'OT Approval Inbox',
       acknowledgeTitle: 'OT Acknowledge Inbox',
       subtitle: 'Manage overtime requests using backend-driven data.',
+
       requestNo: 'Request No.',
       otDate: 'OT Date',
       otTime: 'OT Time',
+      time: 'Time',
       dayType: 'Day Type',
+      otOption: 'OT Option',
+
       employee: 'Employee',
       employees: 'Employees',
       approver: 'Approver',
+      requester: 'Requester',
       requestedMinutes: 'Requested Minutes',
       paidMinutes: 'Paid Minutes',
       breakMinutes: 'Break Minutes',
+      exportExcel: 'Export Excel',
+      newRequest: 'New OT Request',
+
+      allDayTypes: 'All Day Types',
+      otDateFrom: 'OT Date From',
+      otDateTo: 'OT Date To',
+
+      loading: 'Loading OT requests',
+      fetchingRecords: 'Fetching OT request records...',
+      noData: 'No OT requests found.',
+      loadFailed: 'Failed to load OT requests.',
+
+      exported: 'Export ready',
+      exportedSuccess: 'Excel file downloaded successfully.',
+      exportFailed: 'Export failed',
+
+      approvalStatus: 'Approval Status',
+      staff: 'Staff',
+      staffCount: '{count} staff',
+      timing: 'Timing',
+      verify: 'Verify',
+
+      preset: 'Preset',
+      customFixed: 'Custom',
+
+      employeeOtTimeDetail: 'Employee OT time detail',
+      defaultRequestTime: 'Default request time',
+      employeeId: 'ID',
+      break: 'Break',
+      total: 'Total',
+      mode: 'Mode',
+      noEmployeeData: 'No employee data found for this request.',
+
+      edit: {
+        title: 'Edit OT Request',
+        subtitle: 'Requester can edit only before any approval step becomes approved.',
+        saveChanges: 'Save Changes',
+
+        loadingDetail: 'Loading OT request...',
+        notFound: 'OT request not found.',
+
+        legacyManualMode: 'Legacy Manual Mode',
+        shiftOtOptionMode: 'Shift OT Option Mode',
+
+        editForm: 'Edit Form',
+        currentSummary: 'Current Summary',
+        employeesInRequest: 'Employees in This Request',
+
+        requesterId: 'Requester ID',
+        startTime: 'Start Time',
+        endTime: 'End Time',
+        reason: 'Reason',
+        approverChain: 'Approver Chain',
+        selectApprovers: 'Select approvers in hierarchy order',
+        selectOtOption: 'Select OT option',
+
+        shiftType: 'Shift Type',
+        shiftStart: 'Shift Start',
+        shiftEnd: 'Shift End',
+
+        requestedDuration: 'Requested Duration',
+        requestStart: 'Request Start',
+        requestEnd: 'Request End',
+
+        currentRequestTime: 'Current Request Time',
+        currentTotalHours: 'Current Total Hours',
+        currentOtOption: 'Current OT Option',
+
+        employeeListNote:
+          'This version keeps the current employee list and updates OT details, reason, and approver chain.',
+
+        cannotEditMessage:
+          'This OT request cannot be edited because it is no longer pending or it already has an approved step.',
+
+        noShiftOption: 'No active OT option is configured for this shift yet.',
+
+        minutesValue: '{value} min',
+
+        validationTitle: 'Validation',
+        editUnavailableTitle: 'Edit unavailable',
+        editUnavailableDetail: 'This OT request can no longer be edited.',
+        selectDateRequired: 'Please select OT date.',
+        reasonRequired: 'Please enter reason.',
+        employeeRequired: 'At least 1 employee is required.',
+        approverRequired: 'Please select at least 1 approver.',
+        approverMax: 'You can select up to 4 approvers only.',
+        startTimeInvalid: 'Start time must be HH:mm.',
+        endTimeInvalid: 'End time must be HH:mm.',
+        endTimeAfterStart: 'End time must be later than start time.',
+        otOptionRequired: 'Please select OT option.',
+
+        optionsFailedTitle: 'OT options failed',
+        optionsFailedDetail: 'Unable to load OT options for this shift.',
+        loadFailedDetail: 'Failed to load OT request.',
+        updatedSuccess: 'OT request updated successfully.',
+        updateFailedDetail: 'Failed to update OT request.',
+      },
+
+      
+      create: {
+        selectedCount: '{count} selected',
+
+        selectOtDate: '1. Select OT Date',
+        timingType: '3. Timing Type',
+        presetOption: 'Preset option',
+        customFixedTime: 'Custom fixed time',
+        otOptionPolicy: '4. OT Option / Policy',
+        selectTimingType: 'Select timing type',
+        selectOtOption: 'Select OT option',
+
+        customDefaultTime: 'Custom default OT time',
+        customDefaultTimeHelp: 'All selected employees use this time unless adjusted later.',
+        flexible: 'Flexible',
+
+        startTime: 'Start Time',
+        endTime: 'End Time',
+        breakMinutes: 'Break Minutes',
+
+        timing: 'Timing',
+        start: 'Start',
+        end: 'End',
+        total: 'Total',
+        submitRequest: 'Submit OT Request',
+        selectedCount: '{count} selected',
+        reason: '5. Reason',
+        optional: 'Optional',
+        reasonPlaceholder: 'Example: urgent production order, shipment deadline...',
+
+        validationTitle: 'Check form',
+        waitAvailability: 'Please wait until OT availability check finishes.',
+        selectDateFirst: 'Please select OT date first.',
+        selectAtLeastOneEmployee: 'Please select at least 1 employee.',
+        missingShift: 'Some selected employees do not have assigned shift information.',
+        mixedShift: 'Please select employees from one shift only before creating OT request.',
+        selectOtOptionForDayType: 'Please select OT option for {dayType}.',
+        selectOtOptionRequired: 'Please select OT option.',
+        enterCustomStartTime: 'Please enter custom start time.',
+        enterCustomEndTime: 'Please enter custom end time.',
+        customStartInvalid: 'Custom start time must be HH:mm, for example 18:00.',
+        customEndInvalid: 'Custom end time must be HH:mm, for example 20:00.',
+        customTimeInvalid: 'Custom start and end time must be HH:mm.',
+        customTimeSame: 'Custom start time and end time cannot be the same.',
+        breakTooLong: 'Break minutes cannot be greater than or equal to OT duration.',
+        selectValidTiming: 'Please select valid OT timing before submitting.',
+
+        missingEmployeeStart: 'Missing OT start time for {employee}.',
+        missingEmployeeEnd: 'Missing OT end time for {employee}.',
+        employeeStartInvalid: 'Invalid OT start time for {employee}.',
+        employeeEndInvalid: 'Invalid OT end time for {employee}.',
+        employeeTimeSame: 'OT start time and end time cannot be the same for {employee}.',
+        employeeBreakTooLong: 'Break minutes cannot be greater than or equal to OT duration for {employee}.',
+
+        profileLoadFailed: 'Profile load failed',
+        profileLoadFailedDetail: 'Unable to load your employee profile.',
+        availabilityFailed: 'OT availability check failed',
+        availabilityFailedDetail: 'Unable to check existing OT employees for this date.',
+
+        optionsFailed: 'OT options failed',
+        optionsFailedDetail: 'Unable to load OT options for the selected shift and date.',
+        noOptionTitle: 'No OT option',
+        noOptionForDayType: 'No active OT option found for {dayType}. Please ask admin to create one.',
+        noOptionGeneric: 'No active OT option found for this shift/date.',
+
+        calendarUnavailableTitle: 'Holiday calendar unavailable',
+        calendarUnavailableDetail: 'Unable to load internal holiday calendar.',
+
+        employeesRemoved: 'Employees removed',
+        employeesRemovedDetail: '{count} employee(s) already have OT request on this date and were removed from selection.',
+
+        successTitle: 'Created',
+        successMessage: 'OT request created successfully.',
+        createFailedDetail: 'Unable to create OT request.',
+
+        duplicateTitle: 'Duplicate OT employees',
+        duplicateGeneric: 'Some employees already have OT request on this date.',
+        duplicateDetail: 'These employees already have OT request on this date and were removed from selection: {preview}.',
+        duplicateDetailMore: 'These employees already have OT request on this date and were removed from selection: {preview}, and {more} more.',
+
+        missingClockInTitle: 'Attendance time-in required',
+        todayAttendanceRequired: 'Today OT requires attendance time-in before creating the request.',
+        missingClockInDetail: 'Today OT requires attendance time-in. Removed from selection: {preview}.',
+        missingClockInDetailMore: 'Today OT requires attendance time-in. Removed from selection: {preview}, and {more} more.',
+
+        accountEmployeeLinkRequired: 'Your login account is not linked to an employee profile. Please check Account and Employee setup.',
+        approverNotFound: 'No OT approver found in the organization chart. Please set manager chain and OT Role = Approver.',
+        duplicateEmployeeDate: 'Some employees already have OT request on this date.',
+
+        timingMode: {
+          customFixed: 'Custom Fixed Time',
+          fixedTime: 'Fixed Time',
+          afterShiftEnd: 'After Shift End',
+        },
+
+        employeePicker: {
+          title: '2. Choose employees',
+          searchPlaceholder: 'Search ID, name, line, position, or shift...',
+          scopePlaceholder: 'Employee scope',
+
+          myEmployees: 'My employees',
+          allEmployees: 'All employees',
+          allLines: 'All lines',
+
+          noLine: 'No Line',
+          unnamedLine: 'Unnamed line',
+          noShift: 'No shift',
+          noEmployeeId: 'No ID',
+
+          chooseDateFirst: 'Choose OT date first.',
+          checkingBlocked: 'Checking employees already used in OT on this date...',
+          loadingEmployees: 'Loading employees...',
+          autoSelecting: 'Auto-selecting employees with line...',
+
+          emptyTitle: 'No employees found',
+          emptyText: 'Try another keyword, line filter, or employee scope.',
+
+          staffCount: '{count} staff',
+          groupSelectedCount: '{selected}/{total} selected',
+          unavailableCount: '{count} unavailable',
+          manualOnly: 'Manual only',
+          manualSelect: 'Manual Select',
+          available: 'Available',
+          selected: 'Selected',
+
+          columnStart: 'Start',
+          columnEnd: 'End',
+
+          resetDefaultTime: 'Reset to default time',
+          scrollMoreLocal: 'Scroll inside this line to show more employees...',
+          loadingMore: 'Loading more employees...',
+          allMatchedLoaded: 'All matched employees loaded.',
+
+          cannotSelectTitle: 'Cannot select',
+          noSelectableInGroup: 'No selectable employee in this group.',
+          cannotSelectEmployeeTitle: 'Cannot select employee',
+          cannotEditEmployeeTitle: 'Cannot edit employee',
+
+          lineFilterUnavailableTitle: 'Line filter unavailable',
+          lineFilterUnavailableDetail: 'Unable to load line filter options.',
+
+          employeeLoadFailedTitle: 'Employee load failed',
+          employeeLoadFailedDetail: 'Unable to load employees.',
+
+          autoSelectFailedTitle: 'Auto select failed',
+          autoSelectFailedDetail: 'Unable to auto-select your employees.',
+
+          unknownError: 'Unknown error.',
+          invalidValue: 'Invalid value',
+
+          invalidEmployee: 'Invalid employee.',
+          alreadyInRequest: 'Already in OT request {requestNo}',
+          alreadyUnavailable: 'Already unavailable for this date.',
+          employeeNoShift: 'Employee has no shift.',
+          shiftMismatch: 'Employee shift does not match selected shift.',
+        },
+      },
+
+      timeMode: {
+        default: 'Default',
+        custom: 'Custom',
+      },
+
+      acknowledge: {
+        loading: 'Loading acknowledgement inbox',
+        fetchingRecords: 'Fetching acknowledgement OT requests...',
+        noData: 'No acknowledgement requests found.',
+        loadFailed: 'Failed to load acknowledgement inbox.',
+
+        acknowledgement: 'Acknowledgement',
+        requestStatus: 'Request Status',
+        fyi: 'FYI',
+      },
+    },
+
+    policy: {
+      tableTitle: 'OT Calculation Policies',
+      subtitle:
+        'Backend-driven OT calculation rules used by shift OT options and payment verification.',
+      searchPlaceholder: 'Search code, name, or description',
+
+      newPolicy: 'New Policy',
+      createTitle: 'Create OT Policy',
+      editTitle: 'Edit OT Policy',
+
+      policy: 'Policy',
+      rounding: 'Rounding',
+      eligibility: 'Eligibility',
+      behavior: 'Behavior',
+      forgetScan: 'Forget Scan',
+
+      allMethods: 'All Methods',
+      roundMethodLabel: 'Round Method',
+      minEligible: 'Min Eligible',
+      roundUnit: 'Round Unit',
+      graceAfterShiftEnd: 'Grace After Shift End',
+
+      minEligibleShort: 'Min',
+      graceShort: 'Grace',
+      everyUnit: 'Every {unit}',
+
+      codePlaceholder: 'Example: POST_SHIFT_STD_30M',
+      namePlaceholder: 'Example: Post Shift Standard 30-Minute Ceiling',
+      descriptionPlaceholder: 'Optional note for admins...',
+      activeHelp: 'Active policies can be used by new Shift OT Options.',
+
+      loading: 'Loading OT policies',
+      noData: 'No OT policies matched your filters.',
+      loadFailed: 'Failed to load OT policies.',
+      saveFailed: 'Failed to save OT policy.',
+      createdSuccess: 'OT policy created successfully.',
+      updatedSuccess: 'OT policy updated successfully.',
+
+      roundMethod: {
+        floor: 'Floor',
+        ceil: 'Ceil',
+        nearest: 'Nearest',
+      },
+
+      flag: {
+        allowPreShiftOT: 'Pre-shift',
+        allowPostShiftOT: 'Post-shift',
+        capByRequestedMinutes: 'Cap requested',
+        treatForgetScanInAsPending: 'Missing clock-in pending',
+        treatForgetScanOutAsPending: 'Missing clock-out pending',
+        allowApprovedOtWithoutExactClockOut: 'No exact clock-out',
+      },
+
+      flagHelp: {
+        allowPreShiftOT: 'Allow OT before shift start.',
+        allowPostShiftOT: 'Allow OT after shift end.',
+        capByRequestedMinutes: 'Do not pay more than requested OT.',
+        treatForgetScanInAsPending: 'Require review when clock-in is missing.',
+        treatForgetScanOutAsPending: 'Require review when clock-out is missing.',
+        allowApprovedOtWithoutExactClockOut:
+          'Allow approved OT without exact clock-out when policy permits.',
+      },
+
+      flagShort: {
+        pre: 'Pre {value}',
+        post: 'Post {value}',
+        cap: 'Cap {value}',
+        noExactOut: 'No exact out {value}',
+        fsIn: 'FS In {value}',
+        fsOut: 'FS Out {value}',
+      },
+
+      validation: {
+        codeRequired: 'Code is required.',
+        nameRequired: 'Name is required.',
+        roundMethodRequired: 'Round method is required.',
+        roundUnitInvalid: 'Round unit must be at least 1 minute.',
+        minEligibleInvalid: 'Minimum eligible minutes cannot be negative.',
+        graceInvalid: 'Grace minutes cannot be negative.',
+      },
+    },
+
+    shiftOption: {
+      tableTitle: 'Shift OT Options',
+      subtitle:
+        'Manage OT options by shift, day type, timing mode, and calculation policy.',
+      searchPlaceholder: 'Search shift, option label, policy, or timing mode',
+
+      newOption: 'New Option',
+      createTitle: 'Create Shift OT Option',
+      editTitle: 'Edit Shift OT Option',
+
+      allShifts: 'All Shifts',
+      allPolicies: 'All Policies',
+      allTimingModes: 'All Timing Modes',
+      allDayTypes: 'All Day Types',
+
+      optionLabel: 'Option Label',
+      dayType: 'Day Type',
+      timingMode: 'Timing Mode',
+      otWindow: 'OT Window',
+      requested: 'Requested',
+      break: 'Break',
+      paid: 'Paid',
+      policy: 'Calculation Policy',
+      sequence: 'Sequence',
+
+      selectShift: 'Select shift',
+      selectPolicy: 'Select calculation policy',
+      labelPlaceholder: 'Example: Evening OT 18:00 - 20:00',
+
+      applicableDayTypes: 'Applicable Day Types',
+      selectDayTypes: 'Select day types',
+      startAfterShiftEnd: 'Start After Shift End',
+      startAfterShiftEndHelp:
+        'Backend uses the selected shift end time plus this offset to build the OT window.',
+      requestedMinutes: 'Requested Minutes',
+      fixedStartTime: 'Fixed Start Time',
+      fixedEndTime: 'Fixed End Time',
+      activeHelp: 'Inactive options will not be available for new OT requests.',
+
+      timing: {
+        afterShiftEnd: 'After Shift End',
+        fixedTime: 'Fixed Time',
+      },
+
+      afterShiftOffset: 'Offset {offset} after shift end',
+      roundEvery: 'Round every {unit}',
+      minEligibleValue: 'Min {value}',
+
+      noData: 'No shift OT options matched your filters.',
+      loadFailed: 'Failed to load shift OT options.',
+      saveFailed: 'Failed to save shift OT option.',
+      createdSuccess: 'Shift OT option created successfully.',
+      updatedSuccess: 'Shift OT option updated successfully.',
+      shiftLookupFailed: 'Failed to load shift options.',
+      policyLookupFailed: 'Failed to load policy options.',
+
+      validation: {
+        shiftRequired: 'Shift is required.',
+        labelRequired: 'Option label is required.',
+        timingModeRequired: 'Timing mode is required.',
+        dayTypesRequired: 'Please select at least one applicable day type.',
+        policyRequired: 'Calculation policy is required.',
+        requestedMinutesInvalid: 'Requested minutes must be at least 1.',
+        sequenceInvalid: 'Sequence must be at least 1.',
+        startAfterShiftEndInvalid: 'Start-after-shift-end minutes cannot be negative.',
+        fixedStartTimeInvalid: 'Fixed start time must use HH:mm format.',
+        fixedEndTimeInvalid: 'Fixed end time must use HH:mm format.',
+        fixedTimeSame: 'Fixed start time and end time cannot be the same.',
+      },
     },
   },
 
@@ -1162,5 +1624,217 @@ export default {
     preview: 'Preview',
     calculateExport: 'Calculate & Export',
     salaryTemplate: 'Salary Template',
+
+    dayTypes: {
+      workingDay: 'Working Day',
+      sunday: 'Sunday',
+      holiday: 'Holiday',
+    },
+
+    formulas: {
+      tableTitle: 'Payment Formula List',
+      searchPlaceholder: 'Search code, name, or description',
+
+      newFormula: 'New Formula',
+      createTitle: 'Create Payment Formula',
+      editTitle: 'Edit Payment Formula',
+
+      formulaName: 'Formula Name',
+      baseRule: 'Base Rule',
+      multipliers: 'Multipliers',
+      round: 'Round',
+      currency: 'Currency',
+
+      daysPerMonth: 'days / month',
+      hoursPerDay: 'hours / day',
+      hoursPerDayField: 'Hours / Day',
+      decimals: 'decimals',
+
+      workingDays: 'Working Days',
+      roundDecimals: 'Round Decimals',
+      dayTypeMultipliers: 'Day Type Multipliers',
+      previewTitle: 'Formula Preview',
+
+      codePlaceholder: 'Example: STD_OT_2026',
+      namePlaceholder: 'Example: Standard OT Formula 2026',
+      descriptionPlaceholder: 'Optional description...',
+
+      dialogNote:
+        'Formula setup is saved. Salary Excel and generated payment result are not saved.',
+
+      hourlyRatePreview:
+        'Hourly Rate = Monthly Salary ÷ Working Days ÷ Hours Per Day',
+      otAmountPreview:
+        'OT Amount = Payable OT Hours × Hourly Rate × Day Type Multiplier',
+
+      noData: 'No payment formulas matched your filters.',
+      loadFailed: 'Failed to load payment formulas.',
+      saveFailed: 'Failed to save payment formula.',
+      createdSuccess: 'Payment formula created successfully.',
+      updatedSuccess: 'Payment formula updated successfully.',
+
+      validation: {
+        codeRequired: 'Code is required.',
+        nameRequired: 'Name is required.',
+        workingDaysRequired: 'Monthly working days must be greater than 0.',
+        hoursPerDayRequired: 'Hours per day must be greater than 0.',
+        workingDayMultiplierInvalid: 'Working day multiplier cannot be negative.',
+        sundayMultiplierInvalid: 'Sunday multiplier cannot be negative.',
+        holidayMultiplierInvalid: 'Holiday multiplier cannot be negative.',
+        roundingInvalid: 'Round decimals must be between 0 and 6.',
+      },
+    },
+
+    process: {
+      field: {
+        paymentFormula: 'Payment Formula',
+        salaryExcel: 'Salary Excel',
+        noFile: 'No file selected',
+        formula: 'Formula',
+        workingDays: 'Working Days',
+        hoursPerDay: 'Hours Per Day',
+        month: 'month',
+        hours: 'hours',
+        multipliers: 'Multipliers',
+        calculation: 'Calculation',
+      },
+
+      action: {
+        uploadSalary: 'Upload Salary',
+        changeFile: 'Change File',
+        template: 'Template',
+        preview: 'Preview',
+        generate: 'Generate',
+      },
+
+      card: {
+        processingTitle: 'Payment Processing',
+        processingSubtitle: 'Preview first, then generate final OT payment Excel.',
+        formulaTitle: 'Formula Preview',
+        formulaSubtitle: 'Formula selected for this payment calculation.',
+      },
+
+      status: {
+        previewReady: 'Preview Ready',
+        notPreviewed: 'Not Previewed',
+        ready: 'Ready',
+        selectFormula: 'Select Formula',
+      },
+
+      note: {
+        notSaved:
+          'Salary file, preview result, and final payment file are not saved. If download fails, upload salary again and generate again.',
+      },
+
+      calendar: {
+        title: 'Internal Calendar Check',
+        subtitle:
+          'Frontend displays active holidays from Calendar module. Backend payment still recalculates the official day type.',
+        loading: 'Loading Calendar',
+        holidayCount: '{count} holiday(s)',
+        workingDays: 'Working Days',
+        sundays: 'Sundays',
+        internalHolidays: 'Internal Holidays',
+      },
+
+      preview: {
+        title: 'Payment Preview',
+        subtitle: 'Review the calculated result before generating Excel.',
+        notSaved: 'Preview rows are not saved in database.',
+      },
+
+      summary: {
+        payableEmployees: 'Payable Employees',
+        totalOtHours: 'Total OT Hours',
+        totalAmount: 'Total Amount',
+        missingSalary: 'Missing Salary',
+        warnings: 'Warnings',
+      },
+
+      table: {
+        detail: 'Payment Detail Preview',
+        missingSalary: 'Missing Salary',
+        warnings: 'Warnings',
+      },
+
+      column: {
+        requestNo: 'Request No',
+        otOption: 'OT Option',
+        otTime: 'OT Time',
+        paymentDayType: 'Payment Day Type',
+        internalCalendar: 'Internal Calendar',
+        storedType: 'Stored Type',
+        employeeId: 'ID',
+        employeeName: 'Name',
+        salary: 'Salary',
+        otOptionTime: 'OT Option Time',
+        breakTime: 'Break Time',
+        totalRequestPaid: 'Total Request Paid',
+        actual: 'Actual',
+        eligible: 'Eligible',
+        payable: 'Payable',
+        backendCap: 'Backend Cap',
+        hours: 'Hours',
+        multiplier: 'Multiplier',
+        amount: 'Amount',
+        currency: 'Currency',
+        decision: 'Decision',
+        reason: 'Reason',
+        otHours: 'OT Hours',
+      },
+
+      label: {
+        cappedByRequestPaid: 'Capped by request paid',
+        backendCalculated: 'Backend calculated',
+      },
+
+      empty: {
+        noFormula: 'No formula selected',
+        selectFormula: 'Select an active payment formula before preview.',
+        noPaymentDetail: 'No payable payment detail found.',
+        noMissingSalary: 'No missing salary.',
+        noWarnings: 'No warnings.',
+        previewTitle: 'No payment preview yet',
+        previewHint:
+          'Upload salary Excel and click Preview to see the payment result before download.',
+      },
+
+      validation: {
+        fromDateRequired: 'From date is required.',
+        toDateRequired: 'To date is required.',
+        formulaRequired: 'Payment formula is required.',
+        salaryRequired: 'Salary Excel file is required.',
+        invalidDateRange: 'From date cannot be after To date.',
+      },
+
+      message: {
+        loadFormulasFailed: 'Failed to load payment formulas.',
+        calendarFailedTitle: 'Calendar failed',
+        calendarFailed: 'Failed to load internal holiday calendar.',
+
+        invalidFileTitle: 'Invalid file',
+        invalidFile: 'Please upload Excel file only: .xlsx or .xls.',
+
+        downloadedTitle: 'Downloaded',
+        downloadFailedTitle: 'Download failed',
+        templateDownloaded: 'Salary template downloaded.',
+        templateDownloadFailed: 'Failed to download salary template.',
+
+        checkFormTitle: 'Check form',
+
+        previewReadyTitle: 'Preview ready',
+        previewReady: 'Payment preview calculated successfully.',
+        previewFailedTitle: 'Preview failed',
+        previewFailed: 'Failed to calculate payment preview.',
+
+        previewRequiredTitle: 'Preview required',
+        previewRequired: 'Please preview the payment before generating Excel.',
+
+        generatedTitle: 'Generated',
+        generated: 'Payment Excel generated successfully.',
+        generateFailedTitle: 'Generate failed',
+        generateFailed: 'Failed to generate payment Excel.',
+      },
+    },
   },
 }

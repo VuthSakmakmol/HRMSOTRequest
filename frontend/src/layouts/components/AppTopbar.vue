@@ -1,5 +1,7 @@
 <!-- frontend/src/layouts/components/AppTopbar.vue -->
 <script setup>
+// frontend/src/layouts/components/AppTopbar.vue
+
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -31,7 +33,7 @@ const profileMenu = ref(null)
 
 const pageTitle = computed(() => {
   const titleKey = String(route.meta?.titleKey || '').trim()
-  const fallbackTitle = String(route.meta?.title || 'Dashboard').trim()
+  const fallbackTitle = String(route.meta?.title || t('nav.dashboard')).trim()
 
   return titleKey ? t(titleKey) : fallbackTitle
 })
@@ -46,10 +48,16 @@ const displayName = computed(() =>
   String(auth.user?.displayName || auth.user?.loginId || 'User').trim(),
 )
 
+const themeIcon = computed(() => (theme.isDark ? 'pi pi-sun' : 'pi pi-moon'))
+
+const themeLabel = computed(() =>
+  theme.isDark ? t('common.switchToLightMode') : t('common.switchToDarkMode'),
+)
+
 const profileItems = computed(() => [
   {
-    label: theme.isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode',
-    icon: theme.isDark ? 'pi pi-sun' : 'pi pi-moon',
+    label: themeLabel.value,
+    icon: themeIcon.value,
     command: () => theme.toggle(),
   },
   {
@@ -75,8 +83,8 @@ function toggleProfileMenu(event) {
 
 <template>
   <header class="app-topbar sticky top-0 z-30">
-    <div class="flex h-[56px] items-center justify-between gap-3 px-3 sm:px-4 lg:px-5">
-      <div class="flex min-w-0 items-center gap-2">
+    <div class="app-topbar__inner">
+      <div class="app-topbar__left">
         <Button
           icon="pi pi-bars"
           text
@@ -84,7 +92,7 @@ function toggleProfileMenu(event) {
           severity="secondary"
           size="small"
           class="topbar-icon-btn lg:!hidden"
-          aria-label="Open navigation"
+          :aria-label="t('common.openNavigation')"
           @click="emit('toggle-sidebar')"
         />
 
@@ -95,30 +103,30 @@ function toggleProfileMenu(event) {
           severity="secondary"
           size="small"
           class="topbar-icon-btn hidden lg:!inline-flex"
-          aria-label="Toggle desktop sidebar"
+          :aria-label="t('common.toggleDesktopSidebar')"
           @click="emit('toggle-desktop-sidebar')"
         />
 
-        <div class="hidden h-7 w-px bg-[color:var(--ot-border)] sm:block" />
+        <div class="app-topbar__divider" />
 
-        <div class="min-w-0">
-          <div class="truncate text-sm font-semibold text-[color:var(--ot-text)] sm:text-[15px]">
+        <div class="app-topbar__title-wrap">
+          <div class="app-topbar__title">
             {{ pageTitle }}
           </div>
         </div>
       </div>
 
-      <div class="flex shrink-0 items-center gap-1">
+      <div class="app-topbar__right">
         <AppLanguageSwitcher />
 
         <Button
-          :icon="theme.isDark ? 'pi pi-sun' : 'pi pi-moon'"
+          :icon="themeIcon"
           text
           rounded
           severity="secondary"
           size="small"
           class="topbar-icon-btn"
-          aria-label="Toggle theme"
+          :aria-label="themeLabel"
           @click="theme.toggle()"
         />
 
@@ -128,13 +136,14 @@ function toggleProfileMenu(event) {
           rounded
           severity="secondary"
           size="small"
-          class="topbar-icon-btn"
-          aria-label="Notifications"
+          class="topbar-icon-btn hidden sm:!inline-flex"
+          :aria-label="t('common.notifications')"
         />
 
         <button
           type="button"
-          class="topbar-profile-btn ml-1 flex min-w-0 items-center gap-2 rounded-full border px-1 py-1 transition"
+          class="topbar-profile-btn"
+          :aria-label="t('auth.profile')"
           @click="toggleProfileMenu"
         >
           <Avatar
@@ -143,11 +152,11 @@ function toggleProfileMenu(event) {
             class="!h-8 !w-8 !bg-[color:var(--ot-blue)] !text-xs !font-semibold !text-white"
           />
 
-          <span class="hidden max-w-[120px] truncate text-xs font-medium text-[color:var(--ot-text)] md:block">
+          <span class="topbar-profile-btn__name">
             {{ displayName }}
           </span>
 
-          <i class="pi pi-angle-down hidden text-[10px] text-[color:var(--ot-text-muted)] sm:block" />
+          <i class="pi pi-angle-down topbar-profile-btn__icon" />
         </button>
 
         <Menu
@@ -175,14 +184,85 @@ function toggleProfileMenu(event) {
   box-shadow: 0 1px 0 color-mix(in srgb, var(--ot-border) 55%, transparent);
 }
 
+.app-topbar__inner {
+  display: flex;
+  height: 56px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding-inline: 0.75rem;
+}
+
+.app-topbar__left {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.app-topbar__right {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.app-topbar__divider {
+  display: none;
+  height: 1.75rem;
+  width: 1px;
+  background: var(--ot-border);
+}
+
+.app-topbar__title-wrap {
+  min-width: 0;
+}
+
+.app-topbar__title {
+  overflow: hidden;
+  max-width: 44vw;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--ot-text);
+}
+
 .topbar-profile-btn {
-  border-color: transparent;
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: 0.15rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
   background: transparent;
+  padding: 0.25rem;
+  transition:
+    border-color 0.16s ease,
+    background-color 0.16s ease;
 }
 
 .topbar-profile-btn:hover {
   border-color: var(--ot-border);
   background: color-mix(in srgb, var(--ot-text) 6%, transparent);
+}
+
+.topbar-profile-btn__name {
+  display: none;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  font-weight: 650;
+  color: var(--ot-text);
+}
+
+.topbar-profile-btn__icon {
+  display: none;
+  font-size: 0.62rem;
+  color: var(--ot-text-muted);
 }
 
 :deep(.topbar-icon-btn.p-button) {
@@ -232,5 +312,40 @@ function toggleProfileMenu(event) {
 
 :global(.dark) :global(.app-profile-menu.p-menu) {
   box-shadow: 0 18px 45px rgb(0 0 0 / 0.38) !important;
+}
+
+@media (min-width: 640px) {
+  .app-topbar__inner {
+    padding-inline: 1rem;
+  }
+
+  .app-topbar__divider {
+    display: block;
+  }
+
+  .app-topbar__title {
+    max-width: 52vw;
+    font-size: 0.94rem;
+  }
+
+  .topbar-profile-btn__icon {
+    display: inline-block;
+  }
+}
+
+@media (min-width: 768px) {
+  .topbar-profile-btn__name {
+    display: inline-block;
+  }
+}
+
+@media (min-width: 1024px) {
+  .app-topbar__inner {
+    padding-inline: 1.25rem;
+  }
+
+  .app-topbar__title {
+    max-width: 58vw;
+  }
 }
 </style>

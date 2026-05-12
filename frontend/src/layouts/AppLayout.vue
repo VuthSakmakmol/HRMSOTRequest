@@ -1,5 +1,7 @@
 <!-- frontend/src/layouts/AppLayout.vue -->
 <script setup>
+// frontend/src/layouts/AppLayout.vue
+
 import { computed, ref } from 'vue'
 import { RouterView } from 'vue-router'
 
@@ -15,26 +17,26 @@ const desktopSidebarWidth = computed(() =>
 </script>
 
 <template>
-  <div
-    class="min-h-screen bg-[color:var(--ot-bg)] text-[color:var(--ot-text)] transition-colors duration-200"
-  >
+  <div class="app-layout">
     <AppSidebar
       v-model:mobileVisible="isMobileSidebarOpen"
       v-model:desktopCollapsed="isDesktopSidebarCollapsed"
     />
 
     <div
-      class="min-h-screen transition-[padding-left] duration-200 ease-out lg:pl-[var(--ot-sidebar-width)]"
+      class="app-layout__content"
       :style="{ '--ot-sidebar-width': desktopSidebarWidth }"
     >
       <AppTopbar
         :desktopCollapsed="isDesktopSidebarCollapsed"
         @toggle-sidebar="isMobileSidebarOpen = true"
-        @toggle-desktop-sidebar="isDesktopSidebarCollapsed = !isDesktopSidebarCollapsed"
+        @toggle-desktop-sidebar="
+          isDesktopSidebarCollapsed = !isDesktopSidebarCollapsed
+        "
       />
 
-      <main class="px-3 py-3 sm:px-4 sm:py-4 lg:px-5 lg:py-5">
-        <div class="mx-auto w-full max-w-[1600px] min-w-0">
+      <main class="app-layout__main">
+        <div class="app-layout__page">
           <RouterView v-slot="{ Component }">
             <transition name="page-fade" mode="out-in">
               <component :is="Component" />
@@ -47,6 +49,47 @@ const desktopSidebarWidth = computed(() =>
 </template>
 
 <style scoped>
+.app-layout {
+  min-height: 100vh;
+  background: var(--ot-bg);
+  color: var(--ot-text);
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.app-layout__content {
+  min-height: 100vh;
+  transition: padding-left 0.2s ease-out;
+}
+
+.app-layout__main {
+  padding: 0.75rem;
+}
+
+.app-layout__page {
+  width: 100%;
+  max-width: 1600px;
+  min-width: 0;
+  margin-inline: auto;
+}
+
+@media (min-width: 640px) {
+  .app-layout__main {
+    padding: 1rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .app-layout__content {
+    padding-left: var(--ot-sidebar-width);
+  }
+
+  .app-layout__main {
+    padding: 1.25rem;
+  }
+}
+
 .page-fade-enter-active,
 .page-fade-leave-active {
   transition:

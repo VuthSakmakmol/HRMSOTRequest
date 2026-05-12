@@ -1,8 +1,7 @@
 <!-- frontend/src/modules/payment/views/PaymentFormulaView.vue -->
 <script setup>
-// frontend/src/modules/payment/views/PaymentFormulaView.vue
-
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
@@ -19,14 +18,16 @@ import Tag from 'primevue/tag'
 import Textarea from 'primevue/textarea'
 
 import AppTableLoading from '@/shared/components/AppTableLoading.vue'
-
 import {
   createPaymentFormula,
   getPaymentFormulas,
   updatePaymentFormula,
 } from '@/modules/payment/payment.api'
+import { getApiErrorMessage } from '@/shared/utils/apiError'
+import { formatDateTime } from '@/shared/utils/dateFormat'
 
 const toast = useToast()
+const { t } = useI18n()
 
 const PAGE_SIZE = 10
 const SEARCH_DEBOUNCE_MS = 250
@@ -45,30 +46,31 @@ const editingId = ref('')
 const filters = reactive({
   search: '',
   isActive: '',
-})
-
-const sortState = reactive({
-  sortBy: 'createdAt',
-  sortOrder: 'desc',
+  sortField: 'createdAt',
+  sortOrder: -1,
 })
 
 const form = reactive(defaultForm())
 
-const statusOptions = [
-  { label: 'All Status', value: '' },
-  { label: 'Active', value: true },
-  { label: 'Inactive', value: false },
-]
+const statusOptions = computed(() => [
+  { label: t('common.allStatus'), value: '' },
+  { label: t('common.active'), value: true },
+  { label: t('common.inactive'), value: false },
+])
 
 const totalItems = computed(() => Number(totalRecords.value || 0))
 const loadedCount = computed(() => rows.value.filter(Boolean).length)
-const summaryText = computed(() => `${loadedCount.value} of ${totalItems.value}`)
 const hasAnyData = computed(() => rows.value.some(Boolean))
 const useVirtualScroll = computed(() => totalItems.value > PAGE_SIZE)
-const firstLoading = computed(() => {
-  return backgroundLoading.value && !bootstrapped.value && !hasAnyData.value
-})
+const isFirstLoading = computed(() => !bootstrapped.value && backgroundLoading.value)
 const isEditMode = computed(() => Boolean(editingId.value))
+
+const loadedLabel = computed(() =>
+  t('common.loaded', {
+    loaded: loadedCount.value,
+    total: totalItems.value,
+  }),
+)
 
 let searchTimer = null
 let currentRequestId = 0
@@ -109,7 +111,12 @@ function normalizePayload(res) {
 }
 
 function normalizeItems(payload) {
+  if (Array.isArray(payload)) return payload
   return Array.isArray(payload?.items) ? payload.items : []
+}
+
+function normalizeTotal(payload) {
+  return Number(payload?.pagination?.total || payload?.pagination?.totalRecords || payload?.total || 0)
 }
 
 function normalizeRow(row) {
@@ -117,36 +124,8 @@ function normalizeRow(row) {
 
   return {
     ...row,
-    id: String(row?.id || row?._id || '').trim(),
+    id: s(row.id || row._id),
   }
-}
-
-function errorMessage(error, fallback = 'Something went wrong') {
-  return (
-    error?.response?.data?.message ||
-    error?.response?.data?.error ||
-    error?.message ||
-    fallback
-  )
-}
-
-function pad2(value) {
-  return String(value).padStart(2, '0')
-}
-
-function formatDateTimeDMY(value) {
-  if (!value) return '-'
-
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return String(value || '-')
-
-  const dd = pad2(date.getDate())
-  const mm = pad2(date.getMonth() + 1)
-  const yyyy = date.getFullYear()
-  const hh = pad2(date.getHours())
-  const min = pad2(date.getMinutes())
-
-  return `${dd}/${mm}/${yyyy}, ${hh}:${min}`
 }
 
 function formatMultiplier(value) {
@@ -158,16 +137,12 @@ function formatMultiplier(value) {
   return number.toFixed(4).replace(/\.?0+$/, '')
 }
 
-function normalizeClassKey(value) {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/_/g, '-')
-    .replace(/\s+/g, '-')
+function formatFormulaStatusLabel(value) {
+  return value ? t('common.active') : t('common.inactive')
 }
 
-function statusClass(value) {
-  return `payment-status-${normalizeClassKey(value ? 'active' : 'inactive')}`
+function getFormulaStatusSeverity(value) {
+  return value ? 'success' : 'danger'
 }
 
 function buildQuery(page) {
@@ -176,9 +151,18 @@ function buildQuery(page) {
     limit: PAGE_SIZE,
     search: s(filters.search) || undefined,
     isActive: filters.isActive === '' ? undefined : filters.isActive,
-    sortBy: sortState.sortBy,
-    sortOrder: sortState.sortOrder,
+    sortBy: filters.sortField,
+    sortOrder: filters.sortOrder === 1 ? 'asc' : 'desc',
   }
+}
+
+function showToast(severity, summary, detail, life = 3000) {
+  toast.add({
+    severity,
+    summary,
+    detail,
+    life,
+  })
 }
 
 async function fetchPage(page, { replace = false, silent = false } = {}) {
@@ -192,63 +176,62 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
   try {
     const res = await getPaymentFormulas(buildQuery(page))
+
     if (requestId !== currentRequestId) return
 
     const payload = normalizePayload(res)
     const items = normalizeItems(payload).map(normalizeRow)
-
-    const total = Number(
-      payload?.pagination?.total ||
-        payload?.pagination?.totalRecords ||
-        0,
-    )
+    const total = normalizeTotal(payload)
+    const startIndex = (page - 1) * PAGE_SIZE
 
     totalRecords.value = total
 
     if (replace) {
-      const nextRows = Array.from({ length: total }, () => null)
-      const startIndex = (page - 1) * PAGE_SIZE
+      const nextRows = total > 0 ? Array.from({ length: total }, () => null) : []
 
-      for (let i = 0; i < items.length; i += 1) {
-        nextRows[startIndex + i] = items[i]
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
       }
 
-      rows.value = total === 0 ? [] : nextRows
+      rows.value = nextRows
       loadedPages.value = new Set([page])
     } else {
-      if (!rows.value.length && total > 0) {
-        rows.value = Array.from({ length: total }, () => null)
+      const nextRows = rows.value.length
+        ? [...rows.value]
+        : Array.from({ length: total }, () => null)
+
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
       }
 
-      const startIndex = (page - 1) * PAGE_SIZE
+      rows.value = nextRows
 
-      for (let i = 0; i < items.length; i += 1) {
-        rows.value[startIndex + i] = items[i]
-      }
-
-      loadedPages.value.add(page)
+      const nextLoadedPages = new Set(loadedPages.value)
+      nextLoadedPages.add(page)
+      loadedPages.value = nextLoadedPages
     }
 
     bootstrapped.value = true
   } catch (error) {
     bootstrapped.value = true
 
-    toast.add({
-      severity: 'error',
-      summary: 'Load failed',
-      detail: errorMessage(error, 'Failed to load payment formulas'),
-      life: 3000,
-    })
+    showToast(
+      'error',
+      t('common.loadFailed'),
+      getApiErrorMessage(error, t('payment.formulas.loadFailed')),
+    )
   } finally {
     backgroundLoading.value = false
   }
 }
 
 async function reloadFirstPage({ keepVisible = true } = {}) {
+  loadedPages.value = new Set()
+
   if (!keepVisible) {
     rows.value = []
     totalRecords.value = 0
-    loadedPages.value = new Set()
+    bootstrapped.value = false
   }
 
   await fetchPage(1, {
@@ -269,22 +252,13 @@ function onSearchInput() {
   runSearchSoon()
 }
 
-function onStatusChange() {
-  reloadFirstPage({ keepVisible: true })
-}
-
-function clearFilters() {
-  filters.search = ''
-  filters.isActive = ''
-  sortState.sortBy = 'createdAt'
-  sortState.sortOrder = 'desc'
-
+function onFilterChange() {
   reloadFirstPage({ keepVisible: true })
 }
 
 function onSort(event) {
-  sortState.sortBy = event?.sortField || 'createdAt'
-  sortState.sortOrder = event?.sortOrder === 1 ? 'asc' : 'desc'
+  filters.sortField = event?.sortField || 'createdAt'
+  filters.sortOrder = typeof event?.sortOrder === 'number' ? event.sortOrder : -1
 
   reloadFirstPage({ keepVisible: true })
 }
@@ -305,6 +279,19 @@ async function onVirtualLazyLoad(event) {
   }
 }
 
+function clearFilters() {
+  filters.search = ''
+  filters.isActive = ''
+  filters.sortField = 'createdAt'
+  filters.sortOrder = -1
+
+  reloadFirstPage({ keepVisible: true })
+}
+
+function refresh() {
+  reloadFirstPage({ keepVisible: true })
+}
+
 function openCreateDialog() {
   editingId.value = ''
   resetForm()
@@ -314,12 +301,12 @@ function openCreateDialog() {
 function openEditDialog(row) {
   if (!row) return
 
-  editingId.value = String(row?._id || row?.id || '')
+  editingId.value = s(row.id || row._id)
 
   Object.assign(form, {
-    code: row.code || '',
-    name: row.name || '',
-    description: row.description || '',
+    code: s(row.code),
+    name: s(row.name),
+    description: s(row.description),
     salaryBasis: row.salaryBasis || 'MONTHLY_SALARY',
     monthlyWorkingDays: Number(row.monthlyWorkingDays || 26),
     hoursPerDay: Number(row.hoursPerDay || 8),
@@ -329,8 +316,8 @@ function openEditDialog(row) {
       HOLIDAY: Number(row.multipliers?.HOLIDAY ?? 3),
     },
     roundingDecimals: Number(row.roundingDecimals ?? 2),
-    currency: row.currency || 'USD',
-    isActive: Boolean(row.isActive),
+    currency: s(row.currency || 'USD'),
+    isActive: row.isActive !== false,
   })
 
   dialogVisible.value = true
@@ -355,34 +342,8 @@ function normalizeSavePayload() {
   }
 }
 
-function validatePayload(payload) {
-  if (!payload.code) return 'Code is required'
-  if (!payload.name) return 'Name is required'
-  if (payload.monthlyWorkingDays <= 0) return 'Monthly working days must be greater than 0'
-  if (payload.hoursPerDay <= 0) return 'Hours per day must be greater than 0'
-  if (payload.multipliers.WORKING_DAY < 0) return 'Working day multiplier cannot be negative'
-  if (payload.multipliers.SUNDAY < 0) return 'Sunday multiplier cannot be negative'
-  if (payload.multipliers.HOLIDAY < 0) return 'Holiday multiplier cannot be negative'
-  if (payload.roundingDecimals < 0 || payload.roundingDecimals > 6) {
-    return 'Round decimals must be between 0 and 6'
-  }
-
-  return ''
-}
-
 async function saveFormula() {
   const payload = normalizeSavePayload()
-  const validationMessage = validatePayload(payload)
-
-  if (validationMessage) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Check form',
-      detail: validationMessage,
-      life: 3000,
-    })
-    return
-  }
 
   saving.value = true
 
@@ -390,36 +351,43 @@ async function saveFormula() {
     if (isEditMode.value) {
       await updatePaymentFormula(editingId.value, payload)
 
-      toast.add({
-        severity: 'success',
-        summary: 'Updated',
-        detail: 'Payment formula updated successfully',
-        life: 2500,
-      })
+      showToast(
+        'success',
+        t('common.updated'),
+        t('payment.formulas.updatedSuccess'),
+        2500,
+      )
     } else {
       await createPaymentFormula(payload)
 
-      toast.add({
-        severity: 'success',
-        summary: 'Created',
-        detail: 'Payment formula created successfully',
-        life: 2500,
-      })
+      showToast(
+        'success',
+        t('common.created'),
+        t('payment.formulas.createdSuccess'),
+        2500,
+      )
     }
 
     dialogVisible.value = false
     await reloadFirstPage({ keepVisible: true })
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Save failed',
-      detail: errorMessage(error, 'Failed to save payment formula'),
-      life: 3500,
-    })
+    showToast(
+      'error',
+      isEditMode.value ? t('common.updateFailed') : t('common.createFailed'),
+      getApiErrorMessage(error, t('payment.formulas.saveFailed')),
+      3500,
+    )
   } finally {
     saving.value = false
   }
 }
+
+watch(
+  () => filters.isActive,
+  () => {
+    onFilterChange()
+  },
+)
 
 onMounted(() => {
   reloadFirstPage({ keepVisible: false })
@@ -431,323 +399,442 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4">
-    <div
-      class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]"
-    >
-      <!-- Compact filter/action bar -->
-      <div class="border-b border-[color:var(--ot-border)] px-3 py-3">
-        <div class="flex flex-col gap-2 xl:flex-row xl:items-center">
-          <IconField class="w-full xl:w-[240px] xl:shrink-0">
-            <InputIcon class="pi pi-search" />
+  <div class="ot-page-shell">
+    <section class="ot-filter-bar payment-formula-filter-bar">
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('common.search') }}
+        </label>
 
-            <InputText
-              v-model="filters.search"
-              placeholder="Search"
-              class="w-full"
-              size="small"
-              @input="onSearchInput"
-            />
-          </IconField>
+        <IconField>
+          <InputIcon class="pi pi-search" />
 
-          <div class="w-full xl:w-[175px] xl:shrink-0">
-            <Select
-              v-model="filters.isActive"
-              :options="statusOptions"
-              optionLabel="label"
-              optionValue="value"
-              placeholder="Status"
-              class="w-full"
-              size="small"
-              @change="onStatusChange"
-            />
-          </div>
+          <InputText
+            v-model="filters.search"
+            :placeholder="t('payment.formulas.searchPlaceholder')"
+            class="w-full"
+            size="small"
+            @input="onSearchInput"
+          />
+        </IconField>
+      </div>
 
-          <div class="flex items-center gap-2 xl:ml-auto xl:shrink-0">
-            <div
-              class="rounded-lg border border-[color:var(--ot-border)] px-3 py-1.5 text-xs font-medium text-[color:var(--ot-text-muted)]"
-            >
-              Loaded {{ summaryText }}
-            </div>
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('common.status') }}
+        </label>
 
-            <Button
-              label="Clear"
-              icon="pi pi-refresh"
-              severity="secondary"
-              outlined
-              size="small"
-              @click="clearFilters"
-            />
+        <Select
+          v-model="filters.isActive"
+          :options="statusOptions"
+          option-label="label"
+          option-value="value"
+          :placeholder="t('common.allStatus')"
+          class="w-full"
+          size="small"
+        />
+      </div>
 
-            <Button
-              label="New Formula"
-              icon="pi pi-plus"
-              size="small"
-              @click="openCreateDialog"
-            />
-          </div>
+      <div class="ot-filter-actions payment-formula-filter-actions">
+        <span class="ot-loaded-badge whitespace-nowrap">
+          {{ loadedLabel }}
+        </span>
+
+        <Button
+          :label="t('payment.formulas.newFormula')"
+          icon="pi pi-plus"
+          size="small"
+          class="whitespace-nowrap"
+          @click="openCreateDialog"
+        />
+
+        <Button
+          :label="t('common.refresh')"
+          icon="pi pi-refresh"
+          severity="secondary"
+          outlined
+          size="small"
+          :loading="backgroundLoading"
+          @click="refresh"
+        />
+
+        <Button
+          :label="t('common.clear')"
+          icon="pi pi-filter-slash"
+          severity="secondary"
+          outlined
+          size="small"
+          @click="clearFilters"
+        />
+      </div>
+    </section>
+
+    <section class="ot-table-card">
+      <div class="ot-table-toolbar">
+        <div>
+          <h2 class="ot-table-title">
+            {{ t('payment.formulas.tableTitle') }}
+          </h2>
+        </div>
+
+        <div class="ot-table-actions">
+          <span
+            v-if="backgroundLoading && hasAnyData"
+            class="ot-loaded-badge"
+          >
+            <i class="pi pi-spin pi-spinner" />
+            {{ t('common.updating') }}
+          </span>
         </div>
       </div>
 
-      <AppTableLoading
-        v-if="firstLoading"
-        title="Loading payment formulas"
-        message="Fetching payment formula setup..."
-        :rows="8"
-        :columns="8"
-      />
+      <div class="ot-table-wrapper">
+        <AppTableLoading
+          v-if="isFirstLoading"
+          :title="t('common.loadingData')"
+          :message="t('common.fetchingRecords')"
+          :rows="7"
+          :columns="8"
+          icon="pi pi-calculator"
+        />
 
-      <DataTable
-        v-else
-        :value="rows"
-        dataKey="id"
-        lazy
-        scrollable
-        scrollHeight="500px"
-        removableSort
-        tableStyle="width: max-content; min-width: 100%; table-layout: auto;"
-        class="payment-formula-table"
-        :virtualScrollerOptions="useVirtualScroll ? {
-          lazy: true,
-          onLazyLoad: onVirtualLazyLoad,
-          itemSize: 64,
-          delay: 0,
-          showLoader: false,
-          loading: false,
-          numToleratedItems: 12,
-        } : null"
-        @sort="onSort"
-      >
-        <template #empty>
-          <div
-            v-if="bootstrapped"
-            class="py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
-          >
-            No payment formulas found.
-          </div>
-        </template>
-
-        <Column field="code" header="Code" sortable>
-          <template #body="{ data }">
-            <span
-              v-if="data"
-              class="font-semibold text-[color:var(--ot-text)]"
-            >
-              {{ data.code || '-' }}
-            </span>
-          </template>
-        </Column>
-
-        <Column field="name" header="Formula Name" sortable>
-          <template #body="{ data }">
-            <div v-if="data" class="formula-name-cell">
-              <div class="font-medium text-[color:var(--ot-text)]">
-                {{ data.name || '-' }}
-              </div>
-
-              <div
-                v-if="data.description"
-                class="mt-0.5 max-w-[360px] truncate text-xs text-[color:var(--ot-text-muted)]"
-              >
-                {{ data.description }}
-              </div>
-            </div>
-          </template>
-        </Column>
-
-        <Column header="Base Rule">
-          <template #body="{ data }">
+        <DataTable
+          v-else
+          :value="rows"
+          data-key="id"
+          lazy
+          removable-sort
+          scrollable
+          scroll-height="500px"
+          :sort-field="filters.sortField"
+          :sort-order="filters.sortOrder"
+          table-style="width: max-content; min-width: 100%; table-layout: auto;"
+          class="ot-data-table ot-data-table-compact payment-formula-table"
+          :virtual-scroller-options="useVirtualScroll ? {
+            lazy: true,
+            onLazyLoad: onVirtualLazyLoad,
+            itemSize: 72,
+            delay: 0,
+            showLoader: false,
+            loading: false,
+            numToleratedItems: 12,
+          } : null"
+          @sort="onSort"
+        >
+          <template #empty>
             <div
-              v-if="data"
-              class="whitespace-nowrap text-xs font-medium text-[color:var(--ot-text-muted)]"
+              v-if="bootstrapped"
+              class="ot-empty-state"
             >
-              <div>{{ data.monthlyWorkingDays || 0 }} days / month</div>
-              <div>{{ data.hoursPerDay || 0 }} hours / day</div>
+              <div class="ot-empty-icon">
+                <i class="pi pi-calculator" />
+              </div>
+
+              <div class="ot-empty-title">
+                {{ t('common.noData') }}
+              </div>
+
+              <div class="ot-empty-text">
+                {{ t('payment.formulas.noData') }}
+              </div>
             </div>
           </template>
-        </Column>
 
-        <Column header="Multipliers">
-          <template #body="{ data }">
-            <div v-if="data" class="flex flex-wrap gap-1.5">
+          <Column
+            field="code"
+            :header="t('common.code')"
+            sortable
+            style="min-width: 11rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="font-semibold text-[color:var(--ot-text)]"
+              >
+                {{ data.code || '—' }}
+              </span>
+            </template>
+          </Column>
+
+          <Column
+            field="name"
+            :header="t('payment.formulas.formulaName')"
+            sortable
+            style="min-width: 18rem"
+          >
+            <template #body="{ data }">
+              <div
+                v-if="data"
+                class="min-w-0"
+              >
+                <div class="font-medium text-[color:var(--ot-text)]">
+                  {{ data.name || '—' }}
+                </div>
+
+                <div
+                  v-if="data.description"
+                  class="mt-0.5 max-w-[360px] truncate text-xs text-[color:var(--ot-text-muted)]"
+                  :title="data.description"
+                >
+                  {{ data.description }}
+                </div>
+              </div>
+            </template>
+          </Column>
+
+          <Column
+            :header="t('payment.formulas.baseRule')"
+            style="min-width: 12rem"
+          >
+            <template #body="{ data }">
+              <div
+                v-if="data"
+                class="text-xs leading-5 text-[color:var(--ot-text-muted)]"
+              >
+                <div>
+                  {{ Number(data.monthlyWorkingDays || 0) }}
+                  {{ t('payment.formulas.daysPerMonth') }}
+                </div>
+
+                <div>
+                  {{ Number(data.hoursPerDay || 0) }}
+                  {{ t('payment.formulas.hoursPerDay') }}
+                </div>
+              </div>
+            </template>
+          </Column>
+
+          <Column
+            :header="t('payment.formulas.multipliers')"
+            style="min-width: 22rem"
+          >
+            <template #body="{ data }">
+              <div
+                v-if="data"
+                class="flex flex-wrap items-center gap-1.5"
+              >
+                <Tag
+                  :value="`${t('payment.dayTypes.workingDay')} ${formatMultiplier(data.multipliers?.WORKING_DAY)}x`"
+                  severity="success"
+                  class="payment-status-tag payment-day-working"
+                />
+
+                <Tag
+                  :value="`${t('payment.dayTypes.sunday')} ${formatMultiplier(data.multipliers?.SUNDAY)}x`"
+                  severity="warning"
+                  class="payment-status-tag payment-day-sunday"
+                />
+
+                <Tag
+                  :value="`${t('payment.dayTypes.holiday')} ${formatMultiplier(data.multipliers?.HOLIDAY)}x`"
+                  severity="danger"
+                  class="payment-status-tag payment-day-holiday"
+                />
+              </div>
+            </template>
+          </Column>
+
+          <Column
+            :header="t('payment.formulas.round')"
+            style="min-width: 8rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="whitespace-nowrap text-sm text-[color:var(--ot-text)]"
+              >
+                {{ data.roundingDecimals ?? 2 }}
+                {{ t('payment.formulas.decimals') }}
+              </span>
+            </template>
+          </Column>
+
+          <Column
+            :header="t('payment.formulas.currency')"
+            style="min-width: 7rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="whitespace-nowrap text-sm text-[color:var(--ot-text)]"
+              >
+                {{ data.currency || 'USD' }}
+              </span>
+            </template>
+          </Column>
+
+          <Column
+            field="isActive"
+            :header="t('common.status')"
+            sortable
+            style="min-width: 8rem"
+          >
+            <template #body="{ data }">
               <Tag
-                :value="`Working ${formatMultiplier(data.multipliers?.WORKING_DAY)}x`"
-                severity="success"
-                class="payment-status-tag payment-day-working"
+                v-if="data"
+                :value="formatFormulaStatusLabel(data.isActive)"
+                :severity="getFormulaStatusSeverity(data.isActive)"
+                class="payment-status-tag"
+                :class="data.isActive ? 'payment-status-active' : 'payment-status-inactive'"
               />
+            </template>
+          </Column>
 
-              <Tag
-                :value="`Sunday ${formatMultiplier(data.multipliers?.SUNDAY)}x`"
-                severity="warning"
-                class="payment-status-tag payment-day-sunday"
+          <Column
+            field="updatedAt"
+            :header="t('common.updatedAt')"
+            sortable
+            style="min-width: 13rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="whitespace-nowrap text-xs text-[color:var(--ot-text-muted)]"
+              >
+                {{ formatDateTime(data.updatedAt || data.createdAt) || '—' }}
+              </span>
+            </template>
+          </Column>
+
+          <Column
+            :header="t('common.actions')"
+            frozen
+            align-frozen="right"
+            header-class="ot-action-header"
+            body-class="ot-action-cell"
+            style="width: 5.5rem; min-width: 5.5rem"
+          >
+            <template #body="{ data }">
+              <Button
+                v-if="data"
+                icon="pi pi-pencil"
+                severity="secondary"
+                text
+                rounded
+                size="small"
+                :aria-label="t('common.edit')"
+                @click="openEditDialog(data)"
               />
-
-              <Tag
-                :value="`Holiday ${formatMultiplier(data.multipliers?.HOLIDAY)}x`"
-                severity="danger"
-                class="payment-status-tag payment-day-holiday"
-              />
-            </div>
-          </template>
-        </Column>
-
-        <Column header="Round">
-          <template #body="{ data }">
-            <span
-              v-if="data"
-              class="whitespace-nowrap text-sm font-medium text-[color:var(--ot-text)]"
-            >
-              {{ data.roundingDecimals ?? 2 }} decimals
-            </span>
-          </template>
-        </Column>
-
-        <Column header="Currency">
-          <template #body="{ data }">
-            <span
-              v-if="data"
-              class="whitespace-nowrap text-sm font-semibold text-[color:var(--ot-text)]"
-            >
-              {{ data.currency || 'USD' }}
-            </span>
-          </template>
-        </Column>
-
-        <Column field="isActive" header="Status" sortable>
-          <template #body="{ data }">
-            <Tag
-              v-if="data"
-              :value="data.isActive ? 'Active' : 'Inactive'"
-              :severity="data.isActive ? 'success' : 'danger'"
-              class="payment-status-tag"
-              :class="statusClass(data.isActive)"
-            />
-          </template>
-        </Column>
-
-        <Column field="updatedAt" header="Updated At" sortable>
-          <template #body="{ data }">
-            <span
-              v-if="data"
-              class="whitespace-nowrap text-xs font-medium text-[color:var(--ot-text-muted)]"
-            >
-              {{ formatDateTimeDMY(data.updatedAt || data.createdAt) }}
-            </span>
-          </template>
-        </Column>
-
-        <Column header="Action" frozen alignFrozen="right">
-          <template #body="{ data }">
-            <Button
-              v-if="data"
-              icon="pi pi-pencil"
-              severity="secondary"
-              text
-              rounded
-              size="small"
-              @click="openEditDialog(data)"
-            />
-          </template>
-        </Column>
-      </DataTable>
-
-      <div
-        v-if="backgroundLoading && hasAnyData"
-        class="flex items-center justify-center border-t border-[color:var(--ot-border)] px-3 py-2 text-xs text-[color:var(--ot-text-muted)]"
-      >
-        Updating...
+            </template>
+          </Column>
+        </DataTable>
       </div>
-    </div>
+    </section>
 
-    <!-- Create/Edit Dialog -->
     <Dialog
       v-model:visible="dialogVisible"
       modal
       :draggable="false"
-      :header="isEditMode ? 'Edit Payment Formula' : 'Create Payment Formula'"
-      class="payment-dialog w-[96vw] max-w-3xl"
+      :style="{ width: '96vw', maxWidth: '920px' }"
+      :header="isEditMode ? t('payment.formulas.editTitle') : t('payment.formulas.createTitle')"
     >
-      <div class="flex flex-col gap-3">
-        <div class="payment-warning-box">
+      <div class="ot-dialog-form">
+        <div class="payment-formula-note">
           <i class="pi pi-info-circle" />
+
           <div>
-            Formula setup is saved. Salary Excel and generated payment result are not saved.
+            {{ t('payment.formulas.dialogNote') }}
           </div>
         </div>
 
-        <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <div class="field-box">
-            <label>Code <span>*</span></label>
+        <div class="grid gap-3 md:grid-cols-2">
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('common.code') }}
+              <span class="text-red-500">*</span>
+            </label>
+
             <InputText
               v-model="form.code"
               class="w-full"
-              placeholder="STD_OT_2026"
+              :placeholder="t('payment.formulas.codePlaceholder')"
               :disabled="saving"
             />
           </div>
 
-          <div class="field-box">
-            <label>Name <span>*</span></label>
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('common.name') }}
+              <span class="text-red-500">*</span>
+            </label>
+
             <InputText
               v-model="form.name"
               class="w-full"
-              placeholder="Standard OT Formula 2026"
+              :placeholder="t('payment.formulas.namePlaceholder')"
               :disabled="saving"
             />
           </div>
         </div>
 
-        <div class="field-box">
-          <label>Description</label>
+        <div class="ot-field">
+          <label class="ot-field-label">
+            {{ t('common.description') }}
+          </label>
+
           <Textarea
             v-model="form.description"
             class="w-full"
             rows="2"
-            autoResize
-            placeholder="Optional description..."
+            auto-resize
+            :placeholder="t('payment.formulas.descriptionPlaceholder')"
             :disabled="saving"
           />
         </div>
 
-        <div class="grid grid-cols-1 gap-3 md:grid-cols-4">
-          <div class="field-box">
-            <label>Working Days <span>*</span></label>
+        <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('payment.formulas.workingDays') }}
+              <span class="text-red-500">*</span>
+            </label>
+
             <InputNumber
               v-model="form.monthlyWorkingDays"
               class="w-full"
-              inputClass="w-full"
+              input-class="w-full"
               :min="1"
-              :maxFractionDigits="2"
+              :max-fraction-digits="2"
               :disabled="saving"
             />
           </div>
 
-          <div class="field-box">
-            <label>Hours / Day <span>*</span></label>
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('payment.formulas.hoursPerDayField') }}
+              <span class="text-red-500">*</span>
+            </label>
+
             <InputNumber
               v-model="form.hoursPerDay"
               class="w-full"
-              inputClass="w-full"
+              input-class="w-full"
               :min="1"
-              :maxFractionDigits="2"
+              :max-fraction-digits="2"
               :disabled="saving"
             />
           </div>
 
-          <div class="field-box">
-            <label>Round Decimals</label>
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('payment.formulas.roundDecimals') }}
+            </label>
+
             <InputNumber
               v-model="form.roundingDecimals"
               class="w-full"
-              inputClass="w-full"
+              input-class="w-full"
               :min="0"
               :max="6"
               :disabled="saving"
             />
           </div>
 
-          <div class="field-box">
-            <label>Currency</label>
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('payment.formulas.currency') }}
+            </label>
+
             <InputText
               v-model="form.currency"
               class="w-full"
@@ -757,70 +844,88 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div class="formula-section">
-          <div class="formula-section-title">Day Type Multipliers</div>
+        <div class="ot-panel">
+          <div class="mb-3 text-sm text-[color:var(--ot-text)]">
+            {{ t('payment.formulas.dayTypeMultipliers') }}
+          </div>
 
-          <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
-            <div class="field-box">
-              <label>Working Day</label>
+          <div class="grid gap-3 md:grid-cols-3">
+            <div class="ot-field">
+              <label class="ot-field-label">
+                {{ t('payment.dayTypes.workingDay') }}
+              </label>
+
               <InputNumber
                 v-model="form.multipliers.WORKING_DAY"
                 class="w-full"
-                inputClass="w-full"
+                input-class="w-full"
                 :min="0"
-                :maxFractionDigits="4"
+                :max-fraction-digits="4"
                 :disabled="saving"
               />
             </div>
 
-            <div class="field-box">
-              <label>Sunday</label>
+            <div class="ot-field">
+              <label class="ot-field-label">
+                {{ t('payment.dayTypes.sunday') }}
+              </label>
+
               <InputNumber
                 v-model="form.multipliers.SUNDAY"
                 class="w-full"
-                inputClass="w-full"
+                input-class="w-full"
                 :min="0"
-                :maxFractionDigits="4"
+                :max-fraction-digits="4"
                 :disabled="saving"
               />
             </div>
 
-            <div class="field-box">
-              <label>Holiday</label>
+            <div class="ot-field">
+              <label class="ot-field-label">
+                {{ t('payment.dayTypes.holiday') }}
+              </label>
+
               <InputNumber
                 v-model="form.multipliers.HOLIDAY"
                 class="w-full"
-                inputClass="w-full"
+                input-class="w-full"
                 :min="0"
-                :maxFractionDigits="4"
+                :max-fraction-digits="4"
                 :disabled="saving"
               />
             </div>
           </div>
         </div>
 
-        <div class="formula-section">
-          <div class="formula-section-title">Formula Preview</div>
+        <div class="ot-panel">
+          <div class="mb-3 text-sm text-[color:var(--ot-text)]">
+            {{ t('payment.formulas.previewTitle') }}
+          </div>
 
-          <div class="formula-preview">
-            <div>Hourly Rate = Monthly Salary ÷ Working Days ÷ Hours Per Day</div>
-            <div>OT Amount = Payable OT Hours × Hourly Rate × Day Type Multiplier</div>
+          <div class="payment-formula-preview">
+            <div>
+              {{ t('payment.formulas.hourlyRatePreview') }}
+            </div>
+
+            <div>
+              {{ t('payment.formulas.otAmountPreview') }}
+            </div>
           </div>
         </div>
 
         <div class="flex items-center gap-2">
           <Checkbox
             v-model="form.isActive"
-            inputId="payment-formula-active"
+            input-id="payment-formula-active"
             binary
             :disabled="saving"
           />
 
           <label
             for="payment-formula-active"
-            class="text-sm font-medium text-[color:var(--ot-text)]"
+            class="text-sm text-[color:var(--ot-text)]"
           >
-            Active
+            {{ t('common.active') }}
           </label>
         </div>
       </div>
@@ -828,7 +933,7 @@ onBeforeUnmount(() => {
       <template #footer>
         <div class="flex justify-end gap-2">
           <Button
-            label="Cancel"
+            :label="t('common.cancel')"
             severity="secondary"
             outlined
             :disabled="saving"
@@ -836,7 +941,7 @@ onBeforeUnmount(() => {
           />
 
           <Button
-            :label="isEditMode ? 'Update' : 'Create'"
+            :label="isEditMode ? t('common.update') : t('common.create')"
             icon="pi pi-save"
             :loading="saving"
             @click="saveFormula"
@@ -848,6 +953,22 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+@media (min-width: 1280px) {
+  .payment-formula-filter-bar {
+    grid-template-columns:
+      minmax(260px, 1fr)
+      minmax(180px, 220px)
+      auto;
+    align-items: end;
+  }
+
+  .payment-formula-filter-actions {
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    min-width: max-content;
+  }
+}
+
 :deep(.payment-formula-table .p-datatable-table) {
   width: max-content !important;
   min-width: 100% !important;
@@ -855,25 +976,12 @@ onBeforeUnmount(() => {
 }
 
 :deep(.payment-formula-table .p-datatable-thead > tr > th) {
-  padding: 0.62rem 0.75rem !important;
   white-space: nowrap !important;
-  width: auto !important;
-  min-width: auto !important;
-  max-width: none !important;
 }
 
 :deep(.payment-formula-table .p-datatable-tbody > tr > td) {
-  padding: 0.55rem 0.75rem !important;
-  height: 64px !important;
   vertical-align: middle !important;
   white-space: nowrap !important;
-  width: auto !important;
-  min-width: auto !important;
-  max-width: none !important;
-}
-
-.formula-name-cell {
-  min-width: max-content;
 }
 
 :deep(.payment-formula-table .p-tag.payment-status-tag) {
@@ -907,7 +1015,7 @@ onBeforeUnmount(() => {
   border-color: #ef4444 !important;
 }
 
-.payment-warning-box {
+.payment-formula-note {
   display: flex;
   gap: 0.5rem;
   align-items: flex-start;
@@ -915,48 +1023,20 @@ onBeforeUnmount(() => {
   border-radius: 0.85rem;
   background: rgba(245, 158, 11, 0.08);
   color: var(--ot-text);
-  padding: 0.7rem 0.8rem;
+  padding: 0.65rem 0.75rem;
   font-size: 0.78rem;
-  font-weight: 600;
+  line-height: 1.5;
 }
 
-.field-box label {
-  margin-bottom: 0.35rem;
-  display: block;
-  font-size: 0.72rem;
-  font-weight: 700;
-  color: var(--ot-text-muted);
-}
-
-.field-box label span {
-  color: #ef4444;
-}
-
-.formula-section {
-  border: 1px solid var(--ot-border);
-  border-radius: 1rem;
-  background:
-    linear-gradient(135deg, rgba(59, 130, 246, 0.04), transparent),
-    var(--ot-bg);
-  padding: 0.85rem;
-}
-
-.formula-section-title {
-  margin-bottom: 0.65rem;
-  font-size: 0.82rem;
-  font-weight: 700;
-  color: var(--ot-text);
-}
-
-.formula-preview {
+.payment-formula-preview {
   display: grid;
   gap: 0.35rem;
   border: 1px dashed var(--ot-border);
   border-radius: 0.85rem;
   background: var(--ot-surface);
-  padding: 0.7rem 0.75rem;
+  padding: 0.68rem 0.75rem;
   font-size: 0.78rem;
-  font-weight: 600;
+  line-height: 1.5;
   color: var(--ot-text);
 }
 
@@ -978,15 +1058,5 @@ onBeforeUnmount(() => {
   background: rgba(239, 68, 68, 0.18) !important;
   color: #fca5a5 !important;
   border-color: rgba(239, 68, 68, 0.45) !important;
-}
-
-@media (max-width: 768px) {
-  :deep(.payment-formula-table .p-datatable-tbody > tr > td) {
-    height: 60px !important;
-  }
-
-  .formula-section {
-    padding: 0.75rem;
-  }
 }
 </style>

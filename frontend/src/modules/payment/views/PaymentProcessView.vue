@@ -1,28 +1,29 @@
 <!-- frontend/src/modules/payment/views/PaymentProcessView.vue -->
 <script setup>
-// frontend/src/modules/payment/views/PaymentProcessView.vue
-
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
 import Column from 'primevue/column'
 import DataTable from 'primevue/datatable'
-import DatePicker from 'primevue/datepicker'
 import Message from 'primevue/message'
 import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 
+import HolidayDatePicker from '@/modules/calendar/components/HolidayDatePicker.vue'
 import { getHolidays } from '@/modules/calendar/holiday.api'
-
 import {
   calculatePaymentExport,
   downloadSalaryTemplate,
   getPaymentFormulaLookupOptions,
   previewPayment,
 } from '@/modules/payment/payment.api'
+import { getApiErrorMessage } from '@/shared/utils/apiError'
+import { formatDate } from '@/shared/utils/dateFormat'
 
 const toast = useToast()
+const { t } = useI18n()
 
 const formulaOptions = ref([])
 const loadingFormulas = ref(false)
@@ -40,16 +41,16 @@ const previewDone = ref(false)
 const previewResult = ref(null)
 
 const form = reactive({
-  fromDate: null,
-  toDate: null,
+  fromDate: '',
+  toDate: '',
   formulaId: '',
 })
 
 let calendarTimer = null
 
 const selectedFormula = computed(() => {
-  const id = String(form.formulaId || '')
-  return formulaOptions.value.find((item) => String(item.id || item._id) === id) || null
+  const id = s(form.formulaId)
+  return formulaOptions.value.find((item) => s(item.id || item._id || item.value) === id) || null
 })
 
 const canPreview = computed(() => {
@@ -61,17 +62,16 @@ const canGenerate = computed(() => {
 })
 
 const fileName = computed(() => salaryFile.value?.name || '')
-
 const previewSummary = computed(() => previewResult.value?.summary || null)
 const previewData = computed(() => previewResult.value?.preview || {})
 
-const periodStartYMD = computed(() => formatDateYMD(form.fromDate))
-const periodEndYMD = computed(() => formatDateYMD(form.toDate))
+const periodStartYMD = computed(() => normalizeYMD(form.fromDate))
+const periodEndYMD = computed(() => normalizeYMD(form.toDate))
 
 const holidayDateSet = computed(() => {
   return new Set(
     periodHolidayRows.value
-      .map((item) => String(item?.date || '').trim())
+      .map((item) => s(item?.date))
       .filter(Boolean),
   )
 })
@@ -86,13 +86,12 @@ const periodCalendarRows = computed(() => {
   const cursor = new Date(start)
 
   while (cursor <= end) {
-    const ymd = formatDateYMD(cursor)
+    const ymd = normalizeYMD(cursor)
     const holiday = periodHolidayRows.value.find((item) => item.date === ymd) || null
 
     rows.push({
       date: ymd,
-      dayName: cursor.toLocaleDateString('en-US', { weekday: 'short' }),
-      dayType: getFrontendDayType(ymd),
+      dayType: getDisplayDayType(ymd),
       holidayName: holiday?.name || '',
       holidayCode: holiday?.code || '',
       isPaidHoliday: holiday?.isPaidHoliday === true,
@@ -119,34 +118,34 @@ const summaryCards = computed(() => {
 
   return [
     {
-      label: 'Payable Employees',
-      value: summary ? summary.employeeCount : '-',
+      label: t('payment.process.summary.payableEmployees'),
+      value: summary ? summary.employeeCount : '—',
       icon: 'pi pi-users',
       className: 'card-blue',
     },
     {
-      label: 'Total OT Hours',
-      value: summary ? formatNumber(summary.totalPayableHours, 4) : '-',
+      label: t('payment.process.summary.totalOtHours'),
+      value: summary ? formatNumber(summary.totalPayableHours, 4) : '—',
       icon: 'pi pi-clock',
       className: 'card-green',
     },
     {
-      label: 'Total Amount',
+      label: t('payment.process.summary.totalAmount'),
       value: summary
         ? `${formatNumber(summary.totalAmount, 2)} ${summary.currency || ''}`
-        : '-',
+        : '—',
       icon: 'pi pi-wallet',
       className: 'card-purple',
     },
     {
-      label: 'Missing Salary',
-      value: summary ? summary.missingSalaryCount : '-',
+      label: t('payment.process.summary.missingSalary'),
+      value: summary ? summary.missingSalaryCount : '—',
       icon: 'pi pi-exclamation-triangle',
       className: 'card-orange',
     },
     {
-      label: 'Warnings',
-      value: summary ? summary.warningCount : '-',
+      label: t('payment.process.summary.warnings'),
+      value: summary ? summary.warningCount : '—',
       icon: 'pi pi-info-circle',
       className: 'card-red',
     },
@@ -161,10 +160,6 @@ watch(
   },
 )
 
-function pad2(value) {
-  return String(value).padStart(2, '0')
-}
-
 function s(value) {
   return String(value ?? '').trim()
 }
@@ -173,18 +168,41 @@ function upper(value) {
   return s(value).toUpperCase()
 }
 
+function pad2(value) {
+  return String(value).padStart(2, '0')
+}
+
 function normalizePayload(res) {
   return res?.data?.data || res?.data || {}
 }
 
 function normalizeItems(payload) {
+  if (Array.isArray(payload)) return payload
   return Array.isArray(payload?.items) ? payload.items : []
 }
 
-function formatDateYMD(value) {
+function normalizeFormulaOption(item) {
+  const id = s(item.id || item._id || item.value)
+
+  return {
+    ...item,
+    id,
+    label: item.label || item.name || item.code || id,
+  }
+}
+
+function normalizeYMD(value) {
   if (!value) return ''
 
-  const date = value instanceof Date ? value : new Date(value)
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return ''
+    return `${value.getFullYear()}-${pad2(value.getMonth() + 1)}-${pad2(value.getDate())}`
+  }
+
+  const raw = s(value)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw
+
+  const date = new Date(raw)
   if (Number.isNaN(date.getTime())) return ''
 
   return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
@@ -201,12 +219,7 @@ function parseYMD(value) {
 }
 
 function formatDateDMY(value) {
-  if (!value) return '-'
-
-  const date = value instanceof Date ? value : new Date(value)
-  if (Number.isNaN(date.getTime())) return '-'
-
-  return `${pad2(date.getDate())}/${pad2(date.getMonth() + 1)}/${date.getFullYear()}`
+  return formatDate(value) || '—'
 }
 
 function formatNumber(value, decimals = 2) {
@@ -232,18 +245,10 @@ function formatMinutesLabel(value) {
   return `${mins}m`
 }
 
-function errorMessage(error, fallback = 'Something went wrong') {
-  return (
-    error?.response?.data?.message ||
-    error?.response?.data?.error ||
-    error?.message ||
-    fallback
-  )
-}
-
 function parseDownloadFileName(response, fallback) {
   const disposition = response?.headers?.['content-disposition'] || ''
   const match = disposition.match(/filename="?([^"]+)"?/i)
+
   return match?.[1] || fallback
 }
 
@@ -266,20 +271,27 @@ function downloadBlob(response, fallbackFileName) {
   window.URL.revokeObjectURL(url)
 }
 
+function showToast(severity, summary, detail, life = 3000) {
+  toast.add({
+    severity,
+    summary,
+    detail,
+    life,
+  })
+}
+
 function resetPreview() {
   previewDone.value = false
   previewResult.value = null
 }
 
-function buildFormData() {
-  const formData = new FormData()
-
-  formData.append('fromDate', periodStartYMD.value)
-  formData.append('toDate', periodEndYMD.value)
-  formData.append('formulaId', form.formulaId)
-  formData.append('salaryFile', salaryFile.value)
-
-  return formData
+function buildProcessPayload() {
+  return {
+    fromDate: periodStartYMD.value,
+    toDate: periodEndYMD.value,
+    formulaId: form.formulaId,
+    salaryFile: salaryFile.value,
+  }
 }
 
 function monthKey(date) {
@@ -304,7 +316,7 @@ function getMonthKeysBetween(fromYMD, toYMD) {
   return keys
 }
 
-function getFrontendDayType(ymd) {
+function getDisplayDayType(ymd) {
   if (!ymd) return ''
 
   if (holidayDateSet.value.has(ymd)) {
@@ -330,17 +342,25 @@ function dayTypeSeverity(value) {
 function dayTypeLabel(value) {
   const normalized = upper(value)
 
-  if (normalized === 'HOLIDAY') return 'Holiday'
-  if (normalized === 'SUNDAY') return 'Sunday'
-  if (normalized === 'WORKING_DAY') return 'Working Day'
+  const labels = {
+    HOLIDAY: t('payment.dayTypes.holiday'),
+    SUNDAY: t('payment.dayTypes.sunday'),
+    WORKING_DAY: t('payment.dayTypes.workingDay'),
+  }
 
-  return normalized || '-'
+  return labels[normalized] || normalized || '—'
 }
 
 function decisionSeverity(value) {
   const normalized = upper(value)
 
-  if (['MATCH', 'APPROVED_WITHOUT_EXACT_CLOCK_OUT', 'FIXED_OT_APPROVED_WITHOUT_EXACT_CLOCK_OUT'].includes(normalized)) {
+  if (
+    [
+      'MATCH',
+      'APPROVED_WITHOUT_EXACT_CLOCK_OUT',
+      'FIXED_OT_APPROVED_WITHOUT_EXACT_CLOCK_OUT',
+    ].includes(normalized)
+  ) {
     return 'success'
   }
 
@@ -365,14 +385,13 @@ async function loadFormulaOptions() {
     })
 
     const payload = normalizePayload(res)
-    formulaOptions.value = normalizeItems(payload)
+    formulaOptions.value = normalizeItems(payload).map(normalizeFormulaOption)
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Load failed',
-      detail: errorMessage(error, 'Failed to load payment formulas'),
-      life: 3000,
-    })
+    showToast(
+      'error',
+      t('common.loadFailed'),
+      getApiErrorMessage(error, t('payment.process.message.loadFormulasFailed')),
+    )
   } finally {
     loadingFormulas.value = false
   }
@@ -429,29 +448,29 @@ async function loadInternalCalendarForPeriod() {
 
     const uniqueMap = new Map()
 
-    for (const item of rows) {
+    rows.forEach((item) => {
       const date = s(item?.date)
 
-      if (!date || date < from || date > to) continue
+      if (!date || date < from || date > to) return
 
       uniqueMap.set(date, {
         ...item,
         date,
       })
-    }
+    })
 
     periodHolidayRows.value = [...uniqueMap.values()].sort((a, b) => {
-      return String(a.date || '').localeCompare(String(b.date || ''))
+      return s(a.date).localeCompare(s(b.date))
     })
   } catch (error) {
     periodHolidayRows.value = []
 
-    toast.add({
-      severity: 'error',
-      summary: 'Calendar failed',
-      detail: errorMessage(error, 'Failed to load internal holiday calendar'),
-      life: 3500,
-    })
+    showToast(
+      'error',
+      t('payment.process.message.calendarFailedTitle'),
+      getApiErrorMessage(error, t('payment.process.message.calendarFailed')),
+      3500,
+    )
   } finally {
     loadingCalendar.value = false
   }
@@ -471,20 +490,22 @@ function onFileChange(event) {
     return
   }
 
-  const allowedExtensions = ['.xlsx', '.xls']
   const lowerName = String(file.name || '').toLowerCase()
-  const isExcel = allowedExtensions.some((ext) => lowerName.endsWith(ext))
+  const isExcel = ['.xlsx', '.xls'].some((ext) => lowerName.endsWith(ext))
 
   if (!isExcel) {
     salaryFile.value = null
-    if (salaryFileInput.value) salaryFileInput.value.value = ''
 
-    toast.add({
-      severity: 'warn',
-      summary: 'Invalid file',
-      detail: 'Please upload Excel file only: .xlsx or .xls',
-      life: 3000,
-    })
+    if (salaryFileInput.value) {
+      salaryFileInput.value.value = ''
+    }
+
+    showToast(
+      'warn',
+      t('payment.process.message.invalidFileTitle'),
+      t('payment.process.message.invalidFile'),
+    )
+
     return
   }
 
@@ -493,16 +514,20 @@ function onFileChange(event) {
 
 function clearFile() {
   salaryFile.value = null
-  if (salaryFileInput.value) salaryFileInput.value.value = ''
+
+  if (salaryFileInput.value) {
+    salaryFileInput.value.value = ''
+  }
+
   resetPreview()
 }
 
 function clearForm() {
-  form.fromDate = null
-  form.toDate = null
+  form.fromDate = ''
+  form.toDate = ''
   form.formulaId = ''
-  clearFile()
   periodHolidayRows.value = []
+  clearFile()
   resetPreview()
 }
 
@@ -513,34 +538,33 @@ async function handleDownloadTemplate() {
     const res = await downloadSalaryTemplate()
     downloadBlob(res, 'salary_template.xlsx')
 
-    toast.add({
-      severity: 'success',
-      summary: 'Downloaded',
-      detail: 'Salary template downloaded',
-      life: 2500,
-    })
+    showToast(
+      'success',
+      t('payment.process.message.downloadedTitle'),
+      t('payment.process.message.templateDownloaded'),
+      2500,
+    )
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Download failed',
-      detail: errorMessage(error, 'Failed to download salary template'),
-      life: 3500,
-    })
+    showToast(
+      'error',
+      t('payment.process.message.downloadFailedTitle'),
+      getApiErrorMessage(error, t('payment.process.message.templateDownloadFailed')),
+      3500,
+    )
   } finally {
     downloadingTemplate.value = false
   }
 }
 
 function validateBeforeProcess() {
-  if (!form.fromDate) return 'From date is required'
-  if (!form.toDate) return 'To date is required'
-  if (!form.formulaId) return 'Payment formula is required'
-  if (!salaryFile.value) return 'Salary Excel file is required'
+  if (!form.fromDate) return t('payment.process.validation.fromDateRequired')
+  if (!form.toDate) return t('payment.process.validation.toDateRequired')
+  if (!form.formulaId) return t('payment.process.validation.formulaRequired')
+  if (!salaryFile.value) return t('payment.process.validation.salaryRequired')
 
-  const from = new Date(form.fromDate)
-  const to = new Date(form.toDate)
-
-  if (from > to) return 'From date cannot be after To date'
+  if (periodStartYMD.value > periodEndYMD.value) {
+    return t('payment.process.validation.invalidDateRange')
+  }
 
   return ''
 }
@@ -549,12 +573,11 @@ async function handlePreview() {
   const validationMessage = validateBeforeProcess()
 
   if (validationMessage) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Check form',
-      detail: validationMessage,
-      life: 3000,
-    })
+    showToast(
+      'warn',
+      t('payment.process.message.checkFormTitle'),
+      validationMessage,
+    )
     return
   }
 
@@ -562,25 +585,25 @@ async function handlePreview() {
   resetPreview()
 
   try {
-    const res = await previewPayment(buildFormData())
+    const res = await previewPayment(buildProcessPayload())
     const payload = normalizePayload(res)
 
     previewResult.value = payload
     previewDone.value = true
 
-    toast.add({
-      severity: 'success',
-      summary: 'Preview ready',
-      detail: 'Payment preview calculated successfully',
-      life: 2500,
-    })
+    showToast(
+      'success',
+      t('payment.process.message.previewReadyTitle'),
+      t('payment.process.message.previewReady'),
+      2500,
+    )
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Preview failed',
-      detail: errorMessage(error, 'Failed to calculate payment preview'),
-      life: 4000,
-    })
+    showToast(
+      'error',
+      t('payment.process.message.previewFailedTitle'),
+      getApiErrorMessage(error, t('payment.process.message.previewFailed')),
+      4000,
+    )
   } finally {
     previewing.value = false
   }
@@ -590,48 +613,41 @@ async function handleGenerate() {
   const validationMessage = validateBeforeProcess()
 
   if (validationMessage) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Check form',
-      detail: validationMessage,
-      life: 3000,
-    })
+    showToast(
+      'warn',
+      t('payment.process.message.checkFormTitle'),
+      validationMessage,
+    )
     return
   }
 
   if (!previewDone.value) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Preview required',
-      detail: 'Please preview the payment before generating Excel',
-      life: 3000,
-    })
+    showToast(
+      'warn',
+      t('payment.process.message.previewRequiredTitle'),
+      t('payment.process.message.previewRequired'),
+    )
     return
   }
 
   generating.value = true
 
   try {
-    const res = await calculatePaymentExport(buildFormData())
+    const res = await calculatePaymentExport(buildProcessPayload())
+    downloadBlob(res, `payment_${periodStartYMD.value}_to_${periodEndYMD.value}.xlsx`)
 
-    const from = periodStartYMD.value
-    const to = periodEndYMD.value
-
-    downloadBlob(res, `payment_${from}_to_${to}.xlsx`)
-
-    toast.add({
-      severity: 'success',
-      summary: 'Generated',
-      detail: 'Payment Excel generated successfully',
-      life: 3000,
-    })
+    showToast(
+      'success',
+      t('payment.process.message.generatedTitle'),
+      t('payment.process.message.generated'),
+    )
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Generate failed',
-      detail: errorMessage(error, 'Failed to generate payment Excel'),
-      life: 4000,
-    })
+    showToast(
+      'error',
+      t('payment.process.message.generateFailedTitle'),
+      getApiErrorMessage(error, t('payment.process.message.generateFailed')),
+      4000,
+    )
   } finally {
     generating.value = false
   }
@@ -648,378 +664,503 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4">
-    <div
-      class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]"
-    >
-      <!-- Filter/action bar -->
-      <div class="border-b border-[color:var(--ot-border)] px-3 py-3">
-        <div class="flex flex-col gap-2 xl:flex-row xl:items-center">
-          <div class="w-full xl:w-[180px] xl:shrink-0">
-            <DatePicker
-              v-model="form.fromDate"
-              dateFormat="dd/mm/yy"
-              showIcon
-              showButtonBar
-              class="w-full"
-              inputClass="w-full"
-              placeholder="From Date"
-            />
-          </div>
-
-          <div class="w-full xl:w-[180px] xl:shrink-0">
-            <DatePicker
-              v-model="form.toDate"
-              dateFormat="dd/mm/yy"
-              showIcon
-              showButtonBar
-              class="w-full"
-              inputClass="w-full"
-              placeholder="To Date"
-            />
-          </div>
-
-          <div class="w-full xl:w-[280px] xl:shrink-0">
-            <Select
-              v-model="form.formulaId"
-              :options="formulaOptions"
-              optionLabel="label"
-              optionValue="id"
-              :loading="loadingFormulas"
-              placeholder="Payment Formula"
-              class="w-full"
-              size="small"
-            />
-          </div>
-
-          <input
-            ref="salaryFileInput"
-            type="file"
-            accept=".xlsx,.xls"
-            class="hidden"
-            @change="onFileChange"
-          />
-
-          <Button
-            :label="fileName ? 'Change File' : 'Upload Salary'"
-            icon="pi pi-upload"
-            severity="secondary"
-            outlined
-            size="small"
-            class="xl:shrink-0"
-            @click="chooseFile"
-          />
-
-          <div class="flex items-center gap-2 xl:ml-auto xl:shrink-0">
-            <Button
-              label="Template"
-              icon="pi pi-download"
-              severity="secondary"
-              outlined
-              size="small"
-              :loading="downloadingTemplate"
-              @click="handleDownloadTemplate"
-            />
-
-            <Button
-              label="Clear"
-              icon="pi pi-refresh"
-              severity="secondary"
-              outlined
-              size="small"
-              :disabled="previewing || generating"
-              @click="clearForm"
-            />
-
-            <Button
-              label="Preview"
-              icon="pi pi-eye"
-              severity="info"
-              size="small"
-              :loading="previewing"
-              :disabled="!canPreview || generating"
-              @click="handlePreview"
-            />
-
-            <Button
-              label="Generate"
-              icon="pi pi-file-excel"
-              size="small"
-              :loading="generating"
-              :disabled="!canGenerate || previewing"
-              @click="handleGenerate"
-            />
-          </div>
-        </div>
+  <div class="ot-page-shell">
+    <section class="ot-filter-bar payment-process-filter-bar">
+      <div class="ot-field">
+        <HolidayDatePicker
+          v-model="form.fromDate"
+          :label="t('common.fromDate')"
+          :placeholder="t('common.fromDate')"
+        />
       </div>
 
-      <!-- Main body -->
-      <div class="grid grid-cols-1 gap-3 p-3 xl:grid-cols-[1fr_1fr]">
-        <div class="payment-card">
-          <div class="payment-card-header">
-            <div>
-              <h2 class="payment-title">Payment Processing</h2>
-              <p class="payment-subtitle">
-                Preview first, then generate final OT payment Excel.
-              </p>
-            </div>
+      <div class="ot-field">
+        <HolidayDatePicker
+          v-model="form.toDate"
+          :label="t('common.toDate')"
+          :placeholder="t('common.toDate')"
+        />
+      </div>
 
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('payment.process.field.paymentFormula') }}
+        </label>
+
+        <Select
+          v-model="form.formulaId"
+          :options="formulaOptions"
+          option-label="label"
+          option-value="id"
+          :loading="loadingFormulas"
+          :placeholder="t('payment.process.field.paymentFormula')"
+          class="w-full"
+          size="small"
+        />
+      </div>
+
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('payment.process.field.salaryExcel') }}
+        </label>
+
+        <input
+          ref="salaryFileInput"
+          type="file"
+          accept=".xlsx,.xls"
+          class="hidden"
+          @change="onFileChange"
+        >
+
+        <Button
+          :label="fileName ? t('payment.process.action.changeFile') : t('payment.process.action.uploadSalary')"
+          icon="pi pi-upload"
+          severity="secondary"
+          outlined
+          size="small"
+          class="w-full justify-center"
+          @click="chooseFile"
+        />
+      </div>
+
+      <div class="ot-filter-actions payment-process-filter-actions">
+        <Button
+          :label="t('payment.process.action.template')"
+          icon="pi pi-download"
+          severity="secondary"
+          outlined
+          size="small"
+          :loading="downloadingTemplate"
+          @click="handleDownloadTemplate"
+        />
+
+        <Button
+          :label="t('common.clear')"
+          icon="pi pi-filter-slash"
+          severity="secondary"
+          outlined
+          size="small"
+          :disabled="previewing || generating"
+          @click="clearForm"
+        />
+
+        <Button
+          :label="t('payment.process.action.preview')"
+          icon="pi pi-eye"
+          severity="info"
+          size="small"
+          :loading="previewing"
+          :disabled="!canPreview || generating"
+          @click="handlePreview"
+        />
+
+        <Button
+          :label="t('payment.process.action.generate')"
+          icon="pi pi-file-excel"
+          size="small"
+          :loading="generating"
+          :disabled="!canGenerate || previewing"
+          @click="handleGenerate"
+        />
+      </div>
+    </section>
+
+    <section class="grid gap-4 xl:grid-cols-2">
+      <div class="ot-table-card">
+        <div class="ot-table-toolbar">
+          <div>
+            <h2 class="ot-table-title">
+              {{ t('payment.process.card.processingTitle') }}
+            </h2>
+
+            <p class="payment-muted-text">
+              {{ t('payment.process.card.processingSubtitle') }}
+            </p>
+          </div>
+
+          <div class="ot-table-actions">
             <Tag
-              :value="previewDone ? 'Preview Ready' : 'Not Previewed'"
+              :value="previewDone ? t('payment.process.status.previewReady') : t('payment.process.status.notPreviewed')"
               :severity="previewDone ? 'success' : 'warning'"
               class="payment-tag"
             />
           </div>
+        </div>
 
-          <div class="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
-            <div class="payment-info-box">
-              <div class="payment-info-label">From Date</div>
-              <div class="payment-info-value">{{ formatDateDMY(form.fromDate) }}</div>
+        <div class="grid gap-3 p-3 md:grid-cols-2">
+          <div class="ot-panel">
+            <div class="ot-field-label">
+              {{ t('common.fromDate') }}
             </div>
 
-            <div class="payment-info-box">
-              <div class="payment-info-label">To Date</div>
-              <div class="payment-info-value">{{ formatDateDMY(form.toDate) }}</div>
-            </div>
-
-            <div class="payment-info-box md:col-span-2">
-              <div class="payment-info-label">Salary Excel</div>
-
-              <div class="flex min-w-0 items-center justify-between gap-2">
-                <div class="payment-info-value truncate">
-                  {{ fileName || 'No file selected' }}
-                </div>
-
-                <Button
-                  v-if="salaryFile"
-                  icon="pi pi-times"
-                  text
-                  rounded
-                  severity="danger"
-                  size="small"
-                  @click="clearFile"
-                />
-              </div>
+            <div class="payment-info-value">
+              {{ formatDateDMY(form.fromDate) }}
             </div>
           </div>
 
-          <Message severity="warn" :closable="false" class="mt-3">
-            Salary file, preview result, and final payment file are not saved.
-            If download fails, upload salary again and generate again.
-          </Message>
-        </div>
-
-        <div class="payment-card">
-          <div class="payment-card-header">
-            <div>
-              <h2 class="payment-title">Formula Preview</h2>
-              <p class="payment-subtitle">
-                Formula selected for this payment calculation.
-              </p>
+          <div class="ot-panel">
+            <div class="ot-field-label">
+              {{ t('common.toDate') }}
             </div>
 
+            <div class="payment-info-value">
+              {{ formatDateDMY(form.toDate) }}
+            </div>
+          </div>
+
+          <div class="ot-panel md:col-span-2">
+            <div class="ot-field-label">
+              {{ t('payment.process.field.salaryExcel') }}
+            </div>
+
+            <div class="flex min-w-0 items-center justify-between gap-2">
+              <div class="payment-info-value truncate">
+                {{ fileName || t('payment.process.field.noFile') }}
+              </div>
+
+              <Button
+                v-if="salaryFile"
+                icon="pi pi-times"
+                text
+                rounded
+                severity="danger"
+                size="small"
+                :aria-label="t('common.clear')"
+                @click="clearFile"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div class="border-t border-[color:var(--ot-border)] p-3">
+          <Message
+            severity="warn"
+            :closable="false"
+            class="m-0"
+          >
+            {{ t('payment.process.note.notSaved') }}
+          </Message>
+        </div>
+      </div>
+
+      <div class="ot-table-card">
+        <div class="ot-table-toolbar">
+          <div>
+            <h2 class="ot-table-title">
+              {{ t('payment.process.card.formulaTitle') }}
+            </h2>
+
+            <p class="payment-muted-text">
+              {{ t('payment.process.card.formulaSubtitle') }}
+            </p>
+          </div>
+
+          <div class="ot-table-actions">
             <Tag
-              :value="selectedFormula ? 'Ready' : 'Select Formula'"
+              :value="selectedFormula ? t('payment.process.status.ready') : t('payment.process.status.selectFormula')"
               :severity="selectedFormula ? 'success' : 'secondary'"
               class="payment-tag"
             />
           </div>
+        </div>
 
-          <div v-if="selectedFormula" class="mt-3 space-y-2">
-            <div class="payment-info-box">
-              <div class="payment-info-label">Formula</div>
+        <div
+          v-if="selectedFormula"
+          class="grid gap-3 p-3"
+        >
+          <div class="ot-panel">
+            <div class="ot-field-label">
+              {{ t('payment.process.field.formula') }}
+            </div>
+
+            <div class="payment-info-value">
+              {{ selectedFormula.label || selectedFormula.name || '—' }}
+            </div>
+          </div>
+
+          <div class="grid gap-3 md:grid-cols-2">
+            <div class="ot-panel">
+              <div class="ot-field-label">
+                {{ t('payment.process.field.workingDays') }}
+              </div>
+
               <div class="payment-info-value">
-                {{ selectedFormula.label || selectedFormula.name }}
+                {{ selectedFormula.monthlyWorkingDays || '—' }}
+                /
+                {{ t('payment.process.field.month') }}
               </div>
             </div>
 
-            <div class="grid grid-cols-1 gap-2 md:grid-cols-2">
-              <div class="payment-info-box">
-                <div class="payment-info-label">Working Days</div>
-                <div class="payment-info-value">
-                  {{ selectedFormula.monthlyWorkingDays }} / month
-                </div>
+            <div class="ot-panel">
+              <div class="ot-field-label">
+                {{ t('payment.process.field.hoursPerDay') }}
               </div>
 
-              <div class="payment-info-box">
-                <div class="payment-info-label">Hours Per Day</div>
-                <div class="payment-info-value">
-                  {{ selectedFormula.hoursPerDay }} hours
-                </div>
-              </div>
-            </div>
-
-            <div class="payment-info-box">
-              <div class="payment-info-label">Multipliers</div>
-
-              <div class="mt-2 flex flex-wrap gap-1.5">
-                <Tag
-                  :value="`Working ${formatNumber(selectedFormula.multipliers?.WORKING_DAY)}x`"
-                  severity="success"
-                  class="payment-tag payment-day-working"
-                />
-                <Tag
-                  :value="`Sunday ${formatNumber(selectedFormula.multipliers?.SUNDAY)}x`"
-                  severity="warning"
-                  class="payment-tag payment-day-sunday"
-                />
-                <Tag
-                  :value="`Holiday ${formatNumber(selectedFormula.multipliers?.HOLIDAY)}x`"
-                  severity="danger"
-                  class="payment-tag payment-day-holiday"
-                />
-              </div>
-            </div>
-
-            <div class="payment-formula-box">
-              <div class="payment-info-label">Calculation</div>
-              <div class="mt-1 text-xs font-medium text-[color:var(--ot-text)]">
-                Hourly Rate = Monthly Salary ÷ Working Days ÷ Hours Per Day
-              </div>
-              <div class="mt-1 text-xs font-medium text-[color:var(--ot-text)]">
-                OT Amount = Payable OT Hours × Hourly Rate × Day Type Multiplier
+              <div class="payment-info-value">
+                {{ selectedFormula.hoursPerDay || '—' }}
+                {{ t('payment.process.field.hours') }}
               </div>
             </div>
           </div>
 
-          <div v-else class="payment-empty-box">
-            <i class="pi pi-calculator text-xl" />
-            <div class="mt-2 text-sm font-semibold">No formula selected</div>
-            <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
-              Select an active payment formula before preview.
+          <div class="ot-panel">
+            <div class="ot-field-label">
+              {{ t('payment.process.field.multipliers') }}
             </div>
-          </div>
-        </div>
-      </div>
 
-      <!-- Internal Calendar Preview -->
-      <div class="border-t border-[color:var(--ot-border)] p-3">
-        <div class="mb-3 flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h2 class="payment-section-title">Internal Calendar Check</h2>
-            <p class="payment-section-subtitle">
-              Frontend displays active holidays from Calendar module. Backend payment still recalculates the official day type.
-            </p>
-          </div>
+            <div class="mt-2 flex flex-wrap gap-1.5">
+              <Tag
+                :value="`${t('payment.dayTypes.workingDay')} ${formatNumber(selectedFormula.multipliers?.WORKING_DAY)}x`"
+                severity="success"
+                class="payment-tag payment-day-working"
+              />
 
-          <Tag
-            :value="loadingCalendar ? 'Loading Calendar' : `${periodHolidayRows.length} holidays`"
-            :severity="loadingCalendar ? 'info' : 'secondary'"
-            class="payment-tag"
-          />
-        </div>
+              <Tag
+                :value="`${t('payment.dayTypes.sunday')} ${formatNumber(selectedFormula.multipliers?.SUNDAY)}x`"
+                severity="warning"
+                class="payment-tag payment-day-sunday"
+              />
 
-        <div class="grid grid-cols-1 gap-2 md:grid-cols-3">
-          <div class="summary-card card-green">
-            <div class="summary-icon">
-              <i class="pi pi-briefcase" />
-            </div>
-            <div>
-              <div class="summary-label">Working Days</div>
-              <div class="summary-value">{{ periodCalendarSummary.workingDays }}</div>
+              <Tag
+                :value="`${t('payment.dayTypes.holiday')} ${formatNumber(selectedFormula.multipliers?.HOLIDAY)}x`"
+                severity="danger"
+                class="payment-tag payment-day-holiday"
+              />
             </div>
           </div>
 
-          <div class="summary-card card-orange">
-            <div class="summary-icon">
-              <i class="pi pi-sun" />
+          <div class="ot-panel">
+            <div class="ot-field-label">
+              {{ t('payment.process.field.calculation') }}
             </div>
-            <div>
-              <div class="summary-label">Sundays</div>
-              <div class="summary-value">{{ periodCalendarSummary.sundays }}</div>
-            </div>
-          </div>
 
-          <div class="summary-card card-red">
-            <div class="summary-icon">
-              <i class="pi pi-star" />
-            </div>
-            <div>
-              <div class="summary-label">Internal Holidays</div>
-              <div class="summary-value">{{ periodCalendarSummary.holidays }}</div>
+            <div class="payment-formula-preview">
+              <div>
+                {{ t('payment.formulas.hourlyRatePreview') }}
+              </div>
+
+              <div>
+                {{ t('payment.formulas.otAmountPreview') }}
+              </div>
             </div>
           </div>
         </div>
 
         <div
-          v-if="periodHolidayRows.length"
-          class="mt-3 flex flex-wrap gap-2"
+          v-else
+          class="ot-empty-state"
         >
+          <div class="ot-empty-icon">
+            <i class="pi pi-calculator" />
+          </div>
+
+          <div class="ot-empty-title">
+            {{ t('payment.process.empty.noFormula') }}
+          </div>
+
+          <div class="ot-empty-text">
+            {{ t('payment.process.empty.selectFormula') }}
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="ot-table-card">
+      <div class="ot-table-toolbar">
+        <div>
+          <h2 class="ot-table-title">
+            {{ t('payment.process.calendar.title') }}
+          </h2>
+
+          <p class="payment-muted-text">
+            {{ t('payment.process.calendar.subtitle') }}
+          </p>
+        </div>
+
+        <div class="ot-table-actions">
           <Tag
-            v-for="holiday in periodHolidayRows"
-            :key="holiday.id || holiday.date"
-            :value="`${holiday.date} · ${holiday.name}`"
-            severity="danger"
+            :value="loadingCalendar ? t('payment.process.calendar.loading') : t('payment.process.calendar.holidayCount', { count: periodHolidayRows.length })"
+            :severity="loadingCalendar ? 'info' : 'secondary'"
             class="payment-tag"
           />
         </div>
       </div>
 
-      <!-- Preview Summary -->
-      <div
-        v-if="previewResult"
-        class="border-t border-[color:var(--ot-border)] p-3"
-      >
-        <div class="mb-3 flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h2 class="payment-section-title">Payment Preview</h2>
-            <p class="payment-section-subtitle">
-              Review the calculated result before generating Excel.
-            </p>
+      <div class="grid gap-3 p-3 md:grid-cols-3">
+        <div class="payment-summary-card card-green">
+          <div class="summary-icon">
+            <i class="pi pi-briefcase" />
           </div>
 
-          <div class="text-xs font-medium text-[color:var(--ot-text-muted)]">
-            Preview rows are not saved in database.
+          <div>
+            <div class="summary-label">
+              {{ t('payment.process.calendar.workingDays') }}
+            </div>
+
+            <div class="summary-value">
+              {{ periodCalendarSummary.workingDays }}
+            </div>
           </div>
         </div>
 
-        <div class="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-5">
-          <div
-            v-for="card in summaryCards"
-            :key="card.label"
-            class="summary-card"
-            :class="card.className"
-          >
-            <div class="summary-icon">
-              <i :class="card.icon" />
+        <div class="payment-summary-card card-orange">
+          <div class="summary-icon">
+            <i class="pi pi-sun" />
+          </div>
+
+          <div>
+            <div class="summary-label">
+              {{ t('payment.process.calendar.sundays') }}
             </div>
 
-            <div class="min-w-0">
-              <div class="summary-label">{{ card.label }}</div>
-              <div class="summary-value truncate">{{ card.value }}</div>
+            <div class="summary-value">
+              {{ periodCalendarSummary.sundays }}
+            </div>
+          </div>
+        </div>
+
+        <div class="payment-summary-card card-red">
+          <div class="summary-icon">
+            <i class="pi pi-star" />
+          </div>
+
+          <div>
+            <div class="summary-label">
+              {{ t('payment.process.calendar.internalHolidays') }}
+            </div>
+
+            <div class="summary-value">
+              {{ periodCalendarSummary.holidays }}
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Preview Tables -->
       <div
-        v-if="previewResult"
-        class="grid grid-cols-1 gap-3 border-t border-[color:var(--ot-border)] p-3 xl:grid-cols-2"
+        v-if="periodHolidayRows.length"
+        class="flex flex-wrap gap-2 border-t border-[color:var(--ot-border)] p-3"
       >
-        <div class="preview-table-card xl:col-span-2">
-          <div class="preview-table-title">Payment Detail Preview</div>
+        <Tag
+          v-for="holiday in periodHolidayRows"
+          :key="holiday.id || holiday._id || holiday.date"
+          :value="`${formatDateDMY(holiday.date)} · ${holiday.name || holiday.code || t('payment.dayTypes.holiday')}`"
+          severity="danger"
+          class="payment-tag"
+        />
+      </div>
+    </section>
 
+    <section
+      v-if="previewResult"
+      class="ot-table-card"
+    >
+      <div class="ot-table-toolbar">
+        <div>
+          <h2 class="ot-table-title">
+            {{ t('payment.process.preview.title') }}
+          </h2>
+
+          <p class="payment-muted-text">
+            {{ t('payment.process.preview.subtitle') }}
+          </p>
+        </div>
+
+        <div class="ot-table-actions">
+          <span class="ot-loaded-badge">
+            {{ t('payment.process.preview.notSaved') }}
+          </span>
+        </div>
+      </div>
+
+      <div class="grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-5">
+        <div
+          v-for="card in summaryCards"
+          :key="card.label"
+          class="payment-summary-card"
+          :class="card.className"
+        >
+          <div class="summary-icon">
+            <i :class="card.icon" />
+          </div>
+
+          <div class="min-w-0">
+            <div class="summary-label">
+              {{ card.label }}
+            </div>
+
+            <div class="summary-value truncate">
+              {{ card.value }}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section
+      v-if="previewResult"
+      class="grid gap-4 xl:grid-cols-2"
+    >
+      <div class="ot-table-card xl:col-span-2">
+        <div class="ot-table-toolbar">
+          <div>
+            <h2 class="ot-table-title">
+              {{ t('payment.process.table.detail') }}
+            </h2>
+          </div>
+        </div>
+
+        <div class="ot-table-wrapper">
           <DataTable
             :value="previewData.detailRows || []"
             scrollable
-            scrollHeight="320px"
-            size="small"
-            tableStyle="width: max-content; min-width: 100%; table-layout: auto;"
-            class="payment-preview-table"
+            scroll-height="420px"
+            table-style="width: max-content; min-width: 100%; table-layout: auto;"
+            class="ot-data-table ot-data-table-compact payment-preview-table"
           >
             <template #empty>
-              <div class="py-6 text-center text-sm text-[color:var(--ot-text-muted)]">
-                No payable payment detail found.
+              <div class="ot-empty-state">
+                <div class="ot-empty-icon">
+                  <i class="pi pi-wallet" />
+                </div>
+
+                <div class="ot-empty-title">
+                  {{ t('common.noData') }}
+                </div>
+
+                <div class="ot-empty-text">
+                  {{ t('payment.process.empty.noPaymentDetail') }}
+                </div>
               </div>
             </template>
 
-            <Column field="otDate" header="Date" />
-            <Column field="requestNo" header="Request No" />
-            <Column field="shiftOtOptionLabel" header="OT Option" />
-            <Column field="requestTime" header="OT Time" />
+            <Column
+              field="otDate"
+              :header="t('common.date')"
+              style="min-width: 8rem"
+            />
 
-            <Column header="Payment Day Type">
+            <Column
+              field="requestNo"
+              :header="t('payment.process.column.requestNo')"
+              style="min-width: 10rem"
+            />
+
+            <Column
+              field="shiftOtOptionLabel"
+              :header="t('payment.process.column.otOption')"
+              style="min-width: 14rem"
+            />
+
+            <Column
+              field="requestTime"
+              :header="t('payment.process.column.otTime')"
+              style="min-width: 10rem"
+            />
+
+            <Column
+              :header="t('payment.process.column.paymentDayType')"
+              style="min-width: 11rem"
+            >
               <template #body="{ data }">
                 <Tag
                   :value="dayTypeLabel(data.dayType)"
@@ -1029,7 +1170,10 @@ onBeforeUnmount(() => {
               </template>
             </Column>
 
-            <Column header="Internal Calendar">
+            <Column
+              :header="t('payment.process.column.internalCalendar')"
+              style="min-width: 12rem"
+            >
               <template #body="{ data }">
                 <Tag
                   :value="dayTypeLabel(data.internalCalendarDayType)"
@@ -1039,7 +1183,10 @@ onBeforeUnmount(() => {
               </template>
             </Column>
 
-            <Column header="Stored Type">
+            <Column
+              :header="t('payment.process.column.storedType')"
+              style="min-width: 10rem"
+            >
               <template #body="{ data }">
                 <Tag
                   :value="dayTypeLabel(data.storedDayType)"
@@ -1049,213 +1196,335 @@ onBeforeUnmount(() => {
               </template>
             </Column>
 
-            <Column field="employeeNo" header="ID" />
-            <Column field="employeeName" header="Name" />
-            <Column field="monthlySalary" header="Salary" />
+            <Column
+              field="employeeNo"
+              :header="t('payment.process.column.employeeId')"
+              style="min-width: 8rem"
+            />
 
-            <Column header="OT Option Time">
+            <Column
+              field="employeeName"
+              :header="t('payment.process.column.employeeName')"
+              style="min-width: 14rem"
+            />
+
+            <Column
+              field="monthlySalary"
+              :header="t('payment.process.column.salary')"
+              style="min-width: 8rem"
+            />
+
+            <Column
+              :header="t('payment.process.column.otOptionTime')"
+              style="min-width: 10rem"
+            >
               <template #body="{ data }">
                 {{ formatMinutesLabel(data.requestedMinutes) }}
               </template>
             </Column>
 
-            <Column header="Break Time">
+            <Column
+              :header="t('payment.process.column.breakTime')"
+              style="min-width: 9rem"
+            >
               <template #body="{ data }">
                 {{ formatMinutesLabel(data.breakMinutes) }}
               </template>
             </Column>
 
-            <Column header="Total Request Paid">
+            <Column
+              :header="t('payment.process.column.totalRequestPaid')"
+              style="min-width: 12rem"
+            >
               <template #body="{ data }">
                 {{ formatMinutesLabel(data.totalRequestPaidMinutes) }}
               </template>
             </Column>
 
-            <Column header="Actual">
+            <Column
+              :header="t('payment.process.column.actual')"
+              style="min-width: 8rem"
+            >
               <template #body="{ data }">
                 {{ formatMinutesLabel(data.actualOtMinutes) }}
               </template>
             </Column>
 
-            <Column header="Eligible">
+            <Column
+              :header="t('payment.process.column.eligible')"
+              style="min-width: 8rem"
+            >
               <template #body="{ data }">
                 {{ formatMinutesLabel(data.eligibleOtMinutes) }}
               </template>
             </Column>
 
-            <Column header="Payable">
+            <Column
+              :header="t('payment.process.column.payable')"
+              style="min-width: 8rem"
+            >
               <template #body="{ data }">
                 {{ formatMinutesLabel(data.roundedOtMinutes) }}
               </template>
             </Column>
 
-            <Column header="Backend Cap">
+            <Column
+              :header="t('payment.process.column.backendCap')"
+              style="min-width: 13rem"
+            >
               <template #body="{ data }">
                 <Tag
-                  :value="data.cappedByRequestPaidMinutes ? 'Capped by request paid' : 'Backend calculated'"
+                  :value="data.cappedByRequestPaidMinutes ? t('payment.process.label.cappedByRequestPaid') : t('payment.process.label.backendCalculated')"
                   :severity="data.cappedByRequestPaidMinutes ? 'warning' : 'success'"
                   class="payment-tag"
                 />
               </template>
             </Column>
 
-            <Column field="payableHours" header="Hours" />
-            <Column field="multiplier" header="Multiplier" />
-            <Column field="amount" header="Amount" />
-            <Column field="currency" header="Currency" />
+            <Column
+              field="payableHours"
+              :header="t('payment.process.column.hours')"
+              style="min-width: 7rem"
+            />
 
-            <Column header="Decision">
+            <Column
+              field="multiplier"
+              :header="t('payment.process.column.multiplier')"
+              style="min-width: 8rem"
+            />
+
+            <Column
+              field="amount"
+              :header="t('payment.process.column.amount')"
+              style="min-width: 8rem"
+            />
+
+            <Column
+              field="currency"
+              :header="t('payment.process.column.currency')"
+              style="min-width: 8rem"
+            />
+
+            <Column
+              :header="t('payment.process.column.decision')"
+              style="min-width: 12rem"
+            >
               <template #body="{ data }">
                 <Tag
-                  :value="data.rawOtDecision || data.otResult || '-'"
+                  :value="data.rawOtDecision || data.otResult || '—'"
                   :severity="decisionSeverity(data.rawOtDecision || data.otResult)"
                   class="payment-tag"
                 />
               </template>
             </Column>
 
-            <Column field="otResultReason" header="Reason" />
+            <Column
+              field="otResultReason"
+              :header="t('payment.process.column.reason')"
+              style="min-width: 18rem"
+            />
           </DataTable>
         </div>
+      </div>
 
-        <div class="preview-table-card">
-          <div class="preview-table-title">Missing Salary</div>
+      <div class="ot-table-card">
+        <div class="ot-table-toolbar">
+          <div>
+            <h2 class="ot-table-title">
+              {{ t('payment.process.table.missingSalary') }}
+            </h2>
+          </div>
+        </div>
 
+        <div class="ot-table-wrapper">
           <DataTable
             :value="previewData.missingSalaryRows || []"
             scrollable
-            scrollHeight="220px"
-            size="small"
-            tableStyle="width: max-content; min-width: 100%; table-layout: auto;"
-            class="payment-preview-table"
+            scroll-height="260px"
+            table-style="width: max-content; min-width: 100%; table-layout: auto;"
+            class="ot-data-table ot-data-table-compact payment-preview-table"
           >
             <template #empty>
-              <div class="py-6 text-center text-sm text-[color:var(--ot-text-muted)]">
-                No missing salary.
+              <div class="ot-empty-state">
+                <div class="ot-empty-icon">
+                  <i class="pi pi-check-circle" />
+                </div>
+
+                <div class="ot-empty-title">
+                  {{ t('payment.process.empty.noMissingSalary') }}
+                </div>
               </div>
             </template>
 
-            <Column field="otDate" header="Date" />
-            <Column field="requestNo" header="Request No" />
-            <Column field="employeeNo" header="ID" />
-            <Column field="employeeName" header="Name" />
-            <Column field="payableHours" header="OT Hours" />
-            <Column field="reason" header="Reason" />
+            <Column
+              field="otDate"
+              :header="t('common.date')"
+              style="min-width: 8rem"
+            />
+
+            <Column
+              field="requestNo"
+              :header="t('payment.process.column.requestNo')"
+              style="min-width: 10rem"
+            />
+
+            <Column
+              field="employeeNo"
+              :header="t('payment.process.column.employeeId')"
+              style="min-width: 8rem"
+            />
+
+            <Column
+              field="employeeName"
+              :header="t('payment.process.column.employeeName')"
+              style="min-width: 14rem"
+            />
+
+            <Column
+              field="payableHours"
+              :header="t('payment.process.column.otHours')"
+              style="min-width: 8rem"
+            />
+
+            <Column
+              field="reason"
+              :header="t('payment.process.column.reason')"
+              style="min-width: 18rem"
+            />
           </DataTable>
         </div>
+      </div>
 
-        <div class="preview-table-card">
-          <div class="preview-table-title">Warnings</div>
+      <div class="ot-table-card">
+        <div class="ot-table-toolbar">
+          <div>
+            <h2 class="ot-table-title">
+              {{ t('payment.process.table.warnings') }}
+            </h2>
+          </div>
+        </div>
 
+        <div class="ot-table-wrapper">
           <DataTable
             :value="previewData.warningRows || []"
             scrollable
-            scrollHeight="220px"
-            size="small"
-            tableStyle="width: max-content; min-width: 100%; table-layout: auto;"
-            class="payment-preview-table"
+            scroll-height="260px"
+            table-style="width: max-content; min-width: 100%; table-layout: auto;"
+            class="ot-data-table ot-data-table-compact payment-preview-table"
           >
             <template #empty>
-              <div class="py-6 text-center text-sm text-[color:var(--ot-text-muted)]">
-                No warnings.
+              <div class="ot-empty-state">
+                <div class="ot-empty-icon">
+                  <i class="pi pi-check-circle" />
+                </div>
+
+                <div class="ot-empty-title">
+                  {{ t('payment.process.empty.noWarnings') }}
+                </div>
               </div>
             </template>
 
-            <Column field="otDate" header="Date" />
-            <Column field="requestNo" header="Request No" />
-            <Column field="employeeNo" header="ID" />
-            <Column field="employeeName" header="Name" />
-            <Column field="reason" header="Reason" />
+            <Column
+              field="otDate"
+              :header="t('common.date')"
+              style="min-width: 8rem"
+            />
+
+            <Column
+              field="requestNo"
+              :header="t('payment.process.column.requestNo')"
+              style="min-width: 10rem"
+            />
+
+            <Column
+              field="employeeNo"
+              :header="t('payment.process.column.employeeId')"
+              style="min-width: 8rem"
+            />
+
+            <Column
+              field="employeeName"
+              :header="t('payment.process.column.employeeName')"
+              style="min-width: 14rem"
+            />
+
+            <Column
+              field="reason"
+              :header="t('payment.process.column.reason')"
+              style="min-width: 18rem"
+            />
           </DataTable>
         </div>
       </div>
+    </section>
 
-      <div
-        v-else
-        class="border-t border-[color:var(--ot-border)] px-3 py-8 text-center text-sm text-[color:var(--ot-text-muted)]"
-      >
-        Upload salary Excel and click Preview to see the payment result before download.
+    <section
+      v-else
+      class="ot-table-card"
+    >
+      <div class="ot-empty-state">
+        <div class="ot-empty-icon">
+          <i class="pi pi-file-excel" />
+        </div>
+
+        <div class="ot-empty-title">
+          {{ t('payment.process.empty.previewTitle') }}
+        </div>
+
+        <div class="ot-empty-text">
+          {{ t('payment.process.empty.previewHint') }}
+        </div>
       </div>
-    </div>
+    </section>
   </div>
 </template>
 
 <style scoped>
-.payment-card {
-  border: 1px solid var(--ot-border);
-  border-radius: 1rem;
-  background:
-    linear-gradient(135deg, rgba(59, 130, 246, 0.04), transparent),
-    var(--ot-bg);
-  padding: 0.85rem;
+@media (min-width: 1280px) {
+  .payment-process-filter-bar {
+    grid-template-columns:
+      minmax(180px, 220px)
+      minmax(180px, 220px)
+      minmax(220px, 280px)
+      minmax(160px, 190px)
+      auto;
+    align-items: end;
+  }
+
+  .payment-process-filter-actions {
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    min-width: max-content;
+  }
 }
 
-.payment-card-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.payment-title {
-  font-size: 0.9rem;
-  font-weight: 700;
-  color: var(--ot-text);
-}
-
-.payment-subtitle,
-.payment-section-subtitle {
+.payment-muted-text {
   margin-top: 0.12rem;
   font-size: 0.72rem;
-  font-weight: 500;
-  color: var(--ot-text-muted);
-}
-
-.payment-section-title {
-  font-size: 0.92rem;
-  font-weight: 800;
-  color: var(--ot-text);
-}
-
-.payment-info-box {
-  min-width: 0;
-  border: 1px solid var(--ot-border);
-  border-radius: 0.85rem;
-  background: var(--ot-surface);
-  padding: 0.65rem 0.75rem;
-}
-
-.payment-info-label {
-  font-size: 0.68rem;
-  font-weight: 700;
-  line-height: 1;
+  line-height: 1.4;
   color: var(--ot-text-muted);
 }
 
 .payment-info-value {
   margin-top: 0.35rem;
-  font-size: 0.82rem;
-  font-weight: 700;
+  font-size: 0.84rem;
   color: var(--ot-text);
 }
 
-.payment-formula-box {
+.payment-formula-preview {
+  margin-top: 0.45rem;
+  display: grid;
+  gap: 0.35rem;
   border: 1px dashed var(--ot-border);
   border-radius: 0.85rem;
-  background: color-mix(in srgb, var(--ot-surface) 76%, transparent);
-  padding: 0.7rem 0.75rem;
+  background: var(--ot-surface);
+  padding: 0.68rem 0.75rem;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--ot-text);
 }
 
-.payment-empty-box {
-  margin-top: 0.75rem;
-  border: 1px dashed var(--ot-border);
-  border-radius: 0.85rem;
-  padding: 2rem 1rem;
-  text-align: center;
-  color: var(--ot-text-muted);
-}
-
-.summary-card {
+.payment-summary-card {
   display: flex;
   min-width: 0;
   align-items: center;
@@ -1279,14 +1548,12 @@ onBeforeUnmount(() => {
 
 .summary-label {
   font-size: 0.68rem;
-  font-weight: 700;
   color: var(--ot-text-muted);
 }
 
 .summary-value {
   margin-top: 0.15rem;
   font-size: 0.9rem;
-  font-weight: 800;
   color: var(--ot-text);
 }
 
@@ -1315,21 +1582,6 @@ onBeforeUnmount(() => {
   color: #dc2626;
 }
 
-.preview-table-card {
-  overflow: hidden;
-  border: 1px solid var(--ot-border);
-  border-radius: 1rem;
-  background: var(--ot-bg);
-}
-
-.preview-table-title {
-  border-bottom: 1px solid var(--ot-border);
-  padding: 0.65rem 0.75rem;
-  font-size: 0.8rem;
-  font-weight: 800;
-  color: var(--ot-text);
-}
-
 :deep(.payment-preview-table .p-datatable-table) {
   width: max-content !important;
   min-width: 100% !important;
@@ -1337,16 +1589,12 @@ onBeforeUnmount(() => {
 }
 
 :deep(.payment-preview-table .p-datatable-thead > tr > th) {
-  padding: 0.55rem 0.65rem !important;
   white-space: nowrap !important;
-  font-size: 0.72rem !important;
 }
 
 :deep(.payment-preview-table .p-datatable-tbody > tr > td) {
-  padding: 0.5rem 0.65rem !important;
   vertical-align: middle !important;
   white-space: nowrap !important;
-  font-size: 0.76rem !important;
 }
 
 :deep(.p-tag.payment-tag) {
@@ -1419,15 +1667,5 @@ onBeforeUnmount(() => {
   background: rgba(239, 68, 68, 0.18) !important;
   color: #fca5a5 !important;
   border-color: rgba(239, 68, 68, 0.45) !important;
-}
-
-@media (max-width: 768px) {
-  .payment-card {
-    padding: 0.75rem;
-  }
-
-  .payment-card-header {
-    flex-direction: column;
-  }
 }
 </style>

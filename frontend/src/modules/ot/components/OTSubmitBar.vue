@@ -2,6 +2,8 @@
 <script setup>
 // frontend/src/modules/ot/components/OTSubmitBar.vue
 
+import { useI18n } from 'vue-i18n'
+
 import Button from 'primevue/button'
 
 defineProps({
@@ -16,12 +18,14 @@ defineProps({
 })
 
 const emit = defineEmits(['submit', 'back'])
+
+const { t } = useI18n()
 </script>
 
 <template>
   <div class="ot-submit-bar">
     <Button
-      label="Submit OT Request"
+      :label="t('ot.requests.create.submitRequest')"
       icon="pi pi-check"
       size="small"
       :loading="submitting"
@@ -31,7 +35,7 @@ const emit = defineEmits(['submit', 'back'])
     />
 
     <Button
-      label="Back"
+      :label="t('common.back')"
       icon="pi pi-arrow-left"
       severity="secondary"
       outlined

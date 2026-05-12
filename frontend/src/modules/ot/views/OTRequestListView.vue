@@ -4,6 +4,7 @@
 
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
@@ -26,6 +27,7 @@ import {
 const router = useRouter()
 const toast = useToast()
 const auth = useAuthStore()
+const { t } = useI18n()
 
 const PAGE_SIZE = 10
 const SEARCH_DEBOUNCE_MS = 250
@@ -55,24 +57,29 @@ const firstLoading = computed(() => {
   return backgroundLoading.value && !bootstrapped.value && !hasAnyData.value
 })
 
-const statusOptions = [
-  { label: 'All Status', value: '' },
-  { label: 'Pending', value: 'PENDING' },
-  { label: 'Approved', value: 'APPROVED' },
-  { label: 'Rejected', value: 'REJECTED' },
-  { label: 'Cancelled', value: 'CANCELLED' },
-]
+const statusOptions = computed(() => [
+  { label: t('common.allStatus'), value: '' },
+  { label: t('ot.status.pending'), value: 'PENDING' },
+  { label: t('ot.status.approved'), value: 'APPROVED' },
+  { label: t('ot.status.rejected'), value: 'REJECTED' },
+  { label: t('ot.status.cancelled'), value: 'CANCELLED' },
+])
 
-const dayTypeOptions = [
-  { label: 'All Day Types', value: '' },
-  { label: 'Working Day', value: 'WORKING_DAY' },
-  { label: 'Sunday', value: 'SUNDAY' },
-  { label: 'Holiday', value: 'HOLIDAY' },
-]
+const dayTypeOptions = computed(() => [
+  { label: t('ot.requests.allDayTypes'), value: '' },
+  { label: t('ot.dayType.workingDay'), value: 'WORKING_DAY' },
+  { label: t('ot.dayType.sunday'), value: 'SUNDAY' },
+  { label: t('ot.dayType.holiday'), value: 'HOLIDAY' },
+])
 
 const totalRequests = computed(() => Number(totalRecords.value || 0))
 const loadedCount = computed(() => rows.value.filter(Boolean).length)
-const summaryText = computed(() => `${loadedCount.value} of ${totalRequests.value}`)
+const summaryText = computed(() =>
+  t('common.loaded', {
+    loaded: loadedCount.value,
+    total: totalRequests.value,
+  }),
+)
 
 const hasAnyData = computed(() => rows.value.some(Boolean))
 const useVirtualScroll = computed(() => totalRequests.value > PAGE_SIZE)
@@ -167,14 +174,20 @@ function formatDateTimeDMY(value) {
 function formatMinutesLabel(value) {
   const minutes = Number(value || 0)
 
-  if (!minutes) return '0 min'
+  if (!minutes) return t('ot.common.minuteValue', { value: 0 })
 
   const hh = Math.floor(minutes / 60)
   const mm = minutes % 60
 
-  if (hh && mm) return `${hh}h ${mm}m`
-  if (hh) return `${hh}h`
-  return `${mm}m`
+  if (hh && mm) {
+    return t('ot.common.hourMinuteValue', {
+      hours: hh,
+      minutes: mm,
+    })
+  }
+
+  if (hh) return t('ot.common.hourValue', { value: hh })
+  return t('ot.common.minuteValue', { value: mm })
 }
 
 function buildQuery(page) {
@@ -211,15 +224,60 @@ function dayTypeClass(value) {
   return `ot-day-${normalizeClassKey(value || 'unknown')}`
 }
 
+function statusClass(value) {
+  return `ot-status-${normalizeClassKey(value || 'unknown')}`
+}
+
+function approvalDisplayClass(row) {
+  return `ot-approval-${normalizeClassKey(approvalDisplay(row).type || 'unknown')}`
+}
+
+function translateBackendKey(key, fallback = '-') {
+  const value = String(key || '').trim()
+  if (!value) return fallback
+  return t(value)
+}
+
+function statusLabel(value, key = '') {
+  if (key) return translateBackendKey(key, value || '-')
+
+  const normalized = upper(value)
+
+  if (normalized === 'PENDING') return t('ot.status.pending')
+  if (normalized === 'PENDING_REQUESTER_CONFIRMATION') {
+    return t('ot.status.pendingRequesterConfirmation')
+  }
+  if (normalized === 'APPROVED') return t('ot.status.approved')
+  if (normalized === 'REJECTED') return t('ot.status.rejected')
+  if (normalized === 'REQUESTER_DISAGREED') return t('ot.status.requesterDisagreed')
+  if (normalized === 'CANCELLED') return t('ot.status.cancelled')
+
+  return normalized || t('common.unknown')
+}
+
 function statusSeverity(value) {
   const normalized = upper(value)
 
   if (normalized === 'APPROVED') return 'success'
   if (normalized === 'REJECTED') return 'danger'
+  if (normalized === 'REQUESTER_DISAGREED') return 'danger'
   if (normalized === 'CANCELLED') return 'contrast'
+  if (normalized === 'PENDING_REQUESTER_CONFIRMATION') return 'info'
   if (normalized === 'PENDING') return 'warning'
 
   return 'secondary'
+}
+
+function dayTypeLabel(value, key = '') {
+  if (key) return translateBackendKey(key, value || '-')
+
+  const normalized = upper(value)
+
+  if (normalized === 'HOLIDAY') return t('ot.dayType.holiday')
+  if (normalized === 'SUNDAY') return t('ot.dayType.sunday')
+  if (normalized === 'WORKING_DAY') return t('ot.dayType.workingDay')
+
+  return normalized || t('common.unknown')
 }
 
 function dayTypeSeverity(value) {
@@ -235,8 +293,8 @@ function dayTypeSeverity(value) {
 function timingSourceLabel(value) {
   const normalized = upper(value)
 
-  if (normalized === 'CUSTOM_FIXED') return 'Custom'
-  return 'Preset'
+  if (normalized === 'CUSTOM_FIXED') return t('ot.requests.customFixed')
+  return t('ot.requests.preset')
 }
 
 function timingSourceSeverity(value) {
@@ -266,6 +324,7 @@ function formatRequester(row) {
 
   const employeeNo = String(
     row?.requesterEmployeeNo ||
+      row?.requesterEmployeeCode ||
       row?.createdByEmployeeNo ||
       row?.employeeNo ||
       '',
@@ -282,57 +341,43 @@ function canEdit(row) {
 }
 
 function approvalDisplay(row) {
-  const display = row?.approvalDisplay || {
-    type: row?.approvalDisplayType || row?.status || 'UNKNOWN',
-    label: row?.approvalDisplayLabel || row?.status || '-',
-    subLabel: row?.approvalDisplaySubLabel || '',
-    severity: row?.approvalDisplaySeverity || statusSeverity(row?.status),
+  const display = row?.approvalDisplay || {}
+
+  const type = firstText(
+    display.type,
+    row?.approvalDisplayType,
+    row?.status,
+    'UNKNOWN',
+  )
+
+  const label = firstText(
+    display.label,
+    row?.approvalDisplayLabel,
+    statusLabel(row?.status, row?.statusKey),
+  )
+
+  const subLabel = firstText(
+    display.subLabel,
+    row?.approvalDisplaySubLabel,
+    '',
+  )
+
+  const severity = firstText(
+    display.severity,
+    row?.approvalDisplaySeverity,
+    statusSeverity(type),
+  )
+
+  return {
+    type,
+    label,
+    subLabel,
+    severity,
   }
-
-  const type = upper(display.type)
-  const status = upper(row?.status)
-
-  if (type === 'REQUESTER_CONFIRMATION' || status === 'PENDING_REQUESTER_CONFIRMATION') {
-    return {
-      ...display,
-      type: 'WAITING',
-      label: 'Pending',
-      subLabel: '',
-      severity: 'warning',
-    }
-  }
-
-  if (type === 'REQUESTER_DISAGREED' || status === 'REQUESTER_DISAGREED') {
-    return {
-      ...display,
-      type: 'REJECTED',
-      label: 'Rejected',
-      subLabel: '',
-      severity: 'danger',
-    }
-  }
-
-  return display
-}
-
-function approvalDisplayClass(row) {
-  return `ot-approval-${normalizeClassKey(approvalDisplay(row).type || 'unknown')}`
 }
 
 function approvalDisplaySeverity(row) {
-  const display = approvalDisplay(row)
-  const severity = display.severity
-
-  if (severity) return severity
-
-  const type = upper(display.type)
-
-  if (type === 'APPROVED') return 'success'
-  if (type === 'REJECTED') return 'danger'
-  if (type === 'WAITING') return 'warning'
-  if (type === 'CANCELLED') return 'secondary'
-
-  return 'secondary'
+  return approvalDisplay(row).severity || statusSeverity(row?.status)
 }
 
 function getTargetEmployees(row) {
@@ -517,7 +562,9 @@ function employeeTimeModeOf(employee) {
 }
 
 function employeeTimeModeLabel(employee) {
-  return employeeTimeModeOf(employee) === 'CUSTOM' ? 'Custom' : 'Default'
+  return employeeTimeModeOf(employee) === 'CUSTOM'
+    ? t('ot.requests.timeMode.custom')
+    : t('ot.requests.timeMode.default')
 }
 
 function employeeTimeModeSeverity(employee) {
@@ -562,12 +609,14 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
         rows.value = Array.from({ length: total }, () => null)
       }
 
+      const nextRows = [...rows.value]
       const startIndex = (page - 1) * PAGE_SIZE
 
       for (let i = 0; i < items.length; i += 1) {
-        rows.value[startIndex + i] = items[i]
+        nextRows[startIndex + i] = items[i]
       }
 
+      rows.value = nextRows
       loadedPages.value.add(page)
     }
 
@@ -575,11 +624,11 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
   } catch (error) {
     toast.add({
       severity: 'error',
-      summary: 'Load failed',
+      summary: t('common.loadFailed'),
       detail:
         error?.response?.data?.message ||
         error?.message ||
-        'Failed to load OT requests',
+        t('ot.requests.loadFailed'),
       life: 3000,
     })
   } finally {
@@ -716,18 +765,18 @@ async function onExportExcel() {
 
     toast.add({
       severity: 'success',
-      summary: 'Export ready',
-      detail: 'Excel file downloaded successfully.',
+      summary: t('ot.requests.exported'),
+      detail: t('ot.requests.exportedSuccess'),
       life: 2500,
     })
   } catch (error) {
     toast.add({
       severity: 'error',
-      summary: 'Export failed',
+      summary: t('ot.requests.exportFailed'),
       detail:
         error?.response?.data?.message ||
         error?.message ||
-        'Failed to export Excel file',
+        t('ot.requests.exportFailed'),
       life: 3000,
     })
   } finally {
@@ -749,7 +798,7 @@ onBeforeUnmount(() => {
     <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
       <div class="flex flex-wrap items-center gap-2">
         <Button
-          label="Export Excel"
+          :label="t('ot.requests.exportExcel')"
           icon="pi pi-file-excel"
           severity="success"
           outlined
@@ -760,7 +809,7 @@ onBeforeUnmount(() => {
 
         <Button
           v-if="canCreateRequest"
-          label="New OT Request"
+          :label="t('ot.requests.newRequest')"
           icon="pi pi-plus"
           size="small"
           @click="goCreate"
@@ -770,13 +819,13 @@ onBeforeUnmount(() => {
 
     <div class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]">
       <div class="border-b border-[color:var(--ot-border)] px-3 py-3">
-        <div class="flex flex-col gap-2 xl:flex-row xl:items-center">
+        <div class="ot-request-filter-row">
           <IconField class="w-full xl:w-[190px] xl:shrink-0">
             <InputIcon class="pi pi-search" />
 
             <InputText
               v-model="filters.search"
-              placeholder="Search"
+              :placeholder="t('common.search')"
               class="w-full"
               size="small"
               @input="onSearchInput"
@@ -789,7 +838,7 @@ onBeforeUnmount(() => {
               :options="statusOptions"
               optionLabel="label"
               optionValue="value"
-              placeholder="Status"
+              :placeholder="t('common.status')"
               class="w-full"
               size="small"
               @change="onStatusChange"
@@ -802,7 +851,7 @@ onBeforeUnmount(() => {
               :options="dayTypeOptions"
               optionLabel="label"
               optionValue="value"
-              placeholder="Day Type"
+              :placeholder="t('ot.requests.dayType')"
               class="w-full"
               size="small"
               @change="onDayTypeChange"
@@ -817,7 +866,7 @@ onBeforeUnmount(() => {
               showButtonBar
               class="w-full"
               inputClass="w-full"
-              placeholder="OT Date From"
+              :placeholder="t('ot.requests.otDateFrom')"
               @date-select="onDateChange"
               @clear-click="onDateChange"
             />
@@ -831,19 +880,19 @@ onBeforeUnmount(() => {
               showButtonBar
               class="w-full"
               inputClass="w-full"
-              placeholder="OT Date To"
+              :placeholder="t('ot.requests.otDateTo')"
               @date-select="onDateChange"
               @clear-click="onDateChange"
             />
           </div>
 
-          <div class="flex items-center gap-2 xl:ml-auto xl:shrink-0">
+          <div class="flex flex-wrap items-center gap-2 xl:ml-auto xl:shrink-0">
             <div class="rounded-lg border border-[color:var(--ot-border)] px-3 py-1.5 text-xs font-medium text-[color:var(--ot-text-muted)]">
-              Loaded {{ summaryText }}
+              {{ summaryText }}
             </div>
 
             <Button
-              label="Clear"
+              :label="t('common.clear')"
               icon="pi pi-refresh"
               severity="secondary"
               outlined
@@ -856,8 +905,8 @@ onBeforeUnmount(() => {
 
       <AppTableLoading
         v-if="firstLoading"
-        title="Loading OT requests"
-        message="Fetching OT request records..."
+        :title="t('ot.requests.loading')"
+        :message="t('ot.requests.fetchingRecords')"
         :rows="8"
         :columns="10"
       />
@@ -887,7 +936,7 @@ onBeforeUnmount(() => {
             v-if="bootstrapped"
             class="py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
           >
-            No OT requests found.
+            {{ t('ot.requests.noData') }}
           </div>
         </template>
 
@@ -895,7 +944,7 @@ onBeforeUnmount(() => {
 
         <Column
           field="requestNo"
-          header="Request No"
+          :header="t('ot.requests.requestNo')"
         >
           <template #body="{ data }">
             <span
@@ -907,7 +956,7 @@ onBeforeUnmount(() => {
           </template>
         </Column>
 
-        <Column header="Requester">
+        <Column :header="t('ot.requests.requester')">
           <template #body="{ data }">
             <div
               v-if="data"
@@ -926,7 +975,7 @@ onBeforeUnmount(() => {
 
         <Column
           field="status"
-          header="Approval Status"
+          :header="t('ot.requests.approvalStatus')"
         >
           <template #body="{ data }">
             <div
@@ -943,11 +992,11 @@ onBeforeUnmount(() => {
           </template>
         </Column>
 
-        <Column header="Staff">
+        <Column :header="t('ot.requests.staff')">
           <template #body="{ data }">
             <Tag
               v-if="data"
-              :value="`${getEmployeeCount(data)} staff`"
+              :value="t('ot.requests.staffCount', { count: getEmployeeCount(data) })"
               severity="info"
               class="ot-status-tag ot-count-approved"
             />
@@ -956,20 +1005,20 @@ onBeforeUnmount(() => {
 
         <Column
           field="otDate"
-          header="OT Date"
+          :header="t('ot.requests.otDate')"
         >
           <template #body="{ data }">
             <span v-if="data">{{ formatDateDMY(data.otDate) }}</span>
           </template>
         </Column>
 
-        <Column header="OT Time">
+        <Column :header="t('ot.requests.otTime')">
           <template #body="{ data }">
             <span v-if="data">{{ formatTimeRange(data) }}</span>
           </template>
         </Column>
 
-        <Column header="Timing">
+        <Column :header="t('ot.requests.timing')">
           <template #body="{ data }">
             <Tag
               v-if="data"
@@ -982,12 +1031,12 @@ onBeforeUnmount(() => {
 
         <Column
           field="dayType"
-          header="Day Type"
+          :header="t('ot.requests.dayType')"
         >
           <template #body="{ data }">
             <Tag
               v-if="data"
-              :value="data.dayType || '-'"
+              :value="dayTypeLabel(data.dayType, data.dayTypeKey)"
               :severity="dayTypeSeverity(data.dayType)"
               class="ot-status-tag"
               :class="dayTypeClass(data.dayType)"
@@ -997,14 +1046,20 @@ onBeforeUnmount(() => {
 
         <Column
           field="createdAt"
-          header="Created At"
+          :header="t('common.createdAt')"
         >
           <template #body="{ data }">
             <span v-if="data">{{ formatDateTimeDMY(data.createdAt) }}</span>
           </template>
         </Column>
 
-        <Column header="Actions">
+        <Column
+          :header="t('common.actions')"
+          frozen
+          alignFrozen="right"
+          headerClass="ot-action-column-header"
+          bodyClass="ot-action-column-body"
+        >
           <template #body="{ data }">
             <div
               v-if="data"
@@ -1012,7 +1067,7 @@ onBeforeUnmount(() => {
             >
               <Button
                 v-if="canVerifyAttendance"
-                label="Verify"
+                :label="t('ot.requests.verify')"
                 icon="pi pi-check-square"
                 size="small"
                 severity="success"
@@ -1022,7 +1077,7 @@ onBeforeUnmount(() => {
 
               <Button
                 v-if="canEdit(data)"
-                label="Edit"
+                :label="t('common.edit')"
                 icon="pi pi-pencil"
                 size="small"
                 severity="warning"
@@ -1042,11 +1097,11 @@ onBeforeUnmount(() => {
               <div class="ot-expanded-header">
                 <div>
                   <div class="ot-expanded-title">
-                    Employee OT time detail
+                    {{ t('ot.requests.employeeOtTimeDetail') }}
                   </div>
 
                   <div class="ot-expanded-subtitle">
-                    Default request time: {{ formatTimeRange(data) }}
+                    {{ t('ot.requests.defaultRequestTime') }}: {{ formatTimeRange(data) }}
                   </div>
                 </div>
 
@@ -1059,15 +1114,15 @@ onBeforeUnmount(() => {
 
               <div class="ot-expanded-responsive-table">
                 <div class="ot-expanded-grid-row is-head">
-                  <div>No</div>
-                  <div>ID</div>
-                  <div>Name</div>
-                  <div>Position</div>
-                  <div>OT Time</div>
-                  <div>Break</div>
-                  <div>Total</div>
-                  <div>Mode</div>
-                  <div>Line</div>
+                  <div>{{ t('common.no') }}</div>
+                  <div>{{ t('ot.requests.employeeId') }}</div>
+                  <div>{{ t('common.name') }}</div>
+                  <div>{{ t('nav.positions') }}</div>
+                  <div>{{ t('ot.requests.otTime') }}</div>
+                  <div>{{ t('ot.requests.break') }}</div>
+                  <div>{{ t('ot.requests.total') }}</div>
+                  <div>{{ t('ot.requests.mode') }}</div>
+                  <div>{{ t('nav.lines') }}</div>
                 </div>
 
                 <div
@@ -1096,7 +1151,7 @@ onBeforeUnmount(() => {
                   </div>
 
                   <div class="cell-center cell-mono">
-                    {{ employeeBreakMinutesOf(employee, data) }}m
+                    {{ employeeBreakMinutesOf(employee, data) }}{{ t('ot.common.minShort') }}
                   </div>
 
                   <div class="cell-center cell-mono">
@@ -1122,7 +1177,7 @@ onBeforeUnmount(() => {
               v-else
               class="ot-expanded-empty"
             >
-              No employee data found for this request.
+              {{ t('ot.requests.noEmployeeData') }}
             </div>
           </div>
         </template>
@@ -1132,13 +1187,26 @@ onBeforeUnmount(() => {
         v-if="backgroundLoading && hasAnyData"
         class="flex items-center justify-center border-t border-[color:var(--ot-border)] px-3 py-2 text-xs text-[color:var(--ot-text-muted)]"
       >
-        Updating...
+        {{ t('common.updating') }}
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
+.ot-request-filter-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+@media (min-width: 1280px) {
+  .ot-request-filter-row {
+    flex-direction: row;
+    align-items: center;
+  }
+}
+
 :deep(.ot-request-table .p-datatable-table) {
   width: max-content !important;
   min-width: 100% !important;
@@ -1174,6 +1242,28 @@ onBeforeUnmount(() => {
   height: 1.75rem !important;
 }
 
+:deep(.ot-request-table .ot-action-column-header),
+:deep(.ot-request-table .ot-action-column-body) {
+  position: sticky !important;
+  right: 0 !important;
+  z-index: 8 !important;
+  width: 9.25rem !important;
+  min-width: 9.25rem !important;
+  max-width: 9.25rem !important;
+  background: var(--ot-surface) !important;
+  box-shadow: -8px 0 18px rgba(15, 23, 42, 0.06) !important;
+}
+
+:deep(.ot-request-table .ot-action-column-header) {
+  z-index: 10 !important;
+  background: linear-gradient(180deg, var(--ot-surface-2), var(--ot-surface-3)) !important;
+}
+
+:global(.dark) :deep(.ot-request-table .ot-action-column-header),
+:global(.dark) :deep(.ot-request-table .ot-action-column-body) {
+  box-shadow: -8px 0 18px rgba(0, 0, 0, 0.22) !important;
+}
+
 .requester-cell {
   min-width: max-content;
 }
@@ -1181,6 +1271,7 @@ onBeforeUnmount(() => {
 .action-cell {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 0.4rem;
   flex-wrap: nowrap;
   white-space: nowrap;
@@ -1375,7 +1466,9 @@ onBeforeUnmount(() => {
 }
 
 :deep(.p-tag.ot-status-rejected),
-:deep(.p-tag.ot-approval-rejected) {
+:deep(.p-tag.ot-status-requester-disagreed),
+:deep(.p-tag.ot-approval-rejected),
+:deep(.p-tag.ot-approval-requester-disagreed) {
   background: #fee2e2 !important;
   color: #991b1b !important;
   border-color: #ef4444 !important;
@@ -1423,7 +1516,9 @@ onBeforeUnmount(() => {
 }
 
 :global(.dark) :deep(.p-tag.ot-status-rejected),
-:global(.dark) :deep(.p-tag.ot-approval-rejected) {
+:global(.dark) :deep(.p-tag.ot-status-requester-disagreed),
+:global(.dark) :deep(.p-tag.ot-approval-rejected),
+:global(.dark) :deep(.p-tag.ot-approval-requester-disagreed) {
   background: rgba(239, 68, 68, 0.18) !important;
   color: #fca5a5 !important;
   border-color: rgba(239, 68, 68, 0.45) !important;
@@ -1518,10 +1613,10 @@ onBeforeUnmount(() => {
       8.8rem
       8.2rem
       7.4rem
-      4.4rem
-      5.2rem
-      5.2rem
-      10rem;
+      4.8rem
+      5.4rem
+      5.4rem
+      9.5rem;
   }
 
   .ot-expanded-grid-row > div {
@@ -1568,10 +1663,10 @@ onBeforeUnmount(() => {
       8.5rem
       8rem
       7.2rem
-      4.3rem
-      5.1rem
-      5.1rem
-      10rem;
+      4.6rem
+      5.2rem
+      5.2rem
+      9.2rem;
   }
 
   .ot-expanded-grid-row > div {

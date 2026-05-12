@@ -3,6 +3,7 @@
 // frontend/src/modules/ot/components/OTEmployeeMultiPicker.vue
 
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
@@ -70,6 +71,7 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue'])
 
 const toast = useToast()
+const { t } = useI18n()
 
 const PAGE_SIZE = 10
 const GROUP_VISIBLE_STEP = 10
@@ -112,32 +114,12 @@ const selectedIds = computed(() => {
   return new Set(selectedRows.value.map((item) => getEmployeeId(item)).filter(Boolean))
 })
 
-const selectedCount = computed(() => selectedRows.value.length)
-
-const selectedWithLineCount = computed(() => {
-  return selectedRows.value.filter((item) => hasLine(item)).length
-})
-
-const selectedNoLineCount = computed(() => {
-  return selectedRows.value.filter((item) => !hasLine(item)).length
-})
-
-const outsideSelectedCount = computed(() => {
-  return selectedRows.value.filter((item) => item?.isOutsideManaged === true).length
-})
-
 const blockedStamp = computed(() => {
   const map = props.blockedEmployeeMap || {}
   return Object.keys(map).sort().join('|')
 })
 
 const loadedCount = computed(() => employees.value.length)
-
-const loadedCountLabel = computed(() => {
-  const loaded = loadedCount.value
-  const all = total.value || loaded
-  return `${loaded}/${all}`
-})
 
 const hasMoreEmployees = computed(() => {
   return loadedCount.value < Number(total.value || 0)
@@ -188,14 +170,14 @@ const defaultTimeKey = computed(() => {
 const employeeScopeOptions = computed(() => {
   const options = [
     {
-      label: 'My employees',
+      label: t('ot.requests.create.employeePicker.myEmployees'),
       value: 'MANAGED',
     },
   ]
 
   if (canSelectOtherEmployees.value) {
     options.push({
-      label: 'All employees',
+      label: t('ot.requests.create.employeePicker.allEmployees'),
       value: 'ALL',
     })
   }
@@ -205,7 +187,7 @@ const employeeScopeOptions = computed(() => {
 
 const lineOptions = computed(() => [
   {
-    label: 'All lines',
+    label: t('ot.requests.create.employeePicker.allLines'),
     value: '',
   },
   ...remoteLineOptions.value,
@@ -306,14 +288,21 @@ function calculateTimeWindowMinutes(startTime, endTime, breakMinutes = 0) {
 function formatMinutesLabel(value) {
   const minutes = Number(value || 0)
 
-  if (!minutes) return '0 min'
+  if (!minutes) return t('ot.common.minuteValue', { value: 0 })
 
   const hh = Math.floor(minutes / 60)
   const mm = minutes % 60
 
-  if (hh && mm) return `${hh}h ${mm}m`
-  if (hh) return `${hh}h`
-  return `${mm}m`
+  if (hh && mm) {
+    return t('ot.common.hourMinuteValue', {
+      hours: hh,
+      minutes: mm,
+    })
+  }
+
+  if (hh) return t('ot.common.hourValue', { value: hh })
+
+  return t('ot.common.minuteValue', { value: mm })
 }
 
 function getEmployeeId(employee) {
@@ -584,7 +573,9 @@ function normalizeLineOptionsResponse(res) {
 
     const code = toTrimmedString(row?.code || row?.lineCode)
     const name = toTrimmedString(row?.name || row?.lineName)
-    const label = [code, name].filter(Boolean).join(' · ') || 'Unnamed line'
+    const label =
+      [code, name].filter(Boolean).join(' · ') ||
+      t('ot.requests.create.employeePicker.unnamedLine')
 
     map.set(id, {
       label,
@@ -609,25 +600,25 @@ function compareLineGroups(a, b) {
 }
 
 function buildLineLabel(employee = {}) {
-  if (!hasLine(employee)) return 'No Line'
+  if (!hasLine(employee)) return t('ot.requests.create.employeePicker.noLine')
 
   return (
     [employee?.lineCode, employee?.lineName].filter(Boolean).join(' · ') ||
-    'Unnamed line'
+    t('ot.requests.create.employeePicker.unnamedLine')
   )
 }
 
 function buildShiftLabel(employee = {}) {
   return (
     [employee?.shiftCode, employee?.shiftName].filter(Boolean).join(' · ') ||
-    'No shift'
+    t('ot.requests.create.employeePicker.noShift')
   )
 }
 
 function buildApiErrorMessage(error) {
   const data = error?.response?.data
 
-  if (!data) return error?.message || 'Unknown error.'
+  if (!data) return error?.message || t('ot.requests.create.employeePicker.unknownError')
 
   const details =
     data?.details ||
@@ -644,7 +635,10 @@ function buildApiErrorMessage(error) {
           ? item.path.join('.')
           : item?.path || item?.field || ''
 
-        const message = item?.message || item?.msg || 'Invalid value'
+        const message =
+          item?.message ||
+          item?.msg ||
+          t('ot.requests.create.employeePicker.invalidValue')
 
         return path ? `${path}: ${message}` : message
       })
@@ -655,7 +649,11 @@ function buildApiErrorMessage(error) {
     return JSON.stringify(details, null, 2)
   }
 
-  return data?.message || error?.message || 'Unable to create OT request.'
+  return (
+    data?.message ||
+    error?.message ||
+    t('ot.requests.create.employeePicker.employeeLoadFailedDetail')
+  )
 }
 
 function getSelectedEmployee(employee) {
@@ -717,7 +715,7 @@ function getEmployeeBlockInfo(employee) {
   if (!id) {
     return {
       blocked: true,
-      reason: 'Invalid employee.',
+      reason: t('ot.requests.create.employeePicker.invalidEmployee'),
     }
   }
 
@@ -730,8 +728,8 @@ function getEmployeeBlockInfo(employee) {
     return {
       blocked: true,
       reason: requestNo
-        ? `Already in OT request ${requestNo}`
-        : status || 'Already unavailable for this date.',
+        ? t('ot.requests.create.employeePicker.alreadyInRequest', { requestNo })
+        : status || t('ot.requests.create.employeePicker.alreadyUnavailable'),
     }
   }
 
@@ -740,14 +738,14 @@ function getEmployeeBlockInfo(employee) {
   if (!shiftId) {
     return {
       blocked: true,
-      reason: 'Employee has no shift.',
+      reason: t('ot.requests.create.employeePicker.employeeNoShift'),
     }
   }
 
   if (props.selectedShiftId && shiftId !== props.selectedShiftId) {
     return {
       blocked: true,
-      reason: 'Employee shift does not match selected shift.',
+      reason: t('ot.requests.create.employeePicker.shiftMismatch'),
     }
   }
 
@@ -793,8 +791,8 @@ function selectRows(rows = []) {
   if (!safeRows.length) {
     toast.add({
       severity: 'warn',
-      summary: 'Cannot select',
-      detail: 'No selectable employee in this group.',
+      summary: t('ot.requests.create.employeePicker.cannotSelectTitle'),
+      detail: t('ot.requests.create.employeePicker.noSelectableInGroup'),
       life: 2500,
     })
     return
@@ -811,10 +809,6 @@ function removeRows(rows = []) {
   )
 }
 
-function clearSelected() {
-  emitSelected([])
-}
-
 function toggleEmployee(employee, checked) {
   if (!checked) {
     removeRows([employee])
@@ -826,7 +820,7 @@ function toggleEmployee(employee, checked) {
   if (blockInfo.blocked) {
     toast.add({
       severity: 'warn',
-      summary: 'Cannot select employee',
+      summary: t('ot.requests.create.employeePicker.cannotSelectEmployeeTitle'),
       detail: blockInfo.reason,
       life: 3000,
     })
@@ -845,7 +839,7 @@ function updateSelectedEmployeeTime(employee, patch = {}) {
   if (!exists && isEmployeeDisabled(employee)) {
     toast.add({
       severity: 'warn',
-      summary: 'Cannot edit employee',
+      summary: t('ot.requests.create.employeePicker.cannotEditEmployeeTitle'),
       detail: getEmployeeBlockInfo(employee).reason,
       life: 3000,
     })
@@ -1094,11 +1088,8 @@ async function loadLineOptions() {
 
     toast.add({
       severity: 'warn',
-      summary: 'Line filter unavailable',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Unable to load line filter options.',
+      summary: t('ot.requests.create.employeePicker.lineFilterUnavailableTitle'),
+      detail: buildApiErrorMessage(error) || t('ot.requests.create.employeePicker.lineFilterUnavailableDetail'),
       life: 3000,
     })
   } finally {
@@ -1238,11 +1229,8 @@ async function fetchEmployeePage(targetPage = 1, { replace = false, silent = fal
 
     toast.add({
       severity: 'error',
-      summary: 'Employee load failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Unable to load employees.',
+      summary: t('ot.requests.create.employeePicker.employeeLoadFailedTitle'),
+      detail: buildApiErrorMessage(error),
       life: 3000,
     })
   } finally {
@@ -1358,11 +1346,8 @@ async function autoSelectManagedEmployees() {
   } catch (error) {
     toast.add({
       severity: 'error',
-      summary: 'Auto select failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Unable to auto-select your employees.',
+      summary: t('ot.requests.create.employeePicker.autoSelectFailedTitle'),
+      detail: buildApiErrorMessage(error) || t('ot.requests.create.employeePicker.autoSelectFailedDetail'),
       life: 3000,
     })
   } finally {
@@ -1392,12 +1377,6 @@ function onSearchInput() {
 }
 
 function onFilterChange() {
-  resetAndLoadEmployees()
-}
-
-function clearFilters() {
-  search.value = ''
-  selectedLineId.value = ''
   resetAndLoadEmployees()
 }
 
@@ -1458,7 +1437,8 @@ onBeforeUnmount(() => {
     <div class="ot-compact-header">
       <div class="ot-title-block">
         <h2 class="ot-picker-title">
-          2. Choose employees <span class="ot-required-star">*</span>
+          {{ t('ot.requests.create.employeePicker.title') }}
+          <span class="ot-required-star">*</span>
         </h2>
       </div>
 
@@ -1469,7 +1449,7 @@ onBeforeUnmount(() => {
           v-model.trim="search"
           class="w-full"
           size="small"
-          placeholder="Search ID, name, line, position, or shift..."
+          :placeholder="t('ot.requests.create.employeePicker.searchPlaceholder')"
           @input="onSearchInput"
         />
       </IconField>
@@ -1477,85 +1457,25 @@ onBeforeUnmount(() => {
       <Select
         v-model="employeeScope"
         :options="employeeScopeOptions"
-        optionLabel="label"
-        optionValue="value"
+        option-label="label"
+        option-value="value"
         class="ot-scope-filter"
         size="small"
-        placeholder="Employee scope"
+        :placeholder="t('ot.requests.create.employeePicker.scopePlaceholder')"
         :disabled="loadingAccess || !canSelectOtherEmployees"
       />
 
       <Select
         v-model="selectedLineId"
         :options="lineOptions"
-        optionLabel="label"
-        optionValue="value"
+        option-label="label"
+        option-value="value"
         class="ot-line-filter"
         size="small"
-        placeholder="All lines"
+        :placeholder="t('ot.requests.create.employeePicker.allLines')"
         :loading="loadingLines"
         @change="onFilterChange"
       />
-
-      <div class="ot-inline-tags">
-        <Tag
-          :value="props.selectedShiftLabel || 'Shift required'"
-          :severity="props.selectedShiftLabel ? 'success' : 'warning'"
-          class="ot-status-tag"
-        />
-
-        <Tag
-          :value="backgroundFetchingAll ? `${loadedCountLabel} loading all...` : `${loadedCountLabel} loaded`"
-          :severity="backgroundFetchingAll ? 'warning' : 'info'"
-          class="ot-status-tag"
-        />
-      </div>
-
-      <div class="ot-mini-summary">
-        <div class="ot-mini-chip">
-          <span>Selected</span>
-          <strong>{{ selectedCount }}</strong>
-        </div>
-
-        <div class="ot-mini-chip">
-          <span>With Line</span>
-          <strong>{{ selectedWithLineCount }}</strong>
-        </div>
-
-        <div class="ot-mini-chip is-warn">
-          <span>No Line</span>
-          <strong>{{ selectedNoLineCount }}</strong>
-        </div>
-
-        <div
-          v-if="outsideSelectedCount"
-          class="ot-mini-chip is-warn"
-        >
-          <span>Other</span>
-          <strong>{{ outsideSelectedCount }}</strong>
-        </div>
-      </div>
-
-      <div class="ot-header-actions">
-        <Button
-          label="Clear Filter"
-          icon="pi pi-refresh"
-          size="small"
-          severity="secondary"
-          outlined
-          @click="clearFilters"
-        />
-
-        <Button
-          v-if="selectedCount"
-          label="Clear Selection"
-          icon="pi pi-times"
-          size="small"
-          severity="danger"
-          outlined
-          @click="clearSelected"
-        />
-      </div>
     </div>
 
     <Message
@@ -1564,7 +1484,7 @@ onBeforeUnmount(() => {
       :closable="false"
       class="mx-3 mb-3"
     >
-      Choose OT date first.
+      {{ t('ot.requests.create.employeePicker.chooseDateFirst') }}
     </Message>
 
     <Message
@@ -1573,7 +1493,7 @@ onBeforeUnmount(() => {
       :closable="false"
       class="mx-3 mb-3"
     >
-      Checking employees already used in OT on this date...
+      {{ t('ot.requests.create.employeePicker.checkingBlocked') }}
     </Message>
 
     <div
@@ -1586,11 +1506,15 @@ onBeforeUnmount(() => {
       >
         <ProgressSpinner
           style="width: 34px; height: 34px"
-          strokeWidth="4"
+          stroke-width="4"
         />
 
         <span>
-          {{ selectingManaged ? 'Auto-selecting employees with line...' : 'Loading employees...' }}
+          {{
+            selectingManaged
+              ? t('ot.requests.create.employeePicker.autoSelecting')
+              : t('ot.requests.create.employeePicker.loadingEmployees')
+          }}
         </span>
       </div>
 
@@ -1600,9 +1524,9 @@ onBeforeUnmount(() => {
       >
         <i class="pi pi-users" />
 
-        <strong>No employees found</strong>
+        <strong>{{ t('ot.requests.create.employeePicker.emptyTitle') }}</strong>
 
-        <span>Try another keyword, line filter, or employee scope.</span>
+        <span>{{ t('ot.requests.create.employeePicker.emptyText') }}</span>
       </div>
 
       <div
@@ -1632,36 +1556,41 @@ onBeforeUnmount(() => {
 
             <div class="ot-line-head-right">
               <Tag
-                :value="`${group.count} staff`"
+                :value="t('ot.requests.create.employeePicker.staffCount', { count: group.count })"
                 severity="secondary"
                 class="ot-status-tag"
               />
 
               <Tag
-                :value="`${group.selectedCount}/${group.count} selected`"
+                :value="t('ot.requests.create.employeePicker.groupSelectedCount', {
+                  selected: group.selectedCount,
+                  total: group.count,
+                })"
                 :severity="group.selectedCount ? 'success' : 'secondary'"
                 class="ot-status-tag"
               />
 
               <Tag
                 v-if="group.disabledCount"
-                :value="`${group.disabledCount} unavailable`"
+                :value="t('ot.requests.create.employeePicker.unavailableCount', {
+                  count: group.disabledCount,
+                })"
                 severity="danger"
                 class="ot-status-tag"
               />
 
               <Tag
                 v-if="group.isNoLine"
-                value="Manual only"
+                :value="t('ot.requests.create.employeePicker.manualOnly')"
                 severity="warning"
                 class="ot-status-tag"
               />
 
               <Checkbox
                 binary
-                :modelValue="isLineGroupSelected(group)"
+                :model-value="isLineGroupSelected(group)"
                 :disabled="!group.selectableCount"
-                @update:modelValue="(checked) => toggleLineGroup(group, checked)"
+                @update:model-value="(checked) => toggleLineGroup(group, checked)"
               />
             </div>
           </div>
@@ -1677,18 +1606,18 @@ onBeforeUnmount(() => {
               <table class="ot-employee-table">
                 <thead>
                   <tr>
-                    <th>No</th>
+                    <th>{{ t('common.no') }}</th>
                     <th></th>
-                    <th>ID</th>
-                    <th>Name</th>
-                    <th>Position</th>
-                    <th>Start</th>
-                    <th>End</th>
-                    <th>Break</th>
-                    <th>Total</th>
-                    <th>Mode</th>
-                    <th>Shift</th>
-                    <th>Status</th>
+                    <th>{{ t('ot.requests.employeeId') }}</th>
+                    <th>{{ t('common.name') }}</th>
+                    <th>{{ t('nav.positions') }}</th>
+                    <th>{{ t('ot.requests.create.employeePicker.columnStart') }}</th>
+                    <th>{{ t('ot.requests.create.employeePicker.columnEnd') }}</th>
+                    <th>{{ t('ot.requests.break') }}</th>
+                    <th>{{ t('ot.requests.total') }}</th>
+                    <th>{{ t('ot.requests.mode') }}</th>
+                    <th>{{ t('nav.shift') }}</th>
+                    <th>{{ t('common.status') }}</th>
                   </tr>
                 </thead>
 
@@ -1704,15 +1633,15 @@ onBeforeUnmount(() => {
                     <td class="cell-center">
                       <Checkbox
                         binary
-                        :modelValue="isSelected(employee)"
+                        :model-value="isSelected(employee)"
                         :disabled="isEmployeeDisabled(employee) && !isSelected(employee)"
-                        @update:modelValue="(checked) => toggleEmployee(employee, checked)"
+                        @update:model-value="(checked) => toggleEmployee(employee, checked)"
                       />
                     </td>
 
                     <td>
                       <span class="cell-mono">
-                        {{ employee.employeeNo || 'No ID' }}
+                        {{ employee.employeeNo || t('ot.requests.create.employeePicker.noEmployeeId') }}
                       </span>
                     </td>
 
@@ -1728,34 +1657,34 @@ onBeforeUnmount(() => {
 
                     <td>
                       <InputText
-                        :modelValue="getEmployeeStartTime(employee)"
+                        :model-value="getEmployeeStartTime(employee)"
                         type="time"
                         class="ot-time-input"
                         :disabled="isEmployeeDisabled(employee) && !isSelected(employee)"
-                        @update:modelValue="(value) => updateSelectedEmployeeTime(employee, { requestStartTime: value })"
+                        @update:model-value="(value) => updateSelectedEmployeeTime(employee, { requestStartTime: value })"
                       />
                     </td>
 
                     <td>
                       <InputText
-                        :modelValue="getEmployeeEndTime(employee)"
+                        :model-value="getEmployeeEndTime(employee)"
                         type="time"
                         class="ot-time-input"
                         :disabled="isEmployeeDisabled(employee) && !isSelected(employee)"
-                        @update:modelValue="(value) => updateSelectedEmployeeTime(employee, { requestEndTime: value })"
+                        @update:model-value="(value) => updateSelectedEmployeeTime(employee, { requestEndTime: value })"
                       />
                     </td>
 
                     <td>
                       <InputNumber
-                        :modelValue="getEmployeeBreakMinutes(employee)"
+                        :model-value="getEmployeeBreakMinutes(employee)"
                         class="ot-break-input"
-                        inputClass="ot-break-input-field"
+                        input-class="ot-break-input-field"
                         :min="0"
                         :max="1440"
                         :step="5"
                         :disabled="isEmployeeDisabled(employee) && !isSelected(employee)"
-                        @update:modelValue="(value) => updateSelectedEmployeeTime(employee, { breakMinutes: value })"
+                        @update:model-value="(value) => updateSelectedEmployeeTime(employee, { breakMinutes: value })"
                       />
                     </td>
 
@@ -1768,7 +1697,9 @@ onBeforeUnmount(() => {
                     <td>
                       <div class="mode-cell">
                         <Tag
-                          :value="getEmployeeTimeMode(employee) === 'CUSTOM' ? 'Custom' : 'Default'"
+                          :value="getEmployeeTimeMode(employee) === 'CUSTOM'
+                            ? t('ot.requests.timeMode.custom')
+                            : t('ot.requests.timeMode.default')"
                           :severity="getEmployeeTimeMode(employee) === 'CUSTOM' ? 'warn' : 'success'"
                           class="ot-status-tag"
                         />
@@ -1780,7 +1711,7 @@ onBeforeUnmount(() => {
                           rounded
                           size="small"
                           severity="secondary"
-                          title="Reset to default time"
+                          :title="t('ot.requests.create.employeePicker.resetDefaultTime')"
                           @click="resetEmployeeTime(employee)"
                         />
                       </div>
@@ -1800,21 +1731,21 @@ onBeforeUnmount(() => {
 
                       <Tag
                         v-else-if="isSelected(employee)"
-                        value="Selected"
+                        :value="t('ot.requests.create.employeePicker.selected')"
                         severity="success"
                         class="ot-status-tag"
                       />
 
                       <Tag
                         v-else-if="group.isNoLine"
-                        value="Manual Select"
+                        :value="t('ot.requests.create.employeePicker.manualSelect')"
                         severity="warning"
                         class="ot-status-tag"
                       />
 
                       <Tag
                         v-else
-                        value="Available"
+                        :value="t('ot.requests.create.employeePicker.available')"
                         severity="secondary"
                         class="ot-status-tag"
                       />
@@ -1827,7 +1758,7 @@ onBeforeUnmount(() => {
                 v-if="groupHasMoreLocalRows(group)"
                 class="ot-line-scroll-hint"
               >
-                Scroll inside this line to show more employees...
+                {{ t('ot.requests.create.employeePicker.scrollMoreLocal') }}
               </div>
             </div>
           </div>
@@ -1839,17 +1770,17 @@ onBeforeUnmount(() => {
         >
           <ProgressSpinner
             style="width: 22px; height: 22px"
-            strokeWidth="4"
+            stroke-width="4"
           />
 
-          <span>Loading more employees...</span>
+          <span>{{ t('ot.requests.create.employeePicker.loadingMore') }}</span>
         </div>
 
         <div
           v-else-if="!hasMoreEmployees && loadedCount"
           class="ot-end-line"
         >
-          All matched employees loaded.
+          {{ t('ot.requests.create.employeePicker.allMatchedLoaded') }}
         </div>
       </div>
     </div>
@@ -1903,59 +1834,6 @@ onBeforeUnmount(() => {
 .ot-line-filter {
   flex: 0 0 170px;
   width: 170px;
-}
-
-.ot-inline-tags {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 0.35rem;
-}
-
-.ot-mini-summary {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 0.35rem;
-  margin-left: auto;
-}
-
-.ot-mini-chip {
-  min-width: 68px;
-  border: 1px solid var(--ot-border);
-  border-radius: 0.8rem;
-  background: var(--ot-surface);
-  padding: 0.35rem 0.55rem;
-  text-align: center;
-}
-
-.ot-mini-chip.is-warn {
-  border-color: color-mix(in srgb, #f59e0b 45%, var(--ot-border));
-  background: color-mix(in srgb, #f59e0b 10%, var(--ot-bg));
-}
-
-.ot-mini-chip span {
-  display: block;
-  font-size: 0.56rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ot-text-muted);
-}
-
-.ot-mini-chip strong {
-  display: block;
-  margin-top: 0.06rem;
-  font-size: 0.84rem;
-  font-weight: 700;
-  color: var(--ot-text);
-}
-
-.ot-header-actions {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 0.4rem;
 }
 
 .ot-table-shell {
@@ -2194,10 +2072,6 @@ onBeforeUnmount(() => {
   .ot-compact-header {
     flex-wrap: wrap;
   }
-
-  .ot-mini-summary {
-    margin-left: 0;
-  }
 }
 
 @media (max-width: 768px) {
@@ -2209,18 +2083,9 @@ onBeforeUnmount(() => {
   .ot-title-block,
   .ot-search-field,
   .ot-scope-filter,
-  .ot-line-filter,
-  .ot-mini-summary,
-  .ot-header-actions,
-  .ot-inline-tags {
+  .ot-line-filter {
     width: 100%;
     flex: 1 1 auto;
-  }
-
-  .ot-mini-summary,
-  .ot-header-actions,
-  .ot-inline-tags {
-    flex-wrap: wrap;
   }
 
   .ot-line-sticky-head {

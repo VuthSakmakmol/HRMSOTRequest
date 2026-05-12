@@ -1,18 +1,21 @@
 <!-- frontend/src/modules/ot/views/OTRequestEditView.vue -->
 <script setup>
+// frontend/src/modules/ot/views/OTRequestEditView.vue
+
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
 import Card from 'primevue/card'
 import DatePicker from 'primevue/datepicker'
 import Divider from 'primevue/divider'
-import Dropdown from 'primevue/dropdown'
 import InputNumber from 'primevue/inputnumber'
 import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
 import MultiSelect from 'primevue/multiselect'
+import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 import Textarea from 'primevue/textarea'
 
@@ -26,6 +29,7 @@ import {
 const route = useRoute()
 const router = useRouter()
 const toast = useToast()
+const { t } = useI18n()
 
 const loading = ref(false)
 const saving = ref(false)
@@ -57,6 +61,12 @@ const isLegacyManualMode = computed(() => {
 
   return !shiftId && !shiftOtOptionId
 })
+
+const requestModeLabel = computed(() =>
+  isLegacyManualMode.value
+    ? t('ot.requests.edit.legacyManualMode')
+    : t('ot.requests.edit.shiftOtOptionMode'),
+)
 
 const selectedOTOption = computed(() =>
   shiftOptions.value.find((item) => item.id === form.shiftOtOptionId) || null,
@@ -97,14 +107,16 @@ function normalizeShiftOptionsResponse(res) {
         item?.requestedHours || (requestedMinutes / 60).toFixed(2),
       )
 
+      const label = String(item?.label || '').trim()
+
       return {
         id: String(item?.id || item?._id || '').trim(),
-        label: String(item?.label || '').trim(),
+        label,
         requestedMinutes,
         requestedHours,
         sequence: Number(item?.sequence || 0),
         calculationPolicy: item?.calculationPolicy || null,
-        optionLabel: `${String(item?.label || '').trim()} (${requestedMinutes} min)`,
+        optionLabel: `${label} (${t('ot.requests.edit.minutesValue', { value: requestedMinutes })})`,
       }
     })
     .filter((item) => item.id && item.label)
@@ -157,14 +169,20 @@ function addMinutesToHHmm(hhmm, extraMinutes) {
 function formatMinutesLabel(value) {
   const minutes = Number(value || 0)
 
-  if (!minutes) return '0 min'
+  if (!minutes) return t('ot.common.minuteValue', { value: 0 })
 
   const hh = Math.floor(minutes / 60)
   const mm = minutes % 60
 
-  if (hh && mm) return `${hh}h ${mm}m`
-  if (hh) return `${hh}h`
-  return `${mm}m`
+  if (hh && mm) {
+    return t('ot.common.hourMinuteValue', {
+      hours: hh,
+      minutes: mm,
+    })
+  }
+
+  if (hh) return t('ot.common.hourValue', { value: hh })
+  return t('ot.common.minuteValue', { value: mm })
 }
 
 function formatTimeRange(row) {
@@ -173,6 +191,44 @@ function formatTimeRange(row) {
 
   if (!start && !end) return '-'
   return [start, end].filter(Boolean).join(' - ')
+}
+
+function buildApiErrorMessage(error, fallback) {
+  const payload = error?.response?.data || {}
+  const errorObject = payload?.error || payload?.data?.error || {}
+
+  const details =
+    payload?.details ||
+    payload?.errors ||
+    payload?.data?.details ||
+    payload?.data?.errors ||
+    errorObject?.details ||
+    errorObject?.errors
+
+  if (Array.isArray(details) && details.length) {
+    return details
+      .map((item) => {
+        if (typeof item === 'string') return item
+
+        const path = Array.isArray(item?.path)
+          ? item.path.join('.')
+          : item?.path || item?.field || ''
+
+        const message = item?.message || item?.msg || t('common.somethingWentWrong')
+
+        return path ? `${path}: ${message}` : message
+      })
+      .join('\n')
+  }
+
+  return (
+    payload?.message ||
+    payload?.data?.message ||
+    errorObject?.message ||
+    error?.message ||
+    fallback ||
+    t('common.somethingWentWrong')
+  )
 }
 
 function hydrateForm(data) {
@@ -239,13 +295,11 @@ async function fetchShiftOptions(shiftId) {
     }
   } catch (error) {
     shiftOptions.value = []
+
     toast.add({
       severity: 'error',
-      summary: 'OT options failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Unable to load OT options for this shift.',
+      summary: t('ot.requests.edit.optionsFailedTitle'),
+      detail: buildApiErrorMessage(error, t('ot.requests.edit.optionsFailedDetail')),
       life: 3500,
     })
   } finally {
@@ -275,11 +329,8 @@ async function fetchDetail() {
   } catch (error) {
     toast.add({
       severity: 'error',
-      summary: 'Load failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to load OT request',
+      summary: t('common.loadFailed'),
+      detail: buildApiErrorMessage(error, t('ot.requests.edit.loadFailedDetail')),
       life: 3000,
     })
   } finally {
@@ -296,64 +347,48 @@ function goBack() {
   router.push(`/ot/requests/${requestId.value}`)
 }
 
+function showValidationToast(detailMessage) {
+  toast.add({
+    severity: 'warn',
+    summary: t('ot.requests.edit.validationTitle'),
+    detail: detailMessage,
+    life: 2500,
+  })
+}
+
 function validateForm() {
   if (!detail.value?.canEdit) {
     toast.add({
       severity: 'warn',
-      summary: 'Edit unavailable',
-      detail: 'This OT request can no longer be edited.',
+      summary: t('ot.requests.edit.editUnavailableTitle'),
+      detail: t('ot.requests.edit.editUnavailableDetail'),
       life: 2500,
     })
     return false
   }
 
   if (!form.otDate) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Validation',
-      detail: 'Please select OT date.',
-      life: 2500,
-    })
+    showValidationToast(t('ot.requests.edit.selectDateRequired'))
     return false
   }
 
   if (!String(form.reason || '').trim()) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Validation',
-      detail: 'Please enter reason.',
-      life: 2500,
-    })
+    showValidationToast(t('ot.requests.edit.reasonRequired'))
     return false
   }
 
   if (!Array.isArray(form.employeeIds) || !form.employeeIds.length) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Validation',
-      detail: 'At least 1 employee is required.',
-      life: 2500,
-    })
+    showValidationToast(t('ot.requests.edit.employeeRequired'))
     return false
   }
 
   if (!Array.isArray(form.approverEmployeeIds) || !form.approverEmployeeIds.length) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Validation',
-      detail: 'Please select at least 1 approver.',
-      life: 2500,
-    })
+    showValidationToast(t('ot.requests.edit.approverRequired'))
     return false
   }
 
   if (form.approverEmployeeIds.length > 4) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Validation',
-      detail: 'You can select up to 4 approvers only.',
-      life: 2500,
-    })
+    showValidationToast(t('ot.requests.edit.approverMax'))
     return false
   }
 
@@ -362,44 +397,22 @@ function validateForm() {
     const endMinutes = timeToMinutes(form.endTime)
 
     if (startMinutes === null) {
-      toast.add({
-        severity: 'warn',
-        summary: 'Validation',
-        detail: 'Start time must be HH:mm.',
-        life: 2500,
-      })
+      showValidationToast(t('ot.requests.edit.startTimeInvalid'))
       return false
     }
 
     if (endMinutes === null) {
-      toast.add({
-        severity: 'warn',
-        summary: 'Validation',
-        detail: 'End time must be HH:mm.',
-        life: 2500,
-      })
+      showValidationToast(t('ot.requests.edit.endTimeInvalid'))
       return false
     }
 
     if (endMinutes <= startMinutes) {
-      toast.add({
-        severity: 'warn',
-        summary: 'Validation',
-        detail: 'End time must be later than start time.',
-        life: 2500,
-      })
+      showValidationToast(t('ot.requests.edit.endTimeAfterStart'))
       return false
     }
-  } else {
-    if (!String(form.shiftOtOptionId || '').trim()) {
-      toast.add({
-        severity: 'warn',
-        summary: 'Validation',
-        detail: 'Please select OT option.',
-        life: 2500,
-      })
-      return false
-    }
+  } else if (!String(form.shiftOtOptionId || '').trim()) {
+    showValidationToast(t('ot.requests.edit.otOptionRequired'))
+    return false
   }
 
   return true
@@ -432,8 +445,8 @@ async function onSave() {
 
     toast.add({
       severity: 'success',
-      summary: 'Updated',
-      detail: 'OT request updated successfully.',
+      summary: t('common.updated'),
+      detail: t('ot.requests.edit.updatedSuccess'),
       life: 2500,
     })
 
@@ -441,11 +454,8 @@ async function onSave() {
   } catch (error) {
     toast.add({
       severity: 'error',
-      summary: 'Update failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to update OT request',
+      summary: t('common.updateFailed'),
+      detail: buildApiErrorMessage(error, t('ot.requests.edit.updateFailedDetail')),
       life: 3500,
     })
   } finally {
@@ -464,7 +474,7 @@ onMounted(() => {
       <div class="min-w-0">
         <div class="flex flex-wrap items-center gap-2">
           <h1 class="text-xl font-semibold text-[color:var(--ot-text)]">
-            Edit OT Request
+            {{ t('ot.requests.edit.title') }}
           </h1>
 
           <Tag
@@ -475,27 +485,28 @@ onMounted(() => {
 
           <Tag
             v-if="detail"
-            :value="isLegacyManualMode ? 'LEGACY MANUAL MODE' : 'SHIFT OT OPTION MODE'"
+            :value="requestModeLabel"
             :severity="isLegacyManualMode ? 'contrast' : 'info'"
           />
         </div>
 
         <p class="mt-1 text-sm text-[color:var(--ot-text-muted)]">
-          Requester can edit only before any approval step becomes approved.
+          {{ t('ot.requests.edit.subtitle') }}
         </p>
       </div>
 
       <div class="flex items-center gap-2">
         <Button
-          label="Back"
+          :label="t('common.back')"
           icon="pi pi-arrow-left"
           severity="secondary"
           outlined
           size="small"
           @click="goBack"
         />
+
         <Button
-          label="Save Changes"
+          :label="t('ot.requests.edit.saveChanges')"
           icon="pi pi-save"
           size="small"
           :loading="saving"
@@ -509,47 +520,52 @@ onMounted(() => {
       v-if="loading"
       class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-4 py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
     >
-      Loading OT request...
+      {{ t('ot.requests.edit.loadingDetail') }}
     </div>
 
     <template v-else-if="detail">
-      <Message v-if="!detail.canEdit" severity="warn" :closable="false">
-        This OT request cannot be edited because it is no longer pending or it already has an approved step.
+      <Message
+        v-if="!detail.canEdit"
+        severity="warn"
+        :closable="false"
+      >
+        {{ t('ot.requests.edit.cannotEditMessage') }}
       </Message>
 
       <div class="grid grid-cols-1 gap-4 xl:grid-cols-3">
         <Card class="ot-edit-card xl:col-span-2">
           <template #title>
-            Edit Form
+            {{ t('ot.requests.edit.editForm') }}
           </template>
 
           <template #content>
             <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
               <div class="ot-info-box">
-                <div class="ot-info-label">Request No</div>
+                <div class="ot-info-label">{{ t('ot.requests.requestNo') }}</div>
                 <div class="ot-info-value">{{ detail.requestNo || '-' }}</div>
               </div>
 
               <div class="ot-info-box">
-                <div class="ot-info-label">Requester</div>
+                <div class="ot-info-label">{{ t('ot.requests.requester') }}</div>
                 <div class="ot-info-value">{{ detail.requesterName || '-' }}</div>
               </div>
 
               <div class="ot-info-box">
-                <div class="ot-info-label">Requester Id</div>
+                <div class="ot-info-label">{{ t('ot.requests.edit.requesterId') }}</div>
                 <div class="ot-info-value">{{ detail.requesterEmployeeNo || '-' }}</div>
               </div>
 
               <div class="space-y-2">
                 <label class="text-sm font-medium text-[color:var(--ot-text)]">
-                  OT Date
+                  {{ t('ot.requests.otDate') }}
                 </label>
+
                 <DatePicker
                   v-model="form.otDate"
-                  dateFormat="yy-mm-dd"
-                  showIcon
+                  date-format="yy-mm-dd"
+                  show-icon
                   class="w-full"
-                  inputClass="w-full"
+                  input-class="w-full"
                   :disabled="!detail.canEdit"
                 />
               </div>
@@ -557,8 +573,9 @@ onMounted(() => {
               <template v-if="isLegacyManualMode">
                 <div class="space-y-2">
                   <label class="text-sm font-medium text-[color:var(--ot-text)]">
-                    Start Time
+                    {{ t('ot.requests.edit.startTime') }}
                   </label>
+
                   <InputText
                     v-model.trim="form.startTime"
                     class="w-full"
@@ -569,8 +586,9 @@ onMounted(() => {
 
                 <div class="space-y-2">
                   <label class="text-sm font-medium text-[color:var(--ot-text)]">
-                    End Time
+                    {{ t('ot.requests.edit.endTime') }}
                   </label>
+
                   <InputText
                     v-model.trim="form.endTime"
                     class="w-full"
@@ -581,14 +599,15 @@ onMounted(() => {
 
                 <div class="space-y-2">
                   <label class="text-sm font-medium text-[color:var(--ot-text)]">
-                    Break Minutes
+                    {{ t('ot.requests.breakMinutes') }}
                   </label>
+
                   <InputNumber
                     v-model="form.breakMinutes"
-                    inputClass="w-full"
+                    input-class="w-full"
                     class="w-full"
                     :min="0"
-                    :useGrouping="false"
+                    :use-grouping="false"
                     :disabled="!detail.canEdit"
                   />
                 </div>
@@ -597,15 +616,16 @@ onMounted(() => {
               <template v-else>
                 <div class="space-y-2 md:col-span-2">
                   <label class="text-sm font-medium text-[color:var(--ot-text)]">
-                    OT Option
+                    {{ t('ot.requests.otOption') }}
                   </label>
-                  <Dropdown
+
+                  <Select
                     v-model="form.shiftOtOptionId"
                     :options="shiftOptions"
-                    optionLabel="optionLabel"
-                    optionValue="id"
+                    option-label="optionLabel"
+                    option-value="id"
                     class="w-full"
-                    placeholder="Select OT option"
+                    :placeholder="t('ot.requests.edit.selectOtOption')"
                     :loading="loadingShiftOptions"
                     :disabled="!detail.canEdit || !shiftOptions.length"
                   />
@@ -614,17 +634,18 @@ onMounted(() => {
 
               <div class="space-y-2 md:col-span-2 xl:col-span-2">
                 <label class="text-sm font-medium text-[color:var(--ot-text)]">
-                  Approver Chain
+                  {{ t('ot.requests.edit.approverChain') }}
                 </label>
+
                 <MultiSelect
                   v-model="form.approverEmployeeIds"
                   :options="approverOptions"
-                  optionLabel="label"
-                  optionValue="value"
+                  option-label="label"
+                  option-value="value"
                   class="w-full"
                   display="chip"
-                  placeholder="Select approvers in hierarchy order"
-                  :maxSelectedLabels="4"
+                  :placeholder="t('ot.requests.edit.selectApprovers')"
+                  :max-selected-labels="4"
                   :disabled="!detail.canEdit"
                 />
               </div>
@@ -635,28 +656,28 @@ onMounted(() => {
             <template v-if="!isLegacyManualMode">
               <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
                 <div class="ot-info-box">
-                  <div class="ot-info-label">Shift</div>
+                  <div class="ot-info-label">{{ t('nav.shift') }}</div>
                   <div class="ot-info-value">
                     {{ detail.shiftCode || '-' }} {{ detail.shiftName ? `· ${detail.shiftName}` : '' }}
                   </div>
                 </div>
 
                 <div class="ot-info-box">
-                  <div class="ot-info-label">Shift Type</div>
+                  <div class="ot-info-label">{{ t('ot.requests.edit.shiftType') }}</div>
                   <div class="ot-info-value">
                     {{ detail.shiftType || '-' }}
                   </div>
                 </div>
 
                 <div class="ot-info-box">
-                  <div class="ot-info-label">Shift Start</div>
+                  <div class="ot-info-label">{{ t('ot.requests.edit.shiftStart') }}</div>
                   <div class="ot-info-value">
                     {{ detail.shiftStartTime || '-' }}
                   </div>
                 </div>
 
                 <div class="ot-info-box">
-                  <div class="ot-info-label">Shift End</div>
+                  <div class="ot-info-label">{{ t('ot.requests.edit.shiftEnd') }}</div>
                   <div class="ot-info-value">
                     {{ detail.shiftEndTime || '-' }}
                   </div>
@@ -668,28 +689,28 @@ onMounted(() => {
                 class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4"
               >
                 <div class="ot-info-box border-emerald-200 dark:border-emerald-800">
-                  <div class="ot-info-label">Requested Minutes</div>
+                  <div class="ot-info-label">{{ t('ot.requests.requestedMinutes') }}</div>
                   <div class="ot-info-value">
                     {{ requestPreview.requestedMinutes }}
                   </div>
                 </div>
 
                 <div class="ot-info-box border-sky-200 dark:border-sky-800">
-                  <div class="ot-info-label">Requested Duration</div>
+                  <div class="ot-info-label">{{ t('ot.requests.edit.requestedDuration') }}</div>
                   <div class="ot-info-value">
                     {{ formatMinutesLabel(requestPreview.requestedMinutes) }}
                   </div>
                 </div>
 
                 <div class="ot-info-box border-violet-200 dark:border-violet-800">
-                  <div class="ot-info-label">Request Start</div>
+                  <div class="ot-info-label">{{ t('ot.requests.edit.requestStart') }}</div>
                   <div class="ot-info-value">
                     {{ requestPreview.requestStartTime || '-' }}
                   </div>
                 </div>
 
                 <div class="ot-info-box border-amber-200 dark:border-amber-800">
-                  <div class="ot-info-label">Request End</div>
+                  <div class="ot-info-label">{{ t('ot.requests.edit.requestEnd') }}</div>
                   <div class="ot-info-value">
                     {{ requestPreview.requestEndTime || '-' }}
                   </div>
@@ -702,7 +723,7 @@ onMounted(() => {
                 :closable="false"
                 class="mt-4"
               >
-                No active OT option is configured for this shift yet.
+                {{ t('ot.requests.edit.noShiftOption') }}
               </Message>
 
               <div
@@ -711,8 +732,9 @@ onMounted(() => {
               >
                 <div class="mb-2 flex flex-wrap items-center gap-2">
                   <span class="text-sm font-semibold text-[color:var(--ot-text)]">
-                    Calculation Policy
+                    {{ t('ot.policy.policy') }}
                   </span>
+
                   <Tag
                     :value="selectedOTOption.calculationPolicy.code || '—'"
                     severity="info"
@@ -721,19 +743,30 @@ onMounted(() => {
 
                 <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
                   <div class="text-sm text-[color:var(--ot-text-muted)]">
-                    <span class="font-medium text-[color:var(--ot-text)]">Name:</span>
+                    <span class="font-medium text-[color:var(--ot-text)]">
+                      {{ t('common.name') }}:
+                    </span>
                     {{ selectedOTOption.calculationPolicy.name || '-' }}
                   </div>
+
                   <div class="text-sm text-[color:var(--ot-text-muted)]">
-                    <span class="font-medium text-[color:var(--ot-text)]">Min Eligible:</span>
-                    {{ selectedOTOption.calculationPolicy.minEligibleMinutes ?? 0 }} min
+                    <span class="font-medium text-[color:var(--ot-text)]">
+                      {{ t('ot.policy.minEligible') }}:
+                    </span>
+                    {{ t('ot.requests.edit.minutesValue', { value: selectedOTOption.calculationPolicy.minEligibleMinutes ?? 0 }) }}
                   </div>
+
                   <div class="text-sm text-[color:var(--ot-text-muted)]">
-                    <span class="font-medium text-[color:var(--ot-text)]">Round Unit:</span>
-                    {{ selectedOTOption.calculationPolicy.roundUnitMinutes ?? 0 }} min
+                    <span class="font-medium text-[color:var(--ot-text)]">
+                      {{ t('ot.policy.roundUnit') }}:
+                    </span>
+                    {{ t('ot.requests.edit.minutesValue', { value: selectedOTOption.calculationPolicy.roundUnitMinutes ?? 0 }) }}
                   </div>
+
                   <div class="text-sm text-[color:var(--ot-text-muted)]">
-                    <span class="font-medium text-[color:var(--ot-text)]">Round Method:</span>
+                    <span class="font-medium text-[color:var(--ot-text)]">
+                      {{ t('ot.policy.roundMethodLabel') }}:
+                    </span>
                     {{ selectedOTOption.calculationPolicy.roundMethod || '-' }}
                   </div>
                 </div>
@@ -744,12 +777,13 @@ onMounted(() => {
 
             <div class="space-y-2">
               <label class="text-sm font-medium text-[color:var(--ot-text)]">
-                Reason
+                {{ t('ot.requests.edit.reason') }}
               </label>
+
               <Textarea
                 v-model.trim="form.reason"
                 rows="5"
-                autoResize
+                auto-resize
                 class="w-full"
                 :disabled="!detail.canEdit"
               />
@@ -759,38 +793,38 @@ onMounted(() => {
 
         <Card class="ot-edit-card">
           <template #title>
-            Current Summary
+            {{ t('ot.requests.edit.currentSummary') }}
           </template>
 
           <template #content>
             <div class="flex flex-col gap-3">
               <div class="ot-info-box">
-                <div class="ot-info-label">Department</div>
+                <div class="ot-info-label">{{ t('nav.departments') }}</div>
                 <div class="ot-info-value">{{ detail.departmentName || '-' }}</div>
               </div>
 
               <div class="ot-info-box">
-                <div class="ot-info-label">Position</div>
+                <div class="ot-info-label">{{ t('nav.positions') }}</div>
                 <div class="ot-info-value">{{ detail.positionName || '-' }}</div>
               </div>
 
               <div class="ot-info-box">
-                <div class="ot-info-label">Current Request Time</div>
+                <div class="ot-info-label">{{ t('ot.requests.edit.currentRequestTime') }}</div>
                 <div class="ot-info-value">{{ formatTimeRange(detail) }}</div>
               </div>
 
               <div class="ot-info-box">
-                <div class="ot-info-label">Current Total Hours</div>
+                <div class="ot-info-label">{{ t('ot.requests.edit.currentTotalHours') }}</div>
                 <div class="ot-info-value">{{ detail.totalHours ?? '-' }}</div>
               </div>
 
               <div class="ot-info-box">
-                <div class="ot-info-label">Current OT Option</div>
+                <div class="ot-info-label">{{ t('ot.requests.edit.currentOtOption') }}</div>
                 <div class="ot-info-value">{{ detail.shiftOtOptionLabel || '-' }}</div>
               </div>
 
               <div class="ot-info-box">
-                <div class="ot-info-label">Requested Minutes</div>
+                <div class="ot-info-label">{{ t('ot.requests.requestedMinutes') }}</div>
                 <div class="ot-info-value">{{ detail.requestedMinutes ?? 0 }}</div>
               </div>
             </div>
@@ -800,12 +834,12 @@ onMounted(() => {
 
       <Card class="ot-edit-card">
         <template #title>
-          Employees in This Request
+          {{ t('ot.requests.edit.employeesInRequest') }}
         </template>
 
         <template #content>
           <div class="mb-3 text-sm text-[color:var(--ot-text-muted)]">
-            This version keeps the current employee list and updates OT details, reason, and approver chain.
+            {{ t('ot.requests.edit.employeeListNote') }}
           </div>
 
           <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -817,9 +851,11 @@ onMounted(() => {
               <div class="font-semibold text-[color:var(--ot-text)]">
                 {{ employee.employeeName || '-' }}
               </div>
+
               <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
                 {{ employee.employeeCode || '-' }}
               </div>
+
               <div class="mt-2 text-sm text-[color:var(--ot-text-muted)]">
                 {{ employee.departmentName || '-' }} · {{ employee.positionName || '-' }}
               </div>
@@ -833,7 +869,7 @@ onMounted(() => {
       v-else
       class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-4 py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
     >
-      OT request not found.
+      {{ t('ot.requests.edit.notFound') }}
     </div>
   </div>
 </template>
@@ -845,7 +881,7 @@ onMounted(() => {
 
 :deep(.ot-edit-card .p-card-title) {
   font-size: 1rem !important;
-  font-weight: 700 !important;
+  font-weight: 600 !important;
   color: var(--ot-text) !important;
 }
 
@@ -859,7 +895,7 @@ onMounted(() => {
 .ot-info-label {
   margin-bottom: 0.3rem;
   font-size: 0.75rem;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--ot-text-muted);

@@ -1,5 +1,7 @@
 <!-- frontend/src/layouts/components/AppSidebar.vue -->
 <script setup>
+// frontend/src/layouts/components/AppSidebar.vue
+
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -296,7 +298,7 @@ const navGroups = computed(() => {
 })
 
 const desktopSidebarClass = computed(() =>
-  props.desktopCollapsed ? 'w-[88px]' : 'w-[272px]',
+  props.desktopCollapsed ? 'app-sidebar--collapsed' : 'app-sidebar--expanded',
 )
 
 function isGroupExpanded(groupKey, groupItems = []) {
@@ -315,43 +317,44 @@ function toggleGroup(groupKey, groupItems = []) {
 }
 
 function sidebarItemClass(to, collapsed = false) {
-  const base = isActivePath(to)
-    ? 'ot-nav-item ot-nav-item-active'
-    : 'ot-nav-item'
-
-  return collapsed ? `${base} ot-nav-item-collapsed` : base
+  return [
+    'ot-nav-item',
+    {
+      'ot-nav-item-active': isActivePath(to),
+      'ot-nav-item-collapsed': collapsed,
+    },
+  ]
 }
 </script>
 
 <template>
   <aside
+    class="app-sidebar"
     :class="desktopSidebarClass"
-    class="fixed inset-y-0 left-0 z-40 hidden border-r border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] transition-[width] duration-200 ease-out lg:flex lg:flex-col"
   >
-    <div class="flex h-[56px] items-center gap-3 border-b border-[color:var(--ot-border)] px-3">
-      <div
-        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[color:var(--ot-blue)] text-white shadow-sm"
-      >
-        <i class="pi pi-objects-column text-sm" />
+    <div class="app-sidebar__brand">
+      <div class="app-sidebar__logo">
+        <i class="pi pi-objects-column" />
       </div>
 
-      <div v-if="!desktopCollapsed" class="min-w-0">
-        <div class="truncate text-[15px] font-semibold text-[color:var(--ot-text)]">
-          {{ t('common.appName') }}
-        </div>
+      <div
+        v-if="!desktopCollapsed"
+        class="app-sidebar__brand-text"
+      >
+        {{ t('common.appName') }}
       </div>
     </div>
 
-    <div class="min-h-0 flex-1 px-2 py-3">
+    <div class="app-sidebar__nav">
       <ScrollPanel style="width: 100%; height: 100%">
-        <div class="space-y-1.5">
+        <div class="app-sidebar__nav-inner">
           <template
             v-for="group in navGroups"
             :key="group.key"
           >
             <div
               v-if="desktopCollapsed"
-              class="space-y-1"
+              class="app-sidebar__collapsed-group"
             >
               <button
                 v-for="item in group.items"
@@ -359,41 +362,48 @@ function sidebarItemClass(to, collapsed = false) {
                 type="button"
                 :class="sidebarItemClass(item.to, true)"
                 :title="item.label"
+                :aria-label="item.label"
                 @click="go(item.to)"
               >
                 <i
                   :class="item.icon"
-                  class="text-sm"
+                  class="ot-nav-item__icon"
                 />
               </button>
             </div>
 
             <div
               v-else
-              class="rounded-xl"
+              class="app-sidebar__group"
             >
               <button
                 type="button"
                 class="ot-group-button"
                 @click="toggleGroup(group.key, group.items)"
               >
-                <div class="flex min-w-0 items-center gap-2">
+                <div class="ot-group-button__main">
                   <i
                     :class="group.icon"
-                    class="text-sm"
+                    class="ot-group-button__icon"
                   />
-                  <span class="truncate">{{ group.label }}</span>
+                  <span class="ot-group-button__label">
+                    {{ group.label }}
+                  </span>
                 </div>
 
                 <i
-                  class="pi text-xs transition-transform duration-150"
-                  :class="isGroupExpanded(group.key, group.items) ? 'pi-chevron-down' : 'pi-chevron-right'"
+                  class="pi ot-group-button__arrow"
+                  :class="
+                    isGroupExpanded(group.key, group.items)
+                      ? 'pi-chevron-down'
+                      : 'pi-chevron-right'
+                  "
                 />
               </button>
 
               <div
                 v-show="isGroupExpanded(group.key, group.items)"
-                class="mt-1 space-y-1"
+                class="app-sidebar__items"
               >
                 <button
                   v-for="item in group.items"
@@ -404,9 +414,11 @@ function sidebarItemClass(to, collapsed = false) {
                 >
                   <i
                     :class="item.icon"
-                    class="text-sm"
+                    class="ot-nav-item__icon"
                   />
-                  <span class="truncate">{{ item.label }}</span>
+                  <span class="ot-nav-item__label">
+                    {{ item.label }}
+                  </span>
                 </button>
               </div>
             </div>
@@ -415,7 +427,7 @@ function sidebarItemClass(to, collapsed = false) {
       </ScrollPanel>
     </div>
 
-    <div class="border-t border-[color:var(--ot-border)] p-2">
+    <div class="app-sidebar__footer">
       <Button
         v-if="!desktopCollapsed"
         :label="t('auth.logout')"
@@ -450,52 +462,54 @@ function sidebarItemClass(to, collapsed = false) {
     @update:visible="emit('update:mobileVisible', $event)"
   >
     <template #header>
-      <div class="flex min-w-0 items-center gap-3">
-        <div
-          class="flex h-9 w-9 items-center justify-center rounded-xl bg-[color:var(--ot-blue)] text-white shadow-sm"
-        >
-          <i class="pi pi-objects-column text-sm" />
+      <div class="app-sidebar__mobile-brand">
+        <div class="app-sidebar__logo">
+          <i class="pi pi-objects-column" />
         </div>
 
-        <div class="min-w-0">
-          <div class="truncate text-[15px] font-semibold text-[color:var(--ot-text)]">
-            {{ t('common.appName') }}
-          </div>
+        <div class="app-sidebar__brand-text">
+          {{ t('common.appName') }}
         </div>
       </div>
     </template>
 
-    <div class="flex h-full min-h-0 flex-col">
-      <div class="min-h-0 flex-1 py-3">
+    <div class="app-sidebar__mobile">
+      <div class="app-sidebar__mobile-nav">
         <ScrollPanel style="width: 100%; height: 100%">
-          <div class="space-y-1.5">
+          <div class="app-sidebar__nav-inner">
             <template
               v-for="group in navGroups"
               :key="`mobile-${group.key}`"
             >
-              <div class="rounded-xl">
+              <div class="app-sidebar__group">
                 <button
                   type="button"
                   class="ot-group-button"
                   @click="toggleGroup(`mobile-${group.key}`, group.items)"
                 >
-                  <div class="flex min-w-0 items-center gap-2">
+                  <div class="ot-group-button__main">
                     <i
                       :class="group.icon"
-                      class="text-sm"
+                      class="ot-group-button__icon"
                     />
-                    <span class="truncate">{{ group.label }}</span>
+                    <span class="ot-group-button__label">
+                      {{ group.label }}
+                    </span>
                   </div>
 
                   <i
-                    class="pi text-xs transition-transform duration-150"
-                    :class="isGroupExpanded(`mobile-${group.key}`, group.items) ? 'pi-chevron-down' : 'pi-chevron-right'"
+                    class="pi ot-group-button__arrow"
+                    :class="
+                      isGroupExpanded(`mobile-${group.key}`, group.items)
+                        ? 'pi-chevron-down'
+                        : 'pi-chevron-right'
+                    "
                   />
                 </button>
 
                 <div
                   v-show="isGroupExpanded(`mobile-${group.key}`, group.items)"
-                  class="mt-1 space-y-1"
+                  class="app-sidebar__items"
                 >
                   <button
                     v-for="item in group.items"
@@ -506,9 +520,11 @@ function sidebarItemClass(to, collapsed = false) {
                   >
                     <i
                       :class="item.icon"
-                      class="text-sm"
+                      class="ot-nav-item__icon"
                     />
-                    <span class="truncate">{{ item.label }}</span>
+                    <span class="ot-nav-item__label">
+                      {{ item.label }}
+                    </span>
                   </button>
                 </div>
               </div>
@@ -517,7 +533,7 @@ function sidebarItemClass(to, collapsed = false) {
         </ScrollPanel>
       </div>
 
-      <div class="border-t border-[color:var(--ot-border)] pt-3">
+      <div class="app-sidebar__mobile-footer">
         <Button
           :label="t('auth.logout')"
           icon="pi pi-sign-out"
@@ -533,38 +549,178 @@ function sidebarItemClass(to, collapsed = false) {
 </template>
 
 <style scoped>
-.ot-group-button {
-  width: 100%;
+.app-sidebar {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 40;
+  display: none;
+  flex-direction: column;
+  border-right: 1px solid var(--ot-border);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--ot-surface) 98%, transparent),
+      color-mix(in srgb, var(--ot-surface-2) 96%, transparent)
+    );
+  transition: width 0.2s ease-out;
+}
+
+.app-sidebar--expanded {
+  width: 272px;
+}
+
+.app-sidebar--collapsed {
+  width: 88px;
+}
+
+.app-sidebar__brand {
   display: flex;
+  height: 56px;
+  align-items: center;
+  gap: 0.75rem;
+  border-bottom: 1px solid var(--ot-border);
+  padding-inline: 0.75rem;
+}
+
+.app-sidebar__logo {
+  display: inline-flex;
+  width: 2.25rem;
+  height: 2.25rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.9rem;
+  background: var(--ot-blue);
+  color: #ffffff;
+  box-shadow: var(--ot-shadow-sm);
+}
+
+.app-sidebar__logo i {
+  font-size: 0.9rem;
+}
+
+.app-sidebar__brand-text {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ot-text);
+  font-size: 0.94rem;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-sidebar__nav {
+  min-height: 0;
+  flex: 1;
+  padding: 0.75rem 0.5rem;
+}
+
+.app-sidebar__nav-inner {
+  display: grid;
+  gap: 0.38rem;
+}
+
+.app-sidebar__collapsed-group {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.app-sidebar__group {
+  border-radius: 0.9rem;
+}
+
+.app-sidebar__items {
+  display: grid;
+  gap: 0.25rem;
+  margin-top: 0.25rem;
+}
+
+.app-sidebar__footer {
+  border-top: 1px solid var(--ot-border);
+  padding: 0.5rem;
+}
+
+.app-sidebar__mobile-brand {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.app-sidebar__mobile {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.app-sidebar__mobile-nav {
+  min-height: 0;
+  flex: 1;
+  padding-block: 0.75rem;
+}
+
+.app-sidebar__mobile-footer {
+  border-top: 1px solid var(--ot-border);
+  padding-top: 0.75rem;
+}
+
+.ot-group-button {
+  display: flex;
+  width: 100%;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  border-radius: 12px;
-  padding: 0.62rem 0.72rem;
-  font-size: 0.84rem;
-  font-weight: 600;
+  border-radius: 0.8rem;
+  padding: 0.58rem 0.7rem;
   color: var(--ot-text-muted);
+  font-size: 0.82rem;
+  font-weight: 650;
   transition:
     background-color 0.16s ease,
     color 0.16s ease;
 }
 
 .ot-group-button:hover {
-  background: rgba(129, 166, 198, 0.08);
+  background: color-mix(in srgb, var(--ot-blue) 9%, transparent);
   color: var(--ot-text);
 }
 
-.ot-nav-item {
-  width: 100%;
+.ot-group-button__main {
   display: flex;
+  min-width: 0;
   align-items: center;
-  gap: 0.7rem;
-  border-radius: 12px;
-  padding: 0.62rem 0.72rem 0.62rem 0.9rem;
-  text-align: left;
-  font-size: 0.84rem;
-  font-weight: 500;
+  gap: 0.55rem;
+}
+
+.ot-group-button__icon {
+  flex: 0 0 auto;
+  font-size: 0.86rem;
+}
+
+.ot-group-button__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ot-group-button__arrow {
+  flex: 0 0 auto;
+  font-size: 0.68rem;
+  transition: transform 0.15s ease;
+}
+
+.ot-nav-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.62rem;
+  border-radius: 0.8rem;
+  padding: 0.58rem 0.7rem 0.58rem 0.9rem;
   color: var(--ot-text-muted);
+  text-align: left;
+  font-size: 0.82rem;
+  font-weight: 550;
   transition:
     background-color 0.16s ease,
     color 0.16s ease,
@@ -572,14 +728,19 @@ function sidebarItemClass(to, collapsed = false) {
 }
 
 .ot-nav-item:hover {
-  background: rgba(129, 166, 198, 0.09);
+  background: color-mix(in srgb, var(--ot-blue) 10%, transparent);
   color: var(--ot-text);
 }
 
 .ot-nav-item-active {
-  background: rgba(129, 166, 198, 0.14);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--ot-blue) 18%, transparent),
+      color-mix(in srgb, var(--ot-sky) 14%, transparent)
+    );
   color: var(--ot-text);
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .ot-nav-item-collapsed {
@@ -587,24 +748,51 @@ function sidebarItemClass(to, collapsed = false) {
   padding: 0.72rem;
 }
 
+.ot-nav-item__icon {
+  flex: 0 0 auto;
+  font-size: 0.88rem;
+}
+
+.ot-nav-item__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 :deep(.p-scrollpanel .p-scrollpanel-bar) {
-  background: rgba(129, 166, 198, 0.38) !important;
+  background: color-mix(in srgb, var(--ot-blue) 48%, transparent) !important;
 }
 
 :deep(.ot-app-drawer.p-drawer) {
   width: min(88vw, 280px) !important;
-  background: var(--ot-surface) !important;
   border-right: 1px solid var(--ot-border) !important;
+  background: var(--ot-surface) !important;
 }
 
 :deep(.ot-app-drawer .p-drawer-header) {
-  padding: 1rem 1rem 0.75rem !important;
   border-bottom: 1px solid var(--ot-border) !important;
   background: var(--ot-surface) !important;
+  padding: 1rem 1rem 0.75rem !important;
 }
 
 :deep(.ot-app-drawer .p-drawer-content) {
-  padding: 1rem !important;
   background: var(--ot-surface) !important;
+  padding: 1rem !important;
+}
+
+:global(.dark) .app-sidebar {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--ot-surface) 94%, #020617 6%),
+      color-mix(in srgb, var(--ot-surface-2) 88%, #020617 12%)
+    );
+}
+
+@media (min-width: 1024px) {
+  .app-sidebar {
+    display: flex;
+  }
 }
 </style>

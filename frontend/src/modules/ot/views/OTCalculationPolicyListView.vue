@@ -1,9 +1,13 @@
 <!-- frontend/src/modules/ot/views/OTCalculationPolicyListView.vue -->
 <script setup>
-import { computed, h, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+// frontend/src/modules/ot/views/OTCalculationPolicyListView.vue
+
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
+import Checkbox from 'primevue/checkbox'
 import Column from 'primevue/column'
 import DataTable from 'primevue/datatable'
 import Dialog from 'primevue/dialog'
@@ -15,13 +19,17 @@ import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 import Textarea from 'primevue/textarea'
 
+import AppTableLoading from '@/shared/components/AppTableLoading.vue'
 import { useAuthStore } from '@/modules/auth/auth.store'
+import { getApiErrorMessage } from '@/shared/utils/apiError'
+import { formatDateTime } from '@/shared/utils/dateFormat'
 import {
   createOTCalculationPolicy,
   getOTCalculationPolicies,
   updateOTCalculationPolicy,
 } from '@/modules/ot/otMaster.api'
 
+const { t } = useI18n()
 const toast = useToast()
 const auth = useAuthStore()
 
@@ -56,271 +64,114 @@ const form = reactive({
   roundUnitMinutes: 30,
   roundMethod: 'CEIL',
   graceAfterShiftEndMinutes: 0,
+  allowApprovedOtWithoutExactClockOut: false,
   allowPreShiftOT: false,
   allowPostShiftOT: true,
   capByRequestedMinutes: true,
   treatForgetScanInAsPending: true,
   treatForgetScanOutAsPending: true,
-  allowApprovedOtWithoutExactClockOut: false,
   isActive: true,
 })
 
-const statusOptions = [
-  { label: 'All Status', value: '' },
-  { label: 'Active', value: 'true' },
-  { label: 'Inactive', value: 'false' },
-]
-
-const roundMethodOptions = [
-  { label: 'All Methods', value: '' },
-  { label: 'Floor', value: 'FLOOR' },
-  { label: 'Ceil', value: 'CEIL' },
-  { label: 'Nearest', value: 'NEAREST' },
-]
-
-const formRoundMethodOptions = [
-  { label: 'Floor', value: 'FLOOR' },
-  { label: 'Ceil', value: 'CEIL' },
-  { label: 'Nearest', value: 'NEAREST' },
-]
-
-const policyFieldInfo = {
-  code: {
-    label: 'Code',
-    meaning: 'Unique policy code used by the system and admins.',
-    example:
-      'POST_SHIFT_STD_30M_CEIL means post-shift OT, standard rule, 30-minute rounding, round up.',
-    recommendation:
-      'Use clear uppercase code names so admins can understand the rule later.',
-  },
-  name: {
-    label: 'Name',
-    meaning: 'Human-readable policy name shown to users and admins.',
-    example: 'Post Shift Standard 30-Minute Ceiling.',
-    recommendation:
-      'Use a simple business name that managers can understand.',
-  },
-  description: {
-    label: 'Description',
-    meaning: 'Optional explanation of what this policy is used for.',
-    example:
-      'Used for normal post-shift OT. Actual OT is rounded up by 30 minutes and capped by requested minutes.',
-    recommendation:
-      'Add a short explanation so future admins understand why this policy exists.',
-  },
-  minEligibleMinutes: {
-    label: 'Min Eligible Minutes',
-    meaning:
-      'Minimum actual OT minutes required before OT can be counted.',
-    example:
-      'If set to 30, employee who works only 20 minutes extra is not eligible. If they work 35 minutes, OT can be counted.',
-    recommendation:
-      'For your current flow, 30 minutes is a good default.',
-  },
-  roundUnitMinutes: {
-    label: 'Round Unit Minutes',
-    meaning:
-      'The time block used to round actual OT time.',
-    example:
-      'If set to 30, OT rounds by 30-minute blocks: 30, 60, 90, 120 minutes.',
-    recommendation:
-      '30 minutes is simple and common for payroll calculation.',
-  },
-  roundMethod: {
-    label: 'Round Method',
-    meaning:
-      'Controls how actual OT is rounded after the system calculates real worked OT.',
-    example:
-      'CEIL: 1h20m becomes 1h30m. FLOOR: 1h20m becomes 1h. NEAREST: rounds to the closest unit.',
-    recommendation:
-      'CEIL is employee-friendly. FLOOR is stricter. NEAREST is balanced.',
-  },
-  graceAfterShiftEndMinutes: {
-    label: 'Grace After Shift End',
-    meaning:
-      'Small free period after shift end before OT starts counting.',
-    example:
-      'Shift ends 16:00 and grace is 10 minutes. Clock-out 16:08 = no OT. Clock-out 16:30 = OT counts from 16:10.',
-    recommendation:
-      'Use 0 if OT should start immediately after shift end.',
-  },
-  behaviorFlags: {
-    label: 'Behavior Flags',
-    meaning:
-      'Controls what kind of OT is allowed and how missing scan data should be handled.',
-    example:
-      'Post-shift OT can be allowed, pre-shift OT can be blocked, and missing clock-out can be marked pending.',
-    recommendation:
-      'For your current flow: Post-shift ON, Pre-shift OFF, Cap ON, Forget Scan pending ON.',
-  },
-  quickSummary: {
-    label: 'Quick Summary',
-    meaning:
-      'A simple preview of the current policy setup before saving.',
-    example:
-      'Round: CEIL every 30 min, Min Eligible: 30 min, Grace: 0 min.',
-    recommendation:
-      'Use this to quickly confirm the rule before saving.',
-  },
+function hasPermission(code) {
+  return (
+    auth.user?.isRootAdmin ||
+    auth.hasAnyPermission?.([code]) ||
+    auth.hasPermission?.(code)
+  )
 }
 
-const behaviorFlags = [
+const canView = computed(() => hasPermission('OT_POLICY_VIEW'))
+const canCreate = computed(() => hasPermission('OT_POLICY_CREATE'))
+const canUpdate = computed(() => hasPermission('OT_POLICY_UPDATE'))
+
+const statusOptions = computed(() => [
+  { label: t('common.allStatus'), value: '' },
+  { label: t('common.active'), value: 'true' },
+  { label: t('common.inactive'), value: 'false' },
+])
+
+const roundMethodOptions = computed(() => [
+  { label: t('ot.policy.allMethods'), value: '' },
+  { label: t('ot.policy.roundMethod.floor'), value: 'FLOOR' },
+  { label: t('ot.policy.roundMethod.ceil'), value: 'CEIL' },
+  { label: t('ot.policy.roundMethod.nearest'), value: 'NEAREST' },
+])
+
+const formRoundMethodOptions = computed(() => [
+  { label: t('ot.policy.roundMethod.floor'), value: 'FLOOR' },
+  { label: t('ot.policy.roundMethod.ceil'), value: 'CEIL' },
+  { label: t('ot.policy.roundMethod.nearest'), value: 'NEAREST' },
+])
+
+const behaviorFlags = computed(() => [
   {
     key: 'allowPreShiftOT',
-    label: 'Allow Pre-Shift OT',
-    short: 'Pre',
-    meaning: 'Allows OT before the normal shift start time.',
-    example:
-      'Shift starts at 07:00. Employee clocks in at 06:00. The system may count 06:00 - 07:00 as pre-shift OT.',
-    recommendation:
-      'For your current OT flow, keep this OFF because your flow is mainly post-shift OT.',
+    label: t('ot.policy.flag.allowPreShiftOT'),
+    description: t('ot.policy.flagHelp.allowPreShiftOT'),
   },
   {
     key: 'allowPostShiftOT',
-    label: 'Allow Post-Shift OT',
-    short: 'Post',
-    meaning: 'Allows OT after the normal shift end time.',
-    example:
-      'Shift ends at 16:00. Employee clocks out at 18:00. The system may count 16:00 - 18:00 as post-shift OT.',
-    recommendation:
-      'For your current OT flow, keep this ON.',
+    label: t('ot.policy.flag.allowPostShiftOT'),
+    description: t('ot.policy.flagHelp.allowPostShiftOT'),
   },
   {
     key: 'capByRequestedMinutes',
-    label: 'Cap by Requested Minutes',
-    short: 'Cap',
-    meaning:
-      'Final credited OT cannot be more than the approved/requested OT duration.',
-    example:
-      'Employee requested 2h OT but clocked out 3h late. Final OT is capped at 2h.',
-    recommendation:
-      'Keep this ON to avoid paying more than approved OT.',
+    label: t('ot.policy.flag.capByRequestedMinutes'),
+    description: t('ot.policy.flagHelp.capByRequestedMinutes'),
   },
   {
     key: 'treatForgetScanInAsPending',
-    label: 'Forget Scan In = Pending',
-    short: 'FS-In',
-    meaning:
-      'If clock-in is missing, the system will not auto-finalize the OT result.',
-    example:
-      'Clock-in is missing but clock-out is 18:00. The system marks it as pending for manual review.',
-    recommendation:
-      'Keep this ON for safer attendance verification.',
-  },
-    {
-    key: 'allowApprovedOtWithoutExactClockOut',
-    label: 'Allow Approved OT Without Exact Clock-Out',
-    short: 'No Exact Out',
-    meaning:
-      'Allows working-day approved OT to be credited even when exact OT end clock-out is not available.',
-    example:
-      'Shift is 07:00 - 16:00, approved OT is 16:00 - 20:00, attendance shows 06:45 - 16:00. If employee is present, system can credit approved OT.',
-    recommendation:
-      'Turn ON only for working-day post-shift OT policies. Keep OFF for Sunday/Holiday strict OT policies.',
+    label: t('ot.policy.flag.treatForgetScanInAsPending'),
+    description: t('ot.policy.flagHelp.treatForgetScanInAsPending'),
   },
   {
     key: 'treatForgetScanOutAsPending',
-    label: 'Forget Scan Out = Pending',
-    short: 'FS-Out',
-    meaning:
-      'If clock-out is missing, the system will not auto-calculate OT.',
-    example:
-      'Clock-in exists but clock-out is missing. The system cannot know actual OT end time, so it marks pending.',
-    recommendation:
-      'Keep this ON because OT depends on clock-out time.',
+    label: t('ot.policy.flag.treatForgetScanOutAsPending'),
+    description: t('ot.policy.flagHelp.treatForgetScanOutAsPending'),
   },
-]
-
-const activeFlagInfo = {
-  label: 'Active',
-  meaning:
-    'Controls whether this policy can be selected for new Shift OT Options.',
-  example:
-    'If Active is OFF, old OT requests keep their policy snapshot, but new options should not use this policy.',
-  recommendation:
-    'Keep this ON for policies currently in use.',
-}
-
-function stopHelpEvent(event) {
-  event.preventDefault()
-  event.stopPropagation()
-}
-
-const HelpTip = (props) => {
-  const info = props.info || {}
-
-  return h(
-    'span',
-    {
-      class: 'ot-help-wrap',
-      tabindex: '0',
-      role: 'button',
-      'aria-label': `View ${info.label || 'field'} meaning`,
-      onClick: stopHelpEvent,
-      onMousedown: stopHelpEvent,
-      onKeydown: stopHelpEvent,
-    },
-    [
-      h('i', { class: 'pi pi-info-circle text-xs' }),
-      h('span', { class: 'ot-help-tooltip' }, [
-        h('span', { class: 'ot-help-title' }, info.label || 'Information'),
-        h('span', { class: 'ot-help-line' }, info.meaning || '-'),
-        h('span', { class: 'ot-help-line' }, [
-          h('strong', 'Example: '),
-          info.example || '-',
-        ]),
-        h('span', { class: 'ot-help-line' }, [
-          h('strong', 'Recommended: '),
-          info.recommendation || '-',
-        ]),
-      ]),
-    ],
-  )
-}
-
-HelpTip.props = {
-  info: {
-    type: Object,
-    required: true,
+  {
+    key: 'allowApprovedOtWithoutExactClockOut',
+    label: t('ot.policy.flag.allowApprovedOtWithoutExactClockOut'),
+    description: t('ot.policy.flagHelp.allowApprovedOtWithoutExactClockOut'),
   },
-}
-
-const canViewPolicy = computed(() =>
-  auth.user?.isRootAdmin || auth.hasAnyPermission(['OT_POLICY_VIEW']),
-)
-
-const canCreatePolicy = computed(() =>
-  auth.user?.isRootAdmin || auth.hasAnyPermission(['OT_POLICY_CREATE']),
-)
-
-const canUpdatePolicy = computed(() =>
-  auth.user?.isRootAdmin || auth.hasAnyPermission(['OT_POLICY_UPDATE']),
-)
+])
 
 const isEditMode = computed(() => !!editingPolicyId.value)
-
-const canSaveDialog = computed(() =>
-  isEditMode.value ? canUpdatePolicy.value : canCreatePolicy.value,
-)
-
 const totalPolicies = computed(() => Number(totalRecords.value || 0))
 const loadedCount = computed(() => rows.value.filter(Boolean).length)
-const summaryText = computed(() => `${loadedCount.value} of ${totalPolicies.value}`)
-
 const hasAnyData = computed(() => rows.value.some(Boolean))
 const useVirtualScroll = computed(() => totalPolicies.value > PAGE_SIZE)
+const isFirstLoading = computed(() => !bootstrapped.value && backgroundLoading.value)
+
+const loadedLabel = computed(() =>
+  t('common.loaded', {
+    loaded: loadedCount.value,
+    total: totalPolicies.value,
+  }),
+)
+
+const dialogTitle = computed(() =>
+  isEditMode.value ? t('ot.policy.editTitle') : t('ot.policy.createTitle'),
+)
+
+const saveLabel = computed(() =>
+  isEditMode.value ? t('common.save') : t('common.create'),
+)
 
 const isSaveDisabled = computed(() => {
-  return (
-    saving.value ||
-    !canSaveDialog.value ||
-    !String(form.code || '').trim() ||
-    !String(form.name || '').trim() ||
-    !String(form.roundMethod || '').trim() ||
-    Number(form.roundUnitMinutes || 0) < 1 ||
-    Number(form.minEligibleMinutes || 0) < 0 ||
-    Number(form.graceAfterShiftEndMinutes || 0) < 0
-  )
+  if (saving.value) return true
+  if (isEditMode.value && !canUpdate.value) return true
+  if (!isEditMode.value && !canCreate.value) return true
+
+  if (!String(form.code || '').trim()) return true
+  if (!String(form.name || '').trim()) return true
+  if (!String(form.roundMethod || '').trim()) return true
+  if (Number(form.roundUnitMinutes || 0) < 1) return true
+  if (Number(form.minEligibleMinutes || 0) < 0) return true
+  if (Number(form.graceAfterShiftEndMinutes || 0) < 0) return true
+
+  return false
 })
 
 let searchTimer = null
@@ -332,6 +183,73 @@ function normalizePayload(res) {
 
 function normalizeItems(payload) {
   return Array.isArray(payload?.items) ? payload.items : []
+}
+
+function normalizeTotal(payload) {
+  return Number(payload?.pagination?.total || payload?.total || 0)
+}
+
+function normalizeId(row) {
+  return String(row?.id || row?._id || row?.policyId || '').trim()
+}
+
+function showToast(severity, summary, detail, life = 3000) {
+  toast.add({
+    severity,
+    summary,
+    detail,
+    life,
+  })
+}
+
+function upper(value) {
+  return String(value || '').trim().toUpperCase()
+}
+
+function activeSeverity(row) {
+  return row?.statusSeverity || (row?.isActive === false ? 'secondary' : 'success')
+}
+
+function activeLabel(row) {
+  if (row?.statusKey) return t(row.statusKey)
+  if (row?.statusCode) {
+    return row.statusCode === 'ACTIVE' ? t('common.active') : t('common.inactive')
+  }
+
+  return row?.isActive === false ? t('common.inactive') : t('common.active')
+}
+
+function roundMethodLabel(value) {
+  const method = upper(value)
+
+  if (method === 'FLOOR') return t('ot.policy.roundMethod.floor')
+  if (method === 'NEAREST') return t('ot.policy.roundMethod.nearest')
+
+  return t('ot.policy.roundMethod.ceil')
+}
+
+function minutesLabel(value) {
+  const minutes = Number(value || 0)
+
+  if (!minutes) return t('ot.common.minuteValue', { value: 0 })
+
+  const hours = Math.floor(minutes / 60)
+  const mins = minutes % 60
+
+  if (hours && mins) {
+    return t('ot.common.hourMinuteValue', {
+      hours,
+      minutes: mins,
+    })
+  }
+
+  if (hours) return t('ot.common.hourValue', { value: hours })
+
+  return t('ot.common.minuteValue', { value: mins })
+}
+
+function boolText(value) {
+  return value ? t('common.yes') : t('common.no')
 }
 
 function buildQuery(page) {
@@ -347,7 +265,7 @@ function buildQuery(page) {
 }
 
 async function fetchPage(page, { replace = false, silent = false } = {}) {
-  if (!canViewPolicy.value) {
+  if (!canView.value) {
     bootstrapped.value = true
     return
   }
@@ -362,49 +280,49 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
   try {
     const res = await getOTCalculationPolicies(buildQuery(page))
+
     if (requestId !== currentRequestId) return
 
     const payload = normalizePayload(res)
     const items = normalizeItems(payload)
-    const total = Number(payload?.pagination?.total || 0)
+    const total = normalizeTotal(payload)
+    const startIndex = (page - 1) * PAGE_SIZE
 
     totalRecords.value = total
 
     if (replace) {
-      const nextRows = Array.from({ length: total }, () => null)
-      const startIndex = (page - 1) * PAGE_SIZE
+      const nextRows = total > 0 ? Array.from({ length: total }, () => null) : []
 
-      for (let i = 0; i < items.length; i += 1) {
-        nextRows[startIndex + i] = items[i]
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
       }
 
-      rows.value = total === 0 ? [] : nextRows
+      rows.value = nextRows
       loadedPages.value = new Set([page])
     } else {
       if (!rows.value.length && total > 0) {
         rows.value = Array.from({ length: total }, () => null)
       }
 
-      const startIndex = (page - 1) * PAGE_SIZE
+      const nextRows = [...rows.value]
 
-      for (let i = 0; i < items.length; i += 1) {
-        rows.value[startIndex + i] = items[i]
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
       }
 
+      rows.value = nextRows
       loadedPages.value.add(page)
     }
 
     bootstrapped.value = true
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Load failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to load OT calculation policies.',
-      life: 3000,
-    })
+    bootstrapped.value = true
+
+    showToast(
+      'error',
+      t('common.loadFailed'),
+      getApiErrorMessage(error, t('ot.policy.loadFailed')),
+    )
   } finally {
     backgroundLoading.value = false
   }
@@ -415,6 +333,7 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
     rows.value = []
     totalRecords.value = 0
     loadedPages.value = new Set()
+    bootstrapped.value = false
   }
 
   await fetchPage(1, {
@@ -425,6 +344,7 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
 
 function runSearchSoon() {
   window.clearTimeout(searchTimer)
+
   searchTimer = window.setTimeout(() => {
     reloadFirstPage({ keepVisible: true })
   }, SEARCH_DEBOUNCE_MS)
@@ -434,11 +354,7 @@ function onSearchInput() {
   runSearchSoon()
 }
 
-function onStatusChange() {
-  reloadFirstPage({ keepVisible: true })
-}
-
-function onRoundMethodChange() {
+function onFilterChange() {
   reloadFirstPage({ keepVisible: true })
 }
 
@@ -453,21 +369,8 @@ function clearFilters() {
 }
 
 function onSort(event) {
-  const fieldMap = {
-    code: 'code',
-    name: 'name',
-    roundMethod: 'roundMethod',
-    roundUnitMinutes: 'roundUnitMinutes',
-    minEligibleMinutes: 'minEligibleMinutes',
-    graceAfterShiftEndMinutes: 'graceAfterShiftEndMinutes',
-    isActive: 'isActive',
-    createdAt: 'createdAt',
-    updatedAt: 'updatedAt',
-  }
-
-  filters.sortField = fieldMap[event.sortField] || 'createdAt'
+  filters.sortField = event.sortField || 'createdAt'
   filters.sortOrder = typeof event.sortOrder === 'number' ? event.sortOrder : -1
-
   reloadFirstPage({ keepVisible: true })
 }
 
@@ -497,105 +400,96 @@ function resetForm() {
   form.roundUnitMinutes = 30
   form.roundMethod = 'CEIL'
   form.graceAfterShiftEndMinutes = 0
+  form.allowApprovedOtWithoutExactClockOut = false
   form.allowPreShiftOT = false
   form.allowPostShiftOT = true
   form.capByRequestedMinutes = true
   form.treatForgetScanInAsPending = true
   form.treatForgetScanOutAsPending = true
-  form.allowApprovedOtWithoutExactClockOut = false
   form.isActive = true
 }
 
 function openCreateDialog() {
-  if (!canCreatePolicy.value) return
-
   resetForm()
   policyDialogVisible.value = true
 }
 
 function openEditDialog(row) {
-  if (!canUpdatePolicy.value) return
+  if (!row) return
 
-  editingPolicyId.value = String(row?.id || row?._id || '').trim()
+  editingPolicyId.value = normalizeId(row)
 
-  form.code = String(row?.code || '').trim()
-  form.name = String(row?.name || '').trim()
-  form.description = String(row?.description || '').trim()
-  form.minEligibleMinutes = Number(row?.minEligibleMinutes || 0)
-  form.roundUnitMinutes = Number(row?.roundUnitMinutes || 30)
-  form.roundMethod = String(row?.roundMethod || 'CEIL').trim() || 'CEIL'
-  form.graceAfterShiftEndMinutes = Number(row?.graceAfterShiftEndMinutes || 0)
-  form.allowPreShiftOT = row?.allowPreShiftOT === true
-  form.allowPostShiftOT = row?.allowPostShiftOT !== false
-  form.capByRequestedMinutes = row?.capByRequestedMinutes !== false
-  form.treatForgetScanInAsPending = row?.treatForgetScanInAsPending !== false
-  form.treatForgetScanOutAsPending = row?.treatForgetScanOutAsPending !== false
+  form.code = String(row.code || '').trim()
+  form.name = String(row.name || '').trim()
+  form.description = String(row.description || '').trim()
+  form.minEligibleMinutes = Number(row.minEligibleMinutes || 0)
+  form.roundUnitMinutes = Number(row.roundUnitMinutes || 30)
+  form.roundMethod = upper(row.roundMethod || 'CEIL')
+  form.graceAfterShiftEndMinutes = Number(row.graceAfterShiftEndMinutes || 0)
+
   form.allowApprovedOtWithoutExactClockOut =
-    row?.allowApprovedOtWithoutExactClockOut === true
-  form.isActive = row?.isActive !== false
+    row.allowApprovedOtWithoutExactClockOut === true
+  form.allowPreShiftOT = row.allowPreShiftOT === true
+  form.allowPostShiftOT = row.allowPostShiftOT !== false
+  form.capByRequestedMinutes = row.capByRequestedMinutes !== false
+  form.treatForgetScanInAsPending = row.treatForgetScanInAsPending !== false
+  form.treatForgetScanOutAsPending = row.treatForgetScanOutAsPending !== false
+  form.isActive = row.isActive !== false
 
   policyDialogVisible.value = true
 }
 
-function validateForm() {
-  if (!String(form.code || '').trim()) return 'Code is required.'
-  if (!String(form.name || '').trim()) return 'Name is required.'
-  if (Number(form.minEligibleMinutes || 0) < 0) {
-    return 'Min eligible minutes must be at least 0.'
-  }
-  if (Number(form.roundUnitMinutes || 0) < 1) {
-    return 'Round unit minutes must be at least 1.'
-  }
-  if (Number(form.graceAfterShiftEndMinutes || 0) < 0) {
-    return 'Grace after shift end must be at least 0.'
-  }
-  if (!String(form.roundMethod || '').trim()) return 'Round method is required.'
-
-  return ''
-}
-
 function buildPayload() {
   return {
-    code: String(form.code || '').trim().toUpperCase(),
+    code: String(form.code || '').trim(),
     name: String(form.name || '').trim(),
     description: String(form.description || '').trim(),
+
     minEligibleMinutes: Number(form.minEligibleMinutes || 0),
     roundUnitMinutes: Number(form.roundUnitMinutes || 0),
-    roundMethod: String(form.roundMethod || '').trim().toUpperCase(),
+    roundMethod: upper(form.roundMethod || 'CEIL'),
     graceAfterShiftEndMinutes: Number(form.graceAfterShiftEndMinutes || 0),
+
+    allowApprovedOtWithoutExactClockOut:
+      form.allowApprovedOtWithoutExactClockOut === true,
     allowPreShiftOT: form.allowPreShiftOT === true,
     allowPostShiftOT: form.allowPostShiftOT === true,
     capByRequestedMinutes: form.capByRequestedMinutes === true,
     treatForgetScanInAsPending: form.treatForgetScanInAsPending === true,
     treatForgetScanOutAsPending: form.treatForgetScanOutAsPending === true,
-    allowApprovedOtWithoutExactClockOut:
-      form.allowApprovedOtWithoutExactClockOut === true,
+
     isActive: form.isActive === true,
   }
 }
 
-async function submitPolicy() {
-  const message = validateForm()
+function validateForm() {
+  if (!String(form.code || '').trim()) return t('ot.policy.validation.codeRequired')
+  if (!String(form.name || '').trim()) return t('ot.policy.validation.nameRequired')
 
-  if (message) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Validation',
-      detail: message,
-      life: 2500,
-    })
-    return
+  if (!String(form.roundMethod || '').trim()) {
+    return t('ot.policy.validation.roundMethodRequired')
   }
 
-  if (!canSaveDialog.value) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Permission denied',
-      detail: isEditMode.value
-        ? 'You do not have permission to update OT policy.'
-        : 'You do not have permission to create OT policy.',
-      life: 2500,
-    })
+  if (Number(form.roundUnitMinutes || 0) < 1) {
+    return t('ot.policy.validation.roundUnitInvalid')
+  }
+
+  if (Number(form.minEligibleMinutes || 0) < 0) {
+    return t('ot.policy.validation.minEligibleInvalid')
+  }
+
+  if (Number(form.graceAfterShiftEndMinutes || 0) < 0) {
+    return t('ot.policy.validation.graceInvalid')
+  }
+
+  return ''
+}
+
+async function submitPolicy() {
+  const validationMessage = validateForm()
+
+  if (validationMessage) {
+    showToast('warn', t('common.warning'), validationMessage, 2500)
     return
   }
 
@@ -607,21 +501,21 @@ async function submitPolicy() {
     if (editingPolicyId.value) {
       await updateOTCalculationPolicy(editingPolicyId.value, payload)
 
-      toast.add({
-        severity: 'success',
-        summary: 'Updated',
-        detail: 'OT calculation policy updated successfully.',
-        life: 2500,
-      })
+      showToast(
+        'success',
+        t('common.updated'),
+        t('ot.policy.updatedSuccess'),
+        2500,
+      )
     } else {
       await createOTCalculationPolicy(payload)
 
-      toast.add({
-        severity: 'success',
-        summary: 'Created',
-        detail: 'OT calculation policy created successfully.',
-        life: 2500,
-      })
+      showToast(
+        'success',
+        t('common.created'),
+        t('ot.policy.createdSuccess'),
+        2500,
+      )
     }
 
     policyDialogVisible.value = false
@@ -629,54 +523,19 @@ async function submitPolicy() {
 
     await reloadFirstPage({ keepVisible: false })
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: isEditMode.value ? 'Save failed' : 'Create failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to save OT calculation policy.',
-      life: 3500,
-    })
+    showToast(
+      'error',
+      editingPolicyId.value ? t('common.updateFailed') : t('common.createFailed'),
+      getApiErrorMessage(error, t('ot.policy.saveFailed')),
+      3500,
+    )
   } finally {
     saving.value = false
   }
 }
 
-function activeSeverity(value) {
-  return value ? 'success' : 'contrast'
-}
-
-function boolLabel(value) {
-  return value ? 'YES' : 'NO'
-}
-
-function boolSeverity(value) {
-  return value ? 'success' : 'contrast'
-}
-
-function roundMethodSeverity(value) {
-  const normalized = String(value || '').toUpperCase()
-
-  if (normalized === 'CEIL') return 'warning'
-  if (normalized === 'FLOOR') return 'info'
-  if (normalized === 'NEAREST') return 'success'
-
-  return 'contrast'
-}
-
-function formatDateTime(value) {
-  if (!value) return '-'
-
-  try {
-    return new Date(value).toLocaleString()
-  } catch {
-    return String(value)
-  }
-}
-
-onMounted(() => {
-  reloadFirstPage({ keepVisible: false })
+onMounted(async () => {
+  await reloadFirstPage({ keepVisible: false })
 })
 
 onBeforeUnmount(() => {
@@ -685,422 +544,548 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4">
-    <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+  <div class="ot-page-shell">
+    <section class="ot-filter-bar ot-filter-bar-5">
+      <div class="ot-field md:col-span-2 xl:col-span-2">
+        <label class="ot-field-label">
+          {{ t('common.search') }}
+        </label>
 
-      <div class="flex flex-wrap items-center gap-2">
+        <IconField>
+          <InputIcon class="pi pi-search" />
+
+          <InputText
+            v-model="filters.search"
+            :placeholder="t('ot.policy.searchPlaceholder')"
+            class="w-full"
+            size="small"
+            @input="onSearchInput"
+          />
+        </IconField>
+      </div>
+
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('common.status') }}
+        </label>
+
+        <Select
+          v-model="filters.isActive"
+          :options="statusOptions"
+          option-label="label"
+          option-value="value"
+          class="w-full"
+          size="small"
+          @change="onFilterChange"
+        />
+      </div>
+
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('ot.policy.roundMethodLabel') }}
+        </label>
+
+        <Select
+          v-model="filters.roundMethod"
+          :options="roundMethodOptions"
+          option-label="label"
+          option-value="value"
+          class="w-full"
+          size="small"
+          @change="onFilterChange"
+        />
+      </div>
+
+      <div class="ot-filter-actions">
+        <span class="ot-loaded-badge">
+          {{ loadedLabel }}
+        </span>
 
         <Button
-          v-if="canCreatePolicy"
-          label="New Policy"
+          :label="t('common.clear')"
+          icon="pi pi-filter-slash"
+          severity="secondary"
+          outlined
+          size="small"
+          @click="clearFilters"
+        />
+
+        <Button
+          v-if="canCreate"
+          :label="t('ot.policy.newPolicy')"
           icon="pi pi-plus"
           size="small"
           @click="openCreateDialog"
         />
       </div>
-    </div>
+    </section>
 
-    <div
-      v-if="!canViewPolicy"
-      class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-4 py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
-    >
-      You do not have permission to view OT policies.
-    </div>
+    <section class="ot-table-card">
+      <div class="ot-table-toolbar">
+        <div>
+          <h2 class="ot-table-title">
+            {{ t('ot.policy.tableTitle') }}
+          </h2>
 
-    <div
-      v-else
-      class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]"
-    >
-      <div class="border-b border-[color:var(--ot-border)] px-3 py-3">
-        <div class="flex flex-col gap-2 xl:flex-row xl:items-center">
-          <IconField class="w-full xl:w-[320px] xl:shrink-0">
-            <InputIcon class="pi pi-search" />
-            <InputText
-              v-model="filters.search"
-              placeholder="Search code, name, description"
-              class="w-full"
-              size="small"
-              @input="onSearchInput"
-            />
-          </IconField>
+          <p class="ot-table-subtitle">
+            {{ t('ot.policy.subtitle') }}
+          </p>
+        </div>
 
-          <div class="w-full xl:w-[180px] xl:shrink-0">
-            <Select
-              v-model="filters.isActive"
-              :options="statusOptions"
-              optionLabel="label"
-              optionValue="value"
-              placeholder="Status"
-              class="w-full"
-              size="small"
-              @change="onStatusChange"
-            />
-          </div>
+        <div class="ot-table-actions">
+          <span
+            v-if="backgroundLoading && hasAnyData"
+            class="ot-loaded-badge"
+          >
+            <i class="pi pi-spin pi-spinner" />
+            {{ t('common.updating') }}
+          </span>
 
-          <div class="w-full xl:w-[180px] xl:shrink-0">
-            <Select
-              v-model="filters.roundMethod"
-              :options="roundMethodOptions"
-              optionLabel="label"
-              optionValue="value"
-              placeholder="Round Method"
-              class="w-full"
-              size="small"
-              @change="onRoundMethodChange"
-            />
-          </div>
-
-          <div class="flex items-center gap-2 xl:ml-auto xl:shrink-0">
-            <div class="rounded-lg border border-[color:var(--ot-border)] px-3 py-1.5 text-xs font-medium text-[color:var(--ot-text-muted)]">
-              Loaded {{ summaryText }}
-            </div>
-
-            <Button
-              label="Clear"
-              icon="pi pi-refresh"
-              severity="secondary"
-              outlined
-              size="small"
-              @click="clearFilters"
-            />
-          </div>
+          <Button
+            :label="t('common.refresh')"
+            icon="pi pi-refresh"
+            severity="secondary"
+            outlined
+            size="small"
+            :loading="backgroundLoading && bootstrapped"
+            @click="reloadFirstPage({ keepVisible: true })"
+          />
         </div>
       </div>
 
-      <DataTable
-        :value="rows"
-        lazy
-        removableSort
-        scrollable
-        scrollHeight="500px"
-        :sortField="filters.sortField"
-        :sortOrder="filters.sortOrder"
-        tableStyle="min-width: 108rem"
-        class="ot-policy-table"
-        :virtualScrollerOptions="useVirtualScroll ? {
-          lazy: true,
-          onLazyLoad: onVirtualLazyLoad,
-          itemSize: 76,
-          delay: 0,
-          showLoader: false,
-          loading: false,
-          numToleratedItems: 12,
-        } : null"
-        @sort="onSort"
-      >
-        <template #empty>
-          <div
-            v-if="bootstrapped"
-            class="py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
-          >
-            No OT calculation policies found.
-          </div>
-        </template>
+      <div class="ot-table-wrapper">
+        <AppTableLoading
+          v-if="isFirstLoading"
+          :title="t('common.loadingData')"
+          :message="t('common.fetchingRecords')"
+          :rows="7"
+          :columns="9"
+          icon="pi pi-sliders-h"
+        />
 
-        <Column field="code" header="Code" sortable style="min-width: 13rem">
-          <template #body="{ data }">
-            <span v-if="data" class="font-medium">
-              {{ data.code || '-' }}
-            </span>
-          </template>
-        </Column>
+        <DataTable
+          v-else
+          :value="rows"
+          lazy
+          removable-sort
+          scrollable
+          scroll-height="500px"
+          :sort-field="filters.sortField"
+          :sort-order="filters.sortOrder"
+          table-style="min-width: 112rem"
+          class="ot-data-table ot-data-table-compact"
+          :virtual-scroller-options="useVirtualScroll ? {
+            lazy: true,
+            onLazyLoad: onVirtualLazyLoad,
+            itemSize: 72,
+            delay: 0,
+            showLoader: false,
+            loading: false,
+            numToleratedItems: 12,
+          } : null"
+          @sort="onSort"
+        >
+          <template #empty>
+            <div
+              v-if="bootstrapped"
+              class="ot-empty-state"
+            >
+              <div class="ot-empty-icon">
+                <i class="pi pi-sliders-h" />
+              </div>
 
-        <Column field="name" header="Name" sortable style="min-width: 18rem">
-          <template #body="{ data }">
-            <span v-if="data">{{ data.name || '-' }}</span>
-          </template>
-        </Column>
+              <div class="ot-empty-title">
+                {{ t('common.noData') }}
+              </div>
 
-        <Column field="roundMethod" header="Round Method" sortable style="min-width: 10rem">
-          <template #body="{ data }">
-            <Tag
-              v-if="data"
-              :value="data.roundMethod || '-'"
-              :severity="roundMethodSeverity(data.roundMethod)"
-              class="ot-policy-tag"
-            />
-          </template>
-        </Column>
-
-        <Column field="roundUnitMinutes" header="Round Unit" sortable style="min-width: 9rem">
-          <template #body="{ data }">
-            <span v-if="data">{{ Number(data.roundUnitMinutes || 0) }} min</span>
-          </template>
-        </Column>
-
-        <Column field="minEligibleMinutes" header="Min Eligible" sortable style="min-width: 10rem">
-          <template #body="{ data }">
-            <span v-if="data">{{ Number(data.minEligibleMinutes || 0) }} min</span>
-          </template>
-        </Column>
-
-        <Column field="graceAfterShiftEndMinutes" header="Grace" sortable style="min-width: 8rem">
-          <template #body="{ data }">
-            <span v-if="data">{{ Number(data.graceAfterShiftEndMinutes || 0) }} min</span>
-          </template>
-        </Column>
-
-        <Column header="Flags" style="min-width: 25rem">
-          <template #body="{ data }">
-            <div v-if="data" class="flex flex-wrap gap-1.5">
-              <Tag
-                :value="`Pre: ${boolLabel(data.allowPreShiftOT)}`"
-                :severity="boolSeverity(data.allowPreShiftOT)"
-                class="ot-policy-tag"
-              />
-              <Tag
-                :value="`Post: ${boolLabel(data.allowPostShiftOT)}`"
-                :severity="boolSeverity(data.allowPostShiftOT)"
-                class="ot-policy-tag"
-              />
-              <Tag
-                :value="`Cap: ${boolLabel(data.capByRequestedMinutes)}`"
-                :severity="boolSeverity(data.capByRequestedMinutes)"
-                class="ot-policy-tag"
-              />
-              <Tag
-                :value="`FS-In: ${boolLabel(data.treatForgetScanInAsPending)}`"
-                :severity="boolSeverity(data.treatForgetScanInAsPending)"
-                class="ot-policy-tag"
-              />
-              <Tag
-                :value="`No Exact Out: ${boolLabel(data.allowApprovedOtWithoutExactClockOut)}`"
-                :severity="boolSeverity(data.allowApprovedOtWithoutExactClockOut)"
-                class="ot-policy-tag"
-              />
-              <Tag
-                :value="`FS-Out: ${boolLabel(data.treatForgetScanOutAsPending)}`"
-                :severity="boolSeverity(data.treatForgetScanOutAsPending)"
-                class="ot-policy-tag"
-              />
+              <div class="ot-empty-text">
+                {{ t('ot.policy.noData') }}
+              </div>
             </div>
           </template>
-        </Column>
 
-        <Column field="isActive" header="Status" sortable style="min-width: 8rem">
-          <template #body="{ data }">
-            <Tag
-              v-if="data"
-              :value="data.isActive ? 'Active' : 'Inactive'"
-              :severity="activeSeverity(data.isActive)"
-              class="ot-policy-tag"
-            />
-          </template>
-        </Column>
+          <Column
+            field="code"
+            :header="t('common.code')"
+            sortable
+            style="min-width: 14rem"
+          >
+            <template #body="{ data }">
+              <div
+                v-if="data"
+                class="flex flex-col"
+              >
+                <span class="font-medium text-[color:var(--ot-text)]">
+                  {{ data.code || '-' }}
+                </span>
 
-        <Column field="createdAt" header="Created At" sortable style="min-width: 14rem">
-          <template #body="{ data }">
-            <span v-if="data">{{ formatDateTime(data.createdAt) }}</span>
-          </template>
-        </Column>
+                <span class="text-xs text-[color:var(--ot-text-muted)]">
+                  {{ data.name || '-' }}
+                </span>
+              </div>
+            </template>
+          </Column>
 
-        <Column header="Actions" style="width: 7rem; min-width: 7rem">
-          <template #body="{ data }">
-            <Button
-              v-if="data && canUpdatePolicy"
-              label="Edit"
-              icon="pi pi-pencil"
-              size="small"
-              outlined
-              @click="openEditDialog(data)"
-            />
-          </template>
-        </Column>
-      </DataTable>
+          <Column
+            field="description"
+            :header="t('common.description')"
+            style="min-width: 20rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="ot-truncate-2"
+              >
+                {{ data.description || '-' }}
+              </span>
+            </template>
+          </Column>
 
-      <div
-        v-if="backgroundLoading && hasAnyData"
-        class="flex items-center justify-center border-t border-[color:var(--ot-border)] px-3 py-2 text-xs text-[color:var(--ot-text-muted)]"
-      >
-        Updating...
+          <Column
+            field="roundMethod"
+            :header="t('ot.policy.rounding')"
+            sortable
+            style="min-width: 13rem"
+          >
+            <template #body="{ data }">
+              <div
+                v-if="data"
+                class="flex flex-col gap-1"
+              >
+                <Tag
+                  :value="roundMethodLabel(data.roundMethod)"
+                  severity="info"
+                  class="ot-status-tag"
+                />
+
+                <span class="text-xs text-[color:var(--ot-text-muted)]">
+                  {{ t('ot.policy.everyUnit', { unit: minutesLabel(data.roundUnitMinutes) }) }}
+                </span>
+              </div>
+            </template>
+          </Column>
+
+          <Column
+            field="minEligibleMinutes"
+            :header="t('ot.policy.eligibility')"
+            sortable
+            style="min-width: 13rem"
+          >
+            <template #body="{ data }">
+              <div
+                v-if="data"
+                class="flex flex-col gap-1"
+              >
+                <span class="font-medium">
+                  {{ t('ot.policy.minEligibleShort') }}:
+                  {{ minutesLabel(data.minEligibleMinutes) }}
+                </span>
+
+                <span class="text-xs text-[color:var(--ot-text-muted)]">
+                  {{ t('ot.policy.graceShort') }}:
+                  {{ minutesLabel(data.graceAfterShiftEndMinutes) }}
+                </span>
+              </div>
+            </template>
+          </Column>
+
+          <Column
+            :header="t('ot.policy.behavior')"
+            style="min-width: 29rem"
+          >
+            <template #body="{ data }">
+              <div
+                v-if="data"
+                class="flex flex-wrap gap-1"
+              >
+                <Tag
+                  :value="t('ot.policy.flagShort.pre', { value: boolText(data.allowPreShiftOT) })"
+                  :severity="data.allowPreShiftOT ? 'success' : 'secondary'"
+                  class="ot-status-tag"
+                />
+
+                <Tag
+                  :value="t('ot.policy.flagShort.post', { value: boolText(data.allowPostShiftOT) })"
+                  :severity="data.allowPostShiftOT ? 'success' : 'secondary'"
+                  class="ot-status-tag"
+                />
+
+                <Tag
+                  :value="t('ot.policy.flagShort.cap', { value: boolText(data.capByRequestedMinutes) })"
+                  :severity="data.capByRequestedMinutes ? 'success' : 'warning'"
+                  class="ot-status-tag"
+                />
+
+                <Tag
+                  :value="t('ot.policy.flagShort.noExactOut', {
+                    value: boolText(data.allowApprovedOtWithoutExactClockOut),
+                  })"
+                  :severity="data.allowApprovedOtWithoutExactClockOut ? 'info' : 'secondary'"
+                  class="ot-status-tag"
+                />
+              </div>
+            </template>
+          </Column>
+
+          <Column
+            :header="t('ot.policy.forgetScan')"
+            style="min-width: 16rem"
+          >
+            <template #body="{ data }">
+              <div
+                v-if="data"
+                class="flex flex-wrap gap-1"
+              >
+                <Tag
+                  :value="t('ot.policy.flagShort.fsIn', {
+                    value: boolText(data.treatForgetScanInAsPending),
+                  })"
+                  :severity="data.treatForgetScanInAsPending ? 'warning' : 'secondary'"
+                  class="ot-status-tag"
+                />
+
+                <Tag
+                  :value="t('ot.policy.flagShort.fsOut', {
+                    value: boolText(data.treatForgetScanOutAsPending),
+                  })"
+                  :severity="data.treatForgetScanOutAsPending ? 'warning' : 'secondary'"
+                  class="ot-status-tag"
+                />
+              </div>
+            </template>
+          </Column>
+
+          <Column
+            field="isActive"
+            :header="t('common.status')"
+            sortable
+            style="min-width: 8rem"
+          >
+            <template #body="{ data }">
+              <Tag
+                v-if="data"
+                :value="activeLabel(data)"
+                :severity="activeSeverity(data)"
+                class="ot-status-tag"
+              />
+            </template>
+          </Column>
+
+          <Column
+            field="updatedAt"
+            :header="t('common.updatedAt')"
+            sortable
+            style="min-width: 13rem"
+          >
+            <template #body="{ data }">
+              <span v-if="data">
+                {{ formatDateTime(data.updatedAt || data.createdAt) }}
+              </span>
+            </template>
+          </Column>
+
+          <Column
+            :header="t('common.actions')"
+            frozen
+            alignFrozen="right"
+            headerClass="ot-action-column-header"
+            bodyClass="ot-action-column-body"
+          >
+            <template #body="{ data }">
+              <div
+                v-if="data"
+                class="ot-row-actions"
+              >
+                <Button
+                  v-if="canUpdate"
+                  :label="t('common.edit')"
+                  icon="pi pi-pencil"
+                  size="small"
+                  outlined
+                  @click="openEditDialog(data)"
+                />
+              </div>
+            </template>
+          </Column>
+        </DataTable>
       </div>
-    </div>
+    </section>
 
     <Dialog
       v-model:visible="policyDialogVisible"
       modal
       :closable="!saving"
-      :header="isEditMode ? 'Edit OT Calculation Policy' : 'Create OT Calculation Policy'"
-      :style="{ width: '72rem', maxWidth: '96vw' }"
+      :header="dialogTitle"
+      :style="{ width: '64rem', maxWidth: '96vw' }"
       @hide="resetForm"
     >
-      <div class="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <div class="space-y-4">
-          <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div class="space-y-2">
-              <label class="ot-field-label">
-                <span>Code</span>
-                <HelpTip :info="policyFieldInfo.code" />
-              </label>
-              <InputText
-                v-model="form.code"
-                class="w-full"
-                placeholder="POST_SHIFT_STD_30M_CEIL"
-              />
-            </div>
-
-            <div class="space-y-2">
-              <label class="ot-field-label">
-                <span>Name</span>
-                <HelpTip :info="policyFieldInfo.name" />
-              </label>
-              <InputText
-                v-model="form.name"
-                class="w-full"
-                placeholder="Post Shift Standard 30-Minute Ceiling"
-              />
-            </div>
-          </div>
-
-          <div class="space-y-2">
+      <div class="ot-dialog-form">
+        <div class="ot-form-grid">
+          <div class="ot-field">
             <label class="ot-field-label">
-              <span>Description</span>
-              <HelpTip :info="policyFieldInfo.description" />
+              {{ t('common.code') }}
             </label>
-            <Textarea
-              v-model="form.description"
-              rows="4"
-              autoResize
+
+            <InputText
+              v-model="form.code"
               class="w-full"
-              placeholder="Policy description"
+              :placeholder="t('ot.policy.codePlaceholder')"
             />
           </div>
 
-          <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div class="space-y-2">
-              <label class="ot-field-label">
-                <span>Min Eligible Minutes</span>
-                <HelpTip :info="policyFieldInfo.minEligibleMinutes" />
-              </label>
-              <InputNumber
-                v-model="form.minEligibleMinutes"
-                inputClass="w-full"
-                class="w-full"
-                :min="0"
-                :useGrouping="false"
-              />
-            </div>
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('common.name') }}
+            </label>
 
-            <div class="space-y-2">
-              <label class="ot-field-label">
-                <span>Round Unit Minutes</span>
-                <HelpTip :info="policyFieldInfo.roundUnitMinutes" />
-              </label>
-              <InputNumber
-                v-model="form.roundUnitMinutes"
-                inputClass="w-full"
-                class="w-full"
-                :min="1"
-                :useGrouping="false"
-              />
-            </div>
-
-            <div class="space-y-2">
-              <label class="ot-field-label">
-                <span>Round Method</span>
-                <HelpTip :info="policyFieldInfo.roundMethod" />
-              </label>
-              <Select
-                v-model="form.roundMethod"
-                :options="formRoundMethodOptions"
-                optionLabel="label"
-                optionValue="value"
-                class="w-full"
-              />
-            </div>
-
-            <div class="space-y-2">
-              <label class="ot-field-label">
-                <span>Grace After Shift End</span>
-                <HelpTip :info="policyFieldInfo.graceAfterShiftEndMinutes" />
-              </label>
-              <InputNumber
-                v-model="form.graceAfterShiftEndMinutes"
-                inputClass="w-full"
-                class="w-full"
-                :min="0"
-                :useGrouping="false"
-              />
-            </div>
+            <InputText
+              v-model="form.name"
+              class="w-full"
+              :placeholder="t('ot.policy.namePlaceholder')"
+            />
           </div>
         </div>
 
-        <div class="space-y-4">
-          <div class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-bg)] p-4">
-            <div class="mb-3 flex items-center gap-2 text-sm font-semibold text-[color:var(--ot-text)]">
-              <span>Behavior Flags</span>
-              <HelpTip :info="policyFieldInfo.behaviorFlags" />
-            </div>
+        <div class="ot-field">
+          <label class="ot-field-label">
+            {{ t('common.description') }}
+          </label>
 
-            <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <label
-                v-for="flag in behaviorFlags"
-                :key="flag.key"
-                class="ot-check-item"
-              >
-                <input
-                  v-model="form[flag.key]"
-                  type="checkbox"
-                >
-                <span class="min-w-0 flex-1">{{ flag.label }}</span>
-                <HelpTip :info="flag" />
-              </label>
+          <Textarea
+            v-model="form.description"
+            rows="3"
+            auto-resize
+            class="w-full"
+            :placeholder="t('ot.policy.descriptionPlaceholder')"
+          />
+        </div>
 
-              <label class="ot-check-item">
-                <input
-                  v-model="form.isActive"
-                  type="checkbox"
-                >
-                <span class="min-w-0 flex-1">Active</span>
-                <HelpTip :info="activeFlagInfo" />
-              </label>
-            </div>
+        <div class="ot-form-grid">
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('ot.policy.roundMethodLabel') }}
+            </label>
+
+            <Select
+              v-model="form.roundMethod"
+              :options="formRoundMethodOptions"
+              option-label="label"
+              option-value="value"
+              class="w-full"
+            />
           </div>
 
-          <div class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] p-4">
-            <div class="mb-2 flex items-center gap-2 text-sm font-semibold text-[color:var(--ot-text)]">
-              <span>Quick Summary</span>
-              <HelpTip :info="policyFieldInfo.quickSummary" />
-            </div>
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('ot.policy.roundUnit') }}
+            </label>
 
-            <div class="grid grid-cols-1 gap-2 text-sm text-[color:var(--ot-text-muted)]">
-              <div>
-                <span class="font-medium text-[color:var(--ot-text)]">Round:</span>
-                {{ form.roundMethod }} every {{ Number(form.roundUnitMinutes || 0) }} min
-              </div>
-              <div>
-                <span class="font-medium text-[color:var(--ot-text)]">Min Eligible:</span>
-                {{ Number(form.minEligibleMinutes || 0) }} min
-              </div>
-              <div>
-                <span class="font-medium text-[color:var(--ot-text)]">Grace:</span>
-                {{ Number(form.graceAfterShiftEndMinutes || 0) }} min
-              </div>
-              <div>
-                <span class="font-medium text-[color:var(--ot-text)]">Status:</span>
-                {{ form.isActive ? 'Active' : 'Inactive' }}
-              </div>
-            </div>
+            <InputNumber
+              v-model="form.roundUnitMinutes"
+              class="w-full"
+              inputClass="w-full"
+              :min="1"
+              :useGrouping="false"
+              :suffix="` ${t('ot.common.min')}`"
+            />
           </div>
         </div>
+
+        <div class="ot-form-grid">
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('ot.policy.minEligible') }}
+            </label>
+
+            <InputNumber
+              v-model="form.minEligibleMinutes"
+              class="w-full"
+              inputClass="w-full"
+              :min="0"
+              :useGrouping="false"
+              :suffix="` ${t('ot.common.min')}`"
+            />
+          </div>
+
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('ot.policy.graceAfterShiftEnd') }}
+            </label>
+
+            <InputNumber
+              v-model="form.graceAfterShiftEndMinutes"
+              class="w-full"
+              inputClass="w-full"
+              :min="0"
+              :useGrouping="false"
+              :suffix="` ${t('ot.common.min')}`"
+            />
+          </div>
+        </div>
+
+        <div class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface-2)] p-4">
+          <div class="mb-3 text-sm font-semibold text-[color:var(--ot-text)]">
+            {{ t('ot.policy.behavior') }}
+          </div>
+
+          <div class="grid grid-cols-1 gap-2 lg:grid-cols-2">
+            <label
+              v-for="flag in behaviorFlags"
+              :key="flag.key"
+              class="flex items-start gap-3 rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] p-3"
+            >
+              <Checkbox
+                v-model="form[flag.key]"
+                binary
+              />
+
+              <span class="grid gap-0.5">
+                <span class="text-sm font-semibold text-[color:var(--ot-text)]">
+                  {{ flag.label }}
+                </span>
+
+                <span class="text-xs text-[color:var(--ot-text-muted)]">
+                  {{ flag.description }}
+                </span>
+              </span>
+            </label>
+          </div>
+        </div>
+
+        <label class="flex items-center gap-3 rounded-xl border border-[color:var(--ot-border)] px-4 py-3">
+          <Checkbox
+            v-model="form.isActive"
+            binary
+          />
+
+          <span class="grid gap-0.5">
+            <span class="text-sm font-semibold text-[color:var(--ot-text)]">
+              {{ t('common.active') }}
+            </span>
+
+            <span class="text-xs text-[color:var(--ot-text-muted)]">
+              {{ t('ot.policy.activeHelp') }}
+            </span>
+          </span>
+        </label>
       </div>
 
       <template #footer>
-        <div class="flex justify-end gap-2">
+        <div class="ot-form-footer">
           <Button
-            label="Cancel"
+            :label="t('common.cancel')"
             text
             size="small"
             :disabled="saving"
             @click="policyDialogVisible = false"
           />
+
           <Button
-            v-if="canSaveDialog"
-            :label="isEditMode ? 'Save Changes' : 'Create Policy'"
-            :icon="isEditMode ? 'pi pi-save' : 'pi pi-plus'"
+            :label="saveLabel"
+            icon="pi pi-check"
+            size="small"
             :loading="saving"
             :disabled="isSaveDisabled"
-            size="small"
             @click="submitPolicy"
           />
         </div>
@@ -1110,145 +1095,14 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-:deep(.ot-policy-table .p-datatable-thead > tr > th) {
-  padding: 0.72rem 0.9rem !important;
-}
-
-:deep(.ot-policy-table .p-datatable-tbody > tr > td) {
-  padding: 0.62rem 0.8rem !important;
-  height: 76px !important;
-  vertical-align: middle !important;
-}
-
-:deep(.ot-policy-table .p-tag.ot-policy-tag) {
+:deep(.ot-status-tag) {
   min-height: 1.35rem !important;
-  padding: 0.12rem 0.45rem !important;
-  font-size: 0.7rem !important;
-  font-weight: 600 !important;
-  line-height: 1 !important;
+  padding: 0.12rem 0.48rem !important;
+  border: 1px solid transparent !important;
   border-radius: 999px !important;
-}
-
-/* frontend/src/modules/ot/views/OTCalculationPolicyListView.vue */
-
-/* Field label with help icon */
-.ot-field-label {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: var(--ot-text);
-}
-
-/*
-  IMPORTANT:
-  HelpTip is rendered by JS h(), so use :global()
-  to make sure scoped CSS still controls the tooltip.
-*/
-:global(.ot-help-wrap) {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.35rem;
-  height: 1.35rem;
-  flex-shrink: 0;
-  border-radius: 999px;
-  color: var(--ot-text-muted);
-  cursor: help;
-  transition:
-    color 0.18s ease,
-    background-color 0.18s ease;
-}
-
-:global(.ot-help-wrap:hover),
-:global(.ot-help-wrap:focus-visible) {
-  color: var(--p-primary-500);
-  background: color-mix(in srgb, var(--p-primary-500) 10%, transparent);
-  outline: none;
-}
-
-/* Hidden by default */
-:global(.ot-help-tooltip) {
-  position: absolute;
-  left: 0;
-  top: calc(100% + 0.55rem);
-  z-index: 9999;
-
-  display: flex;
-  width: min(24rem, 80vw);
-  flex-direction: column;
-  gap: 0.45rem;
-
-  border: 1px solid var(--ot-border);
-  border-radius: 1rem;
-  background: var(--ot-surface);
-  box-shadow: 0 18px 45px rgba(15, 23, 42, 0.18);
-  padding: 0.9rem 1rem;
-
-  color: var(--ot-text);
-  text-align: left;
-  line-height: 1.45;
-
-  opacity: 0;
-  visibility: hidden;
-  transform: translateY(-4px);
-  pointer-events: none;
-
-  transition:
-    opacity 0.18s ease 1s,
-    visibility 0s linear 1s,
-    transform 0.18s ease 1s;
-}
-
-/* Small arrow */
-:global(.ot-help-tooltip::before) {
-  content: '';
-  position: absolute;
-  left: 0.45rem;
-  bottom: 100%;
-  border-width: 0.45rem;
-  border-style: solid;
-  border-color: transparent transparent var(--ot-surface) transparent;
-}
-
-/*
-  Show only after hovering/focusing for 2 seconds.
-  This prevents messy instant tooltips.
-*/
-:global(.ot-help-wrap:hover .ot-help-tooltip),
-:global(.ot-help-wrap:focus-visible .ot-help-tooltip) {
-  opacity: 1;
-  visibility: visible;
-  transform: translateY(0);
-  pointer-events: auto;
-
-  transition-delay: 2s, 2s, 2s;
-}
-
-/* If mouse leaves before 2 seconds, hide immediately */
-:global(.ot-help-wrap:not(:hover):not(:focus-visible) .ot-help-tooltip) {
-  opacity: 0;
-  visibility: hidden;
-  transform: translateY(-4px);
-  pointer-events: none;
-
-  transition-delay: 0s;
-}
-
-:global(.ot-help-title) {
-  font-size: 0.85rem;
-  font-weight: 800;
-  color: var(--ot-text);
-}
-
-:global(.ot-help-line) {
-  font-size: 0.78rem;
-  color: var(--ot-text-muted);
-}
-
-:global(.ot-help-line strong) {
-  color: var(--ot-text);
+  font-size: 0.7rem !important;
+  font-weight: 500 !important;
+  line-height: 1 !important;
+  white-space: nowrap !important;
 }
 </style>

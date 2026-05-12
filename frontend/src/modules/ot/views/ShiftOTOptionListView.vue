@@ -2,7 +2,8 @@
 <script setup>
 // frontend/src/modules/ot/views/ShiftOTOptionListView.vue
 
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
@@ -14,10 +15,14 @@ import IconField from 'primevue/iconfield'
 import InputIcon from 'primevue/inputicon'
 import InputNumber from 'primevue/inputnumber'
 import InputText from 'primevue/inputtext'
+import MultiSelect from 'primevue/multiselect'
 import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 
+import AppTableLoading from '@/shared/components/AppTableLoading.vue'
 import { useAuthStore } from '@/modules/auth/auth.store'
+import { getApiErrorMessage } from '@/shared/utils/apiError'
+import { formatDateTime } from '@/shared/utils/dateFormat'
 import { getShiftLookupOptions } from '@/modules/shift/shift.api'
 import {
   createShiftOTOption,
@@ -26,15 +31,17 @@ import {
   updateShiftOTOption,
 } from '@/modules/ot/otMaster.api'
 
+const { t } = useI18n()
 const toast = useToast()
 const auth = useAuthStore()
 
-const DAY_MINUTES = 24 * 60
 const PAGE_SIZE = 10
 const SEARCH_DEBOUNCE_MS = 250
-const LOOKUP_LIMIT = 50
+const LOOKUP_LIMIT = 100
 
 const saving = ref(false)
+const loadingShifts = ref(false)
+const loadingPolicies = ref(false)
 
 const rows = ref([])
 const totalRecords = ref(0)
@@ -43,8 +50,8 @@ const loadedPages = ref(new Set())
 const bootstrapped = ref(false)
 const backgroundLoading = ref(false)
 
-const shiftSelectOptions = ref([])
-const policySelectOptions = ref([])
+const shiftOptions = ref([])
+const policyOptions = ref([])
 
 const optionDialogVisible = ref(false)
 const editingOptionId = ref('')
@@ -74,151 +81,110 @@ const form = reactive({
   isActive: true,
 })
 
-const statusOptions = [
-  { label: 'All Status', value: '' },
-  { label: 'Active', value: 'true' },
-  { label: 'Inactive', value: 'false' },
-]
-
-const timingModeOptions = [
-  { label: 'All Timing Modes', value: '' },
-  { label: 'After Shift End', value: 'AFTER_SHIFT_END' },
-  { label: 'Fixed Time', value: 'FIXED_TIME' },
-]
-
-const formTimingModeOptions = [
-  { label: 'After Shift End', value: 'AFTER_SHIFT_END' },
-  { label: 'Fixed Time', value: 'FIXED_TIME' },
-]
-
-const dayTypeOptions = [
-  { label: 'All Day Types', value: '' },
-  { label: 'Working Day', value: 'WORKING_DAY' },
-  { label: 'Sunday', value: 'SUNDAY' },
-  { label: 'Holiday', value: 'HOLIDAY' },
-]
-
-const formDayTypeOptions = [
-  {
-    label: 'Working Day',
-    value: 'WORKING_DAY',
-  },
-  {
-    label: 'Sunday',
-    value: 'SUNDAY',
-  },
-  {
-    label: 'Holiday',
-    value: 'HOLIDAY',
-  },
-]
-
-const filterShiftOptions = computed(() => [
-  { label: 'All Shifts', value: '' },
-  ...shiftSelectOptions.value,
-])
-
-const filterPolicyOptions = computed(() => [
-  { label: 'All Policies', value: '' },
-  ...policySelectOptions.value,
-])
-
-const canViewShiftOTOption = computed(() =>
+const canView = computed(() =>
   auth.user?.isRootAdmin || auth.hasAnyPermission(['SHIFT_OT_OPTION_VIEW']),
 )
 
-const canCreateShiftOTOption = computed(() =>
+const canCreate = computed(() =>
   auth.user?.isRootAdmin || auth.hasAnyPermission(['SHIFT_OT_OPTION_CREATE']),
 )
 
-const canUpdateShiftOTOption = computed(() =>
+const canUpdate = computed(() =>
   auth.user?.isRootAdmin || auth.hasAnyPermission(['SHIFT_OT_OPTION_UPDATE']),
 )
 
-const isEditMode = computed(() => !!editingOptionId.value)
+const statusOptions = computed(() => [
+  { label: t('common.allStatus'), value: '' },
+  { label: t('common.active'), value: 'true' },
+  { label: t('common.inactive'), value: 'false' },
+])
 
-const canSaveDialog = computed(() =>
-  isEditMode.value ? canUpdateShiftOTOption.value : canCreateShiftOTOption.value,
-)
+const timingModeOptions = computed(() => [
+  { label: t('ot.shiftOption.allTimingModes'), value: '' },
+  { label: t('ot.shiftOption.timing.afterShiftEnd'), value: 'AFTER_SHIFT_END' },
+  { label: t('ot.shiftOption.timing.fixedTime'), value: 'FIXED_TIME' },
+])
+
+const formTimingModeOptions = computed(() => [
+  { label: t('ot.shiftOption.timing.afterShiftEnd'), value: 'AFTER_SHIFT_END' },
+  { label: t('ot.shiftOption.timing.fixedTime'), value: 'FIXED_TIME' },
+])
+
+const dayTypeOptions = computed(() => [
+  { label: t('ot.shiftOption.allDayTypes'), value: '' },
+  { label: t('ot.dayType.workingDay'), value: 'WORKING_DAY' },
+  { label: t('ot.dayType.sunday'), value: 'SUNDAY' },
+  { label: t('ot.dayType.holiday'), value: 'HOLIDAY' },
+])
+
+const formDayTypeOptions = computed(() => [
+  { label: t('ot.dayType.workingDay'), value: 'WORKING_DAY' },
+  { label: t('ot.dayType.sunday'), value: 'SUNDAY' },
+  { label: t('ot.dayType.holiday'), value: 'HOLIDAY' },
+])
+
+const filterShiftOptions = computed(() => [
+  { label: t('ot.shiftOption.allShifts'), value: '' },
+  ...shiftOptions.value,
+])
+
+const filterPolicyOptions = computed(() => [
+  { label: t('ot.shiftOption.allPolicies'), value: '' },
+  ...policyOptions.value,
+])
+
+const isEditMode = computed(() => Boolean(editingOptionId.value))
+const isFixedTimeMode = computed(() => form.timingMode === 'FIXED_TIME')
+const isAfterShiftEndMode = computed(() => form.timingMode === 'AFTER_SHIFT_END')
 
 const totalOptions = computed(() => Number(totalRecords.value || 0))
 const loadedCount = computed(() => rows.value.filter(Boolean).length)
-const summaryText = computed(() => `${loadedCount.value} of ${totalOptions.value}`)
-
 const hasAnyData = computed(() => rows.value.some(Boolean))
 const useVirtualScroll = computed(() => totalOptions.value > PAGE_SIZE)
+const isFirstLoading = computed(() => !bootstrapped.value && backgroundLoading.value)
 
-const selectedShiftOption = computed(() =>
-  shiftSelectOptions.value.find((item) => item.value === form.shiftId) || null,
+const loadedLabel = computed(() =>
+  t('common.loaded', {
+    loaded: loadedCount.value,
+    total: totalOptions.value,
+  }),
 )
 
-const selectedPolicyOption = computed(() =>
-  policySelectOptions.value.find((item) => item.value === form.calculationPolicyId) || null,
+const dialogTitle = computed(() =>
+  isEditMode.value
+    ? t('ot.shiftOption.editTitle')
+    : t('ot.shiftOption.createTitle'),
 )
 
-const isAfterShiftEndMode = computed(() => form.timingMode === 'AFTER_SHIFT_END')
-const isFixedTimeMode = computed(() => form.timingMode === 'FIXED_TIME')
-
-const previewWindow = computed(() => {
-  if (isAfterShiftEndMode.value) {
-    const shiftEnd = selectedShiftOption.value?.endTime || ''
-    const start = addMinutesToHHmm(shiftEnd, Number(form.startAfterShiftEndMinutes || 0))
-    const end = addMinutesToHHmm(start, Number(form.requestedMinutes || 0))
-
-    return {
-      start,
-      end,
-      grossMinutes: Number(form.requestedMinutes || 0),
-      breakMinutes: 0,
-      paidMinutes: Number(form.requestedMinutes || 0),
-    }
-  }
-
-  const grossMinutes =
-    isValidHHmm(form.fixedStartTime) && isValidHHmm(form.fixedEndTime)
-      ? durationBetweenTimes(form.fixedStartTime, form.fixedEndTime)
-      : 0
-
-  const breakMinutes = getSelectedShiftBreakOverlapMinutes(
-    form.fixedStartTime,
-    form.fixedEndTime,
-  )
-
-  const paidMinutes = getFixedPaidMinutes(form.fixedStartTime, form.fixedEndTime)
-
-  return {
-    start: form.fixedStartTime || '',
-    end: form.fixedEndTime || '',
-    grossMinutes,
-    breakMinutes,
-    paidMinutes,
-  }
-})
+const saveLabel = computed(() =>
+  isEditMode.value ? t('common.save') : t('common.create'),
+)
 
 const isSaveDisabled = computed(() => {
-  const baseInvalid =
-    saving.value ||
-    !canSaveDialog.value ||
-    !String(form.shiftId || '').trim() ||
-    !String(form.label || '').trim() ||
-    !String(form.timingMode || '').trim() ||
-    !Array.isArray(form.applicableDayTypes) ||
-    !form.applicableDayTypes.length ||
-    !String(form.calculationPolicyId || '').trim() ||
-    Number(form.requestedMinutes || 0) < 1 ||
-    Number(form.sequence || 0) < 1
+  if (saving.value) return true
+  if (isEditMode.value && !canUpdate.value) return true
+  if (!isEditMode.value && !canCreate.value) return true
 
-  if (baseInvalid) return true
-
-  if (form.timingMode === 'AFTER_SHIFT_END') {
-    return Number(form.startAfterShiftEndMinutes || 0) < 0
+  if (!String(form.shiftId || '').trim()) return true
+  if (!String(form.label || '').trim()) return true
+  if (!String(form.timingMode || '').trim()) return true
+  if (!Array.isArray(form.applicableDayTypes) || !form.applicableDayTypes.length) {
+    return true
   }
 
-  if (form.timingMode === 'FIXED_TIME') {
-    return !isValidHHmm(form.fixedStartTime) || !isValidHHmm(form.fixedEndTime)
+  if (!String(form.calculationPolicyId || '').trim()) return true
+  if (Number(form.requestedMinutes || 0) < 1) return true
+  if (Number(form.sequence || 0) < 1) return true
+
+  if (isAfterShiftEndMode.value && Number(form.startAfterShiftEndMinutes || 0) < 0) {
+    return true
   }
 
-  return true
+  if (isFixedTimeMode.value) {
+    return !isHHmm(form.fixedStartTime) || !isHHmm(form.fixedEndTime)
+  }
+
+  return false
 })
 
 let searchTimer = null
@@ -232,37 +198,53 @@ function normalizeItems(payload) {
   return Array.isArray(payload?.items) ? payload.items : []
 }
 
-function normalizeLookupItems(res) {
-  const payload = normalizePayload(res)
-  const items = normalizeItems(payload)
+function normalizeTotal(payload) {
+  return Number(payload?.pagination?.total || payload?.total || 0)
+}
 
+function normalizeId(row) {
+  return String(row?.id || row?._id || row?.shiftOtOptionId || '').trim()
+}
+
+function buildLabel(...parts) {
+  return parts
+    .map((part) => String(part || '').trim())
+    .filter(Boolean)
+    .join(' - ')
+}
+
+function showToast(severity, summary, detail, life = 3000) {
+  toast.add({
+    severity,
+    summary,
+    detail,
+    life,
+  })
+}
+
+function mapLookupOptions(items = []) {
   return items
     .map((item) => {
-      const id = String(item?.id || item?._id || item?.value || '').trim()
-      const label = String(
+      const value = normalizeId(item) || String(item?.value || '').trim()
+      const label =
         item?.label ||
-          item?.optionLabel ||
-          [item?.code, item?.name].filter(Boolean).join(' - ') ||
-          '',
-      ).trim()
+        item?.optionLabel ||
+        buildLabel(item?.code, item?.name) ||
+        buildLabel(item?.shiftCode, item?.shiftName)
 
-      if (!id || !label) return null
+      if (!value || !label) return null
 
       return {
         ...item,
+        value,
         label,
-        value: id,
-        startTime: item?.startTime || item?.shift?.startTime || '',
-        breakStartTime: item?.breakStartTime || item?.shift?.breakStartTime || '',
-        breakEndTime: item?.breakEndTime || item?.shift?.breakEndTime || '',
-        endTime: item?.endTime || item?.shift?.endTime || '',
       }
     })
     .filter(Boolean)
 }
 
 function normalizeApplicableDayTypes(value) {
-  const source = Array.isArray(value) ? value : ['WORKING_DAY']
+  const source = Array.isArray(value) ? value : []
   const valid = ['WORKING_DAY', 'SUNDAY', 'HOLIDAY']
 
   const normalized = Array.from(
@@ -276,192 +258,191 @@ function normalizeApplicableDayTypes(value) {
   return normalized.length ? normalized : ['WORKING_DAY']
 }
 
-function pad2(value) {
-  return String(value).padStart(2, '0')
-}
-
-function isValidHHmm(value) {
+function isHHmm(value) {
   return /^([01]\d|2[0-3]):([0-5]\d)$/.test(String(value || '').trim())
 }
 
-function toMinutes(value) {
-  const raw = String(value || '').trim()
-
-  if (!isValidHHmm(raw)) return null
-
-  const [hours, minutes] = raw.split(':').map(Number)
-  return hours * 60 + minutes
+function activeSeverity(value) {
+  return value === false ? 'secondary' : 'success'
 }
 
-function fromMinutes(value) {
-  const total = ((Number(value || 0) % DAY_MINUTES) + DAY_MINUTES) % DAY_MINUTES
-  const hours = Math.floor(total / 60)
-  const minutes = total % 60
+function activeLabel(row) {
+  if (row?.statusKey) return t(row.statusKey)
 
-  return `${pad2(hours)}:${pad2(minutes)}`
+  return row?.isActive === false ? t('common.inactive') : t('common.active')
 }
 
-function buildClockInterval(startTime, endTime) {
-  const start = toMinutes(startTime)
-  const endRaw = toMinutes(endTime)
+function timingModeLabel(value) {
+  const mode = String(value || '').trim().toUpperCase()
 
-  if (start === null || endRaw === null) {
-    return null
+  if (mode === 'FIXED_TIME') return t('ot.shiftOption.timing.fixedTime')
+  return t('ot.shiftOption.timing.afterShiftEnd')
+}
+
+function timingModeSeverity(value) {
+  const mode = String(value || '').trim().toUpperCase()
+
+  if (mode === 'FIXED_TIME') return 'info'
+  return 'secondary'
+}
+
+function dayTypeLabel(value) {
+  const dayType = String(value || '').trim().toUpperCase()
+
+  if (dayType === 'SUNDAY') return t('ot.dayType.sunday')
+  if (dayType === 'HOLIDAY') return t('ot.dayType.holiday')
+
+  return t('ot.dayType.workingDay')
+}
+
+function dayTypeSeverity(value) {
+  const dayType = String(value || '').trim().toUpperCase()
+
+  if (dayType === 'HOLIDAY') return 'danger'
+  if (dayType === 'SUNDAY') return 'warning'
+
+  return 'success'
+}
+
+function minutesLabel(value) {
+  const minutes = Number(value || 0)
+
+  if (!minutes) return t('ot.common.minuteValue', { value: 0 })
+
+  const hours = Math.floor(minutes / 60)
+  const mins = minutes % 60
+
+  if (hours && mins) {
+    return t('ot.common.hourMinuteValue', {
+      hours,
+      minutes: mins,
+    })
   }
 
-  return {
-    start,
-    end: endRaw <= start ? endRaw + DAY_MINUTES : endRaw,
-  }
+  if (hours) return t('ot.common.hourValue', { value: hours })
+
+  return t('ot.common.minuteValue', { value: mins })
 }
 
-function addMinutesToHHmm(time, minutesToAdd) {
-  const base = toMinutes(time)
-
-  if (base === null) return ''
-
-  return fromMinutes(base + Number(minutesToAdd || 0))
+function shiftLabel(row) {
+  const shift = row?.shift || {}
+  return (
+    row?.shiftLabel ||
+    shift?.label ||
+    buildLabel(row?.shiftCode, row?.shiftName) ||
+    buildLabel(shift?.code, shift?.name) ||
+    '-'
+  )
 }
 
-function durationBetweenTimes(startTime, endTime) {
-  const interval = buildClockInterval(startTime, endTime)
+function shiftSubLabel(row) {
+  const shift = row?.shift || {}
 
-  if (!interval) return 0
+  const type = row?.shiftType || shift?.type || ''
+  const start = row?.shiftStartTime || shift?.startTime || ''
+  const end = row?.shiftEndTime || shift?.endTime || ''
+  const time = start && end ? `${start} - ${end}` : ''
 
-  return Math.max(0, interval.end - interval.start)
+  return [type, time].filter(Boolean).join(' · ') || '-'
 }
 
-function overlapMinutes(aStart, aEnd, bStart, bEnd) {
-  return Math.max(0, Math.min(aEnd, bEnd) - Math.max(aStart, bStart))
+function policyLabel(row) {
+  const policy = row?.calculationPolicy || row?.policy || {}
+
+  return (
+    row?.calculationPolicyLabel ||
+    row?.policyLabel ||
+    policy?.label ||
+    buildLabel(row?.calculationPolicyCode, row?.calculationPolicyName) ||
+    buildLabel(policy?.code, policy?.name) ||
+    '-'
+  )
 }
 
-function getBreakTimeRange(value = {}) {
-  const shift = value?.shift || {}
+function policySubLabel(row) {
+  const policy = row?.calculationPolicy || row?.policy || {}
 
-  return {
-    breakStartTime: String(
-      value?.breakStartTime ||
-        shift?.breakStartTime ||
-        '',
-    ).trim(),
+  const roundMethod = row?.roundMethod || policy?.roundMethod || ''
+  const roundUnit = row?.roundUnitMinutes || policy?.roundUnitMinutes || ''
+  const minEligible = row?.minEligibleMinutes || policy?.minEligibleMinutes || ''
 
-    breakEndTime: String(
-      value?.breakEndTime ||
-        shift?.breakEndTime ||
-        '',
-    ).trim(),
-  }
-}
+  const parts = []
 
-function getBreakLabel(value = {}) {
-  const { breakStartTime, breakEndTime } = getBreakTimeRange(value)
-
-  if (!breakStartTime || !breakEndTime) return '-'
-
-  return `${breakStartTime} - ${breakEndTime}`
-}
-
-function getBreakOverlapMinutes({
-  windowStartTime,
-  windowEndTime,
-  breakStartTime,
-  breakEndTime,
-}) {
-  const windowInterval = buildClockInterval(windowStartTime, windowEndTime)
-  const breakInterval = buildClockInterval(breakStartTime, breakEndTime)
-
-  if (!windowInterval || !breakInterval) {
-    return 0
-  }
-
-  const overlaps = [-DAY_MINUTES, 0, DAY_MINUTES].map((offset) => {
-    return overlapMinutes(
-      windowInterval.start,
-      windowInterval.end,
-      breakInterval.start + offset,
-      breakInterval.end + offset,
+  if (roundMethod) parts.push(roundMethod)
+  if (roundUnit) {
+    parts.push(
+      t('ot.shiftOption.roundEvery', {
+        unit: minutesLabel(roundUnit),
+      }),
     )
-  })
-
-  return Math.max(...overlaps)
-}
-
-function getBreakOverlapForValue(value = {}, windowStartTime, windowEndTime) {
-  const { breakStartTime, breakEndTime } = getBreakTimeRange(value)
-
-  return getBreakOverlapMinutes({
-    windowStartTime,
-    windowEndTime,
-    breakStartTime,
-    breakEndTime,
-  })
-}
-
-function getSelectedShiftBreakOverlapMinutes(
-  startTime = form.fixedStartTime,
-  endTime = form.fixedEndTime,
-) {
-  return getBreakOverlapForValue(selectedShiftOption.value || {}, startTime, endTime)
-}
-
-function getSelectedShiftBreakLabel() {
-  return getBreakLabel(selectedShiftOption.value || {})
-}
-
-function getFixedPaidMinutes(startTime, endTime) {
-  if (!isValidHHmm(startTime) || !isValidHHmm(endTime)) return 0
-
-  const grossMinutes = durationBetweenTimes(startTime, endTime)
-  const breakOverlap = getSelectedShiftBreakOverlapMinutes(startTime, endTime)
-
-  return Math.max(1, grossMinutes - breakOverlap)
-}
-
-function syncFixedRequestedMinutes() {
-  if (form.timingMode !== 'FIXED_TIME') return
-  if (!isValidHHmm(form.fixedStartTime) || !isValidHHmm(form.fixedEndTime)) return
-
-  form.requestedMinutes = getFixedPaidMinutes(form.fixedStartTime, form.fixedEndTime)
-}
-
-function upsertShiftOptionFromSnapshot(shift = {}) {
-  const id = String(shift?.id || shift?._id || '').trim()
-  if (!id) return
-
-  const existingIndex = shiftSelectOptions.value.findIndex((item) => item.value === id)
-
-  const code = String(shift?.code || '').trim()
-  const name = String(shift?.name || '').trim()
-  const start = String(shift?.startTime || '').trim()
-  const breakStart = String(shift?.breakStartTime || '').trim()
-  const breakEnd = String(shift?.breakEndTime || '').trim()
-  const end = String(shift?.endTime || '').trim()
-
-  const label =
-    [code, name].filter(Boolean).join(' - ') ||
-    [name, start && end ? `(${start}-${end})` : ''].filter(Boolean).join(' ') ||
-    id
-
-  const nextItem = {
-    ...shift,
-    id,
-    value: id,
-    label,
-    startTime: start,
-    breakStartTime: breakStart,
-    breakEndTime: breakEnd,
-    endTime: end,
+  }
+  if (minEligible) {
+    parts.push(
+      t('ot.shiftOption.minEligibleValue', {
+        value: minutesLabel(minEligible),
+      }),
+    )
   }
 
-  if (existingIndex >= 0) {
-    shiftSelectOptions.value[existingIndex] = {
-      ...shiftSelectOptions.value[existingIndex],
-      ...nextItem,
-    }
-    return
+  return parts.join(' · ') || '-'
+}
+
+function optionTimeWindow(row) {
+  const start =
+    row?.requestStartTime ||
+    row?.startTime ||
+    row?.fixedStartTime ||
+    row?.preview?.requestStartTime ||
+    ''
+
+  const end =
+    row?.requestEndTime ||
+    row?.endTime ||
+    row?.fixedEndTime ||
+    row?.preview?.requestEndTime ||
+    ''
+
+  if (!start && !end) return '-'
+
+  return [start, end].filter(Boolean).join(' - ')
+}
+
+function optionTimingSubLabel(row) {
+  const timingMode = timingModeLabel(row?.timingMode)
+  const offset = Number(row?.startAfterShiftEndMinutes || 0)
+
+  if (String(row?.timingMode || '').toUpperCase() === 'AFTER_SHIFT_END') {
+    return offset > 0
+      ? t('ot.shiftOption.afterShiftOffset', {
+          offset: minutesLabel(offset),
+        })
+      : timingMode
   }
 
-  shiftSelectOptions.value = [nextItem, ...shiftSelectOptions.value]
+  return timingMode
+}
+
+function rowRequestedMinutes(row) {
+  return Number(
+    row?.requestedMinutes ||
+      row?.preview?.requestedMinutes ||
+      row?.grossMinutes ||
+      0,
+  )
+}
+
+function rowBreakMinutes(row) {
+  return Number(row?.breakMinutes || row?.preview?.breakMinutes || 0)
+}
+
+function rowPaidMinutes(row) {
+  return Number(
+    row?.totalRequestPaidMinutes ||
+      row?.preview?.totalRequestPaidMinutes ||
+      row?.paidMinutes ||
+      row?.requestedMinutes ||
+      0,
+  )
 }
 
 function buildQuery(page) {
@@ -480,59 +461,55 @@ function buildQuery(page) {
 }
 
 async function fetchShiftLookup() {
+  loadingShifts.value = true
+
   try {
     const res = await getShiftLookupOptions({
-      search: '',
+      page: 1,
       limit: LOOKUP_LIMIT,
+      search: '',
       isActive: true,
     })
 
-    shiftSelectOptions.value = normalizeLookupItems(res)
+    shiftOptions.value = mapLookupOptions(normalizeItems(normalizePayload(res)))
   } catch (error) {
-    shiftSelectOptions.value = []
-
-    toast.add({
-      severity: 'error',
-      summary: 'Shift lookup failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to load shift lookup options.',
-      life: 3000,
-    })
+    shiftOptions.value = []
+    showToast(
+      'error',
+      t('common.loadFailed'),
+      getApiErrorMessage(error, t('ot.shiftOption.shiftLookupFailed')),
+    )
+  } finally {
+    loadingShifts.value = false
   }
 }
 
 async function fetchPolicyLookup() {
+  loadingPolicies.value = true
+
   try {
     const res = await getOTCalculationPolicyLookupOptions({
-      search: '',
+      page: 1,
       limit: LOOKUP_LIMIT,
+      search: '',
       isActive: true,
     })
 
-    policySelectOptions.value = normalizeLookupItems(res)
+    policyOptions.value = mapLookupOptions(normalizeItems(normalizePayload(res)))
   } catch (error) {
-    policySelectOptions.value = []
-
-    toast.add({
-      severity: 'error',
-      summary: 'Policy lookup failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to load policy lookup options.',
-      life: 3000,
-    })
+    policyOptions.value = []
+    showToast(
+      'error',
+      t('common.loadFailed'),
+      getApiErrorMessage(error, t('ot.shiftOption.policyLookupFailed')),
+    )
+  } finally {
+    loadingPolicies.value = false
   }
 }
 
-async function fetchLookups() {
-  await Promise.all([fetchShiftLookup(), fetchPolicyLookup()])
-}
-
 async function fetchPage(page, { replace = false, silent = false } = {}) {
-  if (!canViewShiftOTOption.value) {
+  if (!canView.value) {
     bootstrapped.value = true
     return
   }
@@ -547,49 +524,49 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
   try {
     const res = await getShiftOTOptions(buildQuery(page))
+
     if (requestId !== currentRequestId) return
 
     const payload = normalizePayload(res)
     const items = normalizeItems(payload)
-    const total = Number(payload?.pagination?.total || 0)
+    const total = normalizeTotal(payload)
+    const startIndex = (page - 1) * PAGE_SIZE
 
     totalRecords.value = total
 
     if (replace) {
-      const nextRows = Array.from({ length: total }, () => null)
-      const startIndex = (page - 1) * PAGE_SIZE
+      const nextRows = total > 0 ? Array.from({ length: total }, () => null) : []
 
-      for (let i = 0; i < items.length; i += 1) {
-        nextRows[startIndex + i] = items[i]
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
       }
 
-      rows.value = total === 0 ? [] : nextRows
+      rows.value = nextRows
       loadedPages.value = new Set([page])
     } else {
       if (!rows.value.length && total > 0) {
         rows.value = Array.from({ length: total }, () => null)
       }
 
-      const startIndex = (page - 1) * PAGE_SIZE
+      const nextRows = [...rows.value]
 
-      for (let i = 0; i < items.length; i += 1) {
-        rows.value[startIndex + i] = items[i]
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
       }
 
+      rows.value = nextRows
       loadedPages.value.add(page)
     }
 
     bootstrapped.value = true
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Load failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to load shift OT options.',
-      life: 3000,
-    })
+    bootstrapped.value = true
+
+    showToast(
+      'error',
+      t('common.loadFailed'),
+      getApiErrorMessage(error, t('ot.shiftOption.loadFailed')),
+    )
   } finally {
     backgroundLoading.value = false
   }
@@ -600,6 +577,7 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
     rows.value = []
     totalRecords.value = 0
     loadedPages.value = new Set()
+    bootstrapped.value = false
   }
 
   await fetchPage(1, {
@@ -610,6 +588,7 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
 
 function runSearchSoon() {
   window.clearTimeout(searchTimer)
+
   searchTimer = window.setTimeout(() => {
     reloadFirstPage({ keepVisible: true })
   }, SEARCH_DEBOUNCE_MS)
@@ -619,23 +598,7 @@ function onSearchInput() {
   runSearchSoon()
 }
 
-function onShiftChange() {
-  reloadFirstPage({ keepVisible: true })
-}
-
-function onPolicyChange() {
-  reloadFirstPage({ keepVisible: true })
-}
-
-function onTimingModeFilterChange() {
-  reloadFirstPage({ keepVisible: true })
-}
-
-function onDayTypeFilterChange() {
-  reloadFirstPage({ keepVisible: true })
-}
-
-function onStatusChange() {
+function onFilterChange() {
   reloadFirstPage({ keepVisible: true })
 }
 
@@ -653,20 +616,8 @@ function clearFilters() {
 }
 
 function onSort(event) {
-  const fieldMap = {
-    label: 'label',
-    timingMode: 'timingMode',
-    requestedMinutes: 'requestedMinutes',
-    startAfterShiftEndMinutes: 'startAfterShiftEndMinutes',
-    sequence: 'sequence',
-    isActive: 'isActive',
-    createdAt: 'createdAt',
-    updatedAt: 'updatedAt',
-  }
-
-  filters.sortField = fieldMap[event.sortField] || 'sequence'
+  filters.sortField = event.sortField || 'sequence'
   filters.sortOrder = typeof event.sortOrder === 'number' ? event.sortOrder : 1
-
   reloadFirstPage({ keepVisible: true })
 }
 
@@ -688,6 +639,7 @@ async function onVirtualLazyLoad(event) {
 
 function resetForm() {
   editingOptionId.value = ''
+
   form.shiftId = ''
   form.label = ''
   form.timingMode = 'AFTER_SHIFT_END'
@@ -702,135 +654,111 @@ function resetForm() {
 }
 
 function openCreateDialog() {
-  if (!canCreateShiftOTOption.value) return
-
   resetForm()
   optionDialogVisible.value = true
 }
 
 function openEditDialog(row) {
-  if (!canUpdateShiftOTOption.value) return
+  if (!row) return
 
-  upsertShiftOptionFromSnapshot(row?.shift || {})
+  editingOptionId.value = normalizeId(row)
 
-  editingOptionId.value = String(row?.id || row?._id || '').trim()
-  form.shiftId = String(row?.shiftId || row?.shift?.id || row?.shift?._id || '').trim()
-  form.label = String(row?.label || '').trim()
-  form.timingMode = String(row?.timingMode || 'AFTER_SHIFT_END').trim().toUpperCase()
-  form.applicableDayTypes = normalizeApplicableDayTypes(row?.applicableDayTypes)
-  form.startAfterShiftEndMinutes = Number(row?.startAfterShiftEndMinutes || 0)
-  form.fixedStartTime = String(row?.fixedStartTime || '').trim()
-  form.fixedEndTime = String(row?.fixedEndTime || '').trim()
-  form.requestedMinutes = Number(row?.requestedMinutes || 120)
+  form.shiftId = String(row.shiftId || row.shift?.id || row.shift?._id || '').trim()
+  form.label = String(row.label || '').trim()
+  form.timingMode = String(row.timingMode || 'AFTER_SHIFT_END').trim().toUpperCase()
+  form.applicableDayTypes = normalizeApplicableDayTypes(row.applicableDayTypes)
+  form.startAfterShiftEndMinutes = Number(row.startAfterShiftEndMinutes || 0)
+  form.fixedStartTime = String(row.fixedStartTime || '').trim()
+  form.fixedEndTime = String(row.fixedEndTime || '').trim()
+  form.requestedMinutes = Number(row.requestedMinutes || 0)
   form.calculationPolicyId = String(
-    row?.calculationPolicyId ||
-      row?.calculationPolicy?.id ||
-      row?.calculationPolicy?._id ||
+    row.calculationPolicyId ||
+      row.calculationPolicy?.id ||
+      row.calculationPolicy?._id ||
       '',
   ).trim()
-  form.sequence = Number(row?.sequence || 1)
-  form.isActive = row?.isActive !== false
-
-  if (form.timingMode === 'FIXED_TIME') {
-    syncFixedRequestedMinutes()
-  }
+  form.sequence = Number(row.sequence || 1)
+  form.isActive = row.isActive !== false
 
   optionDialogVisible.value = true
 }
 
+function buildPayload() {
+  const payload = {
+    shiftId: String(form.shiftId || '').trim(),
+    label: String(form.label || '').trim(),
+    timingMode: String(form.timingMode || 'AFTER_SHIFT_END').trim().toUpperCase(),
+    applicableDayTypes: normalizeApplicableDayTypes(form.applicableDayTypes),
+    startAfterShiftEndMinutes: Number(form.startAfterShiftEndMinutes || 0),
+    fixedStartTime: String(form.fixedStartTime || '').trim(),
+    fixedEndTime: String(form.fixedEndTime || '').trim(),
+    requestedMinutes: Number(form.requestedMinutes || 0),
+    calculationPolicyId: String(form.calculationPolicyId || '').trim(),
+    sequence: Number(form.sequence || 1),
+    isActive: form.isActive === true,
+  }
+
+  if (payload.timingMode === 'AFTER_SHIFT_END') {
+    payload.fixedStartTime = ''
+    payload.fixedEndTime = ''
+  }
+
+  if (payload.timingMode === 'FIXED_TIME') {
+    payload.startAfterShiftEndMinutes = 0
+  }
+
+  return payload
+}
+
 function validateForm() {
-  if (!String(form.shiftId || '').trim()) return 'Shift is required.'
-  if (!String(form.label || '').trim()) return 'Label is required.'
-  if (!String(form.timingMode || '').trim()) return 'Timing mode is required.'
+  if (!String(form.shiftId || '').trim()) return t('ot.shiftOption.validation.shiftRequired')
+  if (!String(form.label || '').trim()) return t('ot.shiftOption.validation.labelRequired')
+  if (!String(form.timingMode || '').trim()) {
+    return t('ot.shiftOption.validation.timingModeRequired')
+  }
 
   if (!Array.isArray(form.applicableDayTypes) || !form.applicableDayTypes.length) {
-    return 'Please select at least one applicable day type.'
-  }
-
-  if (form.timingMode === 'AFTER_SHIFT_END') {
-    if (Number(form.startAfterShiftEndMinutes || 0) < 0) {
-      return 'Start after shift end minutes must be at least 0.'
-    }
-  }
-
-  if (form.timingMode === 'FIXED_TIME') {
-    if (!isValidHHmm(form.fixedStartTime)) {
-      return 'Fixed start time must be in HH:mm format.'
-    }
-
-    if (!isValidHHmm(form.fixedEndTime)) {
-      return 'Fixed end time must be in HH:mm format.'
-    }
-
-    if (form.fixedStartTime === form.fixedEndTime) {
-      return 'Fixed start time and fixed end time cannot be the same.'
-    }
-  }
-
-  if (Number(form.requestedMinutes || 0) < 1) {
-    return 'Requested minutes must be at least 1.'
+    return t('ot.shiftOption.validation.dayTypesRequired')
   }
 
   if (!String(form.calculationPolicyId || '').trim()) {
-    return 'Calculation policy is required.'
+    return t('ot.shiftOption.validation.policyRequired')
+  }
+
+  if (Number(form.requestedMinutes || 0) < 1) {
+    return t('ot.shiftOption.validation.requestedMinutesInvalid')
   }
 
   if (Number(form.sequence || 0) < 1) {
-    return 'Sequence must be at least 1.'
+    return t('ot.shiftOption.validation.sequenceInvalid')
+  }
+
+  if (isAfterShiftEndMode.value && Number(form.startAfterShiftEndMinutes || 0) < 0) {
+    return t('ot.shiftOption.validation.startAfterShiftEndInvalid')
+  }
+
+  if (isFixedTimeMode.value) {
+    if (!isHHmm(form.fixedStartTime)) {
+      return t('ot.shiftOption.validation.fixedStartTimeInvalid')
+    }
+
+    if (!isHHmm(form.fixedEndTime)) {
+      return t('ot.shiftOption.validation.fixedEndTimeInvalid')
+    }
+
+    if (form.fixedStartTime === form.fixedEndTime) {
+      return t('ot.shiftOption.validation.fixedTimeSame')
+    }
   }
 
   return ''
 }
 
-function buildPayload() {
-  const timingMode = String(form.timingMode || 'AFTER_SHIFT_END').trim().toUpperCase()
-
-  return {
-    shiftId: String(form.shiftId || '').trim(),
-    label: String(form.label || '').trim(),
-    timingMode,
-    applicableDayTypes: normalizeApplicableDayTypes(form.applicableDayTypes),
-    startAfterShiftEndMinutes:
-      timingMode === 'AFTER_SHIFT_END'
-        ? Number(form.startAfterShiftEndMinutes || 0)
-        : 0,
-    fixedStartTime:
-      timingMode === 'FIXED_TIME'
-        ? String(form.fixedStartTime || '').trim()
-        : '',
-    fixedEndTime:
-      timingMode === 'FIXED_TIME'
-        ? String(form.fixedEndTime || '').trim()
-        : '',
-    requestedMinutes: Number(form.requestedMinutes || 0),
-    calculationPolicyId: String(form.calculationPolicyId || '').trim(),
-    sequence: Number(form.sequence || 0),
-    isActive: form.isActive === true,
-  }
-}
-
 async function submitOption() {
-  const message = validateForm()
+  const validationMessage = validateForm()
 
-  if (message) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Validation',
-      detail: message,
-      life: 2500,
-    })
-    return
-  }
-
-  if (!canSaveDialog.value) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Permission denied',
-      detail: isEditMode.value
-        ? 'You do not have permission to update shift OT option.'
-        : 'You do not have permission to create shift OT option.',
-      life: 2500,
-    })
+  if (validationMessage) {
+    showToast('warn', t('common.warning'), validationMessage, 2500)
     return
   }
 
@@ -842,231 +770,40 @@ async function submitOption() {
     if (editingOptionId.value) {
       await updateShiftOTOption(editingOptionId.value, payload)
 
-      toast.add({
-        severity: 'success',
-        summary: 'Updated',
-        detail: 'Shift OT option updated successfully.',
-        life: 2500,
-      })
+      showToast(
+        'success',
+        t('common.updated'),
+        t('ot.shiftOption.updatedSuccess'),
+        2500,
+      )
     } else {
       await createShiftOTOption(payload)
 
-      toast.add({
-        severity: 'success',
-        summary: 'Created',
-        detail: 'Shift OT option created successfully.',
-        life: 2500,
-      })
+      showToast(
+        'success',
+        t('common.created'),
+        t('ot.shiftOption.createdSuccess'),
+        2500,
+      )
     }
 
     optionDialogVisible.value = false
     resetForm()
-
     await reloadFirstPage({ keepVisible: false })
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: isEditMode.value ? 'Save failed' : 'Create failed',
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to save shift OT option.',
-      life: 3500,
-    })
+    showToast(
+      'error',
+      editingOptionId.value ? t('common.updateFailed') : t('common.createFailed'),
+      getApiErrorMessage(error, t('ot.shiftOption.saveFailed')),
+      3500,
+    )
   } finally {
     saving.value = false
   }
 }
 
-function activeSeverity(value) {
-  return value ? 'success' : 'contrast'
-}
-
-function timingModeSeverity(value) {
-  const normalized = String(value || '').toUpperCase()
-
-  if (normalized === 'FIXED_TIME') return 'warning'
-  return 'info'
-}
-
-function dayTypeSeverity(value) {
-  const normalized = String(value || '').toUpperCase()
-
-  if (normalized === 'HOLIDAY') return 'danger'
-  if (normalized === 'SUNDAY') return 'warning'
-  return 'success'
-}
-
-function dayTypeLabel(value) {
-  const normalized = String(value || '').toUpperCase()
-
-  if (normalized === 'WORKING_DAY') return 'Working Day'
-  if (normalized === 'SUNDAY') return 'Sunday'
-  if (normalized === 'HOLIDAY') return 'Holiday'
-
-  return normalized || '-'
-}
-
-function dayTypesLabel(value) {
-  const values = normalizeApplicableDayTypes(value)
-  return values.map(dayTypeLabel).join(', ')
-}
-
-function formatDateTime(value) {
-  if (!value) return '-'
-
-  try {
-    return new Date(value).toLocaleString()
-  } catch {
-    return String(value)
-  }
-}
-
-function formatMinutesLabel(value) {
-  const minutes = Number(value || 0)
-
-  if (!minutes) return '0 min'
-
-  const hours = Math.floor(minutes / 60)
-  const mins = minutes % 60
-
-  if (hours && mins) return `${hours}h ${mins}m`
-  if (hours) return `${hours}h`
-
-  return `${mins}m`
-}
-
-function shiftLabel(row) {
-  const shift = row?.shift || {}
-  const code = String(shift?.code || '').trim()
-  const name = String(shift?.name || '').trim()
-
-  if (code && name) return `${code} · ${name}`
-  if (code) return code
-  if (name) return name
-
-  return '-'
-}
-
-function shiftSubLabel(row) {
-  const shift = row?.shift || {}
-  const type = String(shift?.type || '').trim()
-  const start = String(shift?.startTime || '').trim()
-  const end = String(shift?.endTime || '').trim()
-  const breakLabel = getBreakLabel(row)
-
-  return [
-    type,
-    start && end ? `${start} - ${end}` : '',
-    breakLabel !== '-' ? `Break ${breakLabel}` : '',
-  ]
-    .filter(Boolean)
-    .join(' · ') || '-'
-}
-
-function policyLabel(row) {
-  const policy = row?.calculationPolicy || {}
-  const code = String(policy?.code || '').trim()
-  const name = String(policy?.name || '').trim()
-
-  if (code && name) return `${code} · ${name}`
-  if (code) return code
-  if (name) return name
-
-  return '-'
-}
-
-function policySubLabel(row) {
-  const policy = row?.calculationPolicy || {}
-
-  const exactOutLabel =
-    policy?.allowApprovedOtWithoutExactClockOut === true
-      ? 'No exact out allowed'
-      : 'Strict scan'
-
-  return [
-    String(policy?.roundMethod || '').trim(),
-    Number(policy?.roundUnitMinutes || 0)
-      ? `${Number(policy?.roundUnitMinutes || 0)} min`
-      : '',
-    exactOutLabel,
-  ]
-    .filter(Boolean)
-    .join(' · ') || '-'
-}
-
-function timingModeLabel(value) {
-  const normalized = String(value || '').toUpperCase()
-
-  if (normalized === 'FIXED_TIME') return 'Fixed Time'
-  return 'After Shift End'
-}
-
-function optionTimeWindow(row) {
-  const timingMode = String(row?.timingMode || 'AFTER_SHIFT_END').toUpperCase()
-
-  if (timingMode === 'FIXED_TIME') {
-    const start = String(row?.fixedStartTime || '').trim()
-    const end = String(row?.fixedEndTime || '').trim()
-
-    if (start && end) return `${start} - ${end}`
-    return '-'
-  }
-
-  const shiftEnd = String(row?.shift?.endTime || '').trim()
-  const start = addMinutesToHHmm(shiftEnd, Number(row?.startAfterShiftEndMinutes || 0))
-  const end = addMinutesToHHmm(start, Number(row?.requestedMinutes || 0))
-
-  if (start && end) return `${start} - ${end}`
-  return '-'
-}
-
-function optionTimingSubLabel(row) {
-  const timingMode = String(row?.timingMode || 'AFTER_SHIFT_END').toUpperCase()
-
-  if (timingMode === 'FIXED_TIME') {
-    const breakOverlap = getBreakOverlapForValue(
-      row,
-      row?.fixedStartTime,
-      row?.fixedEndTime,
-    )
-
-    if (breakOverlap > 0) {
-      return `Fixed time · Break ${breakOverlap} min deducted`
-    }
-
-    return 'Fixed time · No break inside OT window'
-  }
-
-  return `Starts ${Number(row?.startAfterShiftEndMinutes || 0)} min after shift end`
-}
-
-watch(
-  () => form.timingMode,
-  (value) => {
-    const mode = String(value || '').toUpperCase()
-
-    if (mode === 'AFTER_SHIFT_END') {
-      form.fixedStartTime = ''
-      form.fixedEndTime = ''
-    }
-
-    if (mode === 'FIXED_TIME') {
-      form.startAfterShiftEndMinutes = 0
-      syncFixedRequestedMinutes()
-    }
-  },
-)
-
-watch(
-  () => [form.fixedStartTime, form.fixedEndTime, form.timingMode, form.shiftId],
-  () => {
-    syncFixedRequestedMinutes()
-  },
-)
-
 onMounted(async () => {
-  await fetchLookups()
+  await Promise.all([fetchShiftLookup(), fetchPolicyLookup()])
   await reloadFirstPage({ keepVisible: false })
 })
 
@@ -1076,569 +813,663 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4">
-    <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-      <div class="flex flex-wrap items-center gap-2">
+  <div class="ot-page-shell">
+    <section class="ot-filter-bar ot-filter-bar-6">
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('common.search') }}
+        </label>
+
+        <IconField>
+          <InputIcon class="pi pi-search" />
+
+          <InputText
+            v-model="filters.search"
+            :placeholder="t('ot.shiftOption.searchPlaceholder')"
+            class="w-full"
+            size="small"
+            @input="onSearchInput"
+          />
+        </IconField>
+      </div>
+
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('nav.shift') }}
+        </label>
+
+        <Select
+          v-model="filters.shiftId"
+          :options="filterShiftOptions"
+          option-label="label"
+          option-value="value"
+          class="w-full"
+          size="small"
+          filter
+          :loading="loadingShifts"
+          @change="onFilterChange"
+        />
+      </div>
+
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('ot.shiftOption.policy') }}
+        </label>
+
+        <Select
+          v-model="filters.calculationPolicyId"
+          :options="filterPolicyOptions"
+          option-label="label"
+          option-value="value"
+          class="w-full"
+          size="small"
+          filter
+          :loading="loadingPolicies"
+          @change="onFilterChange"
+        />
+      </div>
+
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('ot.shiftOption.timingMode') }}
+        </label>
+
+        <Select
+          v-model="filters.timingMode"
+          :options="timingModeOptions"
+          option-label="label"
+          option-value="value"
+          class="w-full"
+          size="small"
+          @change="onFilterChange"
+        />
+      </div>
+
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('ot.shiftOption.dayType') }}
+        </label>
+
+        <Select
+          v-model="filters.dayType"
+          :options="dayTypeOptions"
+          option-label="label"
+          option-value="value"
+          class="w-full"
+          size="small"
+          @change="onFilterChange"
+        />
+      </div>
+
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('common.status') }}
+        </label>
+
+        <Select
+          v-model="filters.isActive"
+          :options="statusOptions"
+          option-label="label"
+          option-value="value"
+          class="w-full"
+          size="small"
+          @change="onFilterChange"
+        />
+      </div>
+
+      <div class="ot-filter-actions xl:col-span-6">
+        <span class="ot-loaded-badge">
+          {{ loadedLabel }}
+        </span>
+
         <Button
-          v-if="canCreateShiftOTOption"
-          label="New Shift OT Option"
+          :label="t('common.clear')"
+          icon="pi pi-filter-slash"
+          severity="secondary"
+          outlined
+          size="small"
+          @click="clearFilters"
+        />
+
+        <Button
+          v-if="canCreate"
+          :label="t('ot.shiftOption.newOption')"
           icon="pi pi-plus"
           size="small"
           @click="openCreateDialog"
         />
       </div>
-    </div>
+    </section>
 
-    <div
-      v-if="!canViewShiftOTOption"
-      class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-4 py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
-    >
-      You do not have permission to view shift OT options.
-    </div>
+    <section class="ot-table-card">
+      <div class="ot-table-toolbar">
+        <div>
+          <h2 class="ot-table-title">
+            {{ t('ot.shiftOption.tableTitle') }}
+          </h2>
 
-    <div
-      v-else
-      class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]"
-    >
-      <div class="border-b border-[color:var(--ot-border)] px-3 py-3">
-        <div class="flex flex-col gap-2 xl:flex-row xl:items-center">
-          <IconField class="w-full xl:w-[240px] xl:shrink-0">
-            <InputIcon class="pi pi-search" />
-            <InputText
-              v-model="filters.search"
-              placeholder="Search option label"
-              class="w-full"
-              size="small"
-              @input="onSearchInput"
-            />
-          </IconField>
+          <p class="ot-table-subtitle">
+            {{ t('ot.shiftOption.subtitle') }}
+          </p>
+        </div>
 
-          <div class="w-full xl:w-[170px] xl:shrink-0">
-            <Select
-              v-model="filters.shiftId"
-              :options="filterShiftOptions"
-              optionLabel="label"
-              optionValue="value"
-              placeholder="Shift"
-              class="w-full"
-              size="small"
-              filter
-              @change="onShiftChange"
-            />
-          </div>
+        <div class="ot-table-actions">
+          <span
+            v-if="backgroundLoading && hasAnyData"
+            class="ot-loaded-badge"
+          >
+            <i class="pi pi-spin pi-spinner" />
+            {{ t('common.updating') }}
+          </span>
 
-          <div class="w-full xl:w-[190px] xl:shrink-0">
-            <Select
-              v-model="filters.calculationPolicyId"
-              :options="filterPolicyOptions"
-              optionLabel="label"
-              optionValue="value"
-              placeholder="Calculation Policy"
-              class="w-full"
-              size="small"
-              filter
-              @change="onPolicyChange"
-            />
-          </div>
-
-          <div class="w-full xl:w-[170px] xl:shrink-0">
-            <Select
-              v-model="filters.timingMode"
-              :options="timingModeOptions"
-              optionLabel="label"
-              optionValue="value"
-              placeholder="Timing Mode"
-              class="w-full"
-              size="small"
-              @change="onTimingModeFilterChange"
-            />
-          </div>
-
-          <div class="w-full xl:w-[150px] xl:shrink-0">
-            <Select
-              v-model="filters.dayType"
-              :options="dayTypeOptions"
-              optionLabel="label"
-              optionValue="value"
-              placeholder="Day Type"
-              class="w-full"
-              size="small"
-              @change="onDayTypeFilterChange"
-            />
-          </div>
-
-          <div class="w-full xl:w-[135px] xl:shrink-0">
-            <Select
-              v-model="filters.isActive"
-              :options="statusOptions"
-              optionLabel="label"
-              optionValue="value"
-              placeholder="Status"
-              class="w-full"
-              size="small"
-              @change="onStatusChange"
-            />
-          </div>
-
-          <div class="flex items-center gap-2 xl:ml-auto xl:shrink-0">
-            <div class="rounded-lg border border-[color:var(--ot-border)] px-3 py-1.5 text-xs font-medium text-[color:var(--ot-text-muted)]">
-              Loaded {{ summaryText }}
-            </div>
-
-            <Button
-              label="Clear"
-              icon="pi pi-refresh"
-              severity="secondary"
-              outlined
-              size="small"
-              @click="clearFilters"
-            />
-          </div>
+          <Button
+            :label="t('common.refresh')"
+            icon="pi pi-refresh"
+            severity="secondary"
+            outlined
+            size="small"
+            :loading="backgroundLoading && bootstrapped"
+            @click="reloadFirstPage({ keepVisible: true })"
+          />
         </div>
       </div>
 
-      <DataTable
-        :value="rows"
-        lazy
-        removableSort
-        scrollable
-        scrollHeight="500px"
-        :sortField="filters.sortField"
-        :sortOrder="filters.sortOrder"
-        tableStyle="min-width: 126rem"
-        class="shift-ot-option-table"
-        :virtualScrollerOptions="useVirtualScroll ? {
-          lazy: true,
-          onLazyLoad: onVirtualLazyLoad,
-          itemSize: 76,
-          delay: 0,
-          showLoader: false,
-          loading: false,
-          numToleratedItems: 12,
-        } : null"
-        @sort="onSort"
-      >
-        <template #empty>
-          <div
-            v-if="bootstrapped"
-            class="py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
+      <div class="ot-table-wrapper">
+        <AppTableLoading
+          v-if="isFirstLoading"
+          :title="t('common.loadingData')"
+          :message="t('common.fetchingRecords')"
+          :rows="7"
+          :columns="10"
+          icon="pi pi-clock"
+        />
+
+        <DataTable
+          v-else
+          :value="rows"
+          lazy
+          removable-sort
+          scrollable
+          scroll-height="500px"
+          :sort-field="filters.sortField"
+          :sort-order="filters.sortOrder"
+          table-style="min-width: 118rem"
+          class="ot-data-table ot-data-table-compact"
+          :virtual-scroller-options="useVirtualScroll ? {
+            lazy: true,
+            onLazyLoad: onVirtualLazyLoad,
+            itemSize: 72,
+            delay: 0,
+            showLoader: false,
+            loading: false,
+            numToleratedItems: 12,
+          } : null"
+          @sort="onSort"
+        >
+          <template #empty>
+            <div
+              v-if="bootstrapped"
+              class="ot-empty-state"
+            >
+              <div class="ot-empty-icon">
+                <i class="pi pi-clock" />
+              </div>
+
+              <div class="ot-empty-title">
+                {{ t('common.noData') }}
+              </div>
+
+              <div class="ot-empty-text">
+                {{ t('ot.shiftOption.noData') }}
+              </div>
+            </div>
+          </template>
+
+          <Column
+            :header="t('nav.shift')"
+            style="min-width: 18rem"
           >
-            No shift OT options found.
-          </div>
-        </template>
+            <template #body="{ data }">
+              <div
+                v-if="data"
+                class="flex flex-col"
+              >
+                <span class="font-medium text-[color:var(--ot-text)]">
+                  {{ shiftLabel(data) }}
+                </span>
 
-        <Column header="Shift" style="min-width: 18rem">
-          <template #body="{ data }">
-            <div v-if="data" class="flex flex-col">
-              <span class="font-medium text-[color:var(--ot-text)]">
-                {{ shiftLabel(data) }}
+                <span class="text-xs text-[color:var(--ot-text-muted)]">
+                  {{ shiftSubLabel(data) }}
+                </span>
+              </div>
+            </template>
+          </Column>
+
+          <Column
+            field="label"
+            :header="t('ot.shiftOption.optionLabel')"
+            sortable
+            style="min-width: 15rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="font-medium text-[color:var(--ot-text)]"
+              >
+                {{ data.label || '-' }}
               </span>
-              <span class="text-xs text-[color:var(--ot-text-muted)]">
-                {{ shiftSubLabel(data) }}
-              </span>
-            </div>
-          </template>
-        </Column>
+            </template>
+          </Column>
 
-        <Column field="label" header="Option Label" sortable style="min-width: 14rem">
-          <template #body="{ data }">
-            <span v-if="data" class="font-medium text-[color:var(--ot-text)]">
-              {{ data.label || '-' }}
-            </span>
-          </template>
-        </Column>
+          <Column
+            :header="t('ot.shiftOption.dayType')"
+            style="min-width: 14rem"
+          >
+            <template #body="{ data }">
+              <div
+                v-if="data"
+                class="flex flex-wrap gap-1"
+              >
+                <Tag
+                  v-for="type in normalizeApplicableDayTypes(data.applicableDayTypes)"
+                  :key="type"
+                  :value="dayTypeLabel(type)"
+                  :severity="dayTypeSeverity(type)"
+                  class="ot-status-tag"
+                />
+              </div>
+            </template>
+          </Column>
 
-        <Column header="Day Type" style="min-width: 13rem">
-          <template #body="{ data }">
-            <div v-if="data" class="flex flex-wrap gap-1">
+          <Column
+            field="timingMode"
+            :header="t('ot.shiftOption.timingMode')"
+            sortable
+            style="min-width: 12rem"
+          >
+            <template #body="{ data }">
               <Tag
-                v-for="type in normalizeApplicableDayTypes(data.applicableDayTypes)"
-                :key="type"
-                :value="dayTypeLabel(type)"
-                :severity="dayTypeSeverity(type)"
-                class="shift-ot-tag"
+                v-if="data"
+                :value="timingModeLabel(data.timingMode)"
+                :severity="timingModeSeverity(data.timingMode)"
+                class="ot-status-tag"
               />
-            </div>
-          </template>
-        </Column>
+            </template>
+          </Column>
 
-        <Column field="timingMode" header="Timing Mode" sortable style="min-width: 11rem">
-          <template #body="{ data }">
-            <Tag
-              v-if="data"
-              :value="timingModeLabel(data.timingMode)"
-              :severity="timingModeSeverity(data.timingMode)"
-              class="shift-ot-tag"
-            />
-          </template>
-        </Column>
+          <Column
+            :header="t('ot.shiftOption.otWindow')"
+            style="min-width: 15rem"
+          >
+            <template #body="{ data }">
+              <div
+                v-if="data"
+                class="flex flex-col"
+              >
+                <span class="font-semibold text-[color:var(--ot-text)]">
+                  {{ optionTimeWindow(data) }}
+                </span>
 
-        <Column header="OT Window" style="min-width: 14rem">
-          <template #body="{ data }">
-            <div v-if="data" class="flex flex-col">
-              <span class="font-semibold text-[color:var(--ot-text)]">
-                {{ optionTimeWindow(data) }}
+                <span class="text-xs text-[color:var(--ot-text-muted)]">
+                  {{ optionTimingSubLabel(data) }}
+                </span>
+              </div>
+            </template>
+          </Column>
+
+          <Column
+            :header="t('ot.shiftOption.requested')"
+            style="min-width: 10rem"
+          >
+            <template #body="{ data }">
+              <Tag
+                v-if="data"
+                :value="minutesLabel(rowRequestedMinutes(data))"
+                severity="info"
+                class="ot-status-tag"
+              />
+            </template>
+          </Column>
+
+          <Column
+            :header="t('ot.shiftOption.break')"
+            style="min-width: 9rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="font-medium"
+              >
+                {{ minutesLabel(rowBreakMinutes(data)) }}
               </span>
-              <span class="text-xs text-[color:var(--ot-text-muted)]">
-                {{ optionTimingSubLabel(data) }}
+            </template>
+          </Column>
+
+          <Column
+            :header="t('ot.shiftOption.paid')"
+            style="min-width: 10rem"
+          >
+            <template #body="{ data }">
+              <Tag
+                v-if="data"
+                :value="minutesLabel(rowPaidMinutes(data))"
+                severity="success"
+                class="ot-status-tag"
+              />
+            </template>
+          </Column>
+
+          <Column
+            :header="t('ot.shiftOption.policy')"
+            style="min-width: 22rem"
+          >
+            <template #body="{ data }">
+              <div
+                v-if="data"
+                class="flex flex-col"
+              >
+                <span class="font-medium text-[color:var(--ot-text)]">
+                  {{ policyLabel(data) }}
+                </span>
+
+                <span class="text-xs text-[color:var(--ot-text-muted)]">
+                  {{ policySubLabel(data) }}
+                </span>
+              </div>
+            </template>
+          </Column>
+
+          <Column
+            field="sequence"
+            :header="t('ot.shiftOption.sequence')"
+            sortable
+            style="min-width: 8rem"
+          >
+            <template #body="{ data }">
+              <span v-if="data">
+                {{ Number(data.sequence || 0) }}
               </span>
-            </div>
-          </template>
-        </Column>
+            </template>
+          </Column>
 
-        <Column field="requestedMinutes" header="Requested/Paid OT" sortable style="min-width: 11rem">
-          <template #body="{ data }">
-            <Tag
-              v-if="data"
-              :value="formatMinutesLabel(data.requestedMinutes)"
-              severity="info"
-              class="shift-ot-tag"
-            />
-          </template>
-        </Column>
+          <Column
+            field="isActive"
+            :header="t('common.status')"
+            sortable
+            style="min-width: 8rem"
+          >
+            <template #body="{ data }">
+              <Tag
+                v-if="data"
+                :value="activeLabel(data)"
+                :severity="activeSeverity(data.isActive)"
+                class="ot-status-tag"
+              />
+            </template>
+          </Column>
 
-        <Column header="Calculation Policy" style="min-width: 22rem">
-          <template #body="{ data }">
-            <div v-if="data" class="flex flex-col">
-              <span class="font-medium text-[color:var(--ot-text)]">
-                {{ policyLabel(data) }}
+          <Column
+            field="createdAt"
+            :header="t('common.createdAt')"
+            sortable
+            style="min-width: 13rem"
+          >
+            <template #body="{ data }">
+              <span v-if="data">
+                {{ formatDateTime(data.createdAt) }}
               </span>
-              <span class="text-xs text-[color:var(--ot-text-muted)]">
-                {{ policySubLabel(data) }}
-              </span>
-            </div>
-          </template>
-        </Column>
+            </template>
+          </Column>
 
-        <Column field="sequence" header="Sequence" sortable style="min-width: 8rem">
-          <template #body="{ data }">
-            <span v-if="data">{{ Number(data.sequence || 0) }}</span>
-          </template>
-        </Column>
-
-        <Column field="isActive" header="Status" sortable style="min-width: 8rem">
-          <template #body="{ data }">
-            <Tag
-              v-if="data"
-              :value="data.isActive ? 'Active' : 'Inactive'"
-              :severity="activeSeverity(data.isActive)"
-              class="shift-ot-tag"
-            />
-          </template>
-        </Column>
-
-        <Column field="createdAt" header="Created At" sortable style="min-width: 14rem">
-          <template #body="{ data }">
-            <span v-if="data">{{ formatDateTime(data.createdAt) }}</span>
-          </template>
-        </Column>
-
-        <Column header="Actions" style="width: 7rem; min-width: 7rem">
-          <template #body="{ data }">
-            <Button
-              v-if="data && canUpdateShiftOTOption"
-              label="Edit"
-              icon="pi pi-pencil"
-              size="small"
-              outlined
-              @click="openEditDialog(data)"
-            />
-          </template>
-        </Column>
-      </DataTable>
-
-      <div
-        v-if="backgroundLoading && hasAnyData"
-        class="flex items-center justify-center border-t border-[color:var(--ot-border)] px-3 py-2 text-xs text-[color:var(--ot-text-muted)]"
-      >
-        Updating...
+          <Column
+            :header="t('common.actions')"
+            frozen
+            alignFrozen="right"
+            headerClass="ot-action-column-header"
+            bodyClass="ot-action-column-body"
+          >
+            <template #body="{ data }">
+              <div
+                v-if="data"
+                class="ot-row-actions"
+              >
+                <Button
+                  v-if="canUpdate"
+                  :label="t('common.edit')"
+                  icon="pi pi-pencil"
+                  size="small"
+                  outlined
+                  @click="openEditDialog(data)"
+                />
+              </div>
+            </template>
+          </Column>
+        </DataTable>
       </div>
-    </div>
+    </section>
 
     <Dialog
       v-model:visible="optionDialogVisible"
       modal
       :closable="!saving"
-      :header="isEditMode ? 'Edit Shift OT Option' : 'Create Shift OT Option'"
-      :style="{ width: '70rem', maxWidth: '96vw' }"
+      :header="dialogTitle"
+      :style="{ width: '64rem', maxWidth: '96vw' }"
       @hide="resetForm"
     >
-      <div class="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <div class="space-y-4">
-          <div class="space-y-2">
-            <label class="text-sm font-medium text-[color:var(--ot-text)]">
-              Shift
+      <div class="ot-dialog-form">
+        <div class="ot-form-grid">
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('nav.shift') }}
             </label>
+
             <Select
               v-model="form.shiftId"
-              :options="shiftSelectOptions"
-              optionLabel="label"
-              optionValue="value"
+              :options="shiftOptions"
+              option-label="label"
+              option-value="value"
+              :placeholder="t('ot.shiftOption.selectShift')"
               class="w-full"
               filter
-              placeholder="Select shift"
+              :loading="loadingShifts"
             />
           </div>
 
-          <div class="space-y-2">
-            <label class="text-sm font-medium text-[color:var(--ot-text)]">
-              Option Label
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('ot.shiftOption.policy') }}
             </label>
+
+            <Select
+              v-model="form.calculationPolicyId"
+              :options="policyOptions"
+              option-label="label"
+              option-value="value"
+              :placeholder="t('ot.shiftOption.selectPolicy')"
+              class="w-full"
+              filter
+              :loading="loadingPolicies"
+            />
+          </div>
+        </div>
+
+        <div class="ot-form-grid">
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('ot.shiftOption.optionLabel') }}
+            </label>
+
             <InputText
               v-model="form.label"
               class="w-full"
-              placeholder="Evening OT 18:00 - 20:00"
+              :placeholder="t('ot.shiftOption.labelPlaceholder')"
             />
           </div>
 
-          <div class="space-y-2">
-            <label class="text-sm font-medium text-[color:var(--ot-text)]">
-              Applicable Day Types
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('ot.shiftOption.timingMode') }}
             </label>
 
-            <div class="grid grid-cols-1 gap-2 md:grid-cols-3">
-              <label
-                v-for="item in formDayTypeOptions"
-                :key="item.value"
-                class="shift-ot-day-type-card"
-              >
-                <Checkbox
-                  v-model="form.applicableDayTypes"
-                  :value="item.value"
-                />
-
-                <span>
-                  <strong>{{ item.label }}</strong>
-                </span>
-              </label>
-            </div>
-          </div>
-
-          <div class="space-y-2">
-            <label class="text-sm font-medium text-[color:var(--ot-text)]">
-              Timing Mode
-            </label>
             <Select
               v-model="form.timingMode"
               :options="formTimingModeOptions"
-              optionLabel="label"
-              optionValue="value"
+              option-label="label"
+              option-value="value"
               class="w-full"
-              placeholder="Select timing mode"
+            />
+          </div>
+        </div>
+
+        <div class="ot-form-grid">
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('ot.shiftOption.applicableDayTypes') }}
+            </label>
+
+            <MultiSelect
+              v-model="form.applicableDayTypes"
+              :options="formDayTypeOptions"
+              option-label="label"
+              option-value="value"
+              class="w-full"
+              display="chip"
+              :placeholder="t('ot.shiftOption.selectDayTypes')"
             />
           </div>
 
-          <div
-            v-if="isAfterShiftEndMode"
-            class="grid grid-cols-1 gap-4 md:grid-cols-2"
-          >
-            <div class="space-y-2">
-              <label class="text-sm font-medium text-[color:var(--ot-text)]">
-                Start After Shift End Minutes
-              </label>
-              <InputNumber
-                v-model="form.startAfterShiftEndMinutes"
-                inputClass="w-full"
-                class="w-full"
-                :min="0"
-                :useGrouping="false"
-              />
-            </div>
-
-            <div class="space-y-2">
-              <label class="text-sm font-medium text-[color:var(--ot-text)]">
-                Requested Minutes
-              </label>
-              <InputNumber
-                v-model="form.requestedMinutes"
-                inputClass="w-full"
-                class="w-full"
-                :min="1"
-                :useGrouping="false"
-              />
-            </div>
-          </div>
-
-          <div
-            v-if="isFixedTimeMode"
-            class="grid grid-cols-1 gap-4 md:grid-cols-3"
-          >
-            <div class="space-y-2">
-              <label class="text-sm font-medium text-[color:var(--ot-text)]">
-                Fixed Start Time
-              </label>
-              <InputText
-                v-model="form.fixedStartTime"
-                class="w-full"
-                placeholder="08:00"
-              />
-            </div>
-
-            <div class="space-y-2">
-              <label class="text-sm font-medium text-[color:var(--ot-text)]">
-                Fixed End Time
-              </label>
-              <InputText
-                v-model="form.fixedEndTime"
-                class="w-full"
-                placeholder="17:00"
-              />
-            </div>
-
-            <div class="space-y-2">
-              <label class="text-sm font-medium text-[color:var(--ot-text)]">
-                Requested/Paid Minutes
-              </label>
-              <InputNumber
-                v-model="form.requestedMinutes"
-                inputClass="w-full"
-                class="w-full"
-                :min="1"
-                :useGrouping="false"
-                disabled
-              />
-              <p class="text-xs text-[color:var(--ot-text-muted)]">
-                Auto-calculated from fixed time minus only overlapping shift break.
-              </p>
-            </div>
-          </div>
-
-          <div class="space-y-2">
-            <label class="text-sm font-medium text-[color:var(--ot-text)]">
-              Calculation Policy
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('ot.shiftOption.sequence') }}
             </label>
-            <Select
-              v-model="form.calculationPolicyId"
-              :options="policySelectOptions"
-              optionLabel="label"
-              optionValue="value"
-              class="w-full"
-              filter
-              placeholder="Select policy"
-            />
-          </div>
 
-          <div class="space-y-2">
-            <label class="text-sm font-medium text-[color:var(--ot-text)]">
-              Sequence
-            </label>
             <InputNumber
               v-model="form.sequence"
-              inputClass="w-full"
               class="w-full"
+              inputClass="w-full"
               :min="1"
               :useGrouping="false"
             />
           </div>
         </div>
 
-        <div class="space-y-4">
-          <div class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-bg)] p-4">
-            <div class="mb-3 text-sm font-semibold text-[color:var(--ot-text)]">
-              Preview
-            </div>
+        <div
+          v-if="isAfterShiftEndMode"
+          class="ot-form-grid"
+        >
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('ot.shiftOption.startAfterShiftEnd') }}
+            </label>
 
-            <div class="grid grid-cols-1 gap-2 text-sm text-[color:var(--ot-text-muted)]">
-              <div>
-                <span class="font-medium text-[color:var(--ot-text)]">Shift:</span>
-                {{ selectedShiftOption?.label || '-' }}
-              </div>
+            <InputNumber
+              v-model="form.startAfterShiftEndMinutes"
+              class="w-full"
+              inputClass="w-full"
+              :min="0"
+              :useGrouping="false"
+              :suffix="` ${t('ot.common.min')}`"
+            />
 
-              <div>
-                <span class="font-medium text-[color:var(--ot-text)]">Applicable Day Types:</span>
-                {{ dayTypesLabel(form.applicableDayTypes) }}
-              </div>
-
-              <div>
-                <span class="font-medium text-[color:var(--ot-text)]">Shift Time:</span>
-                {{ selectedShiftOption?.startTime || '-' }} - {{ selectedShiftOption?.endTime || '-' }}
-              </div>
-
-              <div>
-                <span class="font-medium text-[color:var(--ot-text)]">Shift Break:</span>
-                {{ getSelectedShiftBreakLabel() }}
-              </div>
-
-              <div>
-                <span class="font-medium text-[color:var(--ot-text)]">Timing Mode:</span>
-                {{ timingModeLabel(form.timingMode) }}
-              </div>
-
-              <div v-if="isAfterShiftEndMode">
-                <span class="font-medium text-[color:var(--ot-text)]">Start Offset:</span>
-                {{ Number(form.startAfterShiftEndMinutes || 0) }} minutes after shift end
-              </div>
-
-              <div>
-                <span class="font-medium text-[color:var(--ot-text)]">OT Window:</span>
-                {{ previewWindow.start || '-' }} - {{ previewWindow.end || '-' }}
-              </div>
-
-              <div v-if="isFixedTimeMode">
-                <span class="font-medium text-[color:var(--ot-text)]">Fixed Duration:</span>
-                {{ previewWindow.grossMinutes }} min
-                <span class="ml-1">
-                  ({{ formatMinutesLabel(previewWindow.grossMinutes) }})
-                </span>
-              </div>
-
-              <div v-if="isFixedTimeMode">
-                <span class="font-medium text-[color:var(--ot-text)]">Break Deducted in OT Window:</span>
-                {{ previewWindow.breakMinutes }} min
-              </div>
-
-              <div>
-                <span class="font-medium text-[color:var(--ot-text)]">Requested/Paid OT:</span>
-                {{ Number(form.requestedMinutes || 0) }} min
-                <span class="ml-1">
-                  ({{ formatMinutesLabel(form.requestedMinutes) }})
-                </span>
-              </div>
-
-              <div>
-                <span class="font-medium text-[color:var(--ot-text)]">Policy:</span>
-                {{ selectedPolicyOption?.label || '-' }}
-              </div>
-
-              <div>
-                <span class="font-medium text-[color:var(--ot-text)]">Status:</span>
-                {{ form.isActive ? 'Active' : 'Inactive' }}
-              </div>
-            </div>
+            <p class="ot-field-help">
+              {{ t('ot.shiftOption.startAfterShiftEndHelp') }}
+            </p>
           </div>
 
-          <div class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] p-4">
-            <div class="mb-3 text-sm font-semibold text-[color:var(--ot-text)]">
-              Flags
-            </div>
-
-            <label class="shift-ot-check-item">
-              <Checkbox
-                v-model="form.isActive"
-                binary
-              />
-              <span>Active</span>
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('ot.shiftOption.requestedMinutes') }}
             </label>
+
+            <InputNumber
+              v-model="form.requestedMinutes"
+              class="w-full"
+              inputClass="w-full"
+              :min="1"
+              :useGrouping="false"
+              :suffix="` ${t('ot.common.min')}`"
+            />
           </div>
         </div>
+
+        <div
+          v-else
+          class="ot-form-grid-3"
+        >
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('ot.shiftOption.fixedStartTime') }}
+            </label>
+
+            <InputText
+              v-model="form.fixedStartTime"
+              class="w-full"
+              placeholder="18:00"
+            />
+          </div>
+
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('ot.shiftOption.fixedEndTime') }}
+            </label>
+
+            <InputText
+              v-model="form.fixedEndTime"
+              class="w-full"
+              placeholder="20:00"
+            />
+          </div>
+
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('ot.shiftOption.requestedMinutes') }}
+            </label>
+
+            <InputNumber
+              v-model="form.requestedMinutes"
+              class="w-full"
+              inputClass="w-full"
+              :min="1"
+              :useGrouping="false"
+              :suffix="` ${t('ot.common.min')}`"
+            />
+          </div>
+        </div>
+
+        <label class="flex items-center gap-3 rounded-xl border border-[color:var(--ot-border)] px-4 py-3">
+          <Checkbox
+            v-model="form.isActive"
+            binary
+          />
+
+          <span class="grid gap-0.5">
+            <span class="text-sm font-semibold text-[color:var(--ot-text)]">
+              {{ t('common.active') }}
+            </span>
+
+            <span class="text-xs text-[color:var(--ot-text-muted)]">
+              {{ t('ot.shiftOption.activeHelp') }}
+            </span>
+          </span>
+        </label>
       </div>
 
       <template #footer>
-        <div class="flex justify-end gap-2">
+        <div class="ot-form-footer">
           <Button
-            label="Cancel"
+            :label="t('common.cancel')"
             text
             size="small"
             :disabled="saving"
             @click="optionDialogVisible = false"
           />
+
           <Button
-            v-if="canSaveDialog"
-            :label="isEditMode ? 'Save Changes' : 'Create Option'"
-            :icon="isEditMode ? 'pi pi-save' : 'pi pi-plus'"
+            :label="saveLabel"
+            icon="pi pi-check"
+            size="small"
             :loading="saving"
             :disabled="isSaveDisabled"
-            size="small"
             @click="submitOption"
           />
         </div>
@@ -1648,62 +1479,14 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-:deep(.shift-ot-option-table .p-datatable-thead > tr > th) {
-  padding: 0.72rem 0.9rem !important;
-}
-
-:deep(.shift-ot-option-table .p-datatable-tbody > tr > td) {
-  padding: 0.62rem 0.8rem !important;
-  height: 76px !important;
-  vertical-align: middle !important;
-}
-
-:deep(.shift-ot-option-table .p-tag.shift-ot-tag) {
+:deep(.ot-status-tag) {
   min-height: 1.35rem !important;
-  padding: 0.12rem 0.45rem !important;
-  font-size: 0.7rem !important;
-  font-weight: 600 !important;
-  line-height: 1 !important;
+  padding: 0.12rem 0.48rem !important;
+  border: 1px solid transparent !important;
   border-radius: 999px !important;
-}
-
-.shift-ot-check-item {
-  display: flex;
-  align-items: center;
-  gap: 0.65rem;
-  border: 1px solid var(--ot-border);
-  background: var(--ot-surface);
-  border-radius: 0.9rem;
-  padding: 0.75rem 0.9rem;
-  color: var(--ot-text);
-  font-size: 0.92rem;
-}
-
-.shift-ot-day-type-card {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.65rem;
-  min-height: 3.4rem;
-  border: 1px solid var(--ot-border);
-  background: var(--ot-surface);
-  border-radius: 0.9rem;
-  padding: 0.75rem 0.85rem;
-  color: var(--ot-text);
-  cursor: pointer;
-}
-
-.shift-ot-day-type-card strong {
-  display: block;
-  font-size: 0.86rem;
-  font-weight: 600;
-  color: var(--ot-text);
-}
-
-.shift-ot-day-type-card small {
-  display: block;
-  margin-top: 0.2rem;
-  font-size: 0.72rem;
-  line-height: 1.35;
-  color: var(--ot-text-muted);
+  font-size: 0.7rem !important;
+  font-weight: 500 !important;
+  line-height: 1 !important;
+  white-space: nowrap !important;
 }
 </style>
