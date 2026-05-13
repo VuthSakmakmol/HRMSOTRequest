@@ -256,7 +256,6 @@ export default {
       createdSuccess: 'Department created successfully.',
       updatedSuccess: 'Department updated successfully.',
     },
-
     position: {
       tableTitle: 'Position List',
       searchPlaceholder: 'Search code, name, or description',
@@ -337,7 +336,6 @@ export default {
       createdSuccess: 'Position created successfully.',
       updatedSuccess: 'Position updated successfully.',
     },
-
     employee: {
       tableTitle: 'Employee List',
       searchPlaceholder: 'Search employee code, name, phone, email, or role',
@@ -460,7 +458,6 @@ export default {
       createdSuccess: 'Employee created successfully.',
       updatedSuccess: 'Employee updated successfully.',
     },
-
     line: {
       tableTitle: 'Production Line List',
       searchPlaceholder: 'Search code, name, or description',
@@ -1103,6 +1100,7 @@ export default {
     },
 
     approval: {
+      inbox: 'OT Approval Inbox',
       approvalStatus: 'Approval Status',
       staffCount: '{count} staff',
       time: 'Time',
@@ -1117,12 +1115,12 @@ export default {
       noData: 'No OT approval requests found.',
       loadFailed: 'Failed to load approval inbox.',
 
-      exported: 'Export ready',
-      exportedSuccess: 'Excel exported successfully.',
+      exported: 'Exported',
+      exportedSuccess: 'Approval inbox Excel exported successfully.',
       exportFailed: 'Export failed',
 
       requestedStaff: 'Requested Staff',
-      requested: 'Request',
+      requested: 'Requested',
       breakTime: 'Break Time',
       totalRequestPaid: 'Total Request Paid',
       paid: 'Paid',
@@ -1149,7 +1147,7 @@ export default {
       yesApprove: 'Yes, Approve',
 
       decisionSuccess: 'Success',
-      approveSuccess: 'OT request processed successfully.',
+      approveSuccess: 'OT request approved successfully.',
       rejectSuccess: 'OT request rejected successfully.',
       decisionFailed: 'Decision failed',
 
@@ -1169,6 +1167,7 @@ export default {
     },
 
     requests: {
+      tableTitle: 'OT Request List',
       title: 'OT Requests',
       createTitle: 'Create OT Request',
       editTitle: 'Edit OT Request',
@@ -1287,7 +1286,6 @@ export default {
         updatedSuccess: 'OT request updated successfully.',
         updateFailedDetail: 'Failed to update OT request.',
       },
-
       
       create: {
         selectedCount: '{count} selected',
@@ -1313,7 +1311,7 @@ export default {
         end: 'End',
         total: 'Total',
         submitRequest: 'Submit OT Request',
-        selectedCount: '{count} selected',
+
         reason: '5. Reason',
         optional: 'Optional',
         reasonPlaceholder: 'Example: urgent production order, shipment deadline...',
@@ -1340,15 +1338,18 @@ export default {
         employeeStartInvalid: 'Invalid OT start time for {employee}.',
         employeeEndInvalid: 'Invalid OT end time for {employee}.',
         employeeTimeSame: 'OT start time and end time cannot be the same for {employee}.',
-        employeeBreakTooLong: 'Break minutes cannot be greater than or equal to OT duration for {employee}.',
+        employeeBreakTooLong:
+          'Break minutes cannot be greater than or equal to OT duration for {employee}.',
 
         profileLoadFailed: 'Profile load failed',
         profileLoadFailedDetail: 'Unable to load your employee profile.',
+
         availabilityFailed: 'OT availability check failed',
         availabilityFailedDetail: 'Unable to check existing OT employees for this date.',
 
         optionsFailed: 'OT options failed',
         optionsFailedDetail: 'Unable to load OT options for the selected shift and date.',
+
         noOptionTitle: 'No OT option',
         noOptionForDayType: 'No active OT option found for {dayType}. Please ask admin to create one.',
         noOptionGeneric: 'No active OT option found for this shift/date.',
@@ -1357,7 +1358,8 @@ export default {
         calendarUnavailableDetail: 'Unable to load internal holiday calendar.',
 
         employeesRemoved: 'Employees removed',
-        employeesRemovedDetail: '{count} employee(s) already have OT request on this date and were removed from selection.',
+        employeesRemovedDetail:
+          '{count} employee(s) already have OT request on this date and were removed from selection.',
 
         successTitle: 'Created',
         successMessage: 'OT request created successfully.',
@@ -1365,16 +1367,22 @@ export default {
 
         duplicateTitle: 'Duplicate OT employees',
         duplicateGeneric: 'Some employees already have OT request on this date.',
-        duplicateDetail: 'These employees already have OT request on this date and were removed from selection: {preview}.',
-        duplicateDetailMore: 'These employees already have OT request on this date and were removed from selection: {preview}, and {more} more.',
+        duplicateDetail:
+          'These employees already have OT request on this date and were removed from selection: {preview}.',
+        duplicateDetailMore:
+          'These employees already have OT request on this date and were removed from selection: {preview}, and {more} more.',
 
         missingClockInTitle: 'Attendance time-in required',
         todayAttendanceRequired: 'Today OT requires attendance time-in before creating the request.',
-        missingClockInDetail: 'Today OT requires attendance time-in. Removed from selection: {preview}.',
-        missingClockInDetailMore: 'Today OT requires attendance time-in. Removed from selection: {preview}, and {more} more.',
+        missingClockInDetail:
+          'Today OT requires attendance time-in. Removed from selection: {preview}.',
+        missingClockInDetailMore:
+          'Today OT requires attendance time-in. Removed from selection: {preview}, and {more} more.',
 
-        accountEmployeeLinkRequired: 'Your login account is not linked to an employee profile. Please check Account and Employee setup.',
-        approverNotFound: 'No OT approver found in the organization chart. Please set manager chain and OT Role = Approver.',
+        accountEmployeeLinkRequired:
+          'Your login account is not linked to an employee profile. Please check Account and Employee setup.',
+        approverNotFound:
+          'No OT approver found in the organization chart. Please set manager chain and OT Role = Approver.',
         duplicateEmployeeDate: 'Some employees already have OT request on this date.',
 
         timingMode: {
@@ -1445,13 +1453,8 @@ export default {
           shiftMismatch: 'Employee shift does not match selected shift.',
         },
       },
-
-      timeMode: {
-        default: 'Default',
-        custom: 'Custom',
-      },
-
       acknowledge: {
+        inbox: 'OT Acknowledge Inbox',
         loading: 'Loading acknowledgement inbox',
         fetchingRecords: 'Fetching acknowledgement OT requests...',
         noData: 'No acknowledgement requests found.',
@@ -1462,7 +1465,6 @@ export default {
         fyi: 'FYI',
       },
     },
-
     policy: {
       tableTitle: 'OT Calculation Policies',
       subtitle:
