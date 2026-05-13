@@ -16,12 +16,14 @@ import InputIcon from 'primevue/inputicon'
 import InputText from 'primevue/inputtext'
 import Select from 'primevue/select'
 import Tag from 'primevue/tag'
-import AppTableLoading from '@/shared/components/AppTableLoading.vue'
 
+import AppTableLoading from '@/shared/components/AppTableLoading.vue'
 import { useAuthStore } from '@/modules/auth/auth.store'
+import { getApiErrorMessage } from '@/shared/utils/apiError'
+import { formatDate, formatDateTime, toApiDate } from '@/shared/utils/dateFormat'
 import {
-  getOTRequests,
   exportOTRequestsExcel,
+  getOTRequests,
 } from '@/modules/ot/ot.api'
 
 const router = useRouter()
@@ -47,19 +49,39 @@ const filters = reactive({
   dayType: '',
   otDateFrom: null,
   otDateTo: null,
+  sortBy: 'createdAt',
+  sortOrder: -1,
 })
 
-const canCreateRequest = computed(() => auth.hasAnyPermission(['OT_REQUEST_CREATE']))
-const canUpdateRequest = computed(() => auth.hasAnyPermission(['OT_REQUEST_UPDATE']))
-const canVerifyAttendance = computed(() => auth.hasAnyPermission(['ATTENDANCE_VERIFY']))
+let searchTimer = null
+let currentRequestId = 0
+
+const canCreate = computed(() => auth.hasPermission('OT_REQUEST_CREATE'))
+const canExport = computed(() => auth.hasPermission('OT_REQUEST_VIEW'))
+
+const totalRequests = computed(() => Number(totalRecords.value || 0))
+const loadedCount = computed(() => rows.value.filter(Boolean).length)
+const hasAnyData = computed(() => rows.value.some(Boolean))
+const useVirtualScroll = computed(() => totalRequests.value > PAGE_SIZE)
 
 const firstLoading = computed(() => {
   return backgroundLoading.value && !bootstrapped.value && !hasAnyData.value
 })
 
+const loadedLabel = computed(() =>
+  t('common.loaded', {
+    loaded: loadedCount.value,
+    total: totalRequests.value,
+  }),
+)
+
 const statusOptions = computed(() => [
   { label: t('common.allStatus'), value: '' },
   { label: t('ot.status.pending'), value: 'PENDING' },
+  {
+    label: t('ot.status.pendingRequesterConfirmation'),
+    value: 'PENDING_REQUESTER_CONFIRMATION',
+  },
   { label: t('ot.status.approved'), value: 'APPROVED' },
   { label: t('ot.status.rejected'), value: 'REJECTED' },
   { label: t('ot.status.cancelled'), value: 'CANCELLED' },
@@ -72,27 +94,28 @@ const dayTypeOptions = computed(() => [
   { label: t('ot.dayType.holiday'), value: 'HOLIDAY' },
 ])
 
-const totalRequests = computed(() => Number(totalRecords.value || 0))
-const loadedCount = computed(() => rows.value.filter(Boolean).length)
-const summaryText = computed(() =>
-  t('common.loaded', {
-    loaded: loadedCount.value,
-    total: totalRequests.value,
-  }),
-)
-
-const hasAnyData = computed(() => rows.value.some(Boolean))
-const useVirtualScroll = computed(() => totalRequests.value > PAGE_SIZE)
-
-let searchTimer = null
-let currentRequestId = 0
-
 function normalizePayload(res) {
   return res?.data?.data || res?.data || {}
 }
 
 function normalizeItems(payload) {
-  return Array.isArray(payload?.items) ? payload.items : []
+  if (Array.isArray(payload)) return payload
+  if (Array.isArray(payload?.items)) return payload.items
+  if (Array.isArray(payload?.requests)) return payload.requests
+  if (Array.isArray(payload?.otRequests)) return payload.otRequests
+  if (Array.isArray(payload?.rows)) return payload.rows
+  return []
+}
+
+function normalizeTotal(payload) {
+  return Number(
+    payload?.pagination?.total ||
+      payload?.pagination?.totalRecords ||
+      payload?.total ||
+      payload?.totalRecords ||
+      payload?.count ||
+      0,
+  )
 }
 
 function normalizeRow(row) {
@@ -100,475 +123,320 @@ function normalizeRow(row) {
 
   return {
     ...row,
-    id: String(row?.id || row?._id || '').trim(),
+    id: String(
+      row?.id ||
+        row?._id ||
+        row?.requestId ||
+        row?.otRequestId ||
+        row?.requestNo ||
+        '',
+    ).trim(),
   }
 }
 
-function pad2(value) {
-  return String(value).padStart(2, '0')
+function normalizeText(value) {
+  return String(value ?? '').trim()
 }
 
 function upper(value) {
-  return String(value || '').trim().toUpperCase()
+  return normalizeText(value).toUpperCase()
 }
 
-function firstText(...values) {
-  for (const value of values) {
-    const text = String(value || '').trim()
-    if (text) return text
+function humanize(value) {
+  const raw = normalizeText(value)
+
+  if (!raw) return '-'
+
+  return raw
+    .replace(/_/g, ' ')
+    .toLowerCase()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase())
+}
+
+function numberOrNull(value) {
+  const n = Number(value)
+  return Number.isFinite(n) ? n : null
+}
+
+function minuteLabel(value) {
+  const minutes = numberOrNull(value)
+
+  if (minutes === null) return '-'
+  if (minutes <= 0) return '0 min'
+
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+
+  if (hours && rest) return `${hours}h ${rest}m`
+  if (hours) return `${hours}h`
+
+  return `${rest} min`
+}
+
+function dateFilterValue(value) {
+  return toApiDate(value, '')
+}
+
+function safeDate(value) {
+  return value ? formatDate(value) : '-'
+}
+
+function safeDateTime(value) {
+  return value ? formatDateTime(value) : '-'
+}
+
+function normalizePrimeSeverity(value, fallback = 'secondary') {
+  const raw = upper(value)
+
+  if (raw === 'SUCCESS') return 'success'
+  if (raw === 'DANGER') return 'danger'
+  if (raw === 'ERROR') return 'danger'
+  if (raw === 'WARNING') return 'warn'
+  if (raw === 'WARN') return 'warn'
+  if (raw === 'INFO') return 'info'
+  if (raw === 'SECONDARY') return 'secondary'
+  if (raw === 'CONTRAST') return 'contrast'
+
+  return fallback
+}
+
+function approvalLabel(row) {
+  return (
+    normalizeText(row?.approvalDisplay?.label) ||
+    normalizeText(row?.approvalStatusLabel) ||
+    normalizeText(row?.statusLabel) ||
+    humanize(row?.approvalStatus || row?.status)
+  )
+}
+
+function approvalSeverity(row) {
+  const displaySeverity = normalizeText(row?.approvalDisplay?.severity)
+
+  if (displaySeverity) {
+    return normalizePrimeSeverity(displaySeverity, 'secondary')
   }
 
-  return ''
+  const status = upper(row?.approvalStatus || row?.status)
+
+  if (status.includes('APPROVED')) return 'success'
+  if (status.includes('REJECTED')) return 'danger'
+  if (status.includes('CANCELLED')) return 'secondary'
+  if (status.includes('PENDING')) return 'warn'
+
+  return 'secondary'
 }
 
-function formatDateYMD(value) {
-  if (!value) return undefined
+function dayTypeLabel(row) {
+  const dayType = upper(row?.dayType)
 
-  const raw = String(value || '').trim()
+  if (normalizeText(row?.dayTypeLabel)) return row.dayTypeLabel
+  if (dayType === 'WORKING_DAY') return t('ot.dayType.workingDay')
+  if (dayType === 'SUNDAY') return t('ot.dayType.sunday')
+  if (dayType === 'HOLIDAY') return t('ot.dayType.holiday')
 
-  const ymdMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/)
-  if (ymdMatch) return raw
-
-  const dmyMatch = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
-  if (dmyMatch) {
-    return `${dmyMatch[3]}-${dmyMatch[2]}-${dmyMatch[1]}`
-  }
-
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return undefined
-
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
+  return humanize(row?.dayType)
 }
 
-function formatDateDMY(value) {
-  if (!value) return '-'
+function dayTypeSeverity(row) {
+  const dayType = upper(row?.dayType)
 
-  const raw = String(value || '').trim()
+  if (dayType === 'WORKING_DAY') return 'success'
+  if (dayType === 'SUNDAY') return 'warn'
+  if (dayType === 'HOLIDAY') return 'danger'
 
-  const ymdMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/)
-  if (ymdMatch) {
-    return `${ymdMatch[3]}/${ymdMatch[2]}/${ymdMatch[1]}`
-  }
-
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return raw || '-'
-
-  return `${pad2(date.getDate())}/${pad2(date.getMonth() + 1)}/${date.getFullYear()}`
+  return 'secondary'
 }
 
-function formatDateTimeDMY(value) {
-  if (!value) return '-'
-
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return String(value || '-')
-
-  const dd = pad2(date.getDate())
-  const mm = pad2(date.getMonth() + 1)
-  const yyyy = date.getFullYear()
-  const hh = pad2(date.getHours())
-  const min = pad2(date.getMinutes())
-
-  return `${dd}/${mm}/${yyyy}, ${hh}:${min}`
+function requestNo(row) {
+  return normalizeText(row?.requestNo || row?.otRequestNo || row?.code) || '-'
 }
 
-function formatMinutesLabel(value) {
-  const minutes = Number(value || 0)
+function requesterName(row) {
+  return (
+    normalizeText(row?.requesterName) ||
+    normalizeText(row?.requesterDisplayName) ||
+    normalizeText(row?.requesterEmployeeName) ||
+    normalizeText(row?.createdByName) ||
+    normalizeText(row?.employeeName) ||
+    '-'
+  )
+}
 
-  if (!minutes) return t('ot.common.minuteValue', { value: 0 })
+function requesterCode(row) {
+  return (
+    normalizeText(row?.requesterCode) ||
+    normalizeText(row?.requesterEmployeeCode) ||
+    normalizeText(row?.requesterEmployeeNo) ||
+    normalizeText(row?.employeeCode) ||
+    normalizeText(row?.employeeNo) ||
+    ''
+  )
+}
 
-  const hh = Math.floor(minutes / 60)
-  const mm = minutes % 60
+function staffCount(row) {
+  const direct = numberOrNull(row?.staffCount ?? row?.employeeCount ?? row?.totalEmployees)
 
-  if (hh && mm) {
-    return t('ot.common.hourMinuteValue', {
-      hours: hh,
-      minutes: mm,
-    })
-  }
+  if (direct !== null) return direct
 
-  if (hh) return t('ot.common.hourValue', { value: hh })
-  return t('ot.common.minuteValue', { value: mm })
+  return detailRows(row).length
+}
+
+function staffCountLabel(row) {
+  return t('ot.requests.staffCount', {
+    count: staffCount(row),
+  })
+}
+
+function otDateLabel(row) {
+  return normalizeText(row?.otDateText) || safeDate(row?.otDate || row?.date)
+}
+
+function otTimeLabel(row) {
+  const preset =
+    normalizeText(row?.otTime) ||
+    normalizeText(row?.timeText) ||
+    normalizeText(row?.otTimeText)
+
+  if (preset) return preset
+
+  const start = normalizeText(row?.startTime || row?.otStartTime)
+  const end = normalizeText(row?.endTime || row?.otEndTime)
+
+  return start && end ? `${start} - ${end}` : '-'
+}
+
+function timingLabel(row) {
+  return (
+    normalizeText(row?.timingLabel) ||
+    normalizeText(row?.shiftOTOptionName) ||
+    normalizeText(row?.otOptionName) ||
+    normalizeText(row?.optionName) ||
+    humanize(row?.timingMode || row?.optionMode)
+  )
+}
+
+function detailRows(row) {
+  const source =
+    row?.staffRows ||
+    row?.employeeDetails ||
+    row?.requestEmployees ||
+    row?.employees ||
+    row?.staff ||
+    row?.details ||
+    []
+
+  return Array.isArray(source) ? source : []
+}
+
+function detailEmployeeCode(item) {
+  const employee = item?.employee || item?.employeeSnapshot || {}
+
+  return (
+    normalizeText(item?.employeeCode) ||
+    normalizeText(item?.employeeNo) ||
+    normalizeText(item?.code) ||
+    normalizeText(employee?.employeeCode) ||
+    normalizeText(employee?.employeeNo) ||
+    '-'
+  )
+}
+
+function detailEmployeeName(item) {
+  const employee = item?.employee || item?.employeeSnapshot || {}
+
+  return (
+    normalizeText(item?.employeeName) ||
+    normalizeText(item?.displayName) ||
+    normalizeText(item?.name) ||
+    normalizeText(employee?.displayName) ||
+    normalizeText(employee?.employeeName) ||
+    '-'
+  )
+}
+
+function detailPositionLabel(item) {
+  const position = item?.position || item?.positionSnapshot || {}
+
+  return (
+    normalizeText(item?.positionName) ||
+    normalizeText(item?.position) ||
+    normalizeText(item?.positions) ||
+    normalizeText(position?.name) ||
+    normalizeText(position?.positionName) ||
+    '-'
+  )
+}
+
+function detailOtTimeLabel(item, row) {
+  const preset =
+    normalizeText(item?.otTime) ||
+    normalizeText(item?.otTimeText) ||
+    normalizeText(item?.timeText)
+
+  if (preset) return preset
+
+  const start = normalizeText(item?.startTime || item?.otStartTime || row?.startTime || row?.otStartTime)
+  const end = normalizeText(item?.endTime || item?.otEndTime || row?.endTime || row?.otEndTime)
+
+  return start && end ? `${start} - ${end}` : '-'
+}
+
+function detailBreakLabel(item, row) {
+  const value =
+    item?.breakMinutes ??
+    item?.breakTimeMinutes ??
+    item?.deductedBreakMinutes ??
+    row?.breakMinutes
+
+  return minuteLabel(value)
+}
+
+function detailTotalLabel(item) {
+  const value =
+    item?.totalPaidMinutes ??
+    item?.paidMinutes ??
+    item?.approvedMinutes ??
+    item?.totalMinutes ??
+    item?.requestMinutes ??
+    item?.requestedMinutes
+
+  return minuteLabel(value)
+}
+
+function detailModeLabel(item) {
+  return (
+    normalizeText(item?.modeLabel) ||
+    normalizeText(item?.timingModeLabel) ||
+    normalizeText(item?.calculationModeLabel) ||
+    humanize(item?.mode || item?.timingMode || item?.calculationMode || 'DEFAULT')
+  )
+}
+
+function detailLineLabel(item) {
+  const line = item?.line || item?.lineSnapshot || {}
+
+  return (
+    normalizeText(item?.lineName) ||
+    normalizeText(line?.name) ||
+    normalizeText(line?.lineName) ||
+    normalizeText(item?.lineCode) ||
+    normalizeText(line?.code) ||
+    '-'
+  )
 }
 
 function buildQuery(page) {
   return {
     page,
     limit: PAGE_SIZE,
-    search: String(filters.search || '').trim() || undefined,
-    status: filters.status || undefined,
-    dayType: filters.dayType || undefined,
-    otDateFrom: formatDateYMD(filters.otDateFrom),
-    otDateTo: formatDateYMD(filters.otDateTo),
+    search: normalizeText(filters.search),
+    status: filters.status,
+    dayType: filters.dayType,
+    otDateFrom: dateFilterValue(filters.otDateFrom),
+    otDateTo: dateFilterValue(filters.otDateTo),
+    sortBy: filters.sortBy,
+    sortOrder: filters.sortOrder === 1 ? 'asc' : 'desc',
   }
-}
-
-function buildExportQuery() {
-  return {
-    search: String(filters.search || '').trim() || undefined,
-    status: filters.status || undefined,
-    dayType: filters.dayType || undefined,
-    otDateFrom: formatDateYMD(filters.otDateFrom),
-    otDateTo: formatDateYMD(filters.otDateTo),
-  }
-}
-
-function normalizeClassKey(value) {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/_/g, '-')
-    .replace(/\s+/g, '-')
-}
-
-function dayTypeClass(value) {
-  return `ot-day-${normalizeClassKey(value || 'unknown')}`
-}
-
-function statusClass(value) {
-  return `ot-status-${normalizeClassKey(value || 'unknown')}`
-}
-
-function approvalDisplayClass(row) {
-  return `ot-approval-${normalizeClassKey(approvalDisplay(row).type || 'unknown')}`
-}
-
-function translateBackendKey(key, fallback = '-') {
-  const value = String(key || '').trim()
-  if (!value) return fallback
-  return t(value)
-}
-
-function statusLabel(value, key = '') {
-  if (key) return translateBackendKey(key, value || '-')
-
-  const normalized = upper(value)
-
-  if (normalized === 'PENDING') return t('ot.status.pending')
-  if (normalized === 'PENDING_REQUESTER_CONFIRMATION') {
-    return t('ot.status.pendingRequesterConfirmation')
-  }
-  if (normalized === 'APPROVED') return t('ot.status.approved')
-  if (normalized === 'REJECTED') return t('ot.status.rejected')
-  if (normalized === 'REQUESTER_DISAGREED') return t('ot.status.requesterDisagreed')
-  if (normalized === 'CANCELLED') return t('ot.status.cancelled')
-
-  return normalized || t('common.unknown')
-}
-
-function statusSeverity(value) {
-  const normalized = upper(value)
-
-  if (normalized === 'APPROVED') return 'success'
-  if (normalized === 'REJECTED') return 'danger'
-  if (normalized === 'REQUESTER_DISAGREED') return 'danger'
-  if (normalized === 'CANCELLED') return 'contrast'
-  if (normalized === 'PENDING_REQUESTER_CONFIRMATION') return 'info'
-  if (normalized === 'PENDING') return 'warning'
-
-  return 'secondary'
-}
-
-function dayTypeLabel(value, key = '') {
-  if (key) return translateBackendKey(key, value || '-')
-
-  const normalized = upper(value)
-
-  if (normalized === 'HOLIDAY') return t('ot.dayType.holiday')
-  if (normalized === 'SUNDAY') return t('ot.dayType.sunday')
-  if (normalized === 'WORKING_DAY') return t('ot.dayType.workingDay')
-
-  return normalized || t('common.unknown')
-}
-
-function dayTypeSeverity(value) {
-  const normalized = upper(value)
-
-  if (normalized === 'HOLIDAY') return 'danger'
-  if (normalized === 'SUNDAY') return 'warning'
-  if (normalized === 'WORKING_DAY') return 'success'
-
-  return 'secondary'
-}
-
-function timingSourceLabel(value) {
-  const normalized = upper(value)
-
-  if (normalized === 'CUSTOM_FIXED') return t('ot.requests.customFixed')
-  return t('ot.requests.preset')
-}
-
-function timingSourceSeverity(value) {
-  const normalized = upper(value)
-
-  if (normalized === 'CUSTOM_FIXED') return 'info'
-  return 'secondary'
-}
-
-function formatTimeRange(row) {
-  const start = String(row?.requestStartTime || row?.startTime || '').trim()
-  const end = String(row?.requestEndTime || row?.endTime || '').trim()
-
-  if (!start && !end) return '-'
-
-  return [start, end].filter(Boolean).join(' - ')
-}
-
-function formatRequester(row) {
-  const name = String(
-    row?.requesterName ||
-      row?.createdByName ||
-      row?.ownerName ||
-      row?.employeeName ||
-      '',
-  ).trim()
-
-  const employeeNo = String(
-    row?.requesterEmployeeNo ||
-      row?.requesterEmployeeCode ||
-      row?.createdByEmployeeNo ||
-      row?.employeeNo ||
-      '',
-  ).trim()
-
-  return {
-    name: name || '-',
-    employeeNo: employeeNo || '-',
-  }
-}
-
-function canEdit(row) {
-  return canUpdateRequest.value && !!row?.canEdit
-}
-
-function approvalDisplay(row) {
-  const display = row?.approvalDisplay || {}
-
-  const type = firstText(
-    display.type,
-    row?.approvalDisplayType,
-    row?.status,
-    'UNKNOWN',
-  )
-
-  const label = firstText(
-    display.label,
-    row?.approvalDisplayLabel,
-    statusLabel(row?.status, row?.statusKey),
-  )
-
-  const subLabel = firstText(
-    display.subLabel,
-    row?.approvalDisplaySubLabel,
-    '',
-  )
-
-  const severity = firstText(
-    display.severity,
-    row?.approvalDisplaySeverity,
-    statusSeverity(type),
-  )
-
-  return {
-    type,
-    label,
-    subLabel,
-    severity,
-  }
-}
-
-function approvalDisplaySeverity(row) {
-  return approvalDisplay(row).severity || statusSeverity(row?.status)
-}
-
-function getTargetEmployees(row) {
-  if (Array.isArray(row?.employees)) return row.employees
-  if (Array.isArray(row?.approvedEmployees)) return row.approvedEmployees
-  if (Array.isArray(row?.requestedEmployees)) return row.requestedEmployees
-  if (Array.isArray(row?.employeeItems)) return row.employeeItems
-  if (Array.isArray(row?.targetEmployees)) return row.targetEmployees
-  if (Array.isArray(row?.employeeList)) return row.employeeList
-
-  return []
-}
-
-function getEmployeeCount(row) {
-  const explicitCount = Number(
-    row?.employeeCount ||
-      row?.approvedEmployeeCount ||
-      row?.requestedEmployeeCount ||
-      row?.totalEmployees ||
-      0,
-  )
-
-  if (explicitCount > 0) return explicitCount
-
-  return getTargetEmployees(row).length
-}
-
-function employeeIdOf(employee) {
-  return String(employee?.employeeId || employee?._id || employee?.id || '').trim()
-}
-
-function employeeNameOf(employee) {
-  return String(
-    employee?.employeeName ||
-      employee?.displayName ||
-      employee?.name ||
-      employee?.fullName ||
-      '-',
-  ).trim() || '-'
-}
-
-function employeeCodeOf(employee) {
-  return String(
-    employee?.employeeCode ||
-      employee?.employeeNo ||
-      employee?.code ||
-      employee?.loginId ||
-      '-',
-  ).trim() || '-'
-}
-
-function employeePositionOf(employee) {
-  return String(
-    employee?.positionName ||
-      employee?.position?.name ||
-      employee?.positionTitle ||
-      '-',
-  ).trim() || '-'
-}
-
-function employeeLineOf(employee, row = null) {
-  const directLabel = firstText(
-    employee?.lineLabel,
-    employee?.productionLineLabel,
-    employee?.employeeLineLabel,
-    employee?.assignedLineLabel,
-    employee?.lineDisplay,
-    employee?.productionLineDisplay,
-    employee?.lineText,
-  )
-
-  if (directLabel) return directLabel
-
-  const code = firstText(
-    employee?.lineCode,
-    employee?.productionLineCode,
-    employee?.employeeLineCode,
-    employee?.assignedLineCode,
-    employee?.line?.code,
-    employee?.line?.lineCode,
-    employee?.productionLine?.code,
-    employee?.productionLine?.lineCode,
-    employee?.productionLineId?.code,
-    employee?.productionLineId?.lineCode,
-    employee?.lineId?.code,
-    employee?.lineId?.lineCode,
-    row?.lineCode,
-    row?.productionLineCode,
-    row?.line?.code,
-    row?.productionLine?.code,
-  )
-
-  const name = firstText(
-    employee?.lineName,
-    employee?.productionLineName,
-    employee?.employeeLineName,
-    employee?.assignedLineName,
-    employee?.line?.name,
-    employee?.line?.lineName,
-    employee?.productionLine?.name,
-    employee?.productionLine?.lineName,
-    employee?.productionLineId?.name,
-    employee?.productionLineId?.lineName,
-    employee?.lineId?.name,
-    employee?.lineId?.lineName,
-    row?.lineName,
-    row?.productionLineName,
-    row?.line?.name,
-    row?.productionLine?.name,
-  )
-
-  if (code && name) return `${code} · ${name}`
-  if (code) return code
-  if (name) return name
-
-  const fallback = firstText(
-    employee?.lineNo,
-    employee?.lineNumber,
-    employee?.productionLineNo,
-    employee?.productionLineNumber,
-    employee?.line,
-    employee?.productionLine,
-  )
-
-  return fallback
-}
-
-function employeeOtTimeOf(employee, row) {
-  const employeeStart = String(
-    employee?.requestStartTime ||
-      employee?.startTime ||
-      employee?.otStartTime ||
-      employee?.approvedStartTime ||
-      '',
-  ).trim()
-
-  const employeeEnd = String(
-    employee?.requestEndTime ||
-      employee?.endTime ||
-      employee?.otEndTime ||
-      employee?.approvedEndTime ||
-      '',
-  ).trim()
-
-  if (employeeStart || employeeEnd) {
-    return [employeeStart, employeeEnd].filter(Boolean).join(' - ')
-  }
-
-  return formatTimeRange(row)
-}
-
-function employeeBreakMinutesOf(employee, row) {
-  const value = Number(
-    employee?.breakMinutes ??
-      employee?.otBreakMinutes ??
-      employee?.approvedBreakMinutes ??
-      row?.breakMinutes ??
-      0,
-  )
-
-  return Number.isFinite(value) && value >= 0 ? value : 0
-}
-
-function employeeTotalMinutesOf(employee, row) {
-  const value = Number(
-    employee?.totalMinutes ??
-      employee?.requestedMinutes ??
-      employee?.otMinutes ??
-      employee?.approvedMinutes ??
-      row?.totalMinutes ??
-      row?.requestedMinutes ??
-      0,
-  )
-
-  return Number.isFinite(value) && value >= 0 ? value : 0
-}
-
-function employeeTimeModeOf(employee) {
-  const mode = upper(employee?.otTimeMode || employee?.timeMode || 'DEFAULT')
-
-  return mode === 'CUSTOM' ? 'CUSTOM' : 'DEFAULT'
-}
-
-function employeeTimeModeLabel(employee) {
-  return employeeTimeModeOf(employee) === 'CUSTOM'
-    ? t('ot.requests.timeMode.custom')
-    : t('ot.requests.timeMode.default')
-}
-
-function employeeTimeModeSeverity(employee) {
-  return employeeTimeModeOf(employee) === 'CUSTOM' ? 'warn' : 'success'
 }
 
 async function fetchPage(page, { replace = false, silent = false } = {}) {
@@ -582,38 +450,35 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
   try {
     const res = await getOTRequests(buildQuery(page))
+
     if (requestId !== currentRequestId) return
 
     const payload = normalizePayload(res)
     const items = normalizeItems(payload).map(normalizeRow)
-    const total = Number(
-      payload?.pagination?.total ||
-        payload?.pagination?.totalRecords ||
-        0,
-    )
+    const total = normalizeTotal(payload)
+    const startIndex = (page - 1) * PAGE_SIZE
 
     totalRecords.value = total
 
     if (replace) {
-      const nextRows = Array.from({ length: total }, () => null)
-      const startIndex = (page - 1) * PAGE_SIZE
+      const nextRows = total > 0 ? Array.from({ length: total }, () => null) : []
 
-      for (let i = 0; i < items.length; i += 1) {
-        nextRows[startIndex + i] = items[i]
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
       }
 
       rows.value = total === 0 ? [] : nextRows
       loadedPages.value = new Set([page])
+      expandedRows.value = {}
     } else {
       if (!rows.value.length && total > 0) {
         rows.value = Array.from({ length: total }, () => null)
       }
 
       const nextRows = [...rows.value]
-      const startIndex = (page - 1) * PAGE_SIZE
 
-      for (let i = 0; i < items.length; i += 1) {
-        nextRows[startIndex + i] = items[i]
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
       }
 
       rows.value = nextRows
@@ -622,29 +487,26 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
     bootstrapped.value = true
   } catch (error) {
+    bootstrapped.value = true
+
     toast.add({
       severity: 'error',
       summary: t('common.loadFailed'),
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        t('ot.requests.loadFailed'),
-      life: 3000,
+      detail: getApiErrorMessage(error, t('ot.requests.loadFailed')),
+      life: 3500,
     })
   } finally {
     backgroundLoading.value = false
   }
 }
 
-async function reloadFirstPage({ keepVisible = true, resetExpanded = false } = {}) {
-  if (resetExpanded) {
-    expandedRows.value = {}
-  }
-
+async function reloadFirstPage({ keepVisible = true } = {}) {
   if (!keepVisible) {
     rows.value = []
     totalRecords.value = 0
     loadedPages.value = new Set()
+    expandedRows.value = {}
+    bootstrapped.value = false
   }
 
   await fetchPage(1, {
@@ -657,7 +519,7 @@ function runSearchSoon() {
   window.clearTimeout(searchTimer)
 
   searchTimer = window.setTimeout(() => {
-    reloadFirstPage({ keepVisible: true, resetExpanded: true })
+    reloadFirstPage({ keepVisible: true })
   }, SEARCH_DEBOUNCE_MS)
 }
 
@@ -665,26 +527,14 @@ function onSearchInput() {
   runSearchSoon()
 }
 
-function onStatusChange() {
-  reloadFirstPage({ keepVisible: true, resetExpanded: true })
+function onFilterChange() {
+  reloadFirstPage({ keepVisible: true })
 }
 
-function onDayTypeChange() {
-  reloadFirstPage({ keepVisible: true, resetExpanded: true })
-}
-
-function onDateChange() {
-  reloadFirstPage({ keepVisible: true, resetExpanded: true })
-}
-
-function clearFilters() {
-  filters.search = ''
-  filters.status = ''
-  filters.dayType = ''
-  filters.otDateFrom = null
-  filters.otDateTo = null
-
-  reloadFirstPage({ keepVisible: true, resetExpanded: true })
+function onSort(event) {
+  filters.sortBy = event.sortField || 'createdAt'
+  filters.sortOrder = typeof event.sortOrder === 'number' ? event.sortOrder : -1
+  reloadFirstPage({ keepVisible: true })
 }
 
 async function onVirtualLazyLoad(event) {
@@ -703,65 +553,60 @@ async function onVirtualLazyLoad(event) {
   }
 }
 
-function goCreate() {
-  if (!canCreateRequest.value) return
+async function clearFilters() {
+  filters.search = ''
+  filters.status = ''
+  filters.dayType = ''
+  filters.otDateFrom = null
+  filters.otDateTo = null
+  filters.sortBy = 'createdAt'
+  filters.sortOrder = -1
 
-  router.push('/ot/requests/create')
+  await reloadFirstPage({ keepVisible: true })
 }
 
-function goEdit(id) {
-  if (!id || !canUpdateRequest.value) return
+function getFilenameFromHeader(res, fallback) {
+  const disposition = String(res?.headers?.['content-disposition'] || '')
+  const match = disposition.match(/filename="?([^"]+)"?/i)
 
-  router.push(`/ot/requests/${id}/edit`)
+  return match?.[1] || fallback
 }
 
-function goVerifyAttendance(id) {
-  if (!id || !canVerifyAttendance.value) return
+function downloadBlob(blob, filename) {
+  const url = window.URL.createObjectURL(blob)
+  const link = document.createElement('a')
 
-  router.push(`/attendance/ot-verification/${id}`)
+  link.href = url
+  link.download = filename
+
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+
+  window.URL.revokeObjectURL(url)
 }
 
-function getExportFilenameFromHeaders(headers = {}) {
-  const disposition =
-    headers?.['content-disposition'] || headers?.['Content-Disposition'] || ''
-  const match = disposition.match(/filename\*?=(?:UTF-8''|")?([^";]+)"?/i)
-
-  if (!match?.[1]) return 'ot-requests.xlsx'
-
-  return decodeURIComponent(match[1]).replace(/[/\\?%*:|"<>]/g, '_')
-}
-
-async function onExportExcel() {
-  if (exporting.value) return
-
+async function handleExport() {
   exporting.value = true
 
   try {
-    const res = await exportOTRequestsExcel(buildExportQuery())
+    const res = await exportOTRequestsExcel({
+      search: normalizeText(filters.search),
+      status: filters.status,
+      dayType: filters.dayType,
+      otDateFrom: dateFilterValue(filters.otDateFrom),
+      otDateTo: dateFilterValue(filters.otDateTo),
+      sortBy: filters.sortBy,
+      sortOrder: filters.sortOrder === 1 ? 'asc' : 'desc',
+    })
 
-    const blob = new Blob(
-      [
-        res?.data instanceof Blob
-          ? res.data
-          : new Uint8Array(res?.data || []),
-      ],
-      {
-        type:
-          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      },
-    )
+    const blob = new Blob([res.data], {
+      type:
+        res?.headers?.['content-type'] ||
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
 
-    const url = window.URL.createObjectURL(blob)
-    const link = document.createElement('a')
-
-    link.href = url
-    link.download = getExportFilenameFromHeaders(res?.headers || {})
-
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-
-    window.URL.revokeObjectURL(url)
+    downloadBlob(blob, getFilenameFromHeader(res, `ot-requests-${Date.now()}.xlsx`))
 
     toast.add({
       severity: 'success',
@@ -773,19 +618,20 @@ async function onExportExcel() {
     toast.add({
       severity: 'error',
       summary: t('ot.requests.exportFailed'),
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        t('ot.requests.exportFailed'),
-      life: 3000,
+      detail: getApiErrorMessage(error, t('ot.requests.exportFailed')),
+      life: 3500,
     })
   } finally {
     exporting.value = false
   }
 }
 
+function openCreateRequest() {
+  router.push('/ot/requests/create')
+}
+
 onMounted(() => {
-  reloadFirstPage({ keepVisible: false, resetExpanded: true })
+  reloadFirstPage({ keepVisible: false })
 })
 
 onBeforeUnmount(() => {
@@ -798,21 +644,22 @@ onBeforeUnmount(() => {
     <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
       <div class="flex flex-wrap items-center gap-2">
         <Button
+          v-if="canExport"
           :label="t('ot.requests.exportExcel')"
           icon="pi pi-file-excel"
           severity="success"
           outlined
           size="small"
           :loading="exporting"
-          @click="onExportExcel"
+          @click="handleExport"
         />
 
         <Button
-          v-if="canCreateRequest"
+          v-if="canCreate"
           :label="t('ot.requests.newRequest')"
           icon="pi pi-plus"
           size="small"
-          @click="goCreate"
+          @click="openCreateRequest"
         />
       </div>
     </div>
@@ -820,7 +667,7 @@ onBeforeUnmount(() => {
     <div class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]">
       <div class="border-b border-[color:var(--ot-border)] px-3 py-3">
         <div class="ot-request-filter-row">
-          <IconField class="w-full xl:w-[190px] xl:shrink-0">
+          <IconField class="w-full xl:w-[260px] xl:shrink-0">
             <InputIcon class="pi pi-search" />
 
             <InputText
@@ -832,7 +679,7 @@ onBeforeUnmount(() => {
             />
           </IconField>
 
-          <div class="w-full xl:w-[165px] xl:shrink-0">
+          <div class="w-full xl:w-[230px] xl:shrink-0">
             <Select
               v-model="filters.status"
               :options="statusOptions"
@@ -841,11 +688,11 @@ onBeforeUnmount(() => {
               :placeholder="t('common.status')"
               class="w-full"
               size="small"
-              @change="onStatusChange"
+              @change="onFilterChange"
             />
           </div>
 
-          <div class="w-full xl:w-[170px] xl:shrink-0">
+          <div class="w-full xl:w-[230px] xl:shrink-0">
             <Select
               v-model="filters.dayType"
               :options="dayTypeOptions"
@@ -854,11 +701,11 @@ onBeforeUnmount(() => {
               :placeholder="t('ot.requests.dayType')"
               class="w-full"
               size="small"
-              @change="onDayTypeChange"
+              @change="onFilterChange"
             />
           </div>
 
-          <div class="w-full xl:w-[175px] xl:shrink-0">
+          <div class="w-full xl:w-[200px] xl:shrink-0">
             <DatePicker
               v-model="filters.otDateFrom"
               dateFormat="dd/mm/yy"
@@ -867,12 +714,12 @@ onBeforeUnmount(() => {
               class="w-full"
               inputClass="w-full"
               :placeholder="t('ot.requests.otDateFrom')"
-              @date-select="onDateChange"
-              @clear-click="onDateChange"
+              @date-select="onFilterChange"
+              @clear-click="onFilterChange"
             />
           </div>
 
-          <div class="w-full xl:w-[175px] xl:shrink-0">
+          <div class="w-full xl:w-[200px] xl:shrink-0">
             <DatePicker
               v-model="filters.otDateTo"
               dateFormat="dd/mm/yy"
@@ -881,14 +728,14 @@ onBeforeUnmount(() => {
               class="w-full"
               inputClass="w-full"
               :placeholder="t('ot.requests.otDateTo')"
-              @date-select="onDateChange"
-              @clear-click="onDateChange"
+              @date-select="onFilterChange"
+              @clear-click="onFilterChange"
             />
           </div>
 
           <div class="flex flex-wrap items-center gap-2 xl:ml-auto xl:shrink-0">
             <div class="rounded-lg border border-[color:var(--ot-border)] px-3 py-1.5 text-xs font-medium text-[color:var(--ot-text-muted)]">
-              {{ summaryText }}
+              {{ loadedLabel }}
             </div>
 
             <Button
@@ -917,19 +764,23 @@ onBeforeUnmount(() => {
         :value="rows"
         dataKey="id"
         lazy
+        removableSort
         scrollable
         scrollHeight="500px"
+        :sortField="filters.sortBy"
+        :sortOrder="filters.sortOrder"
         tableStyle="width: max-content; min-width: 100%; table-layout: auto;"
         class="ot-request-table"
         :virtualScrollerOptions="useVirtualScroll ? {
           lazy: true,
           onLazyLoad: onVirtualLazyLoad,
-          itemSize: 64,
+          itemSize: 70,
           delay: 0,
           showLoader: false,
           loading: false,
           numToleratedItems: 12,
         } : null"
+        @sort="onSort"
       >
         <template #empty>
           <div
@@ -945,13 +796,14 @@ onBeforeUnmount(() => {
         <Column
           field="requestNo"
           :header="t('ot.requests.requestNo')"
+          sortable
         >
           <template #body="{ data }">
             <span
               v-if="data"
               class="font-medium"
             >
-              {{ data.requestNo || '-' }}
+              {{ requestNo(data) }}
             </span>
           </template>
         </Column>
@@ -963,32 +815,27 @@ onBeforeUnmount(() => {
               class="requester-cell"
             >
               <div class="font-medium text-[color:var(--ot-text)]">
-                {{ formatRequester(data).name }}
+                {{ requesterName(data) }}
               </div>
 
-              <div class="text-xs text-[color:var(--ot-text-muted)]">
-                {{ formatRequester(data).employeeNo }}
+              <div
+                v-if="requesterCode(data)"
+                class="text-xs text-[color:var(--ot-text-muted)]"
+              >
+                {{ requesterCode(data) }}
               </div>
             </div>
           </template>
         </Column>
 
-        <Column
-          field="status"
-          :header="t('ot.requests.approvalStatus')"
-        >
+        <Column :header="t('ot.requests.approvalStatus')">
           <template #body="{ data }">
-            <div
+            <Tag
               v-if="data"
-              class="approval-status-cell"
-            >
-              <Tag
-                :value="approvalDisplay(data).label"
-                :severity="approvalDisplaySeverity(data)"
-                class="ot-status-tag approval-display-tag"
-                :class="approvalDisplayClass(data)"
-              />
-            </div>
+              :value="approvalLabel(data)"
+              :severity="approvalSeverity(data)"
+              class="ot-status-tag"
+            />
           </template>
         </Column>
 
@@ -996,9 +843,9 @@ onBeforeUnmount(() => {
           <template #body="{ data }">
             <Tag
               v-if="data"
-              :value="t('ot.requests.staffCount', { count: getEmployeeCount(data) })"
+              :value="staffCountLabel(data)"
               severity="info"
-              class="ot-status-tag ot-count-approved"
+              class="ot-status-tag"
             />
           </template>
         </Column>
@@ -1006,15 +853,16 @@ onBeforeUnmount(() => {
         <Column
           field="otDate"
           :header="t('ot.requests.otDate')"
+          sortable
         >
           <template #body="{ data }">
-            <span v-if="data">{{ formatDateDMY(data.otDate) }}</span>
+            <span v-if="data">{{ otDateLabel(data) }}</span>
           </template>
         </Column>
 
         <Column :header="t('ot.requests.otTime')">
           <template #body="{ data }">
-            <span v-if="data">{{ formatTimeRange(data) }}</span>
+            <span v-if="data">{{ otTimeLabel(data) }}</span>
           </template>
         </Column>
 
@@ -1022,8 +870,8 @@ onBeforeUnmount(() => {
           <template #body="{ data }">
             <Tag
               v-if="data"
-              :value="timingSourceLabel(data.otTimingSource)"
-              :severity="timingSourceSeverity(data.otTimingSource)"
+              :value="timingLabel(data)"
+              severity="secondary"
               class="ot-status-tag"
             />
           </template>
@@ -1032,14 +880,14 @@ onBeforeUnmount(() => {
         <Column
           field="dayType"
           :header="t('ot.requests.dayType')"
+          sortable
         >
           <template #body="{ data }">
             <Tag
               v-if="data"
-              :value="dayTypeLabel(data.dayType, data.dayTypeKey)"
-              :severity="dayTypeSeverity(data.dayType)"
+              :value="dayTypeLabel(data)"
+              :severity="dayTypeSeverity(data)"
               class="ot-status-tag"
-              :class="dayTypeClass(data.dayType)"
             />
           </template>
         </Column>
@@ -1047,67 +895,31 @@ onBeforeUnmount(() => {
         <Column
           field="createdAt"
           :header="t('common.createdAt')"
+          sortable
         >
           <template #body="{ data }">
-            <span v-if="data">{{ formatDateTimeDMY(data.createdAt) }}</span>
-          </template>
-        </Column>
-
-        <Column
-          :header="t('common.actions')"
-          frozen
-          alignFrozen="right"
-          headerClass="ot-action-column-header"
-          bodyClass="ot-action-column-body"
-        >
-          <template #body="{ data }">
-            <div
-              v-if="data"
-              class="action-cell"
-            >
-              <Button
-                v-if="canVerifyAttendance"
-                :label="t('ot.requests.verify')"
-                icon="pi pi-check-square"
-                size="small"
-                severity="success"
-                outlined
-                @click="goVerifyAttendance(data._id || data.id)"
-              />
-
-              <Button
-                v-if="canEdit(data)"
-                :label="t('common.edit')"
-                icon="pi pi-pencil"
-                size="small"
-                severity="warning"
-                outlined
-                @click="goEdit(data._id || data.id)"
-              />
-            </div>
+            <span v-if="data">{{ safeDateTime(data.createdAt) }}</span>
           </template>
         </Column>
 
         <template #expansion="{ data }">
           <div class="ot-expanded-box">
-            <div
-              v-if="getTargetEmployees(data).length"
-              class="ot-expanded-content"
-            >
+            <div class="ot-expanded-content">
               <div class="ot-expanded-header">
                 <div>
                   <div class="ot-expanded-title">
-                    {{ t('ot.requests.employeeOtTimeDetail') }}
+                    {{ t('ot.requests.employees') }}
                   </div>
 
                   <div class="ot-expanded-subtitle">
-                    {{ t('ot.requests.defaultRequestTime') }}: {{ formatTimeRange(data) }}
+                    {{ t('ot.requests.otTime') }}: {{ otTimeLabel(data) }}
+                    · {{ t('ot.requests.timing') }}: {{ timingLabel(data) }}
                   </div>
                 </div>
 
                 <Tag
-                  :value="timingSourceLabel(data.otTimingSource)"
-                  :severity="timingSourceSeverity(data.otTimingSource)"
+                  :value="staffCountLabel(data)"
+                  severity="info"
                   class="ot-status-tag"
                 />
               </div>
@@ -1115,8 +927,8 @@ onBeforeUnmount(() => {
               <div class="ot-expanded-responsive-table">
                 <div class="ot-expanded-grid-row is-head">
                   <div>{{ t('common.no') }}</div>
-                  <div>{{ t('ot.requests.employeeId') }}</div>
-                  <div>{{ t('common.name') }}</div>
+                  <div>{{ t('org.employee.employeeCode') }}</div>
+                  <div>{{ t('org.employee.displayName') }}</div>
                   <div>{{ t('nav.positions') }}</div>
                   <div>{{ t('ot.requests.otTime') }}</div>
                   <div>{{ t('ot.requests.break') }}</div>
@@ -1126,58 +938,34 @@ onBeforeUnmount(() => {
                 </div>
 
                 <div
-                  v-for="(employee, index) in getTargetEmployees(data)"
-                  :key="employeeIdOf(employee) || index"
+                  v-for="(item, index) in detailRows(data)"
+                  :key="item.id || item._id || item.employeeId || item.employeeCode || index"
                   class="ot-expanded-grid-row"
                 >
-                  <div class="cell-center">
-                    {{ index + 1 }}
-                  </div>
-
-                  <div class="cell-mono cell-wrap">
-                    {{ employeeCodeOf(employee) }}
-                  </div>
-
-                  <div class="cell-strong cell-wrap">
-                    {{ employeeNameOf(employee) }}
-                  </div>
-
-                  <div class="cell-wrap">
-                    {{ employeePositionOf(employee) }}
-                  </div>
-
-                  <div class="cell-center cell-mono cell-wrap">
-                    {{ employeeOtTimeOf(employee, data) }}
-                  </div>
-
-                  <div class="cell-center cell-mono">
-                    {{ employeeBreakMinutesOf(employee, data) }}{{ t('ot.common.minShort') }}
-                  </div>
-
-                  <div class="cell-center cell-mono">
-                    {{ formatMinutesLabel(employeeTotalMinutesOf(employee, data)) }}
-                  </div>
-
+                  <div class="cell-center">{{ index + 1 }}</div>
+                  <div class="cell-center cell-mono cell-wrap">{{ detailEmployeeCode(item) }}</div>
+                  <div class="cell-center cell-strong cell-wrap">{{ detailEmployeeName(item) }}</div>
+                  <div class="cell-center cell-wrap">{{ detailPositionLabel(item) }}</div>
+                  <div class="cell-center cell-mono cell-wrap">{{ detailOtTimeLabel(item, data) }}</div>
+                  <div class="cell-center cell-mono">{{ detailBreakLabel(item, data) }}</div>
+                  <div class="cell-center cell-mono">{{ detailTotalLabel(item) }}</div>
                   <div class="cell-center">
                     <Tag
-                      :value="employeeTimeModeLabel(employee)"
-                      :severity="employeeTimeModeSeverity(employee)"
+                      :value="detailModeLabel(item)"
+                      severity="success"
                       class="ot-status-tag"
                     />
                   </div>
+                  <div class="cell-center cell-wrap">{{ detailLineLabel(item) }}</div>
+                </div>
 
-                  <div class="cell-center cell-wrap">
-                    {{ employeeLineOf(employee, data) || '-' }}
-                  </div>
+                <div
+                  v-if="!detailRows(data).length"
+                  class="ot-expanded-empty"
+                >
+                  {{ t('ot.requests.noEmployeeData') }}
                 </div>
               </div>
-            </div>
-
-            <div
-              v-else
-              class="ot-expanded-empty"
-            >
-              {{ t('ot.requests.noEmployeeData') }}
             </div>
           </div>
         </template>
@@ -1207,6 +995,7 @@ onBeforeUnmount(() => {
   }
 }
 
+/* Same base table behavior as ApprovalInbox */
 :deep(.ot-request-table .p-datatable-table) {
   width: max-content !important;
   min-width: 100% !important;
@@ -1214,82 +1003,41 @@ onBeforeUnmount(() => {
 }
 
 :deep(.ot-request-table .p-datatable-thead > tr > th) {
-  padding: 0.62rem 0.75rem !important;
-  white-space: nowrap !important;
   width: auto !important;
   min-width: auto !important;
   max-width: none !important;
+  padding: 0.62rem 0.72rem !important;
+  white-space: nowrap !important;
+  text-align: center !important;
+  vertical-align: middle !important;
 }
 
 :deep(.ot-request-table .p-datatable-tbody > tr > td) {
-  padding: 0.55rem 0.75rem !important;
-  height: 64px !important;
-  vertical-align: middle !important;
-  white-space: nowrap !important;
   width: auto !important;
   min-width: auto !important;
   max-width: none !important;
+  height: 70px !important;
+  padding: 0.5rem 0.72rem !important;
+  vertical-align: middle !important;
+  white-space: nowrap !important;
+  text-align: center !important;
 }
 
-:deep(.ot-request-table .p-sortable-column-icon),
-:deep(.ot-request-table .p-column-header-content .p-icon),
-:deep(.ot-request-table .p-datatable-sort-icon) {
-  display: none !important;
+:deep(.ot-request-table .p-column-header-content) {
+  justify-content: center !important;
 }
 
 :deep(.ot-request-table .p-row-toggler) {
   width: 1.75rem !important;
   height: 1.75rem !important;
+  margin-inline: auto !important;
 }
 
-:deep(.ot-request-table .ot-action-column-header),
-:deep(.ot-request-table .ot-action-column-body) {
-  position: sticky !important;
-  right: 0 !important;
-  z-index: 8 !important;
-  width: 9.25rem !important;
-  min-width: 9.25rem !important;
-  max-width: 9.25rem !important;
-  background: var(--ot-surface) !important;
-  box-shadow: -8px 0 18px rgba(15, 23, 42, 0.06) !important;
-}
-
-:deep(.ot-request-table .ot-action-column-header) {
-  z-index: 10 !important;
-  background: linear-gradient(180deg, var(--ot-surface-2), var(--ot-surface-3)) !important;
-}
-
-:global(.dark) :deep(.ot-request-table .ot-action-column-header),
-:global(.dark) :deep(.ot-request-table .ot-action-column-body) {
-  box-shadow: -8px 0 18px rgba(0, 0, 0, 0.22) !important;
-}
-
-.requester-cell {
-  min-width: max-content;
-}
-
-.action-cell {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.4rem;
-  flex-wrap: nowrap;
-  white-space: nowrap;
-}
-
-.approval-status-cell {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-}
-
-:deep(.ot-request-table .p-button.p-button-sm) {
-  padding: 0.34rem 0.58rem !important;
-  font-size: 0.78rem !important;
-}
-
-:deep(.ot-request-table .p-button.p-button-sm .p-button-icon) {
-  font-size: 0.78rem !important;
+:deep(.ot-request-table .p-datatable-row-expansion > td) {
+  height: auto !important;
+  padding: 0 !important;
+  white-space: normal !important;
+  overflow: hidden !important;
 }
 
 :deep(.ot-request-table .p-tag.ot-status-tag) {
@@ -1303,24 +1051,12 @@ onBeforeUnmount(() => {
   white-space: nowrap !important;
 }
 
-:deep(.p-tag.approval-display-tag) {
-  max-width: 15rem;
+.requester-cell {
+  min-width: max-content;
+  text-align: center;
 }
 
-:deep(.p-tag.approval-display-tag .p-tag-label) {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Expanded employee area */
-:deep(.ot-request-table .p-datatable-row-expansion > td) {
-  height: auto !important;
-  padding: 0 !important;
-  white-space: normal !important;
-  overflow: hidden !important;
-}
-
+/* Expanded area same style direction as ApprovalInbox */
 .ot-expanded-box {
   position: sticky;
   left: 0;
@@ -1375,14 +1111,14 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns:
     2.7rem
-    minmax(4.8rem, 0.55fr)
+    minmax(5rem, 0.6fr)
     minmax(8rem, 1.1fr)
     minmax(7rem, 0.85fr)
-    minmax(6.8rem, 0.7fr)
-    minmax(4.2rem, 0.42fr)
-    minmax(4.8rem, 0.48fr)
-    minmax(4.8rem, 0.46fr)
-    minmax(7rem, 0.8fr);
+    minmax(7rem, 0.75fr)
+    minmax(4.5rem, 0.45fr)
+    minmax(5rem, 0.5fr)
+    minmax(5rem, 0.5fr)
+    minmax(8rem, 0.85fr);
   align-items: stretch;
 }
 
@@ -1434,8 +1170,7 @@ onBeforeUnmount(() => {
 }
 
 .ot-expanded-empty {
-  border: 1px dashed var(--ot-border);
-  border-radius: 0.75rem;
+  border-top: 1px solid var(--ot-border);
   padding: 0.85rem;
   text-align: center;
   font-size: 0.74rem;
@@ -1443,134 +1178,9 @@ onBeforeUnmount(() => {
   color: var(--ot-text-muted);
 }
 
-/* Count colors */
-:deep(.p-tag.ot-count-approved) {
-  background: #e0f2fe !important;
-  color: #075985 !important;
-  border-color: #38bdf8 !important;
-}
-
-/* Status colors */
-:deep(.p-tag.ot-status-pending),
-:deep(.p-tag.ot-approval-waiting) {
-  background: #fef3c7 !important;
-  color: #92400e !important;
-  border-color: #f59e0b !important;
-}
-
-:deep(.p-tag.ot-status-approved),
-:deep(.p-tag.ot-approval-approved) {
-  background: #dcfce7 !important;
-  color: #166534 !important;
-  border-color: #22c55e !important;
-}
-
-:deep(.p-tag.ot-status-rejected),
-:deep(.p-tag.ot-status-requester-disagreed),
-:deep(.p-tag.ot-approval-rejected),
-:deep(.p-tag.ot-approval-requester-disagreed) {
-  background: #fee2e2 !important;
-  color: #991b1b !important;
-  border-color: #ef4444 !important;
-}
-
-:deep(.p-tag.ot-status-cancelled),
-:deep(.p-tag.ot-approval-cancelled) {
-  background: #e5e7eb !important;
-  color: #374151 !important;
-  border-color: #9ca3af !important;
-}
-
-/* Day type colors */
-:deep(.p-tag.ot-day-working-day) {
-  background: #dcfce7 !important;
-  color: #166534 !important;
-  border-color: #22c55e !important;
-}
-
-:deep(.p-tag.ot-day-sunday) {
-  background: #ffedd5 !important;
-  color: #9a3412 !important;
-  border-color: #f97316 !important;
-}
-
-:deep(.p-tag.ot-day-holiday) {
-  background: #fee2e2 !important;
-  color: #991b1b !important;
-  border-color: #ef4444 !important;
-}
-
-/* Dark mode */
-:global(.dark) :deep(.p-tag.ot-status-pending),
-:global(.dark) :deep(.p-tag.ot-approval-waiting) {
-  background: rgba(245, 158, 11, 0.2) !important;
-  color: #fbbf24 !important;
-  border-color: rgba(245, 158, 11, 0.45) !important;
-}
-
-:global(.dark) :deep(.p-tag.ot-status-approved),
-:global(.dark) :deep(.p-tag.ot-approval-approved) {
-  background: rgba(34, 197, 94, 0.18) !important;
-  color: #86efac !important;
-  border-color: rgba(34, 197, 94, 0.45) !important;
-}
-
-:global(.dark) :deep(.p-tag.ot-status-rejected),
-:global(.dark) :deep(.p-tag.ot-status-requester-disagreed),
-:global(.dark) :deep(.p-tag.ot-approval-rejected),
-:global(.dark) :deep(.p-tag.ot-approval-requester-disagreed) {
-  background: rgba(239, 68, 68, 0.18) !important;
-  color: #fca5a5 !important;
-  border-color: rgba(239, 68, 68, 0.45) !important;
-}
-
-:global(.dark) :deep(.p-tag.ot-status-cancelled),
-:global(.dark) :deep(.p-tag.ot-approval-cancelled) {
-  background: rgba(148, 163, 184, 0.18) !important;
-  color: #cbd5e1 !important;
-  border-color: rgba(148, 163, 184, 0.45) !important;
-}
-
-:global(.dark) :deep(.p-tag.ot-day-working-day) {
-  background: rgba(34, 197, 94, 0.18) !important;
-  color: #86efac !important;
-  border-color: rgba(34, 197, 94, 0.45) !important;
-}
-
-:global(.dark) :deep(.p-tag.ot-day-sunday) {
-  background: rgba(249, 115, 22, 0.18) !important;
-  color: #fdba74 !important;
-  border-color: rgba(249, 115, 22, 0.45) !important;
-}
-
-:global(.dark) :deep(.p-tag.ot-day-holiday) {
-  background: rgba(239, 68, 68, 0.18) !important;
-  color: #fca5a5 !important;
-  border-color: rgba(239, 68, 68, 0.45) !important;
-}
-
-:global(.dark) :deep(.p-tag.ot-count-approved) {
-  background: rgba(14, 165, 233, 0.18) !important;
-  color: #7dd3fc !important;
-  border-color: rgba(14, 165, 233, 0.45) !important;
-}
-
 @media (max-width: 1200px) {
   .ot-expanded-box {
-    width: min(100%, 1060px);
-  }
-
-  .ot-expanded-grid-row {
-    grid-template-columns:
-      2.5rem
-      minmax(4.5rem, 0.52fr)
-      minmax(7rem, 1fr)
-      minmax(6.5rem, 0.75fr)
-      minmax(6.4rem, 0.62fr)
-      minmax(4rem, 0.4fr)
-      minmax(4.6rem, 0.46fr)
-      minmax(4.6rem, 0.44fr)
-      minmax(6.8rem, 0.76fr);
+    width: min(100%, 1120px);
   }
 
   .ot-expanded-grid-row > div {
@@ -1587,21 +1197,21 @@ onBeforeUnmount(() => {
 
   .ot-expanded-box {
     width: max-content;
-    min-width: 980px;
+    min-width: 1080px;
     max-width: none;
     padding: 0.6rem;
   }
 
   .ot-expanded-content {
     width: max-content;
-    min-width: 980px;
+    min-width: 1080px;
     max-width: none;
     overflow: visible;
   }
 
   .ot-expanded-responsive-table {
     width: max-content;
-    min-width: 980px;
+    min-width: 1080px;
     max-width: none;
     overflow: visible;
   }
@@ -1633,50 +1243,6 @@ onBeforeUnmount(() => {
     white-space: normal;
     overflow-wrap: anywhere;
     word-break: break-word;
-  }
-}
-
-@media (max-width: 420px) {
-  .ot-expanded-box {
-    width: max-content;
-    min-width: 980px;
-    max-width: none;
-    padding: 0.55rem;
-  }
-
-  .ot-expanded-content {
-    width: max-content;
-    min-width: 980px;
-    max-width: none;
-  }
-
-  .ot-expanded-responsive-table {
-    width: max-content;
-    min-width: 980px;
-    max-width: none;
-  }
-
-  .ot-expanded-grid-row {
-    grid-template-columns:
-      2.3rem
-      5.6rem
-      8.5rem
-      8rem
-      7.2rem
-      4.6rem
-      5.2rem
-      5.2rem
-      9.2rem;
-  }
-
-  .ot-expanded-grid-row > div {
-    padding: 0.4rem 0.46rem;
-    font-size: 0.66rem;
-    line-height: 1.25;
-  }
-
-  .ot-expanded-grid-row.is-head > div {
-    font-size: 0.62rem;
   }
 }
 </style>

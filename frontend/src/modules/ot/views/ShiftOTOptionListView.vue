@@ -243,6 +243,24 @@ function mapLookupOptions(items = []) {
     .filter(Boolean)
 }
 
+function mapPolicyLookupOptions(items = []) {
+  return items
+    .map((item) => {
+      const value = normalizeId(item) || String(item?.value || '').trim()
+      const code = String(item?.code || item?.policyCode || '').trim()
+      const label = code || String(item?.label || '').trim()
+
+      if (!value || !label) return null
+
+      return {
+        ...item,
+        value,
+        label,
+      }
+    })
+    .filter(Boolean)
+}
+
 function normalizeApplicableDayTypes(value) {
   const source = Array.isArray(value) ? value : []
   const valid = ['WORKING_DAY', 'SUNDAY', 'HOLIDAY']
@@ -495,7 +513,7 @@ async function fetchPolicyLookup() {
       isActive: true,
     })
 
-    policyOptions.value = mapLookupOptions(normalizeItems(normalizePayload(res)))
+    policyOptions.value = mapPolicyLookupOptions(normalizeItems(normalizePayload(res)))
   } catch (error) {
     policyOptions.value = []
     showToast(
@@ -947,10 +965,6 @@ onBeforeUnmount(() => {
           <h2 class="ot-table-title">
             {{ t('ot.shiftOption.tableTitle') }}
           </h2>
-
-          <p class="ot-table-subtitle">
-            {{ t('ot.shiftOption.subtitle') }}
-          </p>
         </div>
 
         <div class="ot-table-actions">
@@ -1027,7 +1041,7 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('nav.shift')"
-            style="min-width: 18rem"
+            style="min-width: 10rem"
           >
             <template #body="{ data }">
               <div
@@ -1037,10 +1051,6 @@ onBeforeUnmount(() => {
                 <span class="font-medium text-[color:var(--ot-text)]">
                   {{ shiftLabel(data) }}
                 </span>
-
-                <span class="text-xs text-[color:var(--ot-text-muted)]">
-                  {{ shiftSubLabel(data) }}
-                </span>
               </div>
             </template>
           </Column>
@@ -1049,7 +1059,7 @@ onBeforeUnmount(() => {
             field="label"
             :header="t('ot.shiftOption.optionLabel')"
             sortable
-            style="min-width: 15rem"
+            style="min-width: 10rem"
           >
             <template #body="{ data }">
               <span
@@ -1063,7 +1073,7 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('ot.shiftOption.dayType')"
-            style="min-width: 14rem"
+            style="min-width: 8rem"
           >
             <template #body="{ data }">
               <div
@@ -1085,7 +1095,7 @@ onBeforeUnmount(() => {
             field="timingMode"
             :header="t('ot.shiftOption.timingMode')"
             sortable
-            style="min-width: 12rem"
+            style="min-width: 10rem"
           >
             <template #body="{ data }">
               <Tag
@@ -1099,7 +1109,7 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('ot.shiftOption.otWindow')"
-            style="min-width: 15rem"
+            style="min-width: 10rem"
           >
             <template #body="{ data }">
               <div
@@ -1119,7 +1129,7 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('ot.shiftOption.requested')"
-            style="min-width: 10rem"
+            style="min-width: 8rem"
           >
             <template #body="{ data }">
               <Tag
@@ -1133,7 +1143,7 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('ot.shiftOption.break')"
-            style="min-width: 9rem"
+            style="min-width: 5rem"
           >
             <template #body="{ data }">
               <span
@@ -1147,7 +1157,7 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('ot.shiftOption.paid')"
-            style="min-width: 10rem"
+            style="min-width: 5rem"
           >
             <template #body="{ data }">
               <Tag
@@ -1161,7 +1171,7 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('ot.shiftOption.policy')"
-            style="min-width: 22rem"
+            style="min-width: 15rem"
           >
             <template #body="{ data }">
               <div
@@ -1280,16 +1290,16 @@ onBeforeUnmount(() => {
               {{ t('ot.shiftOption.policy') }}
             </label>
 
-            <Select
-              v-model="form.calculationPolicyId"
-              :options="policyOptions"
-              option-label="label"
-              option-value="value"
-              :placeholder="t('ot.shiftOption.selectPolicy')"
-              class="w-full"
-              filter
-              :loading="loadingPolicies"
-            />
+          <Select
+            v-model="form.calculationPolicyId"
+            :options="policyOptions"
+            option-label="label"
+            option-value="value"
+            :placeholder="t('ot.shiftOption.selectPolicy')"
+            class="w-full"
+            filter
+            :loading="loadingPolicies"
+          />
           </div>
         </div>
 

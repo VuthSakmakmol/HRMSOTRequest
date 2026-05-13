@@ -316,17 +316,6 @@ function normalizeShiftOptionsResponse(res) {
 
       const label = String(item?.label || '').trim()
       const dayTypeLabel = String(item?.dayTypeLabel || '').trim()
-      const windowLabel =
-        requestStartTime && requestEndTime
-          ? `${requestStartTime} - ${requestEndTime}`
-          : ''
-
-      const parts = [
-        label,
-        dayTypeLabel,
-        windowLabel,
-        formatMinutesLabel(requestedMinutes),
-      ].filter(Boolean)
 
       return {
         id: String(item?.id || item?._id || '').trim(),
@@ -342,7 +331,9 @@ function normalizeShiftOptionsResponse(res) {
         requestedHours,
         sequence: Number(item?.sequence || 0),
         calculationPolicy: item?.calculationPolicy || null,
-        optionLabel: parts.join(' · '),
+
+        // Number 4 dropdown shows only OT option name.
+        optionLabel: label,
       }
     })
     .filter((item) => item.id && item.label)
@@ -655,6 +646,7 @@ function buildPayload() {
   return {
     employeeIds: selectedEmployeeIds.value,
     employeeTimeOverrides: buildEmployeeTimeOverridesPayload(),
+    employees,
 
     otDate: selectedDateYMD.value,
 

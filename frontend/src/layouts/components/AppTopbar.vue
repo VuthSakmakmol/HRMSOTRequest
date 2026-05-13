@@ -38,15 +38,51 @@ const pageTitle = computed(() => {
   return titleKey ? t(titleKey) : fallbackTitle
 })
 
-const accountInitial = computed(() =>
-  String(auth.user?.displayName || auth.user?.loginId || 'U')
-    .charAt(0)
-    .toUpperCase(),
-)
+function cleanText(value) {
+  return String(value ?? '').trim()
+}
 
-const displayName = computed(() =>
-  String(auth.user?.displayName || auth.user?.loginId || 'User').trim(),
-)
+function firstValidText(values = []) {
+  return values.map(cleanText).find(Boolean) || ''
+}
+
+const displayName = computed(() => {
+  const user = auth.user || {}
+  const employee = user.employee || user.employeeProfile || user.profile || {}
+
+  const combinedName = [user.firstName, user.lastName].map(cleanText).filter(Boolean).join(' ')
+  const employeeCombinedName = [employee.firstName, employee.lastName]
+    .map(cleanText)
+    .filter(Boolean)
+    .join(' ')
+
+  return (
+    firstValidText([
+      user.displayName,
+      user.fullName,
+      user.name,
+      user.employeeName,
+      user.englishName,
+      user.localName,
+      combinedName,
+      employee.displayName,
+      employee.fullName,
+      employee.name,
+      employee.employeeName,
+      employee.englishName,
+      employee.localName,
+      employeeCombinedName,
+      user.loginId,
+      user.username,
+      user.employeeNo,
+    ]) || 'User'
+  )
+})
+
+const accountInitial = computed(() => {
+  const name = displayName.value || 'U'
+  return String(name).trim().charAt(0).toUpperCase() || 'U'
+})
 
 const themeIcon = computed(() => (theme.isDark ? 'pi pi-sun' : 'pi pi-moon'))
 
@@ -136,20 +172,21 @@ function toggleProfileMenu(event) {
           rounded
           severity="secondary"
           size="small"
-          class="topbar-icon-btn hidden sm:!inline-flex"
+          class="topbar-icon-btn hidden md:!inline-flex"
           :aria-label="t('common.notifications')"
         />
 
         <button
           type="button"
           class="topbar-profile-btn"
-          :aria-label="t('auth.profile')"
+          :title="displayName"
+          :aria-label="displayName"
           @click="toggleProfileMenu"
         >
           <Avatar
             :label="accountInitial"
             shape="circle"
-            class="!h-8 !w-8 !bg-[color:var(--ot-blue)] !text-xs !font-semibold !text-white"
+            class="topbar-profile-btn__avatar"
           />
 
           <span class="topbar-profile-btn__name">
@@ -186,58 +223,66 @@ function toggleProfileMenu(event) {
 
 .app-topbar__inner {
   display: flex;
+  min-width: 0;
   height: 56px;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
-  padding-inline: 0.75rem;
+  gap: 0.5rem;
+  padding-inline: 0.65rem;
 }
 
 .app-topbar__left {
   display: flex;
+  flex: 1 1 auto;
   min-width: 0;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.45rem;
 }
 
 .app-topbar__right {
   display: flex;
-  flex-shrink: 0;
+  flex: 0 0 auto;
+  min-width: 0;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.28rem;
 }
 
 .app-topbar__divider {
   display: none;
-  height: 1.75rem;
+  height: 1.65rem;
   width: 1px;
+  flex: 0 0 auto;
   background: var(--ot-border);
 }
 
 .app-topbar__title-wrap {
   min-width: 0;
+  flex: 1 1 auto;
 }
 
 .app-topbar__title {
   overflow: hidden;
-  max-width: 44vw;
+  max-width: 100%;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.88rem;
-  font-weight: 700;
+  font-size: 0.82rem;
+  font-weight: 650;
+  line-height: 1.2;
   color: var(--ot-text);
 }
 
 .topbar-profile-btn {
   display: inline-flex;
   min-width: 0;
+  max-width: 42vw;
   align-items: center;
-  gap: 0.5rem;
-  margin-left: 0.15rem;
+  gap: 0.42rem;
+  margin-left: 0.1rem;
   border: 1px solid transparent;
   border-radius: 999px;
   background: transparent;
-  padding: 0.25rem;
+  padding: 0.22rem;
+  color: var(--ot-text);
   transition:
     border-color 0.16s ease,
     background-color 0.16s ease;
@@ -248,30 +293,54 @@ function toggleProfileMenu(event) {
   background: color-mix(in srgb, var(--ot-text) 6%, transparent);
 }
 
+:deep(.topbar-profile-btn__avatar) {
+  height: 2rem !important;
+  width: 2rem !important;
+  flex: 0 0 auto;
+  background: var(--ot-blue) !important;
+  color: #ffffff !important;
+  font-size: 0.72rem !important;
+  font-weight: 650 !important;
+}
+
 .topbar-profile-btn__name {
   display: none;
-  max-width: 120px;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.75rem;
-  font-weight: 650;
+  font-size: 0.74rem;
+  font-weight: 600;
+  line-height: 1.1;
   color: var(--ot-text);
 }
 
 .topbar-profile-btn__icon {
   display: none;
+  flex: 0 0 auto;
   font-size: 0.62rem;
   color: var(--ot-text-muted);
 }
 
 :deep(.topbar-icon-btn.p-button) {
+  width: 2rem !important;
+  height: 2rem !important;
   color: var(--ot-text-muted) !important;
 }
 
 :deep(.topbar-icon-btn.p-button:hover) {
   color: var(--ot-text) !important;
   background: color-mix(in srgb, var(--ot-text) 7%, transparent) !important;
+}
+
+:deep(.app-language-switcher) {
+  width: 4.25rem;
+  min-width: 4.25rem;
+}
+
+:deep(.app-language-switcher .p-select-label) {
+  padding-inline: 0.5rem !important;
+  font-size: 0.72rem !important;
 }
 
 :global(.dark) .app-topbar {
@@ -314,6 +383,17 @@ function toggleProfileMenu(event) {
   box-shadow: 0 18px 45px rgb(0 0 0 / 0.38) !important;
 }
 
+@media (min-width: 480px) {
+  .app-topbar__inner {
+    gap: 0.65rem;
+    padding-inline: 0.75rem;
+  }
+
+  .app-topbar__title {
+    font-size: 0.86rem;
+  }
+}
+
 @media (min-width: 640px) {
   .app-topbar__inner {
     padding-inline: 1rem;
@@ -324,8 +404,17 @@ function toggleProfileMenu(event) {
   }
 
   .app-topbar__title {
-    max-width: 52vw;
-    font-size: 0.94rem;
+    font-size: 0.9rem;
+  }
+
+  .topbar-profile-btn {
+    max-width: 13rem;
+    padding-inline: 0.28rem 0.5rem;
+  }
+
+  .topbar-profile-btn__name {
+    display: inline-block;
+    max-width: 7.5rem;
   }
 
   .topbar-profile-btn__icon {
@@ -334,8 +423,12 @@ function toggleProfileMenu(event) {
 }
 
 @media (min-width: 768px) {
+  .app-topbar__right {
+    gap: 0.35rem;
+  }
+
   .topbar-profile-btn__name {
-    display: inline-block;
+    max-width: 10rem;
   }
 }
 
@@ -344,8 +437,46 @@ function toggleProfileMenu(event) {
     padding-inline: 1.25rem;
   }
 
+  .topbar-profile-btn {
+    max-width: 16rem;
+  }
+
+  .topbar-profile-btn__name {
+    max-width: 12rem;
+  }
+}
+
+@media (max-width: 380px) {
+  :deep(.app-language-switcher) {
+    width: 3.75rem;
+    min-width: 3.75rem;
+  }
+
+  .app-topbar__inner {
+    gap: 0.35rem;
+    padding-inline: 0.45rem;
+  }
+
+  .app-topbar__left {
+    gap: 0.28rem;
+  }
+
+  .app-topbar__right {
+    gap: 0.18rem;
+  }
+
   .app-topbar__title {
-    max-width: 58vw;
+    font-size: 0.78rem;
+  }
+
+  :deep(.topbar-icon-btn.p-button) {
+    width: 1.85rem !important;
+    height: 1.85rem !important;
+  }
+
+  :deep(.topbar-profile-btn__avatar) {
+    height: 1.85rem !important;
+    width: 1.85rem !important;
   }
 }
 </style>

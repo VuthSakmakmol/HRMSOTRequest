@@ -86,7 +86,6 @@ const form = reactive({
   reportsToEmployeeId: null,
   otWorkflowRole: 'NONE',
   phone: '',
-  email: '',
   joinDate: '',
   createAccount: false,
   accountLoginId: '',
@@ -639,7 +638,6 @@ function resetForm() {
   form.reportsToEmployeeId = null
   form.otWorkflowRole = 'NONE'
   form.phone = ''
-  form.email = ''
   form.joinDate = ''
   form.createAccount = false
   form.accountLoginId = ''
@@ -685,7 +683,6 @@ async function openEditDialog(row) {
     null
   form.otWorkflowRole = String(row?.otWorkflowRole || 'NONE').toUpperCase()
   form.phone = row?.phone || ''
-  form.email = row?.email || ''
   form.joinDate = row?.joinDate ? toApiDate(row.joinDate, '') : ''
   form.createAccount = false
   form.accountLoginId = ''
@@ -732,7 +729,6 @@ async function submitEmployee() {
       reportsToEmployeeId: form.reportsToEmployeeId || null,
       otWorkflowRole: String(form.otWorkflowRole || 'NONE').trim().toUpperCase(),
       phone: String(form.phone || '').trim(),
-      email: String(form.email || '').trim().toLowerCase(),
       joinDate: String(form.joinDate || '').trim() || null,
       isActive: !!form.isActive,
     }
@@ -1129,7 +1125,7 @@ onBeforeUnmount(() => {
           :title="t('common.loadingData')"
           :message="t('common.fetchingRecords')"
           :rows="7"
-          :columns="12"
+          :columns="11"
           icon="pi pi-users"
         />
 
@@ -1142,7 +1138,7 @@ onBeforeUnmount(() => {
           scroll-height="500px"
           :sort-field="filters.sortBy"
           :sort-order="filters.sortOrder"
-          table-style="min-width: 124rem"
+          table-style="min-width: 112rem"
           class="ot-data-table ot-data-table-compact"
           :virtual-scroller-options="useVirtualScroll ? {
             lazy: true,
@@ -1183,7 +1179,7 @@ onBeforeUnmount(() => {
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="font-bold"
+                class="font-semibold"
               >
                 {{ data.employeeCode || '-' }}
               </span>
@@ -1290,21 +1286,6 @@ onBeforeUnmount(() => {
           </Column>
 
           <Column
-            field="email"
-            :header="t('org.employee.email')"
-            style="min-width: 16rem"
-          >
-            <template #body="{ data }">
-              <span
-                v-if="data"
-                class="ot-truncate-2"
-              >
-                {{ data.email || '-' }}
-              </span>
-            </template>
-          </Column>
-
-          <Column
             field="phone"
             :header="t('org.employee.phone')"
             style="min-width: 10rem"
@@ -1383,6 +1364,8 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('common.actions')"
+            frozen
+            align-frozen="right"
             style="width: 7rem; min-width: 7rem"
           >
             <template #body="{ data }">
@@ -1550,18 +1533,6 @@ onBeforeUnmount(() => {
               v-model="form.joinDate"
               type="date"
               class="w-full"
-            />
-          </div>
-
-          <div class="ot-field">
-            <label class="ot-field-label">
-              {{ t('org.employee.email') }}
-            </label>
-
-            <InputText
-              v-model="form.email"
-              class="w-full"
-              placeholder="example@company.com"
             />
           </div>
 

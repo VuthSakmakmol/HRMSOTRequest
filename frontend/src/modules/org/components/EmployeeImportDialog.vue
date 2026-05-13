@@ -164,10 +164,6 @@ function makeFriendlyImportMessage(error) {
     return `${text}. ${t('org.employee.checkManagerEmployeeCode')}`
   }
 
-  if (/Email already exists/i.test(text)) {
-    return `${text}. ${t('org.employee.uniqueEmailHelp')}`
-  }
-
   return text
 }
 
@@ -260,7 +256,7 @@ async function handleImport() {
           <i class="pi pi-exclamation-triangle mt-0.5" />
 
           <div class="min-w-0">
-            <div class="font-bold">
+            <div class="font-semibold">
               {{ errorTitle || t('org.employee.importFailed') }}
             </div>
 
@@ -285,7 +281,7 @@ async function handleImport() {
       </div>
 
       <div class="ot-panel">
-        <div class="text-sm font-bold text-[color:var(--ot-text)]">
+        <div class="text-sm font-semibold text-[color:var(--ot-text)]">
           {{ t('org.employee.importGuideTitle') }}
         </div>
 
@@ -321,7 +317,7 @@ async function handleImport() {
 
         <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div class="min-w-0">
-            <div class="text-sm font-bold text-[color:var(--ot-text)]">
+            <div class="text-sm font-semibold text-[color:var(--ot-text)]">
               {{ t('org.employee.excelFile') }}
             </div>
 

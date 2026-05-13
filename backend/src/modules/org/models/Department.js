@@ -16,7 +16,6 @@ const departmentSchema = new mongoose.Schema(
       minlength: 2,
       maxlength: 30,
       unique: true,
-      index: true,
     },
 
     name: {
@@ -24,20 +23,11 @@ const departmentSchema = new mongoose.Schema(
       required: true,
       trim: true,
       maxlength: 120,
-      index: true,
-    },
-
-    description: {
-      type: String,
-      trim: true,
-      maxlength: 500,
-      default: '',
     },
 
     isActive: {
       type: Boolean,
       default: true,
-      index: true,
     },
   },
   {
@@ -51,7 +41,6 @@ const departmentSchema = new mongoose.Schema(
 departmentSchema.pre('validate', function normalize(next) {
   this.code = s(this.code).toUpperCase()
   this.name = s(this.name)
-  this.description = s(this.description)
 
   next()
 })

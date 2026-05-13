@@ -1,4 +1,5 @@
 // backend/src/modules/org/models/Employee.js
+
 const mongoose = require('mongoose')
 
 const { Schema } = mongoose
@@ -107,14 +108,6 @@ const employeeSchema = new Schema(
       maxlength: 30,
     },
 
-    email: {
-      type: String,
-      default: '',
-      trim: true,
-      lowercase: true,
-      maxlength: 150,
-    },
-
     joinDate: {
       type: Date,
       default: null,
@@ -136,7 +129,6 @@ employeeSchema.pre('validate', function normalize(next) {
   this.employeeCode = s(this.employeeCode).toUpperCase()
   this.displayName = s(this.displayName)
   this.phone = s(this.phone)
-  this.email = s(this.email).toLowerCase()
   this.otWorkflowRole = s(this.otWorkflowRole || 'NONE').toUpperCase()
 
   if (!this.lineId) {
@@ -169,20 +161,7 @@ employeeSchema.index(
   },
 )
 
-employeeSchema.index(
-  { email: 1 },
-  {
-    unique: true,
-    partialFilterExpression: {
-      email: {
-        $type: 'string',
-        $ne: '',
-      },
-    },
-  },
-)
-
-employeeSchema.index({ displayName: 'text', employeeCode: 'text', email: 'text' })
+employeeSchema.index({ displayName: 'text', employeeCode: 'text' })
 employeeSchema.index({ departmentId: 1, positionId: 1, isActive: 1 })
 employeeSchema.index({ departmentId: 1, lineId: 1, positionId: 1, isActive: 1 })
 employeeSchema.index({ lineId: 1, positionId: 1, isActive: 1 })

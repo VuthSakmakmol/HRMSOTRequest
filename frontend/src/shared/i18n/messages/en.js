@@ -26,6 +26,7 @@ export default {
     detail: 'Detail',
     action: 'Action',
     actions: 'Actions',
+    edit: 'Edit',
 
     no: 'No.',
     status: 'Status',
@@ -1215,7 +1216,6 @@ export default {
       preset: 'Preset',
       customFixed: 'Custom',
 
-      employeeOtTimeDetail: 'Employee OT time detail',
       defaultRequestTime: 'Default request time',
       employeeId: 'ID',
       break: 'Break',

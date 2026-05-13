@@ -37,13 +37,6 @@ const createDepartmentSchema = z.object({
     .min(2, 'org.department.validation.nameMinLength')
     .max(120, 'org.department.validation.nameTooLong'),
 
-  description: z
-    .string()
-    .trim()
-    .max(500, 'org.department.validation.descriptionTooLong')
-    .optional()
-    .default(''),
-
   isActive: z.boolean().optional().default(true),
 })
 
@@ -64,19 +57,12 @@ const updateDepartmentSchema = z
       .max(120, 'org.department.validation.nameTooLong')
       .optional(),
 
-    description: z
-      .string()
-      .trim()
-      .max(500, 'org.department.validation.descriptionTooLong')
-      .optional(),
-
     isActive: z.boolean().optional(),
   })
   .refine(
     (value) =>
       value.code !== undefined ||
       value.name !== undefined ||
-      value.description !== undefined ||
       value.isActive !== undefined,
     {
       message: 'org.department.validation.updatePayloadRequired',

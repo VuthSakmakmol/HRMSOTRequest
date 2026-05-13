@@ -212,6 +212,7 @@ function activeSeverity(row) {
 
 function activeLabel(row) {
   if (row?.statusKey) return t(row.statusKey)
+
   if (row?.statusCode) {
     return row.statusCode === 'ACTIVE' ? t('common.active') : t('common.inactive')
   }
@@ -545,8 +546,8 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="ot-page-shell">
-    <section class="ot-filter-bar ot-filter-bar-5">
-      <div class="ot-field md:col-span-2 xl:col-span-2">
+    <section class="ot-filter-bar ot-policy-filter-bar">
+      <div class="ot-field ot-policy-filter-bar__search">
         <label class="ot-field-label">
           {{ t('common.search') }}
         </label>
@@ -564,7 +565,7 @@ onBeforeUnmount(() => {
         </IconField>
       </div>
 
-      <div class="ot-field">
+      <div class="ot-field ot-policy-filter-bar__status">
         <label class="ot-field-label">
           {{ t('common.status') }}
         </label>
@@ -580,7 +581,7 @@ onBeforeUnmount(() => {
         />
       </div>
 
-      <div class="ot-field">
+      <div class="ot-field ot-policy-filter-bar__method">
         <label class="ot-field-label">
           {{ t('ot.policy.roundMethodLabel') }}
         </label>
@@ -596,7 +597,7 @@ onBeforeUnmount(() => {
         />
       </div>
 
-      <div class="ot-filter-actions">
+      <div class="ot-filter-actions ot-policy-filter-bar__actions">
         <span class="ot-loaded-badge">
           {{ loadedLabel }}
         </span>
@@ -626,10 +627,6 @@ onBeforeUnmount(() => {
           <h2 class="ot-table-title">
             {{ t('ot.policy.tableTitle') }}
           </h2>
-
-          <p class="ot-table-subtitle">
-            {{ t('ot.policy.subtitle') }}
-          </p>
         </div>
 
         <div class="ot-table-actions">
@@ -659,7 +656,7 @@ onBeforeUnmount(() => {
           :title="t('common.loadingData')"
           :message="t('common.fetchingRecords')"
           :rows="7"
-          :columns="9"
+          :columns="10"
           icon="pi pi-sliders-h"
         />
 
@@ -672,7 +669,7 @@ onBeforeUnmount(() => {
           scroll-height="500px"
           :sort-field="filters.sortField"
           :sort-order="filters.sortOrder"
-          table-style="min-width: 112rem"
+          table-style="min-width: 120rem"
           class="ot-data-table ot-data-table-compact"
           :virtual-scroller-options="useVirtualScroll ? {
             lazy: true,
@@ -708,21 +705,31 @@ onBeforeUnmount(() => {
             field="code"
             :header="t('common.code')"
             sortable
-            style="min-width: 14rem"
+            style="min-width: 10rem"
           >
             <template #body="{ data }">
-              <div
+              <span
                 v-if="data"
-                class="flex flex-col"
+                class="font-semibold text-[color:var(--ot-text)]"
               >
-                <span class="font-medium text-[color:var(--ot-text)]">
-                  {{ data.code || '-' }}
-                </span>
+                {{ data.code || '-' }}
+              </span>
+            </template>
+          </Column>
 
-                <span class="text-xs text-[color:var(--ot-text-muted)]">
-                  {{ data.name || '-' }}
-                </span>
-              </div>
+          <Column
+            field="name"
+            :header="t('common.name')"
+            sortable
+            style="min-width: 12rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="ot-truncate-2"
+              >
+                {{ data.name || '-' }}
+              </span>
             </template>
           </Column>
 
@@ -769,7 +776,7 @@ onBeforeUnmount(() => {
             field="minEligibleMinutes"
             :header="t('ot.policy.eligibility')"
             sortable
-            style="min-width: 13rem"
+            style="min-width: 10rem"
           >
             <template #body="{ data }">
               <div
@@ -791,7 +798,7 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('ot.policy.behavior')"
-            style="min-width: 29rem"
+            style="min-width: 20rem"
           >
             <template #body="{ data }">
               <div
@@ -829,7 +836,7 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('ot.policy.forgetScan')"
-            style="min-width: 16rem"
+            style="min-width: 12rem"
           >
             <template #body="{ data }">
               <div
@@ -887,9 +894,9 @@ onBeforeUnmount(() => {
           <Column
             :header="t('common.actions')"
             frozen
-            alignFrozen="right"
-            headerClass="ot-action-column-header"
-            bodyClass="ot-action-column-body"
+            align-frozen="right"
+            header-class="ot-action-column-header"
+            body-class="ot-action-column-body"
           >
             <template #body="{ data }">
               <div
@@ -983,9 +990,9 @@ onBeforeUnmount(() => {
             <InputNumber
               v-model="form.roundUnitMinutes"
               class="w-full"
-              inputClass="w-full"
+              input-class="w-full"
               :min="1"
-              :useGrouping="false"
+              :use-grouping="false"
               :suffix="` ${t('ot.common.min')}`"
             />
           </div>
@@ -1000,9 +1007,9 @@ onBeforeUnmount(() => {
             <InputNumber
               v-model="form.minEligibleMinutes"
               class="w-full"
-              inputClass="w-full"
+              input-class="w-full"
               :min="0"
-              :useGrouping="false"
+              :use-grouping="false"
               :suffix="` ${t('ot.common.min')}`"
             />
           </div>
@@ -1015,9 +1022,9 @@ onBeforeUnmount(() => {
             <InputNumber
               v-model="form.graceAfterShiftEndMinutes"
               class="w-full"
-              inputClass="w-full"
+              input-class="w-full"
               :min="0"
-              :useGrouping="false"
+              :use-grouping="false"
               :suffix="` ${t('ot.common.min')}`"
             />
           </div>
@@ -1095,6 +1102,29 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.ot-policy-filter-bar {
+  grid-template-columns: 1fr;
+}
+
+.ot-policy-filter-bar__search,
+.ot-policy-filter-bar__status,
+.ot-policy-filter-bar__method,
+.ot-policy-filter-bar__actions {
+  min-width: 0;
+}
+
+.ot-policy-filter-bar__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: flex-start;
+  gap: 0.5rem;
+}
+
+.ot-policy-filter-bar__actions :deep(.p-button) {
+  white-space: nowrap;
+}
+
 :deep(.ot-status-tag) {
   min-height: 1.35rem !important;
   padding: 0.12rem 0.48rem !important;
@@ -1104,5 +1134,31 @@ onBeforeUnmount(() => {
   font-weight: 500 !important;
   line-height: 1 !important;
   white-space: nowrap !important;
+}
+
+@media (min-width: 1280px) {
+  .ot-policy-filter-bar {
+    grid-template-columns:
+      minmax(320px, 1.4fr)
+      minmax(150px, 0.7fr)
+      minmax(190px, 0.85fr)
+      auto;
+    align-items: end;
+  }
+
+  .ot-policy-filter-bar__actions {
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+  }
+}
+
+@media (min-width: 1440px) {
+  .ot-policy-filter-bar {
+    grid-template-columns:
+      minmax(380px, 1.55fr)
+      minmax(160px, 0.7fr)
+      minmax(210px, 0.85fr)
+      auto;
+  }
 }
 </style>

@@ -1,4 +1,5 @@
 // backend/src/modules/org/validators/employee.validation.js
+
 const { z } = require('zod')
 const mongoose = require('mongoose')
 
@@ -75,19 +76,6 @@ const phoneField = z
   .optional()
   .default('')
 
-const emailField = z
-  .union([
-    z
-      .string()
-      .trim()
-      .email('org.employee.validation.emailInvalid')
-      .max(150, 'org.employee.validation.emailTooLong'),
-    z.literal(''),
-    z.null(),
-    z.undefined(),
-  ])
-  .transform((value) => s(value).toLowerCase())
-
 const joinDateField = z
   .union([z.string(), z.date(), z.null(), z.undefined()])
   .transform((value) => {
@@ -109,7 +97,6 @@ const otWorkflowRoleField = z
     (value) => ['NONE', 'APPROVER', 'ACKNOWLEDGE'].includes(value),
     'org.employee.validation.otWorkflowRoleInvalid',
   )
-
 
 const createAccountOptionSchema = z
   .object({
@@ -216,7 +203,6 @@ const createEmployeeSchema = z.object({
   otWorkflowRole: otWorkflowRoleField.default('NONE'),
 
   phone: phoneField,
-  email: emailField,
   joinDate: joinDateField,
 
   createAccount: createAccountOptionSchema,
@@ -243,8 +229,6 @@ const updateEmployeeSchema = z
 
     phone: z.string().trim().max(30, 'org.employee.validation.phoneTooLong').optional(),
 
-    email: emailField.optional(),
-
     joinDate: joinDateField.optional(),
 
     isActive: z.boolean().optional(),
@@ -265,7 +249,6 @@ const updateEmployeeSchema = z
       value.reportsToEmployeeId !== undefined ||
       value.otWorkflowRole !== undefined ||
       value.phone !== undefined ||
-      value.email !== undefined ||
       value.joinDate !== undefined ||
       value.isActive !== undefined ||
       value.createAccount !== undefined,
@@ -318,14 +301,15 @@ const importEmployeeRowSchema = z.object({
     .transform((value) => s(value))
     .refine((value) => value.length <= 30, 'org.employee.validation.phoneTooLong'),
 
-  email: emailField,
-
   joinDate: joinDateField,
 
   isActive: z
     .union([z.boolean(), z.string(), z.number(), z.null(), z.undefined()])
     .transform((value) => toBoolean(value, true))
-    .refine((value) => typeof value === 'boolean', 'org.employee.validation.isActiveInvalid'),
+    .refine(
+      (value) => typeof value === 'boolean',
+      'org.employee.validation.isActiveInvalid',
+    ),
 })
 
 function normalizeListQuery(raw = {}) {

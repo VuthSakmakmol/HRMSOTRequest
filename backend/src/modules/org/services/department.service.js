@@ -48,7 +48,6 @@ function mapDepartment(doc) {
     _id: String(doc._id),
     code: doc.code || '',
     name: doc.name || '',
-    description: doc.description || '',
     isActive: !!doc.isActive,
     createdAt: doc.createdAt || null,
     updatedAt: doc.updatedAt || null,
@@ -63,7 +62,6 @@ function mapLookupItem(doc) {
     _id: item._id,
     code: item.code,
     name: item.name,
-    description: item.description,
     label: [item.code, item.name].filter(Boolean).join(' - '),
     isActive: item.isActive,
   }
@@ -71,13 +69,12 @@ function mapLookupItem(doc) {
 
 function buildFilter(query = {}) {
   const filter = {}
-
   const keyword = s(query.search)
 
   if (keyword) {
     const regex = new RegExp(escapeRegex(keyword), 'i')
 
-    filter.$or = [{ code: regex }, { name: regex }, { description: regex }]
+    filter.$or = [{ code: regex }, { name: regex }]
   }
 
   if (query.isActive === 'true') filter.isActive = true
@@ -208,7 +205,6 @@ async function createDepartment(payload) {
   const doc = await Department.create({
     code,
     name: s(payload.name),
-    description: s(payload.description),
     isActive: payload.isActive ?? true,
   })
 
@@ -242,10 +238,6 @@ async function updateDepartment(id, payload) {
 
   if (payload.name !== undefined) {
     doc.name = s(payload.name)
-  }
-
-  if (payload.description !== undefined) {
-    doc.description = s(payload.description)
   }
 
   if (payload.isActive !== undefined) {
@@ -305,7 +297,6 @@ async function exportDepartmentsExcel(query = {}) {
     No: index + 1,
     Code: item.code || '',
     Name: item.name || '',
-    Description: item.description || '',
     Status: item.isActive ? 'Active' : 'Inactive',
     CreatedAt: formatExcelDate(item.createdAt),
     UpdatedAt: formatExcelDate(item.updatedAt),
@@ -318,7 +309,6 @@ async function exportDepartmentsExcel(query = {}) {
           No: '',
           Code: '',
           Name: '',
-          Description: '',
           Status: '',
           CreatedAt: '',
           UpdatedAt: '',
@@ -343,13 +333,11 @@ async function downloadDepartmentImportSample() {
     {
       Code: 'HR',
       Name: 'Human Resources',
-      Description: 'Manage people and HR operations',
       Status: 'Active',
     },
     {
       Code: 'FIN',
       Name: 'Finance',
-      Description: 'Manage accounting and finance operations',
       Status: 'Active',
     },
   ]
@@ -360,7 +348,6 @@ async function downloadDepartmentImportSample() {
     ['Field', 'Rule'],
     ['Code', 'Required. Unique department code. Example: HR'],
     ['Name', 'Required. Department display name.'],
-    ['Description', 'Optional. Maximum 500 characters.'],
     ['Status', 'Optional. Use Active or Inactive. Blank = Active.'],
   ]
 
@@ -451,67 +438,69 @@ async function importDepartmentsExcel(fileBuffer) {
   }
 
   const seenCodes = new Set()
-  const normalizedRows = rows.map((row, index) => {
-    const rowNo = index + 2
-    const code = upper(getCell(row, ['Code', 'Department Code']))
-    const name = s(getCell(row, ['Name', 'Department Name']))
-    const description = s(getCell(row, ['Description']))
-    const isActive = normalizeImportStatus(getCell(row, ['Status', 'Active', 'Is Active']))
 
-    if (!code && !name && !description) {
-      return null
-    }
+  const normalizedRows = rows
+    .map((row, index) => {
+      const rowNo = index + 2
+      const code = upper(getCell(row, ['Code', 'Department Code']))
+      const name = s(getCell(row, ['Name', 'Department Name']))
+      const status = getCell(row, ['Status', 'Active', 'Is Active'])
+      const isActive = normalizeImportStatus(status)
 
-    if (!code) {
-      throw appError({
-        statusCode: 400,
-        code: 'DEPARTMENT_IMPORT_CODE_REQUIRED',
-        messageKey: 'org.department.import.error.codeRequired',
-        message: `Row ${rowNo}: Code is required`,
-        params: { rowNo },
-      })
-    }
+      if (!code && !name && !s(status)) {
+        return null
+      }
 
-    if (!name) {
-      throw appError({
-        statusCode: 400,
-        code: 'DEPARTMENT_IMPORT_NAME_REQUIRED',
-        messageKey: 'org.department.import.error.nameRequired',
-        message: `Row ${rowNo}: Name is required`,
-        params: { rowNo },
-      })
-    }
+      if (!code) {
+        throw appError({
+          statusCode: 400,
+          code: 'DEPARTMENT_IMPORT_CODE_REQUIRED',
+          messageKey: 'org.department.import.error.codeRequired',
+          message: `Row ${rowNo}: Code is required`,
+          params: { rowNo },
+        })
+      }
 
-    if (isActive === 'INVALID_STATUS') {
-      throw appError({
-        statusCode: 400,
-        code: 'DEPARTMENT_IMPORT_INVALID_STATUS',
-        messageKey: 'org.department.import.error.invalidStatus',
-        message: `Row ${rowNo}: Invalid status`,
-        params: { rowNo },
-      })
-    }
+      if (!name) {
+        throw appError({
+          statusCode: 400,
+          code: 'DEPARTMENT_IMPORT_NAME_REQUIRED',
+          messageKey: 'org.department.import.error.nameRequired',
+          message: `Row ${rowNo}: Name is required`,
+          params: { rowNo },
+        })
+      }
 
-    if (seenCodes.has(code)) {
-      throw appError({
-        statusCode: 400,
-        code: 'DEPARTMENT_IMPORT_DUPLICATE_CODE',
-        messageKey: 'org.department.import.error.duplicateCode',
-        message: `Row ${rowNo}: Duplicate code in import file`,
-        params: { rowNo, code },
-      })
-    }
+      if (isActive === 'INVALID_STATUS') {
+        throw appError({
+          statusCode: 400,
+          code: 'DEPARTMENT_IMPORT_INVALID_STATUS',
+          messageKey: 'org.department.import.error.invalidStatus',
+          message: `Row ${rowNo}: Invalid status`,
+          params: { rowNo },
+        })
+      }
 
-    seenCodes.add(code)
+      if (seenCodes.has(code)) {
+        throw appError({
+          statusCode: 400,
+          code: 'DEPARTMENT_IMPORT_DUPLICATE_CODE',
+          messageKey: 'org.department.import.error.duplicateCode',
+          message: `Row ${rowNo}: Duplicate code in import file`,
+          params: { rowNo, code },
+        })
+      }
 
-    return {
-      rowNo,
-      code,
-      name,
-      description,
-      isActive,
-    }
-  }).filter(Boolean)
+      seenCodes.add(code)
+
+      return {
+        rowNo,
+        code,
+        name,
+        isActive,
+      }
+    })
+    .filter(Boolean)
 
   let created = 0
   let updated = 0
@@ -521,7 +510,6 @@ async function importDepartmentsExcel(fileBuffer) {
 
     if (existing) {
       existing.name = row.name
-      existing.description = row.description
       existing.isActive = row.isActive
 
       await existing.save()
@@ -532,7 +520,6 @@ async function importDepartmentsExcel(fileBuffer) {
     await Department.create({
       code: row.code,
       name: row.name,
-      description: row.description,
       isActive: row.isActive,
     })
 

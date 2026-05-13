@@ -14,7 +14,6 @@ import InputSwitch from 'primevue/inputswitch'
 import InputText from 'primevue/inputtext'
 import Select from 'primevue/select'
 import Tag from 'primevue/tag'
-import Textarea from 'primevue/textarea'
 
 import {
   createDepartment,
@@ -59,7 +58,6 @@ const filters = reactive({
 const form = reactive({
   code: '',
   name: '',
-  description: '',
   isActive: true,
 })
 
@@ -264,7 +262,6 @@ function resetForm() {
   editingDepartmentId.value = ''
   form.code = ''
   form.name = ''
-  form.description = ''
   form.isActive = true
 }
 
@@ -277,7 +274,6 @@ function openEditDialog(row) {
   editingDepartmentId.value = normalizeId(row)
   form.code = row?.code || ''
   form.name = row?.name || ''
-  form.description = row?.description || ''
   form.isActive = row?.isActive !== false
   departmentDialogVisible.value = true
 }
@@ -289,7 +285,6 @@ async function submitDepartment() {
     const payload = {
       code: String(form.code || '').trim().toUpperCase(),
       name: String(form.name || '').trim(),
-      description: String(form.description || '').trim(),
       isActive: !!form.isActive,
     }
 
@@ -511,7 +506,7 @@ onBeforeUnmount(() => {
           :title="t('common.loadingData')"
           :message="t('common.fetchingRecords')"
           :rows="7"
-          :columns="6"
+          :columns="5"
           icon="pi pi-building"
         />
 
@@ -524,7 +519,7 @@ onBeforeUnmount(() => {
           scroll-height="500px"
           :sort-field="filters.sortField"
           :sort-order="filters.sortOrder"
-          table-style="min-width: 62rem"
+          table-style="min-width: 50rem"
           class="ot-data-table ot-data-table-compact"
           :virtual-scroller-options="useVirtualScroll ? {
             lazy: true,
@@ -565,7 +560,7 @@ onBeforeUnmount(() => {
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="font-bold"
+                class="font-semibold"
               >
                 {{ data.code || '-' }}
               </span>
@@ -576,7 +571,7 @@ onBeforeUnmount(() => {
             field="name"
             :header="t('common.name')"
             sortable
-            style="min-width: 14rem"
+            style="min-width: 16rem"
           >
             <template #body="{ data }">
               <span v-if="data">{{ data.name || '-' }}</span>
@@ -584,25 +579,10 @@ onBeforeUnmount(() => {
           </Column>
 
           <Column
-            field="description"
-            :header="t('common.description')"
-            style="min-width: 18rem"
-          >
-            <template #body="{ data }">
-              <span
-                v-if="data"
-                class="ot-truncate-2"
-              >
-                {{ data.description || '-' }}
-              </span>
-            </template>
-          </Column>
-
-          <Column
             field="isActive"
             :header="t('common.status')"
             sortable
-            style="min-width: 7rem"
+            style="min-width: 8rem"
           >
             <template #body="{ data }">
               <Tag
@@ -626,6 +606,8 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('common.actions')"
+            frozen
+            align-frozen="right"
             style="width: 7rem; min-width: 7rem"
           >
             <template #body="{ data }">
@@ -675,19 +657,6 @@ onBeforeUnmount(() => {
               :placeholder="t('org.department.nameExample')"
             />
           </div>
-        </div>
-
-        <div class="ot-field">
-          <label class="ot-field-label">
-            {{ t('common.description') }}
-          </label>
-
-          <Textarea
-            v-model="form.description"
-            class="w-full"
-            rows="3"
-            :placeholder="t('org.department.descriptionPlaceholder')"
-          />
         </div>
 
         <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] px-4 py-3">
