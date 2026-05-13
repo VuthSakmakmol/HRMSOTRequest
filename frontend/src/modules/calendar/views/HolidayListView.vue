@@ -736,7 +736,7 @@ onBeforeUnmount(() => {
       @success="handleImportSuccess"
     />
 
-    <section class="ot-filter-bar ot-filter-bar-5">
+    <section class="ot-filter-bar holiday-filter-bar">
       <div class="ot-field">
         <label class="ot-field-label">
           {{ t('common.search') }}
@@ -789,7 +789,7 @@ onBeforeUnmount(() => {
         />
       </div>
 
-      <div class="ot-filter-actions xl:col-span-5">
+      <div class="holiday-filter-actions">
         <span class="ot-loaded-badge">
           {{ loadedLabel }}
         </span>
@@ -828,29 +828,18 @@ onBeforeUnmount(() => {
           :label="t('calendar.holiday.newHoliday')"
           icon="pi pi-plus"
           size="small"
-          @click="openCreateDialog()"
+          @click="openCreateDialog(previewSelectedYmd)"
         />
       </div>
     </section>
 
-    <section class="grid grid-cols-1 gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
-      <aside class="ot-table-card holiday-preview-card">
+    <section class="holiday-content-stack">
+      <aside class="ot-table-card holiday-preview-card holiday-preview-card-top">
         <div class="ot-table-toolbar">
           <div>
             <h2 class="ot-table-title">
               {{ label('calendar.holiday.previewTitle', 'Calendar Preview') }}
             </h2>
-
-            <div class="ot-table-subtitle">
-              {{ previewMonthTitle }}
-            </div>
-          </div>
-
-          <div class="ot-table-actions">
-            <Tag
-              :value="label('calendar.holiday.previewCount', `${previewHolidayRows.length} holidays`)"
-              severity="info"
-            />
           </div>
         </div>
 
@@ -869,7 +858,6 @@ onBeforeUnmount(() => {
                 <div class="holiday-month-title">
                   {{ previewMonthTitle }}
                 </div>
-
                 <div class="holiday-month-subtitle">
                   <span v-if="previewLoading">{{ t('common.loading') }}</span>
                   <span v-else>
@@ -922,7 +910,13 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <div class="holiday-selected-card">
+          <div
+            class="holiday-selected-card"
+            :class="{
+              'is-selected-holiday': previewSelectedHoliday,
+              'is-selected-sunday': !previewSelectedHoliday && previewSelectedDate.getDay() === 0,
+            }"
+          >
             <div class="flex flex-col gap-3">
               <div class="min-w-0">
                 <div class="holiday-selected-label">
@@ -934,7 +928,7 @@ onBeforeUnmount(() => {
                 </div>
               </div>
 
-              <div class="flex flex-wrap items-center gap-2">
+              <div class="flex flex-wrap items-center gap-1.5">
                 <Tag
                   :value="previewSelectedDayLabel"
                   :severity="previewSelectedDaySeverity"
@@ -947,7 +941,7 @@ onBeforeUnmount(() => {
                 />
               </div>
 
-              <div class="flex flex-wrap justify-end gap-2">
+              <div class="flex flex-wrap justify-end gap-1.5">
                 <Button
                   :label="label('calendar.holidayPicker.today', 'Today')"
                   icon="pi pi-calendar"
@@ -955,14 +949,6 @@ onBeforeUnmount(() => {
                   outlined
                   size="small"
                   @click="goPreviewToday"
-                />
-
-                <Button
-                  v-if="canCreate && !previewSelectedHoliday"
-                  :label="label('calendar.holiday.createOnSelectedDate', 'Create')"
-                  icon="pi pi-plus"
-                  size="small"
-                  @click="openCreateDialog(previewSelectedYmd)"
                 />
 
                 <Button
@@ -1187,6 +1173,8 @@ onBeforeUnmount(() => {
 
             <Column
               :header="t('common.actions')"
+              frozen
+              align-frozen="right"
               style="width: 7rem; min-width: 7rem"
             >
               <template #body="{ data }">
@@ -1339,35 +1327,120 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.holiday-filter-bar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  align-items: end;
+}
+
+.holiday-filter-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.holiday-filter-actions > * {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 768px) {
+  .holiday-filter-actions {
+    justify-content: stretch;
+  }
+
+  .holiday-filter-actions > * {
+    flex: 1 1 100%;
+  }
+}
+
+@media (min-width: 1024px) {
+  .holiday-filter-bar {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1280px) {
+  .holiday-filter-bar {
+    grid-template-columns:
+      minmax(260px, 1.25fr)
+      minmax(180px, 0.9fr)
+      minmax(180px, 0.9fr)
+      minmax(160px, 0.75fr);
+  }
+
+  .holiday-filter-actions {
+    grid-column: 1 / -1;
+  }
+}
+
+.holiday-content-stack {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+}
+
 .holiday-preview-card {
   align-self: start;
 }
 
+.holiday-preview-card-top {
+  width: 100%;
+}
+
 .holiday-preview-body {
   display: grid;
-  gap: 0.85rem;
-  padding: 0.85rem;
+  gap: 0.65rem;
+  padding: 0.7rem;
+}
+
+@media (min-width: 1024px) {
+  .holiday-preview-card-top .holiday-preview-body {
+    grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .holiday-preview-card-top .holiday-calendar-box {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    width: 100%;
+    max-width: 380px;
+  }
+
+  .holiday-preview-card-top .holiday-selected-card {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .holiday-preview-card-top .holiday-month-list {
+    grid-column: 2;
+    grid-row: 2;
+    max-height: 10rem;
+    overflow: auto;
+  }
 }
 
 .holiday-calendar-box {
   border: 1px solid var(--ot-border);
   border-radius: var(--ot-radius-md);
   background: var(--ot-bg);
-  padding: 0.85rem;
+  padding: 0.7rem;
 }
 
 .holiday-calendar-top {
-  margin-bottom: 0.85rem;
+  margin-bottom: 0.65rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: 0.6rem;
 }
 
 .holiday-preview-nav {
   display: inline-flex;
-  width: 2rem;
-  height: 2rem;
+  width: 1.9rem;
+  height: 1.9rem;
   align-items: center;
   justify-content: center;
   border: 1px solid var(--ot-border);
@@ -1379,54 +1452,39 @@ onBeforeUnmount(() => {
 
 .holiday-month-title {
   color: var(--ot-text);
-  font-size: 0.95rem;
+  font-size: 0.9rem;
   font-weight: 650;
 }
 
 .holiday-month-subtitle {
-  margin-top: 0.12rem;
+  margin-top: 0.1rem;
   color: var(--ot-text-muted);
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-weight: 500;
 }
 
 .holiday-week-label {
-  padding-bottom: 0.15rem;
+  padding-bottom: 0.1rem;
   text-align: center;
   color: var(--ot-text-muted);
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   font-weight: 600;
 }
 
 .holiday-preview-cell {
   position: relative;
   display: inline-flex;
-  min-height: 2.15rem;
+  min-height: 2rem;
   align-items: center;
   justify-content: center;
   border: 0;
   border-radius: 9999px;
   background: transparent;
   color: var(--ot-text);
-  font-size: 0.82rem;
+  font-size: 0.78rem;
   font-weight: 500;
   cursor: pointer;
   transition: 0.18s ease;
-}
-
-.holiday-selected-label {
-  color: var(--ot-text-muted);
-  font-size: 0.68rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-}
-
-.holiday-selected-title {
-  margin-top: 0.2rem;
-  color: var(--ot-text);
-  font-size: 0.9rem;
-  font-weight: 600;
 }
 
 .holiday-preview-cell:hover {
@@ -1452,18 +1510,27 @@ onBeforeUnmount(() => {
 }
 
 .holiday-preview-cell.is-selected,
-.holiday-preview-cell.is-selected.is-sunday,
-.holiday-preview-cell.is-selected.is-holiday {
+.holiday-preview-cell.is-selected.is-sunday {
   background: var(--p-primary-500);
   color: #ffffff;
 }
 
+.holiday-preview-cell.is-selected.is-holiday {
+  background: var(--ot-danger);
+  color: #ffffff;
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.18);
+}
+
+.holiday-preview-cell.is-selected.is-holiday .holiday-preview-dot {
+  background: #ffffff;
+}
+
 .holiday-preview-dot {
   position: absolute;
-  right: 0.43rem;
-  bottom: 0.34rem;
-  width: 0.28rem;
-  height: 0.28rem;
+  right: 0.38rem;
+  bottom: 0.3rem;
+  width: 0.24rem;
+  height: 0.24rem;
   border-radius: 9999px;
   background: currentColor;
 }
@@ -1472,27 +1539,56 @@ onBeforeUnmount(() => {
   border: 1px solid var(--ot-border);
   border-radius: var(--ot-radius-md);
   background: var(--ot-bg);
-  padding: 0.85rem;
+  padding: 0.6rem 0.7rem;
+}
+
+.holiday-selected-card.is-selected-holiday {
+  border-color: rgba(239, 68, 68, 0.45);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.holiday-selected-card.is-selected-sunday {
+  border-color: rgba(249, 115, 22, 0.4);
+  background: rgba(249, 115, 22, 0.08);
+}
+
+.holiday-selected-card .flex.flex-col.gap-3 {
+  gap: 0.45rem;
 }
 
 .holiday-selected-label {
   color: var(--ot-text-muted);
-  font-size: 0.68rem;
-  font-weight: 850;
+  font-size: 0.6rem;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.1em;
 }
 
 .holiday-selected-title {
-  margin-top: 0.2rem;
+  margin-top: 0.1rem;
   color: var(--ot-text);
-  font-size: 0.9rem;
-  font-weight: 800;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.holiday-selected-card.is-selected-holiday .holiday-selected-title {
+  color: var(--ot-danger);
+}
+
+.holiday-selected-card :deep(.p-tag) {
+  min-height: 1.3rem;
+  padding: 0.1rem 0.45rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+
+.holiday-selected-card :deep(.p-button) {
+  padding-block: 0.32rem;
 }
 
 .holiday-month-list {
   display: grid;
-  gap: 0.5rem;
+  gap: 0.45rem;
 }
 
 .holiday-summary-row {
@@ -1500,11 +1596,11 @@ onBeforeUnmount(() => {
   width: 100%;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: 0.6rem;
   border: 1px solid var(--ot-border);
   border-radius: var(--ot-radius-md);
   background: var(--ot-surface);
-  padding: 0.65rem 0.75rem;
+  padding: 0.48rem 0.62rem;
   text-align: left;
   transition: 0.18s ease;
 }
@@ -1517,21 +1613,21 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 0.85rem;
   border: 1px solid var(--ot-border);
   border-radius: var(--ot-radius-md);
   background: var(--ot-bg);
-  padding: 0.85rem 1rem;
+  padding: 0.75rem 0.85rem;
 }
 
 @media (max-width: 640px) {
   .holiday-preview-body {
-    padding: 0.75rem;
+    padding: 0.65rem;
   }
 
   .holiday-preview-cell {
-    min-height: 2rem;
-    font-size: 0.78rem;
+    min-height: 1.9rem;
+    font-size: 0.76rem;
   }
 }
 </style>

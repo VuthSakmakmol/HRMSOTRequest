@@ -29,7 +29,7 @@ import {
   updateOTCalculationPolicy,
 } from '@/modules/ot/otMaster.api'
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const toast = useToast()
 const auth = useAuthStore()
 
@@ -73,14 +73,6 @@ const form = reactive({
   isActive: true,
 })
 
-function hasPermission(code) {
-  return (
-    auth.user?.isRootAdmin ||
-    auth.hasAnyPermission?.([code]) ||
-    auth.hasPermission?.(code)
-  )
-}
-
 const canView = computed(() => hasPermission('OT_POLICY_VIEW'))
 const canCreate = computed(() => hasPermission('OT_POLICY_CREATE'))
 const canUpdate = computed(() => hasPermission('OT_POLICY_UPDATE'))
@@ -92,48 +84,48 @@ const statusOptions = computed(() => [
 ])
 
 const roundMethodOptions = computed(() => [
-  { label: t('ot.policy.allMethods'), value: '' },
-  { label: t('ot.policy.roundMethod.floor'), value: 'FLOOR' },
-  { label: t('ot.policy.roundMethod.ceil'), value: 'CEIL' },
-  { label: t('ot.policy.roundMethod.nearest'), value: 'NEAREST' },
+  { label: label('ot.policy.allMethods', 'All Methods'), value: '' },
+  { label: label('ot.policy.roundMethod.floor', 'Floor'), value: 'FLOOR' },
+  { label: label('ot.policy.roundMethod.ceil', 'Ceil'), value: 'CEIL' },
+  { label: label('ot.policy.roundMethod.nearest', 'Nearest'), value: 'NEAREST' },
 ])
 
 const formRoundMethodOptions = computed(() => [
-  { label: t('ot.policy.roundMethod.floor'), value: 'FLOOR' },
-  { label: t('ot.policy.roundMethod.ceil'), value: 'CEIL' },
-  { label: t('ot.policy.roundMethod.nearest'), value: 'NEAREST' },
+  { label: label('ot.policy.roundMethod.floor', 'Floor'), value: 'FLOOR' },
+  { label: label('ot.policy.roundMethod.ceil', 'Ceil'), value: 'CEIL' },
+  { label: label('ot.policy.roundMethod.nearest', 'Nearest'), value: 'NEAREST' },
 ])
 
 const behaviorFlags = computed(() => [
   {
     key: 'allowPreShiftOT',
-    label: t('ot.policy.flag.allowPreShiftOT'),
-    description: t('ot.policy.flagHelp.allowPreShiftOT'),
+    label: label('ot.policy.flag.allowPreShiftOT', 'Allow Pre-shift OT'),
+    description: label('ot.policy.flagHelp.allowPreShiftOT', 'Allow OT before shift start.'),
   },
   {
     key: 'allowPostShiftOT',
-    label: t('ot.policy.flag.allowPostShiftOT'),
-    description: t('ot.policy.flagHelp.allowPostShiftOT'),
+    label: label('ot.policy.flag.allowPostShiftOT', 'Allow Post-shift OT'),
+    description: label('ot.policy.flagHelp.allowPostShiftOT', 'Allow OT after shift end.'),
   },
   {
     key: 'capByRequestedMinutes',
-    label: t('ot.policy.flag.capByRequestedMinutes'),
-    description: t('ot.policy.flagHelp.capByRequestedMinutes'),
+    label: label('ot.policy.flag.capByRequestedMinutes', 'Cap by Requested Minutes'),
+    description: label('ot.policy.flagHelp.capByRequestedMinutes', 'Do not pay more than requested OT.'),
   },
   {
     key: 'treatForgetScanInAsPending',
-    label: t('ot.policy.flag.treatForgetScanInAsPending'),
-    description: t('ot.policy.flagHelp.treatForgetScanInAsPending'),
+    label: label('ot.policy.flag.treatForgetScanInAsPending', 'Forget Scan In Pending'),
+    description: label('ot.policy.flagHelp.treatForgetScanInAsPending', 'Mark missing scan-in for review.'),
   },
   {
     key: 'treatForgetScanOutAsPending',
-    label: t('ot.policy.flag.treatForgetScanOutAsPending'),
-    description: t('ot.policy.flagHelp.treatForgetScanOutAsPending'),
+    label: label('ot.policy.flag.treatForgetScanOutAsPending', 'Forget Scan Out Pending'),
+    description: label('ot.policy.flagHelp.treatForgetScanOutAsPending', 'Mark missing scan-out for review.'),
   },
   {
     key: 'allowApprovedOtWithoutExactClockOut',
-    label: t('ot.policy.flag.allowApprovedOtWithoutExactClockOut'),
-    description: t('ot.policy.flagHelp.allowApprovedOtWithoutExactClockOut'),
+    label: label('ot.policy.flag.allowApprovedOtWithoutExactClockOut', 'Allow Without Exact Clock Out'),
+    description: label('ot.policy.flagHelp.allowApprovedOtWithoutExactClockOut', 'Allow approved OT even if clock-out is not exact.'),
   },
 ])
 
@@ -152,7 +144,9 @@ const loadedLabel = computed(() =>
 )
 
 const dialogTitle = computed(() =>
-  isEditMode.value ? t('ot.policy.editTitle') : t('ot.policy.createTitle'),
+  isEditMode.value
+    ? label('ot.policy.editTitle', 'Edit OT Calculation Policy')
+    : label('ot.policy.createTitle', 'Create OT Calculation Policy'),
 )
 
 const saveLabel = computed(() =>
@@ -177,6 +171,19 @@ const isSaveDisabled = computed(() => {
 let searchTimer = null
 let currentRequestId = 0
 
+function label(key, fallback = '') {
+  return key && te(key) ? t(key) : fallback
+}
+
+function hasPermission(code) {
+  return (
+    auth.user?.isRootAdmin ||
+    auth.isRootAdmin ||
+    auth.hasAnyPermission?.([code]) ||
+    auth.hasPermission?.(code)
+  )
+}
+
 function normalizePayload(res) {
   return res?.data?.data || res?.data || {}
 }
@@ -193,6 +200,10 @@ function normalizeId(row) {
   return String(row?.id || row?._id || row?.policyId || '').trim()
 }
 
+function upper(value) {
+  return String(value || '').trim().toUpperCase()
+}
+
 function showToast(severity, summary, detail, life = 3000) {
   toast.add({
     severity,
@@ -200,57 +211,6 @@ function showToast(severity, summary, detail, life = 3000) {
     detail,
     life,
   })
-}
-
-function upper(value) {
-  return String(value || '').trim().toUpperCase()
-}
-
-function activeSeverity(row) {
-  return row?.statusSeverity || (row?.isActive === false ? 'secondary' : 'success')
-}
-
-function activeLabel(row) {
-  if (row?.statusKey) return t(row.statusKey)
-
-  if (row?.statusCode) {
-    return row.statusCode === 'ACTIVE' ? t('common.active') : t('common.inactive')
-  }
-
-  return row?.isActive === false ? t('common.inactive') : t('common.active')
-}
-
-function roundMethodLabel(value) {
-  const method = upper(value)
-
-  if (method === 'FLOOR') return t('ot.policy.roundMethod.floor')
-  if (method === 'NEAREST') return t('ot.policy.roundMethod.nearest')
-
-  return t('ot.policy.roundMethod.ceil')
-}
-
-function minutesLabel(value) {
-  const minutes = Number(value || 0)
-
-  if (!minutes) return t('ot.common.minuteValue', { value: 0 })
-
-  const hours = Math.floor(minutes / 60)
-  const mins = minutes % 60
-
-  if (hours && mins) {
-    return t('ot.common.hourMinuteValue', {
-      hours,
-      minutes: mins,
-    })
-  }
-
-  if (hours) return t('ot.common.hourValue', { value: hours })
-
-  return t('ot.common.minuteValue', { value: mins })
-}
-
-function boolText(value) {
-  return value ? t('common.yes') : t('common.no')
 }
 
 function buildQuery(page) {
@@ -263,6 +223,142 @@ function buildQuery(page) {
     sortField: filters.sortField,
     sortOrder: filters.sortOrder,
   }
+}
+
+function activeLabel(row) {
+  if (row?.statusKey && te(row.statusKey)) return t(row.statusKey)
+
+  if (row?.statusCode) {
+    return row.statusCode === 'ACTIVE' ? t('common.active') : t('common.inactive')
+  }
+
+  return row?.isActive === false ? t('common.inactive') : t('common.active')
+}
+
+function activeTagClass(row) {
+  return [
+    'ot-policy-rgb-tag',
+    row?.isActive === false ? 'ot-policy-tag-inactive' : 'ot-policy-tag-active',
+  ]
+}
+
+function roundMethodLabel(value) {
+  const method = upper(value)
+
+  if (method === 'FLOOR') return label('ot.policy.roundMethod.floor', 'Floor')
+  if (method === 'CEIL') return label('ot.policy.roundMethod.ceil', 'Ceil')
+  if (method === 'NEAREST') return label('ot.policy.roundMethod.nearest', 'Nearest')
+
+  return method || '-'
+}
+
+function roundMethodTagClass(value) {
+  const method = upper(value)
+
+  if (method === 'FLOOR') return ['ot-policy-rgb-tag', 'ot-policy-tag-floor']
+  if (method === 'CEIL') return ['ot-policy-rgb-tag', 'ot-policy-tag-ceil']
+  if (method === 'NEAREST') return ['ot-policy-rgb-tag', 'ot-policy-tag-nearest']
+
+  return ['ot-policy-rgb-tag', 'ot-policy-tag-muted']
+}
+
+function booleanTagClass(value) {
+  return [
+    'ot-policy-rgb-tag',
+    value ? 'ot-policy-tag-active' : 'ot-policy-tag-inactive',
+  ]
+}
+
+function yesNoLabel(value) {
+  return value ? t('common.yes') : t('common.no')
+}
+
+function firstNumber(...values) {
+  for (const value of values) {
+    if (value === undefined || value === null || value === '') continue
+
+    const numberValue = Number(value)
+
+    if (Number.isFinite(numberValue)) return numberValue
+  }
+
+  return 0
+}
+
+function formatMinutes(value) {
+  const minutes = Number(value)
+
+  if (!Number.isFinite(minutes)) return '-'
+  if (minutes <= 0) return '0 min'
+
+  const hours = Math.floor(minutes / 60)
+  const mins = minutes % 60
+
+  if (hours && mins) return `${hours}h ${mins}m`
+  if (hours) return `${hours}h`
+
+  return `${mins} min`
+}
+
+function getRoundUnitMinutes(row) {
+  return firstNumber(
+    row?.roundUnitMinutes,
+    row?.roundingUnitMinutes,
+    row?.roundMinutes,
+  )
+}
+
+function getMinEligibleMinutes(row) {
+  return firstNumber(
+    row?.minEligibleMinutes,
+    row?.minimumEligibleMinutes,
+    row?.minimumOtMinutes,
+    row?.minOTMinutes,
+  )
+}
+
+function getGraceAfterShiftEndMinutes(row) {
+  return firstNumber(
+    row?.graceAfterShiftEndMinutes,
+    row?.graceMinutes,
+    row?.afterShiftGraceMinutes,
+    row?.graceAfterShiftMinutes,
+  )
+}
+
+function flagItems(row) {
+  return [
+    {
+      key: 'pre',
+      label: label('ot.policy.short.allowPreShiftOT', 'Pre'),
+      value: row?.allowPreShiftOT === true,
+    },
+    {
+      key: 'post',
+      label: label('ot.policy.short.allowPostShiftOT', 'Post'),
+      value: row?.allowPostShiftOT !== false,
+    },
+    {
+      key: 'cap',
+      label: label('ot.policy.short.capByRequestedMinutes', 'Cap'),
+      value: row?.capByRequestedMinutes !== false,
+    },
+    {
+      key: 'in',
+      label: label('ot.policy.short.treatForgetScanInAsPending', 'Scan In'),
+      value: row?.treatForgetScanInAsPending !== false,
+    },
+    {
+      key: 'out',
+      label: label('ot.policy.short.treatForgetScanOutAsPending', 'Scan Out'),
+      value: row?.treatForgetScanOutAsPending !== false,
+    },
+    {
+      key: 'clockOut',
+      label: label('ot.policy.short.allowApprovedOtWithoutExactClockOut', 'No Exact Out'),
+      value: row?.allowApprovedOtWithoutExactClockOut === true,
+    },
+  ]
 }
 
 async function fetchPage(page, { replace = false, silent = false } = {}) {
@@ -322,7 +418,7 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
     showToast(
       'error',
       t('common.loadFailed'),
-      getApiErrorMessage(error, t('ot.policy.loadFailed')),
+      getApiErrorMessage(error, label('ot.policy.loadFailed', 'Failed to load OT policies.')),
     )
   } finally {
     backgroundLoading.value = false
@@ -372,6 +468,7 @@ function clearFilters() {
 function onSort(event) {
   filters.sortField = event.sortField || 'createdAt'
   filters.sortOrder = typeof event.sortOrder === 'number' ? event.sortOrder : -1
+
   reloadFirstPage({ keepVisible: true })
 }
 
@@ -420,80 +517,44 @@ function openEditDialog(row) {
 
   editingPolicyId.value = normalizeId(row)
 
-  form.code = String(row.code || '').trim()
-  form.name = String(row.name || '').trim()
-  form.description = String(row.description || '').trim()
-  form.minEligibleMinutes = Number(row.minEligibleMinutes || 0)
-  form.roundUnitMinutes = Number(row.roundUnitMinutes || 30)
-  form.roundMethod = upper(row.roundMethod || 'CEIL')
-  form.graceAfterShiftEndMinutes = Number(row.graceAfterShiftEndMinutes || 0)
-
-  form.allowApprovedOtWithoutExactClockOut =
-    row.allowApprovedOtWithoutExactClockOut === true
-  form.allowPreShiftOT = row.allowPreShiftOT === true
-  form.allowPostShiftOT = row.allowPostShiftOT !== false
-  form.capByRequestedMinutes = row.capByRequestedMinutes !== false
-  form.treatForgetScanInAsPending = row.treatForgetScanInAsPending !== false
-  form.treatForgetScanOutAsPending = row.treatForgetScanOutAsPending !== false
-  form.isActive = row.isActive !== false
+  form.code = row?.code || ''
+  form.name = row?.name || ''
+  form.description = row?.description || ''
+  form.minEligibleMinutes = Number(row?.minEligibleMinutes || 0)
+  form.roundUnitMinutes = Number(row?.roundUnitMinutes || 30)
+  form.roundMethod = upper(row?.roundMethod || 'CEIL')
+  form.graceAfterShiftEndMinutes = Number(row?.graceAfterShiftEndMinutes || 0)
+  form.allowApprovedOtWithoutExactClockOut = row?.allowApprovedOtWithoutExactClockOut === true
+  form.allowPreShiftOT = row?.allowPreShiftOT === true
+  form.allowPostShiftOT = row?.allowPostShiftOT !== false
+  form.capByRequestedMinutes = row?.capByRequestedMinutes !== false
+  form.treatForgetScanInAsPending = row?.treatForgetScanInAsPending !== false
+  form.treatForgetScanOutAsPending = row?.treatForgetScanOutAsPending !== false
+  form.isActive = row?.isActive !== false
 
   policyDialogVisible.value = true
 }
 
 function buildPayload() {
   return {
-    code: String(form.code || '').trim(),
+    code: String(form.code || '').trim().toUpperCase(),
     name: String(form.name || '').trim(),
     description: String(form.description || '').trim(),
-
     minEligibleMinutes: Number(form.minEligibleMinutes || 0),
     roundUnitMinutes: Number(form.roundUnitMinutes || 0),
-    roundMethod: upper(form.roundMethod || 'CEIL'),
+    roundMethod: String(form.roundMethod || '').trim().toUpperCase(),
     graceAfterShiftEndMinutes: Number(form.graceAfterShiftEndMinutes || 0),
-
-    allowApprovedOtWithoutExactClockOut:
-      form.allowApprovedOtWithoutExactClockOut === true,
-    allowPreShiftOT: form.allowPreShiftOT === true,
-    allowPostShiftOT: form.allowPostShiftOT === true,
-    capByRequestedMinutes: form.capByRequestedMinutes === true,
-    treatForgetScanInAsPending: form.treatForgetScanInAsPending === true,
-    treatForgetScanOutAsPending: form.treatForgetScanOutAsPending === true,
-
-    isActive: form.isActive === true,
+    allowApprovedOtWithoutExactClockOut: !!form.allowApprovedOtWithoutExactClockOut,
+    allowPreShiftOT: !!form.allowPreShiftOT,
+    allowPostShiftOT: !!form.allowPostShiftOT,
+    capByRequestedMinutes: !!form.capByRequestedMinutes,
+    treatForgetScanInAsPending: !!form.treatForgetScanInAsPending,
+    treatForgetScanOutAsPending: !!form.treatForgetScanOutAsPending,
+    isActive: !!form.isActive,
   }
-}
-
-function validateForm() {
-  if (!String(form.code || '').trim()) return t('ot.policy.validation.codeRequired')
-  if (!String(form.name || '').trim()) return t('ot.policy.validation.nameRequired')
-
-  if (!String(form.roundMethod || '').trim()) {
-    return t('ot.policy.validation.roundMethodRequired')
-  }
-
-  if (Number(form.roundUnitMinutes || 0) < 1) {
-    return t('ot.policy.validation.roundUnitInvalid')
-  }
-
-  if (Number(form.minEligibleMinutes || 0) < 0) {
-    return t('ot.policy.validation.minEligibleInvalid')
-  }
-
-  if (Number(form.graceAfterShiftEndMinutes || 0) < 0) {
-    return t('ot.policy.validation.graceInvalid')
-  }
-
-  return ''
 }
 
 async function submitPolicy() {
-  const validationMessage = validateForm()
-
-  if (validationMessage) {
-    showToast('warn', t('common.warning'), validationMessage, 2500)
-    return
-  }
-
   saving.value = true
 
   try {
@@ -505,7 +566,7 @@ async function submitPolicy() {
       showToast(
         'success',
         t('common.updated'),
-        t('ot.policy.updatedSuccess'),
+        label('ot.policy.updatedSuccess', 'OT policy updated successfully.'),
         2500,
       )
     } else {
@@ -514,7 +575,7 @@ async function submitPolicy() {
       showToast(
         'success',
         t('common.created'),
-        t('ot.policy.createdSuccess'),
+        label('ot.policy.createdSuccess', 'OT policy created successfully.'),
         2500,
       )
     }
@@ -526,8 +587,8 @@ async function submitPolicy() {
   } catch (error) {
     showToast(
       'error',
-      editingPolicyId.value ? t('common.updateFailed') : t('common.createFailed'),
-      getApiErrorMessage(error, t('ot.policy.saveFailed')),
+      isEditMode.value ? t('common.updateFailed') : t('common.createFailed'),
+      getApiErrorMessage(error, label('ot.policy.saveFailed', 'Failed to save OT policy.')),
       3500,
     )
   } finally {
@@ -535,8 +596,8 @@ async function submitPolicy() {
   }
 }
 
-onMounted(async () => {
-  await reloadFirstPage({ keepVisible: false })
+onMounted(() => {
+  reloadFirstPage({ keepVisible: false })
 })
 
 onBeforeUnmount(() => {
@@ -545,9 +606,9 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="ot-page-shell">
+  <div class="ot-page-shell ot-policy-page">
     <section class="ot-filter-bar ot-policy-filter-bar">
-      <div class="ot-field ot-policy-filter-bar__search">
+      <div class="ot-field">
         <label class="ot-field-label">
           {{ t('common.search') }}
         </label>
@@ -557,7 +618,7 @@ onBeforeUnmount(() => {
 
           <InputText
             v-model="filters.search"
-            :placeholder="t('ot.policy.searchPlaceholder')"
+            :placeholder="label('ot.policy.searchPlaceholder', 'Search code or name')"
             class="w-full"
             size="small"
             @input="onSearchInput"
@@ -565,7 +626,23 @@ onBeforeUnmount(() => {
         </IconField>
       </div>
 
-      <div class="ot-field ot-policy-filter-bar__status">
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ label('ot.policy.roundMethod', 'Round Method') }}
+        </label>
+
+        <Select
+          v-model="filters.roundMethod"
+          :options="roundMethodOptions"
+          option-label="label"
+          option-value="value"
+          class="w-full"
+          size="small"
+          @change="onFilterChange"
+        />
+      </div>
+
+      <div class="ot-field">
         <label class="ot-field-label">
           {{ t('common.status') }}
         </label>
@@ -581,23 +658,7 @@ onBeforeUnmount(() => {
         />
       </div>
 
-      <div class="ot-field ot-policy-filter-bar__method">
-        <label class="ot-field-label">
-          {{ t('ot.policy.roundMethodLabel') }}
-        </label>
-
-        <Select
-          v-model="filters.roundMethod"
-          :options="roundMethodOptions"
-          option-label="label"
-          option-value="value"
-          class="w-full"
-          size="small"
-          @change="onFilterChange"
-        />
-      </div>
-
-      <div class="ot-filter-actions ot-policy-filter-bar__actions">
+      <div class="ot-policy-filter-actions">
         <span class="ot-loaded-badge">
           {{ loadedLabel }}
         </span>
@@ -608,14 +669,16 @@ onBeforeUnmount(() => {
           severity="secondary"
           outlined
           size="small"
+          class="ot-policy-action-button"
           @click="clearFilters"
         />
 
         <Button
           v-if="canCreate"
-          :label="t('ot.policy.newPolicy')"
+          :label="label('ot.policy.newPolicy', 'New Policy')"
           icon="pi pi-plus"
           size="small"
+          class="ot-policy-action-button"
           @click="openCreateDialog"
         />
       </div>
@@ -625,7 +688,7 @@ onBeforeUnmount(() => {
       <div class="ot-table-toolbar">
         <div>
           <h2 class="ot-table-title">
-            {{ t('ot.policy.tableTitle') }}
+            {{ label('ot.policy.tableTitle', 'OT Calculation Policies') }}
           </h2>
         </div>
 
@@ -637,27 +700,37 @@ onBeforeUnmount(() => {
             <i class="pi pi-spin pi-spinner" />
             {{ t('common.updating') }}
           </span>
-
-          <Button
-            :label="t('common.refresh')"
-            icon="pi pi-refresh"
-            severity="secondary"
-            outlined
-            size="small"
-            :loading="backgroundLoading && bootstrapped"
-            @click="reloadFirstPage({ keepVisible: true })"
-          />
         </div>
       </div>
 
-      <div class="ot-table-wrapper">
+      <div
+        v-if="!canView"
+        class="ot-empty-state"
+      >
+        <div class="ot-empty-icon">
+          <i class="pi pi-lock" />
+        </div>
+
+        <div class="ot-empty-title">
+          {{ t('auth.accessDenied') }}
+        </div>
+
+        <div class="ot-empty-text">
+          {{ label('ot.policy.noViewPermission', 'You do not have permission to view OT policies.') }}
+        </div>
+      </div>
+
+      <div
+        v-else
+        class="ot-table-wrapper"
+      >
         <AppTableLoading
           v-if="isFirstLoading"
           :title="t('common.loadingData')"
           :message="t('common.fetchingRecords')"
           :rows="7"
           :columns="10"
-          icon="pi pi-sliders-h"
+          icon="pi pi-calculator"
         />
 
         <DataTable
@@ -669,8 +742,8 @@ onBeforeUnmount(() => {
           scroll-height="500px"
           :sort-field="filters.sortField"
           :sort-order="filters.sortOrder"
-          table-style="min-width: 120rem"
-          class="ot-data-table ot-data-table-compact"
+          table-style="width: max-content; min-width: 100%; table-layout: auto;"
+          class="ot-policy-table ot-data-table ot-data-table-compact"
           :virtual-scroller-options="useVirtualScroll ? {
             lazy: true,
             onLazyLoad: onVirtualLazyLoad,
@@ -688,7 +761,7 @@ onBeforeUnmount(() => {
               class="ot-empty-state"
             >
               <div class="ot-empty-icon">
-                <i class="pi pi-sliders-h" />
+                <i class="pi pi-calculator" />
               </div>
 
               <div class="ot-empty-title">
@@ -696,7 +769,7 @@ onBeforeUnmount(() => {
               </div>
 
               <div class="ot-empty-text">
-                {{ t('ot.policy.noData') }}
+                {{ label('ot.policy.noData', 'No OT calculation policies found.') }}
               </div>
             </div>
           </template>
@@ -705,7 +778,7 @@ onBeforeUnmount(() => {
             field="code"
             :header="t('common.code')"
             sortable
-            style="min-width: 10rem"
+            style="min-width: 9rem"
           >
             <template #body="{ data }">
               <span
@@ -721,7 +794,7 @@ onBeforeUnmount(() => {
             field="name"
             :header="t('common.name')"
             sortable
-            style="min-width: 12rem"
+            style="min-width: 16rem"
           >
             <template #body="{ data }">
               <span
@@ -734,129 +807,67 @@ onBeforeUnmount(() => {
           </Column>
 
           <Column
-            field="description"
-            :header="t('common.description')"
-            style="min-width: 20rem"
+            field="roundMethod"
+            :header="label('ot.policy.roundMethod', 'Round Method')"
+            sortable
+            style="min-width: 10rem"
           >
             <template #body="{ data }">
-              <span
+              <Tag
                 v-if="data"
-                class="ot-truncate-2"
-              >
-                {{ data.description || '-' }}
-              </span>
+                :value="roundMethodLabel(data.roundMethod)"
+                :class="roundMethodTagClass(data.roundMethod)"
+              />
             </template>
           </Column>
 
           <Column
-            field="roundMethod"
-            :header="t('ot.policy.rounding')"
+            field="roundUnitMinutes"
+            :header="label('ot.policy.roundUnit', 'Round Unit')"
             sortable
-            style="min-width: 13rem"
+            style="min-width: 9rem"
           >
             <template #body="{ data }">
-              <div
-                v-if="data"
-                class="flex flex-col gap-1"
-              >
-                <Tag
-                  :value="roundMethodLabel(data.roundMethod)"
-                  severity="info"
-                  class="ot-status-tag"
-                />
-
-                <span class="text-xs text-[color:var(--ot-text-muted)]">
-                  {{ t('ot.policy.everyUnit', { unit: minutesLabel(data.roundUnitMinutes) }) }}
-                </span>
-              </div>
+              <span v-if="data">{{ formatMinutes(data.roundUnitMinutes) }}</span>
             </template>
           </Column>
 
           <Column
             field="minEligibleMinutes"
-            :header="t('ot.policy.eligibility')"
+            :header="label('ot.policy.minEligible', 'Min Eligible')"
             sortable
-            style="min-width: 10rem"
+            style="min-width: 9rem"
           >
             <template #body="{ data }">
-              <div
-                v-if="data"
-                class="flex flex-col gap-1"
-              >
-                <span class="font-medium">
-                  {{ t('ot.policy.minEligibleShort') }}:
-                  {{ minutesLabel(data.minEligibleMinutes) }}
-                </span>
-
-                <span class="text-xs text-[color:var(--ot-text-muted)]">
-                  {{ t('ot.policy.graceShort') }}:
-                  {{ minutesLabel(data.graceAfterShiftEndMinutes) }}
-                </span>
-              </div>
+              <span v-if="data">{{ formatMinutes(getMinEligibleMinutes(data)) }}</span>
             </template>
           </Column>
 
           <Column
-            :header="t('ot.policy.behavior')"
-            style="min-width: 20rem"
+            field="graceAfterShiftEndMinutes"
+            :header="label('ot.policy.graceAfterShift', 'Grace After Shift')"
+            sortable
+            style="min-width: 11rem"
           >
             <template #body="{ data }">
-              <div
-                v-if="data"
-                class="flex flex-wrap gap-1"
-              >
-                <Tag
-                  :value="t('ot.policy.flagShort.pre', { value: boolText(data.allowPreShiftOT) })"
-                  :severity="data.allowPreShiftOT ? 'success' : 'secondary'"
-                  class="ot-status-tag"
-                />
-
-                <Tag
-                  :value="t('ot.policy.flagShort.post', { value: boolText(data.allowPostShiftOT) })"
-                  :severity="data.allowPostShiftOT ? 'success' : 'secondary'"
-                  class="ot-status-tag"
-                />
-
-                <Tag
-                  :value="t('ot.policy.flagShort.cap', { value: boolText(data.capByRequestedMinutes) })"
-                  :severity="data.capByRequestedMinutes ? 'success' : 'warning'"
-                  class="ot-status-tag"
-                />
-
-                <Tag
-                  :value="t('ot.policy.flagShort.noExactOut', {
-                    value: boolText(data.allowApprovedOtWithoutExactClockOut),
-                  })"
-                  :severity="data.allowApprovedOtWithoutExactClockOut ? 'info' : 'secondary'"
-                  class="ot-status-tag"
-                />
-              </div>
+              <span v-if="data">{{ formatMinutes(getGraceAfterShiftEndMinutes(data)) }}</span>
             </template>
           </Column>
 
           <Column
-            :header="t('ot.policy.forgetScan')"
-            style="min-width: 12rem"
+            :header="label('ot.policy.behaviorFlags', 'Rules')"
+            style="min-width: 24rem"
           >
             <template #body="{ data }">
               <div
                 v-if="data"
-                class="flex flex-wrap gap-1"
+                class="ot-policy-flag-row"
               >
                 <Tag
-                  :value="t('ot.policy.flagShort.fsIn', {
-                    value: boolText(data.treatForgetScanInAsPending),
-                  })"
-                  :severity="data.treatForgetScanInAsPending ? 'warning' : 'secondary'"
-                  class="ot-status-tag"
-                />
-
-                <Tag
-                  :value="t('ot.policy.flagShort.fsOut', {
-                    value: boolText(data.treatForgetScanOutAsPending),
-                  })"
-                  :severity="data.treatForgetScanOutAsPending ? 'warning' : 'secondary'"
-                  class="ot-status-tag"
+                  v-for="item in flagItems(data)"
+                  :key="item.key"
+                  :value="`${item.label}: ${yesNoLabel(item.value)}`"
+                  :class="booleanTagClass(item.value)"
                 />
               </div>
             </template>
@@ -872,21 +883,23 @@ onBeforeUnmount(() => {
               <Tag
                 v-if="data"
                 :value="activeLabel(data)"
-                :severity="activeSeverity(data)"
-                class="ot-status-tag"
+                :class="activeTagClass(data)"
               />
             </template>
           </Column>
 
           <Column
-            field="updatedAt"
-            :header="t('common.updatedAt')"
+            field="createdAt"
+            :header="t('common.createdAt')"
             sortable
             style="min-width: 13rem"
           >
             <template #body="{ data }">
-              <span v-if="data">
-                {{ formatDateTime(data.updatedAt || data.createdAt) }}
+              <span
+                v-if="data"
+                class="text-sm text-[color:var(--ot-text-muted)]"
+              >
+                {{ formatDateTime(data.createdAt) }}
               </span>
             </template>
           </Column>
@@ -895,23 +908,18 @@ onBeforeUnmount(() => {
             :header="t('common.actions')"
             frozen
             align-frozen="right"
-            header-class="ot-action-column-header"
-            body-class="ot-action-column-body"
+            style="width: 7rem; min-width: 7rem"
           >
             <template #body="{ data }">
-              <div
-                v-if="data"
-                class="ot-row-actions"
-              >
-                <Button
-                  v-if="canUpdate"
-                  :label="t('common.edit')"
-                  icon="pi pi-pencil"
-                  size="small"
-                  outlined
-                  @click="openEditDialog(data)"
-                />
-              </div>
+              <Button
+                v-if="data && canUpdate"
+                :label="t('common.edit')"
+                icon="pi pi-pencil"
+                size="small"
+                outlined
+                class="ot-policy-action-button"
+                @click="openEditDialog(data)"
+              />
             </template>
           </Column>
         </DataTable>
@@ -921,13 +929,12 @@ onBeforeUnmount(() => {
     <Dialog
       v-model:visible="policyDialogVisible"
       modal
-      :closable="!saving"
       :header="dialogTitle"
-      :style="{ width: '64rem', maxWidth: '96vw' }"
+      :style="{ width: '62rem', maxWidth: '96vw' }"
       @hide="resetForm"
     >
       <div class="ot-dialog-form">
-        <div class="ot-form-grid">
+        <div class="ot-policy-dialog-grid">
           <div class="ot-field">
             <label class="ot-field-label">
               {{ t('common.code') }}
@@ -936,7 +943,8 @@ onBeforeUnmount(() => {
             <InputText
               v-model="form.code"
               class="w-full"
-              :placeholder="t('ot.policy.codePlaceholder')"
+              :placeholder="label('ot.policy.codePlaceholder', 'Example: OT_STD')"
+              maxlength="30"
             />
           </div>
 
@@ -948,29 +956,14 @@ onBeforeUnmount(() => {
             <InputText
               v-model="form.name"
               class="w-full"
-              :placeholder="t('ot.policy.namePlaceholder')"
+              :placeholder="label('ot.policy.namePlaceholder', 'Standard OT Policy')"
+              maxlength="120"
             />
           </div>
-        </div>
 
-        <div class="ot-field">
-          <label class="ot-field-label">
-            {{ t('common.description') }}
-          </label>
-
-          <Textarea
-            v-model="form.description"
-            rows="3"
-            auto-resize
-            class="w-full"
-            :placeholder="t('ot.policy.descriptionPlaceholder')"
-          />
-        </div>
-
-        <div class="ot-form-grid">
           <div class="ot-field">
             <label class="ot-field-label">
-              {{ t('ot.policy.roundMethodLabel') }}
+              {{ label('ot.policy.roundMethod', 'Round Method') }}
             </label>
 
             <Select
@@ -982,26 +975,20 @@ onBeforeUnmount(() => {
             />
           </div>
 
-          <div class="ot-field">
-            <label class="ot-field-label">
-              {{ t('ot.policy.roundUnit') }}
-            </label>
+          <div class="ot-policy-active-card">
+            <span class="text-sm font-semibold text-[color:var(--ot-text)]">
+              {{ t('common.active') }}
+            </span>
 
-            <InputNumber
-              v-model="form.roundUnitMinutes"
-              class="w-full"
-              input-class="w-full"
-              :min="1"
-              :use-grouping="false"
-              :suffix="` ${t('ot.common.min')}`"
+            <Checkbox
+              v-model="form.isActive"
+              binary
             />
           </div>
-        </div>
 
-        <div class="ot-form-grid">
           <div class="ot-field">
             <label class="ot-field-label">
-              {{ t('ot.policy.minEligible') }}
+              {{ label('ot.policy.minEligibleMinutes', 'Minimum Eligible Minutes') }}
             </label>
 
             <InputNumber
@@ -1009,14 +996,27 @@ onBeforeUnmount(() => {
               class="w-full"
               input-class="w-full"
               :min="0"
-              :use-grouping="false"
-              :suffix="` ${t('ot.common.min')}`"
+              :max-fraction-digits="0"
             />
           </div>
 
           <div class="ot-field">
             <label class="ot-field-label">
-              {{ t('ot.policy.graceAfterShiftEnd') }}
+              {{ label('ot.policy.roundUnitMinutes', 'Round Unit Minutes') }}
+            </label>
+
+            <InputNumber
+              v-model="form.roundUnitMinutes"
+              class="w-full"
+              input-class="w-full"
+              :min="1"
+              :max-fraction-digits="0"
+            />
+          </div>
+
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ label('ot.policy.graceAfterShiftEndMinutes', 'Grace After Shift End') }}
             </label>
 
             <InputNumber
@@ -1024,57 +1024,46 @@ onBeforeUnmount(() => {
               class="w-full"
               input-class="w-full"
               :min="0"
-              :use-grouping="false"
-              :suffix="` ${t('ot.common.min')}`"
+              :max-fraction-digits="0"
             />
           </div>
         </div>
 
-        <div class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface-2)] p-4">
-          <div class="mb-3 text-sm font-semibold text-[color:var(--ot-text)]">
-            {{ t('ot.policy.behavior') }}
-          </div>
+        <div class="ot-field">
+          <label class="ot-field-label">
+            {{ t('common.description') }}
+          </label>
 
-          <div class="grid grid-cols-1 gap-2 lg:grid-cols-2">
-            <label
-              v-for="flag in behaviorFlags"
-              :key="flag.key"
-              class="flex items-start gap-3 rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] p-3"
-            >
-              <Checkbox
-                v-model="form[flag.key]"
-                binary
-              />
-
-              <span class="grid gap-0.5">
-                <span class="text-sm font-semibold text-[color:var(--ot-text)]">
-                  {{ flag.label }}
-                </span>
-
-                <span class="text-xs text-[color:var(--ot-text-muted)]">
-                  {{ flag.description }}
-                </span>
-              </span>
-            </label>
-          </div>
+          <Textarea
+            v-model="form.description"
+            class="w-full"
+            rows="3"
+            :placeholder="label('ot.policy.descriptionPlaceholder', 'Policy description')"
+          />
         </div>
 
-        <label class="flex items-center gap-3 rounded-xl border border-[color:var(--ot-border)] px-4 py-3">
-          <Checkbox
-            v-model="form.isActive"
-            binary
-          />
+        <div class="ot-policy-flag-grid">
+          <label
+            v-for="flag in behaviorFlags"
+            :key="flag.key"
+            class="ot-policy-flag-card"
+          >
+            <div class="min-w-0">
+              <div class="ot-policy-flag-title">
+                {{ flag.label }}
+              </div>
 
-          <span class="grid gap-0.5">
-            <span class="text-sm font-semibold text-[color:var(--ot-text)]">
-              {{ t('common.active') }}
-            </span>
+              <div class="ot-policy-flag-description">
+                {{ flag.description }}
+              </div>
+            </div>
 
-            <span class="text-xs text-[color:var(--ot-text-muted)]">
-              {{ t('ot.policy.activeHelp') }}
-            </span>
-          </span>
-        </label>
+            <Checkbox
+              v-model="form[flag.key]"
+              binary
+            />
+          </label>
+        </div>
       </div>
 
       <template #footer>
@@ -1089,10 +1078,9 @@ onBeforeUnmount(() => {
 
           <Button
             :label="saveLabel"
-            icon="pi pi-check"
-            size="small"
             :loading="saving"
             :disabled="isSaveDisabled"
+            size="small"
             @click="submitPolicy"
           />
         </div>
@@ -1102,63 +1090,214 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.ot-policy-filter-bar {
-  grid-template-columns: 1fr;
+.ot-policy-page {
+  --ot-policy-active-rgb: 34 197 94;
+  --ot-policy-inactive-rgb: 100 116 139;
+  --ot-policy-floor-rgb: 59 130 246;
+  --ot-policy-ceil-rgb: 245 158 11;
+  --ot-policy-nearest-rgb: 139 92 246;
+  --ot-policy-muted-rgb: 100 116 139;
 }
 
-.ot-policy-filter-bar__search,
-.ot-policy-filter-bar__status,
-.ot-policy-filter-bar__method,
-.ot-policy-filter-bar__actions {
+.ot-policy-filter-bar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  align-items: end;
+}
+
+.ot-policy-filter-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
   min-width: 0;
 }
 
-.ot-policy-filter-bar__actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  justify-content: flex-start;
-  gap: 0.5rem;
+.ot-policy-filter-actions > * {
+  flex: 0 0 auto;
 }
 
-.ot-policy-filter-bar__actions :deep(.p-button) {
+.ot-policy-flag-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+}
+
+:deep(.ot-policy-rgb-tag) {
+  --ot-policy-tag-rgb: var(--ot-policy-muted-rgb);
+  min-height: 1.42rem;
+  border: 1px solid rgb(var(--ot-policy-tag-rgb) / 0.28);
+  background: rgb(var(--ot-policy-tag-rgb) / 0.11);
+  color: rgb(var(--ot-policy-tag-rgb) / 1);
+  padding: 0.12rem 0.48rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+  border-radius: 999px;
   white-space: nowrap;
 }
 
-:deep(.ot-status-tag) {
-  min-height: 1.35rem !important;
-  padding: 0.12rem 0.48rem !important;
-  border: 1px solid transparent !important;
-  border-radius: 999px !important;
-  font-size: 0.7rem !important;
-  font-weight: 500 !important;
-  line-height: 1 !important;
+:deep(.ot-policy-tag-active) {
+  --ot-policy-tag-rgb: var(--ot-policy-active-rgb);
+}
+
+:deep(.ot-policy-tag-inactive) {
+  --ot-policy-tag-rgb: var(--ot-policy-inactive-rgb);
+}
+
+:deep(.ot-policy-tag-floor) {
+  --ot-policy-tag-rgb: var(--ot-policy-floor-rgb);
+}
+
+:deep(.ot-policy-tag-ceil) {
+  --ot-policy-tag-rgb: var(--ot-policy-ceil-rgb);
+}
+
+:deep(.ot-policy-tag-nearest) {
+  --ot-policy-tag-rgb: var(--ot-policy-nearest-rgb);
+}
+
+:deep(.ot-policy-tag-muted) {
+  --ot-policy-tag-rgb: var(--ot-policy-muted-rgb);
+}
+
+:deep(.ot-policy-action-button .p-button-icon) {
+  font-size: 0.76rem;
+}
+
+:deep(.ot-policy-table .p-datatable-table) {
+  width: max-content !important;
+  min-width: 100% !important;
+  table-layout: auto !important;
+}
+
+:deep(.ot-policy-table .p-datatable-thead > tr > th) {
+  width: auto !important;
+  min-width: auto !important;
+  max-width: none !important;
+  padding: 0.58rem 0.68rem !important;
   white-space: nowrap !important;
+  text-align: center !important;
+  vertical-align: middle !important;
+  font-size: 0.78rem !important;
+  font-weight: 650 !important;
+}
+
+:deep(.ot-policy-table .p-datatable-tbody > tr > td) {
+  width: auto !important;
+  min-width: auto !important;
+  max-width: none !important;
+  height: 68px !important;
+  padding: 0.46rem 0.68rem !important;
+  vertical-align: middle !important;
+  white-space: nowrap !important;
+  text-align: center !important;
+  font-size: 0.8rem !important;
+}
+
+:deep(.ot-policy-table .p-column-header-content) {
+  justify-content: center !important;
+  text-align: center !important;
+}
+
+:deep(.ot-policy-table .p-datatable-tbody > tr > td > *) {
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+.ot-policy-dialog-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: start;
+}
+
+.ot-policy-active-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border: 1px solid var(--ot-border);
+  border-radius: var(--ot-radius-md);
+  padding: 0.75rem 0.85rem;
+}
+
+.ot-policy-flag-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.65rem;
+}
+
+.ot-policy-flag-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.85rem;
+  border: 1px solid var(--ot-border);
+  border-radius: var(--ot-radius-md);
+  background: var(--ot-bg);
+  padding: 0.7rem 0.8rem;
+  cursor: pointer;
+}
+
+.ot-policy-flag-title {
+  color: var(--ot-text);
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.ot-policy-flag-description {
+  margin-top: 0.16rem;
+  color: var(--ot-text-muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+@media (max-width: 768px) {
+  .ot-policy-filter-actions {
+    justify-content: stretch;
+  }
+
+  .ot-policy-filter-actions > * {
+    flex: 1 1 100%;
+  }
+}
+
+@media (min-width: 768px) {
+  .ot-policy-dialog-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ot-policy-flag-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .ot-policy-filter-bar {
+    grid-template-columns:
+      minmax(260px, 1.3fr)
+      minmax(190px, 0.9fr)
+      minmax(170px, 0.8fr);
+  }
+
+  .ot-policy-filter-actions {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (min-width: 1280px) {
-  .ot-policy-filter-bar {
-    grid-template-columns:
-      minmax(320px, 1.4fr)
-      minmax(150px, 0.7fr)
-      minmax(190px, 0.85fr)
-      auto;
-    align-items: end;
+  .ot-policy-dialog-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
-  .ot-policy-filter-bar__actions {
-    flex-wrap: nowrap;
-    justify-content: flex-end;
-  }
-}
-
-@media (min-width: 1440px) {
-  .ot-policy-filter-bar {
-    grid-template-columns:
-      minmax(380px, 1.55fr)
-      minmax(160px, 0.7fr)
-      minmax(210px, 0.85fr)
-      auto;
+  .ot-policy-flag-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 </style>

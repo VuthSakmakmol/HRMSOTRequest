@@ -1,5 +1,7 @@
 <!-- frontend/src/modules/org/views/DepartmentView.vue -->
 <script setup>
+// frontend/src/modules/org/views/DepartmentView.vue
+
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
@@ -312,10 +314,6 @@ async function submitDepartment() {
   }
 }
 
-function statusSeverity(active) {
-  return active ? 'success' : 'secondary'
-}
-
 function getFilenameFromHeader(res, fallback) {
   const disposition = String(res?.headers?.['content-disposition'] || '')
   const match = disposition.match(/filename="?([^"]+)"?/i)
@@ -394,14 +392,14 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="ot-page-shell">
+  <div class="ot-page-shell department-page">
     <DepartmentImportDialog
       v-model:visible="importDialogVisible"
       @success="handleImportSuccess"
     />
 
     <section class="ot-filter-bar department-filter-bar">
-      <div class="ot-field department-filter-bar__search">
+      <div class="ot-field">
         <label class="ot-field-label">
           {{ t('common.search') }}
         </label>
@@ -419,7 +417,7 @@ onBeforeUnmount(() => {
         </IconField>
       </div>
 
-      <div class="ot-field department-filter-bar__status">
+      <div class="ot-field">
         <label class="ot-field-label">
           {{ t('common.status') }}
         </label>
@@ -435,7 +433,7 @@ onBeforeUnmount(() => {
         />
       </div>
 
-      <div class="ot-filter-actions department-filter-bar__meta">
+      <div class="department-filter-actions">
         <span class="ot-loaded-badge">
           {{ loadedLabel }}
         </span>
@@ -448,9 +446,7 @@ onBeforeUnmount(() => {
           size="small"
           @click="clearFilters"
         />
-      </div>
 
-      <div class="ot-page-actions department-filter-bar__actions">
         <Button
           v-if="canCreate"
           :label="t('org.department.importExcel')"
@@ -520,7 +516,7 @@ onBeforeUnmount(() => {
           :sort-field="filters.sortField"
           :sort-order="filters.sortOrder"
           table-style="min-width: 50rem"
-          class="ot-data-table ot-data-table-compact"
+          class="ot-data-table ot-data-table-compact department-data-table"
           :virtual-scroller-options="useVirtualScroll ? {
             lazy: true,
             onLazyLoad: onVirtualLazyLoad,
@@ -560,7 +556,7 @@ onBeforeUnmount(() => {
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="font-semibold"
+                class="department-code-text"
               >
                 {{ data.code || '-' }}
               </span>
@@ -574,7 +570,12 @@ onBeforeUnmount(() => {
             style="min-width: 16rem"
           >
             <template #body="{ data }">
-              <span v-if="data">{{ data.name || '-' }}</span>
+              <span
+                v-if="data"
+                class="department-name-text"
+              >
+                {{ data.name || '-' }}
+              </span>
             </template>
           </Column>
 
@@ -588,7 +589,8 @@ onBeforeUnmount(() => {
               <Tag
                 v-if="data"
                 :value="data.isActive ? t('common.active') : t('common.inactive')"
-                :severity="statusSeverity(data.isActive)"
+                class="department-rgb-tag"
+                :class="data.isActive ? 'department-active-tag' : 'department-inactive-tag'"
               />
             </template>
           </Column>
@@ -659,8 +661,8 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] px-4 py-3">
-          <span class="text-sm font-semibold text-[color:var(--ot-text)]">
+        <div class="department-active-box">
+          <span class="department-active-label">
             {{ t('common.active') }}
           </span>
 
@@ -691,56 +693,128 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.department-filter-bar {
-  grid-template-columns: 1fr;
+.department-page {
+  --department-code-rgb: 37, 99, 235;
+  --department-name-rgb: 15, 23, 42;
+  --department-active-rgb: 22, 163, 74;
+  --department-inactive-rgb: 100, 116, 139;
 }
 
-.department-filter-bar__search,
-.department-filter-bar__status,
-.department-filter-bar__meta,
-.department-filter-bar__actions {
+.department-filter-bar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  align-items: end;
+}
+
+.department-filter-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
   min-width: 0;
 }
 
-.department-filter-bar__meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  gap: 0.5rem;
+.department-filter-actions > * {
+  flex: 0 0 auto;
 }
 
-.department-filter-bar__actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  justify-content: flex-start;
-  gap: 0.5rem;
+.department-code-text {
+  color: rgb(var(--department-code-rgb));
+  font-size: 0.82rem;
+  font-weight: 700;
 }
 
-.department-filter-bar__actions :deep(.p-button) {
-  white-space: nowrap;
+.department-name-text {
+  color: rgb(var(--department-name-rgb));
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.department-rgb-tag {
+  border-radius: 999px;
+  border: 1px solid transparent;
+  padding: 0.2rem 0.58rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.department-active-tag {
+  border-color: rgba(var(--department-active-rgb), 0.24);
+  background: rgba(var(--department-active-rgb), 0.12);
+  color: rgb(var(--department-active-rgb));
+}
+
+.department-inactive-tag {
+  border-color: rgba(var(--department-inactive-rgb), 0.24);
+  background: rgba(var(--department-inactive-rgb), 0.12);
+  color: rgb(var(--department-inactive-rgb));
+}
+
+.department-active-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border: 1px solid var(--ot-border);
+  border-radius: 0.85rem;
+  padding: 0.75rem 0.9rem;
+}
+
+.department-active-label {
+  color: var(--ot-text);
+  font-size: 0.86rem;
+  font-weight: 650;
+}
+
+.department-page :deep(.p-tag-value) {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:global(.dark) .department-page {
+  --department-name-rgb: 226, 232, 240;
+}
+
+:global(.dark) .department-active-tag {
+  border-color: rgba(var(--department-active-rgb), 0.36);
+  background: rgba(var(--department-active-rgb), 0.18);
+}
+
+:global(.dark) .department-inactive-tag {
+  border-color: rgba(var(--department-inactive-rgb), 0.36);
+  background: rgba(var(--department-inactive-rgb), 0.18);
+}
+
+@media (max-width: 768px) {
+  .department-filter-actions {
+    justify-content: stretch;
+  }
+
+  .department-filter-actions > * {
+    flex: 1 1 100%;
+  }
+}
+
+@media (min-width: 1024px) {
+  .department-filter-bar {
+    grid-template-columns:
+      minmax(260px, 1.4fr)
+      minmax(170px, 0.8fr);
+  }
+
+  .department-filter-actions {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (min-width: 1280px) {
   .department-filter-bar {
-    grid-template-columns: minmax(320px, 1.45fr) minmax(180px, 0.9fr) auto auto;
-    align-items: end;
-  }
-
-  .department-filter-bar__meta {
-    flex-wrap: nowrap;
-    justify-content: flex-start;
-  }
-
-  .department-filter-bar__actions {
-    flex-wrap: nowrap;
-    justify-content: flex-end;
-  }
-}
-
-@media (min-width: 1440px) {
-  .department-filter-bar {
-    grid-template-columns: minmax(360px, 1.6fr) minmax(200px, 1fr) auto auto;
+    grid-template-columns:
+      minmax(320px, 1.6fr)
+      minmax(180px, 0.8fr);
   }
 }
 </style>

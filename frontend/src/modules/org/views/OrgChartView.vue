@@ -1,5 +1,7 @@
 <!-- frontend/src/modules/org/views/OrgChartView.vue -->
 <script setup>
+// frontend/src/modules/org/views/OrgChartView.vue
+
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
@@ -24,6 +26,7 @@ const toast = useToast()
 const { t } = useI18n()
 
 const SEARCH_DEBOUNCE_MS = 250
+const DEFAULT_ZOOM = 0.72
 
 const loading = ref(false)
 const searchKeyword = ref(String(route.query.search || '').trim())
@@ -39,7 +42,7 @@ const chartPayload = ref({
   tree: [],
 })
 
-const zoom = ref(0.85)
+const zoom = ref(DEFAULT_ZOOM)
 const panX = ref(0)
 const panY = ref(0)
 const isPanning = ref(false)
@@ -66,19 +69,19 @@ function buildLabel(...parts) {
 }
 
 function clampZoom(value) {
-  return Math.max(0.5, Math.min(1.6, Number(value || 1)))
+  return Math.max(0.45, Math.min(1.6, Number(value || DEFAULT_ZOOM)))
 }
 
 function zoomIn() {
-  zoom.value = clampZoom(zoom.value + 0.1)
+  zoom.value = clampZoom(zoom.value + 0.08)
 }
 
 function zoomOut() {
-  zoom.value = clampZoom(zoom.value - 0.1)
+  zoom.value = clampZoom(zoom.value - 0.08)
 }
 
 function resetView() {
-  zoom.value = 0.85
+  zoom.value = DEFAULT_ZOOM
   panX.value = 0
   panY.value = 0
 }
@@ -91,7 +94,8 @@ const canvasStyle = computed(() => ({
 }))
 
 const canvasOuterStyle = computed(() => ({
-  minHeight: `${Math.max(520, Math.round(620 * zoom.value))}px`,
+  minHeight: `${Math.max(720, Math.round(960 * zoom.value))}px`,
+  minWidth: '100%',
 }))
 
 function shouldIgnorePan(event) {
@@ -163,7 +167,7 @@ function normalizeTreeNode(node) {
 
   return {
     key: s(node.key || data.id),
-    expanded: !!node.expanded,
+    expanded: true,
     data: {
       id: s(data.id),
       name: s(data.name || data.displayName || node.label || t('common.unknown')),
@@ -244,9 +248,11 @@ const matchedEmployeeIds = computed(() => {
 })
 
 const expandedEmployeeIds = computed(() => {
-  return Array.isArray(chartPayload.value?.expandedEmployeeIds)
+  const ids = Array.isArray(chartPayload.value?.expandedEmployeeIds)
     ? chartPayload.value.expandedEmployeeIds
     : []
+
+  return ids
 })
 
 function syncRouteQuery() {
@@ -343,6 +349,7 @@ function onSearchInput() {
 
 function onRootChange(value) {
   selectedRootEmployeeId.value = s(value)
+  resetView()
   loadTree()
 }
 
@@ -364,8 +371,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="ot-page-shell">
-    <section class="ot-filter-bar">
+  <div class="ot-page-shell org-chart-page">
+    <section class="ot-filter-bar org-chart-filter-bar">
       <div class="ot-field">
         <label class="ot-field-label">
           {{ t('common.search') }}
@@ -403,15 +410,15 @@ onBeforeUnmount(() => {
         />
       </div>
 
-      <div class="ot-filter-actions">
-        <label class="flex h-[2.35rem] cursor-pointer items-center gap-2 rounded-xl border border-[color:var(--ot-border)] px-3 text-sm text-[color:var(--ot-text)]">
+      <div class="org-chart-filter-actions">
+        <label class="org-chart-check">
           <Checkbox
             v-model="includeInactive"
             binary
             @change="onToggleInactive"
           />
 
-          <span class="whitespace-nowrap">
+          <span>
             {{ t('org.orgChart.includeInactive') }}
           </span>
         </label>
@@ -428,19 +435,28 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <section class="ot-table-card">
+    <section class="ot-table-card org-chart-card">
       <div class="ot-table-toolbar">
         <div>
           <h2 class="ot-table-title">
             {{ t('org.orgChart.treeTitle') }}
           </h2>
         </div>
+
+        <div class="ot-table-actions">
+          <span class="ot-loaded-badge">
+            {{ t('common.loaded', {
+              loaded: chartPayload.totalVisibleEmployees || 0,
+              total: chartPayload.totalVisibleEmployees || 0,
+            }) }}
+          </span>
+        </div>
       </div>
 
-      <div class="p-4">
+      <div class="org-chart-body">
         <div v-if="loading">
           <Skeleton
-            height="24rem"
+            height="38rem"
             border-radius="1rem"
           />
         </div>
@@ -463,7 +479,7 @@ onBeforeUnmount(() => {
           @pointercancel="endPan"
         >
           <div class="org-chart-sticky-controls">
-            <span class="ot-loaded-badge">
+            <span class="org-chart-zoom-badge">
               {{ t('org.orgChart.zoomLabel', { zoom: zoomPercent }) }}
             </span>
 
@@ -518,14 +534,69 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.org-chart-page {
+  --org-primary-rgb: 37, 99, 235;
+  --org-success-rgb: 22, 163, 74;
+  --org-muted-rgb: 100, 116, 139;
+}
+
+.org-chart-filter-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: end;
+}
+
+.org-chart-filter-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.org-chart-filter-actions > * {
+  flex: 0 0 auto;
+}
+
+.org-chart-check {
+  display: inline-flex;
+  height: 2.35rem;
+  cursor: pointer;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid var(--ot-border);
+  border-radius: 0.85rem;
+  background: var(--ot-surface);
+  padding: 0 0.75rem;
+  color: var(--ot-text);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.org-chart-check span {
+  white-space: nowrap;
+}
+
+.org-chart-card {
+  overflow: hidden;
+}
+
+.org-chart-body {
+  padding: 0.75rem;
+}
+
 .org-chart-frame {
-  overflow: auto;
   position: relative;
-  min-height: 34rem;
-  max-height: calc(100vh - 15rem);
+  min-height: 44rem;
+  max-height: calc(100vh - 10rem);
+  overflow: auto;
   border: 1px solid var(--ot-border);
   border-radius: 1rem;
-  background: var(--ot-surface-2);
+  background:
+    radial-gradient(circle at top left, rgba(var(--org-primary-rgb), 0.07), transparent 28rem),
+    var(--ot-surface-2);
   cursor: grab;
   user-select: none;
   touch-action: none;
@@ -546,17 +617,31 @@ onBeforeUnmount(() => {
   gap: 0.45rem;
   border-bottom: 1px solid var(--ot-border);
   background: color-mix(in srgb, var(--ot-surface) 94%, transparent);
-  padding: 0.6rem;
+  padding: 0.55rem;
   backdrop-filter: blur(10px);
+}
+
+.org-chart-zoom-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.9rem;
+  border: 1px solid rgba(var(--org-primary-rgb), 0.24);
+  border-radius: 999px;
+  background: rgba(var(--org-primary-rgb), 0.1);
+  padding: 0 0.65rem;
+  color: rgb(var(--org-primary-rgb));
+  font-size: 0.72rem;
+  font-weight: 750;
+  white-space: nowrap;
 }
 
 .org-chart-viewport {
   display: flex;
-  min-width: max-content;
   width: 100%;
+  min-width: max-content;
   align-items: flex-start;
   justify-content: center;
-  padding: 2rem;
+  padding: 1.5rem 1.75rem 2.5rem;
 }
 
 .org-chart-canvas {
@@ -572,10 +657,30 @@ onBeforeUnmount(() => {
   white-space: nowrap !important;
 }
 
+:global(.dark) .org-chart-frame {
+  background:
+    radial-gradient(circle at top left, rgba(var(--org-primary-rgb), 0.13), transparent 30rem),
+    var(--ot-surface-2);
+}
+
+@media (max-width: 768px) {
+  .org-chart-filter-actions {
+    justify-content: stretch;
+  }
+
+  .org-chart-filter-actions > * {
+    flex: 1 1 100%;
+  }
+
+  .org-chart-check {
+    justify-content: center;
+  }
+}
+
 @media (max-width: 640px) {
   .org-chart-frame {
-    min-height: 30rem;
-    max-height: calc(100vh - 13rem);
+    min-height: 34rem;
+    max-height: calc(100vh - 12rem);
   }
 
   .org-chart-sticky-controls {
@@ -589,6 +694,27 @@ onBeforeUnmount(() => {
   :deep(.org-chart-control-btn.p-button) {
     width: 2.25rem !important;
     padding-inline: 0 !important;
+  }
+}
+
+@media (min-width: 768px) {
+  .org-chart-filter-bar {
+    grid-template-columns:
+      minmax(260px, 1fr)
+      minmax(320px, 1.3fr);
+  }
+}
+
+@media (min-width: 1280px) {
+  .org-chart-filter-bar {
+    grid-template-columns:
+      minmax(340px, 1fr)
+      minmax(420px, 1.2fr)
+      minmax(300px, 0.8fr);
+  }
+
+  .org-chart-filter-actions {
+    grid-column: auto;
   }
 }
 </style>

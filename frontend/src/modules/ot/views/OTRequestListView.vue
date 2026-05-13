@@ -10,13 +10,13 @@ import { useToast } from 'primevue/usetoast'
 import Button from 'primevue/button'
 import Column from 'primevue/column'
 import DataTable from 'primevue/datatable'
-import DatePicker from 'primevue/datepicker'
 import IconField from 'primevue/iconfield'
 import InputIcon from 'primevue/inputicon'
 import InputText from 'primevue/inputtext'
 import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 
+import HolidayDatePicker from '@/modules/calendar/components/HolidayDatePicker.vue'
 import AppTableLoading from '@/shared/components/AppTableLoading.vue'
 import { useAuthStore } from '@/modules/auth/auth.store'
 import { getApiErrorMessage } from '@/shared/utils/apiError'
@@ -47,8 +47,8 @@ const filters = reactive({
   search: '',
   status: '',
   dayType: '',
-  otDateFrom: null,
-  otDateTo: null,
+  otDateFrom: '',
+  otDateTo: '',
   sortBy: 'createdAt',
   sortOrder: -1,
 })
@@ -185,21 +185,6 @@ function safeDateTime(value) {
   return value ? formatDateTime(value) : '-'
 }
 
-function normalizePrimeSeverity(value, fallback = 'secondary') {
-  const raw = upper(value)
-
-  if (raw === 'SUCCESS') return 'success'
-  if (raw === 'DANGER') return 'danger'
-  if (raw === 'ERROR') return 'danger'
-  if (raw === 'WARNING') return 'warn'
-  if (raw === 'WARN') return 'warn'
-  if (raw === 'INFO') return 'info'
-  if (raw === 'SECONDARY') return 'secondary'
-  if (raw === 'CONTRAST') return 'contrast'
-
-  return fallback
-}
-
 function approvalLabel(row) {
   return (
     normalizeText(row?.approvalDisplay?.label) ||
@@ -209,21 +194,39 @@ function approvalLabel(row) {
   )
 }
 
-function approvalSeverity(row) {
-  const displaySeverity = normalizeText(row?.approvalDisplay?.severity)
-
-  if (displaySeverity) {
-    return normalizePrimeSeverity(displaySeverity, 'secondary')
-  }
-
+function approvalTagClass(row) {
+  const displaySeverity = upper(row?.approvalDisplay?.severity)
   const status = upper(row?.approvalStatus || row?.status)
 
-  if (status.includes('APPROVED')) return 'success'
-  if (status.includes('REJECTED')) return 'danger'
-  if (status.includes('CANCELLED')) return 'secondary'
-  if (status.includes('PENDING')) return 'warn'
+  if (displaySeverity === 'SUCCESS' || status.includes('APPROVED')) {
+    return ['ot-request-rgb-tag', 'ot-request-tag-approved']
+  }
 
-  return 'secondary'
+  if (
+    displaySeverity === 'DANGER' ||
+    displaySeverity === 'ERROR' ||
+    status.includes('REJECTED')
+  ) {
+    return ['ot-request-rgb-tag', 'ot-request-tag-rejected']
+  }
+
+  if (status.includes('CANCELLED')) {
+    return ['ot-request-rgb-tag', 'ot-request-tag-muted']
+  }
+
+  if (
+    displaySeverity === 'WARNING' ||
+    displaySeverity === 'WARN' ||
+    status.includes('PENDING')
+  ) {
+    return ['ot-request-rgb-tag', 'ot-request-tag-pending']
+  }
+
+  if (displaySeverity === 'INFO') {
+    return ['ot-request-rgb-tag', 'ot-request-tag-info']
+  }
+
+  return ['ot-request-rgb-tag', 'ot-request-tag-muted']
 }
 
 function dayTypeLabel(row) {
@@ -237,14 +240,26 @@ function dayTypeLabel(row) {
   return humanize(row?.dayType)
 }
 
-function dayTypeSeverity(row) {
+function dayTypeTagClass(row) {
   const dayType = upper(row?.dayType)
 
-  if (dayType === 'WORKING_DAY') return 'success'
-  if (dayType === 'SUNDAY') return 'warn'
-  if (dayType === 'HOLIDAY') return 'danger'
+  if (dayType === 'WORKING_DAY') return ['ot-request-rgb-tag', 'ot-request-tag-working']
+  if (dayType === 'SUNDAY') return ['ot-request-rgb-tag', 'ot-request-tag-sunday']
+  if (dayType === 'HOLIDAY') return ['ot-request-rgb-tag', 'ot-request-tag-holiday']
 
-  return 'secondary'
+  return ['ot-request-rgb-tag', 'ot-request-tag-muted']
+}
+
+function timingTagClass() {
+  return ['ot-request-rgb-tag', 'ot-request-tag-muted']
+}
+
+function staffTagClass() {
+  return ['ot-request-rgb-tag', 'ot-request-tag-info']
+}
+
+function detailModeTagClass() {
+  return ['ot-request-rgb-tag', 'ot-request-tag-approved']
 }
 
 function requestNo(row) {
@@ -375,8 +390,19 @@ function detailOtTimeLabel(item, row) {
 
   if (preset) return preset
 
-  const start = normalizeText(item?.startTime || item?.otStartTime || row?.startTime || row?.otStartTime)
-  const end = normalizeText(item?.endTime || item?.otEndTime || row?.endTime || row?.otEndTime)
+  const start = normalizeText(
+    item?.startTime ||
+      item?.otStartTime ||
+      row?.startTime ||
+      row?.otStartTime,
+  )
+
+  const end = normalizeText(
+    item?.endTime ||
+      item?.otEndTime ||
+      row?.endTime ||
+      row?.otEndTime,
+  )
 
   return start && end ? `${start} - ${end}` : '-'
 }
@@ -557,8 +583,8 @@ async function clearFilters() {
   filters.search = ''
   filters.status = ''
   filters.dayType = ''
-  filters.otDateFrom = null
-  filters.otDateTo = null
+  filters.otDateFrom = ''
+  filters.otDateTo = ''
   filters.sortBy = 'createdAt'
   filters.sortOrder = -1
 
@@ -640,16 +666,101 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4">
-    <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-      <div class="flex flex-wrap items-center gap-2">
+  <div class="ot-page-shell ot-request-list-page">
+    <section class="ot-filter-bar ot-request-filter-bar">
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('common.search') }}
+        </label>
+
+        <IconField>
+          <InputIcon class="pi pi-search" />
+
+          <InputText
+            v-model="filters.search"
+            :placeholder="t('common.search')"
+            class="w-full"
+            size="small"
+            @input="onSearchInput"
+          />
+        </IconField>
+      </div>
+
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('common.status') }}
+        </label>
+
+        <Select
+          v-model="filters.status"
+          :options="statusOptions"
+          option-label="label"
+          option-value="value"
+          :placeholder="t('common.status')"
+          class="w-full"
+          size="small"
+          @change="onFilterChange"
+        />
+      </div>
+
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('ot.requests.dayType') }}
+        </label>
+
+        <Select
+          v-model="filters.dayType"
+          :options="dayTypeOptions"
+          option-label="label"
+          option-value="value"
+          :placeholder="t('ot.requests.dayType')"
+          class="w-full"
+          size="small"
+          @change="onFilterChange"
+        />
+      </div>
+
+      <div class="ot-field">
+        <HolidayDatePicker
+          v-model="filters.otDateFrom"
+          :label="t('ot.requests.otDateFrom')"
+          :placeholder="t('ot.requests.otDateFrom')"
+          @change="onFilterChange"
+        />
+      </div>
+
+      <div class="ot-field">
+        <HolidayDatePicker
+          v-model="filters.otDateTo"
+          :label="t('ot.requests.otDateTo')"
+          :placeholder="t('ot.requests.otDateTo')"
+          @change="onFilterChange"
+        />
+      </div>
+
+      <div class="ot-request-filter-actions">
+        <span class="ot-loaded-badge">
+          {{ loadedLabel }}
+        </span>
+
+        <Button
+          :label="t('common.clear')"
+          icon="pi pi-filter-slash"
+          severity="secondary"
+          outlined
+          size="small"
+          class="ot-request-action-button"
+          @click="clearFilters"
+        />
+
         <Button
           v-if="canExport"
           :label="t('ot.requests.exportExcel')"
           icon="pi pi-file-excel"
-          severity="success"
+          severity="secondary"
           outlined
           size="small"
+          class="ot-request-action-button ot-request-export-button"
           :loading="exporting"
           @click="handleExport"
         />
@@ -659,94 +770,28 @@ onBeforeUnmount(() => {
           :label="t('ot.requests.newRequest')"
           icon="pi pi-plus"
           size="small"
+          class="ot-request-action-button"
           @click="openCreateRequest"
         />
       </div>
-    </div>
+    </section>
 
-    <div class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]">
-      <div class="border-b border-[color:var(--ot-border)] px-3 py-3">
-        <div class="ot-request-filter-row">
-          <IconField class="w-full xl:w-[260px] xl:shrink-0">
-            <InputIcon class="pi pi-search" />
+    <section class="ot-table-card">
+      <div class="ot-table-toolbar">
+        <div>
+          <h2 class="ot-table-title">
+            {{ t('ot.requests.tableTitle') || t('ot.requests.requestNo') }}
+          </h2>
+        </div>
 
-            <InputText
-              v-model="filters.search"
-              :placeholder="t('common.search')"
-              class="w-full"
-              size="small"
-              @input="onSearchInput"
-            />
-          </IconField>
-
-          <div class="w-full xl:w-[230px] xl:shrink-0">
-            <Select
-              v-model="filters.status"
-              :options="statusOptions"
-              optionLabel="label"
-              optionValue="value"
-              :placeholder="t('common.status')"
-              class="w-full"
-              size="small"
-              @change="onFilterChange"
-            />
-          </div>
-
-          <div class="w-full xl:w-[230px] xl:shrink-0">
-            <Select
-              v-model="filters.dayType"
-              :options="dayTypeOptions"
-              optionLabel="label"
-              optionValue="value"
-              :placeholder="t('ot.requests.dayType')"
-              class="w-full"
-              size="small"
-              @change="onFilterChange"
-            />
-          </div>
-
-          <div class="w-full xl:w-[200px] xl:shrink-0">
-            <DatePicker
-              v-model="filters.otDateFrom"
-              dateFormat="dd/mm/yy"
-              showIcon
-              showButtonBar
-              class="w-full"
-              inputClass="w-full"
-              :placeholder="t('ot.requests.otDateFrom')"
-              @date-select="onFilterChange"
-              @clear-click="onFilterChange"
-            />
-          </div>
-
-          <div class="w-full xl:w-[200px] xl:shrink-0">
-            <DatePicker
-              v-model="filters.otDateTo"
-              dateFormat="dd/mm/yy"
-              showIcon
-              showButtonBar
-              class="w-full"
-              inputClass="w-full"
-              :placeholder="t('ot.requests.otDateTo')"
-              @date-select="onFilterChange"
-              @clear-click="onFilterChange"
-            />
-          </div>
-
-          <div class="flex flex-wrap items-center gap-2 xl:ml-auto xl:shrink-0">
-            <div class="rounded-lg border border-[color:var(--ot-border)] px-3 py-1.5 text-xs font-medium text-[color:var(--ot-text-muted)]">
-              {{ loadedLabel }}
-            </div>
-
-            <Button
-              :label="t('common.clear')"
-              icon="pi pi-refresh"
-              severity="secondary"
-              outlined
-              size="small"
-              @click="clearFilters"
-            />
-          </div>
+        <div class="ot-table-actions">
+          <span
+            v-if="backgroundLoading && hasAnyData"
+            class="ot-loaded-badge"
+          >
+            <i class="pi pi-spin pi-spinner" />
+            {{ t('common.updating') }}
+          </span>
         </div>
       </div>
 
@@ -762,16 +807,16 @@ onBeforeUnmount(() => {
         v-else
         v-model:expandedRows="expandedRows"
         :value="rows"
-        dataKey="id"
+        data-key="id"
         lazy
-        removableSort
+        removable-sort
         scrollable
-        scrollHeight="500px"
-        :sortField="filters.sortBy"
-        :sortOrder="filters.sortOrder"
-        tableStyle="width: max-content; min-width: 100%; table-layout: auto;"
-        class="ot-request-table"
-        :virtualScrollerOptions="useVirtualScroll ? {
+        scroll-height="500px"
+        :sort-field="filters.sortBy"
+        :sort-order="filters.sortOrder"
+        table-style="width: max-content; min-width: 100%; table-layout: auto;"
+        class="ot-request-table ot-data-table ot-data-table-compact"
+        :virtual-scroller-options="useVirtualScroll ? {
           lazy: true,
           onLazyLoad: onVirtualLazyLoad,
           itemSize: 70,
@@ -785,9 +830,19 @@ onBeforeUnmount(() => {
         <template #empty>
           <div
             v-if="bootstrapped"
-            class="py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
+            class="ot-empty-state"
           >
-            {{ t('ot.requests.noData') }}
+            <div class="ot-empty-icon">
+              <i class="pi pi-clock" />
+            </div>
+
+            <div class="ot-empty-title">
+              {{ t('common.noData') }}
+            </div>
+
+            <div class="ot-empty-text">
+              {{ t('ot.requests.noData') }}
+            </div>
           </div>
         </template>
 
@@ -833,8 +888,7 @@ onBeforeUnmount(() => {
             <Tag
               v-if="data"
               :value="approvalLabel(data)"
-              :severity="approvalSeverity(data)"
-              class="ot-status-tag"
+              :class="approvalTagClass(data)"
             />
           </template>
         </Column>
@@ -844,8 +898,7 @@ onBeforeUnmount(() => {
             <Tag
               v-if="data"
               :value="staffCountLabel(data)"
-              severity="info"
-              class="ot-status-tag"
+              :class="staffTagClass()"
             />
           </template>
         </Column>
@@ -871,8 +924,7 @@ onBeforeUnmount(() => {
             <Tag
               v-if="data"
               :value="timingLabel(data)"
-              severity="secondary"
-              class="ot-status-tag"
+              :class="timingTagClass()"
             />
           </template>
         </Column>
@@ -886,8 +938,7 @@ onBeforeUnmount(() => {
             <Tag
               v-if="data"
               :value="dayTypeLabel(data)"
-              :severity="dayTypeSeverity(data)"
-              class="ot-status-tag"
+              :class="dayTypeTagClass(data)"
             />
           </template>
         </Column>
@@ -919,8 +970,7 @@ onBeforeUnmount(() => {
 
                 <Tag
                   :value="staffCountLabel(data)"
-                  severity="info"
-                  class="ot-status-tag"
+                  :class="staffTagClass()"
                 />
               </div>
 
@@ -952,8 +1002,7 @@ onBeforeUnmount(() => {
                   <div class="cell-center">
                     <Tag
                       :value="detailModeLabel(item)"
-                      severity="success"
-                      class="ot-status-tag"
+                      :class="detailModeTagClass()"
                     />
                   </div>
                   <div class="cell-center cell-wrap">{{ detailLineLabel(item) }}</div>
@@ -977,22 +1026,93 @@ onBeforeUnmount(() => {
       >
         {{ t('common.updating') }}
       </div>
-    </div>
+    </section>
   </div>
 </template>
 
 <style scoped>
-.ot-request-filter-row {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
+.ot-request-list-page {
+  --ot-req-approved-rgb: 34 197 94;
+  --ot-req-pending-rgb: 245 158 11;
+  --ot-req-rejected-rgb: 239 68 68;
+  --ot-req-info-rgb: 59 130 246;
+  --ot-req-muted-rgb: 100 116 139;
+  --ot-req-holiday-rgb: 239 68 68;
+  --ot-req-sunday-rgb: 245 158 11;
+  --ot-req-working-rgb: 34 197 94;
 }
 
-@media (min-width: 1280px) {
-  .ot-request-filter-row {
-    flex-direction: row;
-    align-items: center;
-  }
+.ot-request-filter-bar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  align-items: end;
+}
+
+.ot-request-filter-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.ot-request-filter-actions > * {
+  flex: 0 0 auto;
+}
+
+:deep(.ot-request-rgb-tag) {
+  --ot-request-tag-rgb: var(--ot-req-muted-rgb);
+  min-height: 1.42rem;
+  border: 1px solid rgb(var(--ot-request-tag-rgb) / 0.28);
+  background: rgb(var(--ot-request-tag-rgb) / 0.11);
+  color: rgb(var(--ot-request-tag-rgb) / 1);
+  padding: 0.12rem 0.48rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+:deep(.ot-request-tag-approved) {
+  --ot-request-tag-rgb: var(--ot-req-approved-rgb);
+}
+
+:deep(.ot-request-tag-pending) {
+  --ot-request-tag-rgb: var(--ot-req-pending-rgb);
+}
+
+:deep(.ot-request-tag-rejected) {
+  --ot-request-tag-rgb: var(--ot-req-rejected-rgb);
+}
+
+:deep(.ot-request-tag-info) {
+  --ot-request-tag-rgb: var(--ot-req-info-rgb);
+}
+
+:deep(.ot-request-tag-muted) {
+  --ot-request-tag-rgb: var(--ot-req-muted-rgb);
+}
+
+:deep(.ot-request-tag-working) {
+  --ot-request-tag-rgb: var(--ot-req-working-rgb);
+}
+
+:deep(.ot-request-tag-sunday) {
+  --ot-request-tag-rgb: var(--ot-req-sunday-rgb);
+}
+
+:deep(.ot-request-tag-holiday) {
+  --ot-request-tag-rgb: var(--ot-req-holiday-rgb);
+}
+
+:deep(.ot-request-action-button .p-button-icon) {
+  font-size: 0.76rem;
+}
+
+:deep(.ot-request-export-button .p-button-icon) {
+  font-size: 0.72rem;
 }
 
 /* Same base table behavior as ApprovalInbox */
@@ -1006,21 +1126,24 @@ onBeforeUnmount(() => {
   width: auto !important;
   min-width: auto !important;
   max-width: none !important;
-  padding: 0.62rem 0.72rem !important;
+  padding: 0.58rem 0.68rem !important;
   white-space: nowrap !important;
   text-align: center !important;
   vertical-align: middle !important;
+  font-size: 0.78rem !important;
+  font-weight: 650 !important;
 }
 
 :deep(.ot-request-table .p-datatable-tbody > tr > td) {
   width: auto !important;
   min-width: auto !important;
   max-width: none !important;
-  height: 70px !important;
-  padding: 0.5rem 0.72rem !important;
+  height: 68px !important;
+  padding: 0.46rem 0.68rem !important;
   vertical-align: middle !important;
   white-space: nowrap !important;
   text-align: center !important;
+  font-size: 0.8rem !important;
 }
 
 :deep(.ot-request-table .p-column-header-content) {
@@ -1028,8 +1151,8 @@ onBeforeUnmount(() => {
 }
 
 :deep(.ot-request-table .p-row-toggler) {
-  width: 1.75rem !important;
-  height: 1.75rem !important;
+  width: 1.72rem !important;
+  height: 1.72rem !important;
   margin-inline: auto !important;
 }
 
@@ -1038,17 +1161,6 @@ onBeforeUnmount(() => {
   padding: 0 !important;
   white-space: normal !important;
   overflow: hidden !important;
-}
-
-:deep(.ot-request-table .p-tag.ot-status-tag) {
-  min-height: 1.35rem !important;
-  padding: 0.12rem 0.48rem !important;
-  font-size: 0.7rem !important;
-  font-weight: 500 !important;
-  line-height: 1 !important;
-  border-radius: 999px !important;
-  border: 1px solid transparent !important;
-  white-space: nowrap !important;
 }
 
 .requester-cell {
@@ -1066,22 +1178,22 @@ onBeforeUnmount(() => {
   border-top: 1px solid var(--ot-border);
   border-bottom: 1px solid var(--ot-border);
   background:
-    linear-gradient(135deg, rgba(59, 130, 246, 0.05), transparent),
+    linear-gradient(135deg, rgb(var(--ot-req-info-rgb) / 0.05), transparent),
     var(--ot-bg);
-  padding: 0.75rem;
+  padding: 0.7rem;
 }
 
 .ot-expanded-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 0.75rem;
-  margin-bottom: 0.55rem;
+  gap: 0.7rem;
+  margin-bottom: 0.5rem;
 }
 
 .ot-expanded-title {
-  font-size: 0.82rem;
-  font-weight: 600;
+  font-size: 0.8rem;
+  font-weight: 650;
   color: var(--ot-text);
 }
 
@@ -1103,7 +1215,7 @@ onBeforeUnmount(() => {
   max-width: 100%;
   overflow: hidden;
   border: 1px solid var(--ot-border);
-  border-radius: 0.85rem;
+  border-radius: 0.8rem;
   background: var(--ot-surface);
 }
 
@@ -1127,17 +1239,17 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   border-bottom: 1px solid var(--ot-border);
-  padding: 0.46rem 0.5rem;
-  font-size: 0.72rem;
+  padding: 0.42rem 0.48rem;
+  font-size: 0.7rem;
   font-weight: 500;
   color: var(--ot-text);
-  line-height: 1.28;
+  line-height: 1.25;
 }
 
 .ot-expanded-grid-row.is-head > div {
   background: color-mix(in srgb, var(--ot-bg) 82%, transparent);
-  font-size: 0.66rem;
-  font-weight: 600;
+  font-size: 0.64rem;
+  font-weight: 650;
   color: var(--ot-text-muted);
   white-space: nowrap;
 }
@@ -1160,7 +1272,7 @@ onBeforeUnmount(() => {
 }
 
 .cell-strong {
-  font-weight: 600 !important;
+  font-weight: 650 !important;
 }
 
 .cell-wrap {
@@ -1171,25 +1283,22 @@ onBeforeUnmount(() => {
 
 .ot-expanded-empty {
   border-top: 1px solid var(--ot-border);
-  padding: 0.85rem;
+  padding: 0.8rem;
   text-align: center;
-  font-size: 0.74rem;
+  font-size: 0.72rem;
   font-weight: 500;
   color: var(--ot-text-muted);
 }
 
-@media (max-width: 1200px) {
-  .ot-expanded-box {
-    width: min(100%, 1120px);
-  }
-
-  .ot-expanded-grid-row > div {
-    padding: 0.42rem 0.46rem;
-    font-size: 0.68rem;
-  }
-}
-
 @media (max-width: 768px) {
+  .ot-request-filter-actions {
+    justify-content: stretch;
+  }
+
+  .ot-request-filter-actions > * {
+    flex: 1 1 100%;
+  }
+
   .ot-expanded-header {
     flex-direction: column;
     align-items: stretch;
@@ -1230,19 +1339,89 @@ onBeforeUnmount(() => {
   }
 
   .ot-expanded-grid-row > div {
-    padding: 0.42rem 0.5rem;
-    font-size: 0.68rem;
+    padding: 0.4rem 0.48rem;
+    font-size: 0.67rem;
     line-height: 1.25;
   }
 
   .ot-expanded-grid-row.is-head > div {
-    font-size: 0.64rem;
+    font-size: 0.63rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .ot-request-filter-bar {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .cell-wrap {
-    white-space: normal;
-    overflow-wrap: anywhere;
-    word-break: break-word;
+  .ot-request-filter-actions {
+    grid-column: 1 / -1;
   }
+}
+
+@media (min-width: 1280px) {
+  .ot-request-filter-bar {
+    grid-template-columns:
+      minmax(260px, 1.25fr)
+      minmax(190px, 0.85fr)
+      minmax(190px, 0.85fr)
+      minmax(180px, 0.8fr)
+      minmax(180px, 0.8fr);
+  }
+}
+
+/* =========================================================
+   Force OT Request List table content center
+   ========================================================= */
+
+:deep(.ot-request-table .p-datatable-thead > tr > th),
+:deep(.ot-request-table .p-datatable-tbody > tr > td) {
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+:deep(.ot-request-table .p-column-header-content) {
+  justify-content: center !important;
+  text-align: center !important;
+}
+
+:deep(.ot-request-table .p-datatable-tbody > tr > td > *) {
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+:deep(.ot-request-table .p-tag),
+:deep(.ot-request-table .p-button),
+:deep(.ot-request-table .p-row-toggler) {
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+.requester-cell {
+  display: flex;
+  min-width: max-content;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+/* Expanded employee table center */
+.ot-expanded-grid-row > div {
+  justify-content: center !important;
+  text-align: center !important;
+}
+
+.ot-expanded-grid-row.is-head > div {
+  justify-content: center !important;
+  text-align: center !important;
+}
+
+.cell-center,
+.cell-wrap,
+.cell-mono,
+.cell-strong {
+  justify-content: center !important;
+  text-align: center !important;
 }
 </style>

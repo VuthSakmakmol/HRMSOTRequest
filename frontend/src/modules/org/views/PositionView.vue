@@ -565,7 +565,7 @@ onBeforeUnmount(() => {
       @success="handleImportSuccess"
     />
 
-    <section class="ot-filter-bar ot-filter-bar-6">
+    <section class="ot-filter-bar position-filter-bar">
       <div class="ot-field">
         <label class="ot-field-label">
           {{ t('common.search') }}
@@ -638,7 +638,7 @@ onBeforeUnmount(() => {
         />
       </div>
 
-      <div class="ot-filter-actions xl:col-span-2">
+      <div class="position-filter-actions">
         <span class="ot-loaded-badge">
           {{ loadedLabel }}
         </span>
@@ -868,6 +868,8 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('common.actions')"
+            frozen
+            align-frozen="right"
             style="width: 7rem; min-width: 7rem"
           >
             <template #body="{ data }">
@@ -1038,9 +1040,58 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.position-filter-bar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  align-items: end;
+}
+
+.position-filter-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.position-filter-actions > * {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 768px) {
+  .position-filter-actions {
+    justify-content: stretch;
+  }
+
+  .position-filter-actions > * {
+    flex: 1 1 100%;
+  }
+}
+
+@media (min-width: 1024px) {
+  .position-filter-bar {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1280px) {
+  .position-filter-bar {
+    grid-template-columns:
+      minmax(260px, 1.3fr)
+      minmax(230px, 1.1fr)
+      minmax(220px, 1fr)
+      minmax(160px, 0.8fr);
+  }
+
+  .position-filter-actions {
+    grid-column: 1 / -1;
+  }
+}
+
 .ot-scope-tag {
   font-size: 0.76rem;
-  font-weight: 900;
+  font-weight: 700;
   letter-spacing: 0.01em;
 }
 </style>

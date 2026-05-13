@@ -1,5 +1,7 @@
 <!-- frontend/src/modules/org/views/LineView.vue -->
 <script setup>
+// frontend/src/modules/org/views/LineView.vue
+
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
@@ -527,8 +529,8 @@ async function handleImportSuccess(payload = {}) {
   await reloadFirstPage({ keepVisible: false })
 }
 
-function statusSeverity(active) {
-  return active ? 'success' : 'secondary'
+function activeTagClass(active) {
+  return active ? 'line-active-tag' : 'line-inactive-tag'
 }
 
 function departmentLabel(row) {
@@ -569,13 +571,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="ot-page-shell">
+  <div class="ot-page-shell line-page">
     <LineImportDialog
       v-model:visible="importDialogVisible"
       @success="handleImportSuccess"
     />
 
-    <section class="ot-filter-bar ot-filter-bar-5">
+    <section class="ot-filter-bar line-filter-bar">
       <div class="ot-field">
         <label class="ot-field-label">
           {{ t('common.search') }}
@@ -630,7 +632,7 @@ onBeforeUnmount(() => {
         />
       </div>
 
-      <div class="ot-filter-actions xl:col-span-2">
+      <div class="line-filter-actions">
         <span class="ot-loaded-badge">
           {{ loadedLabel }}
         </span>
@@ -713,7 +715,7 @@ onBeforeUnmount(() => {
           :sort-field="filters.sortField"
           :sort-order="filters.sortOrder"
           table-style="min-width: 74rem"
-          class="ot-data-table ot-data-table-compact"
+          class="ot-data-table ot-data-table-compact line-data-table"
           :virtual-scroller-options="useVirtualScroll ? {
             lazy: true,
             onLazyLoad: onVirtualLazyLoad,
@@ -753,7 +755,7 @@ onBeforeUnmount(() => {
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="font-bold"
+                class="line-code-text"
               >
                 {{ data.code || '-' }}
               </span>
@@ -771,13 +773,13 @@ onBeforeUnmount(() => {
                 v-if="data"
                 class="min-w-0"
               >
-                <div class="font-semibold text-[color:var(--ot-text)]">
+                <div class="line-name-text">
                   {{ data.name || '-' }}
                 </div>
 
                 <div
                   v-if="data.description"
-                  class="ot-truncate-2 mt-1 text-xs text-[color:var(--ot-text-muted)]"
+                  class="line-description-text"
                 >
                   {{ data.description }}
                 </div>
@@ -790,7 +792,10 @@ onBeforeUnmount(() => {
             style="min-width: 16rem"
           >
             <template #body="{ data }">
-              <span v-if="data">
+              <span
+                v-if="data"
+                class="line-meta-text"
+              >
                 {{ departmentLabel(data) }}
               </span>
             </template>
@@ -804,25 +809,25 @@ onBeforeUnmount(() => {
               <div v-if="data">
                 <div
                   v-if="positionSummary(data).visible.length"
-                  class="flex flex-wrap gap-1"
+                  class="line-position-tags"
                 >
                   <Tag
                     v-for="position in positionSummary(data).visible"
                     :key="position.id || position._id || position.code || position.name"
                     :value="positionTagLabel(position)"
-                    severity="info"
+                    class="line-rgb-tag line-position-tag"
                   />
 
                   <Tag
                     v-if="positionSummary(data).hidden"
                     :value="`+${positionSummary(data).hidden}`"
-                    severity="secondary"
+                    class="line-rgb-tag line-more-tag"
                   />
                 </div>
 
                 <span
                   v-else
-                  class="text-sm text-[color:var(--ot-text-muted)]"
+                  class="line-empty-text"
                 >
                   {{ positionSummary(data).emptyText }}
                 </span>
@@ -840,7 +845,8 @@ onBeforeUnmount(() => {
               <Tag
                 v-if="data"
                 :value="data.isActive ? t('common.active') : t('common.inactive')"
-                :severity="statusSeverity(data.isActive)"
+                class="line-rgb-tag"
+                :class="activeTagClass(data.isActive)"
               />
             </template>
           </Column>
@@ -852,7 +858,10 @@ onBeforeUnmount(() => {
             style="min-width: 13rem"
           >
             <template #body="{ data }">
-              <span v-if="data">
+              <span
+                v-if="data"
+                class="line-meta-text"
+              >
                 {{ formatDateTime(data.updatedAt) }}
               </span>
             </template>
@@ -860,6 +869,8 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('common.actions')"
+            frozen
+            align-frozen="right"
             style="width: 7rem; min-width: 7rem"
           >
             <template #body="{ data }">
@@ -962,8 +973,8 @@ onBeforeUnmount(() => {
           />
         </div>
 
-        <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] px-4 py-3">
-          <span class="text-sm font-semibold text-[color:var(--ot-text)]">
+        <div class="line-active-box">
+          <span class="line-active-label">
             {{ t('common.active') }}
           </span>
 
@@ -992,3 +1003,189 @@ onBeforeUnmount(() => {
     </Dialog>
   </div>
 </template>
+
+<style scoped>
+.line-page {
+  --line-code-rgb: 37, 99, 235;
+  --line-name-rgb: 15, 23, 42;
+  --line-meta-rgb: 71, 85, 105;
+
+  --line-position-rgb: 37, 99, 235;
+  --line-more-rgb: 100, 116, 139;
+
+  --line-active-rgb: 22, 163, 74;
+  --line-inactive-rgb: 100, 116, 139;
+}
+
+.line-filter-bar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  align-items: end;
+}
+
+.line-filter-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.line-filter-actions > * {
+  flex: 0 0 auto;
+}
+
+.line-code-text {
+  color: rgb(var(--line-code-rgb));
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.line-name-text {
+  color: rgb(var(--line-name-rgb));
+  font-size: 0.82rem;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.line-description-text {
+  display: -webkit-box;
+  margin-top: 0.18rem;
+  overflow: hidden;
+  color: rgb(var(--line-meta-rgb));
+  font-size: 0.72rem;
+  line-height: 1.3;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.line-meta-text {
+  color: rgb(var(--line-meta-rgb));
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.line-position-tags {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.line-rgb-tag {
+  max-width: 100%;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  padding: 0.2rem 0.58rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.line-position-tag {
+  border-color: rgba(var(--line-position-rgb), 0.24);
+  background: rgba(var(--line-position-rgb), 0.11);
+  color: rgb(var(--line-position-rgb));
+}
+
+.line-more-tag {
+  border-color: rgba(var(--line-more-rgb), 0.24);
+  background: rgba(var(--line-more-rgb), 0.1);
+  color: rgb(var(--line-more-rgb));
+}
+
+.line-active-tag {
+  border-color: rgba(var(--line-active-rgb), 0.24);
+  background: rgba(var(--line-active-rgb), 0.12);
+  color: rgb(var(--line-active-rgb));
+}
+
+.line-inactive-tag {
+  border-color: rgba(var(--line-inactive-rgb), 0.24);
+  background: rgba(var(--line-inactive-rgb), 0.12);
+  color: rgb(var(--line-inactive-rgb));
+}
+
+.line-empty-text {
+  color: rgb(var(--line-meta-rgb));
+  font-size: 0.8rem;
+}
+
+.line-active-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border: 1px solid var(--ot-border);
+  border-radius: 0.85rem;
+  padding: 0.75rem 0.9rem;
+}
+
+.line-active-label {
+  color: var(--ot-text);
+  font-size: 0.86rem;
+  font-weight: 650;
+}
+
+.line-page :deep(.p-tag-value) {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:global(.dark) .line-page {
+  --line-name-rgb: 226, 232, 240;
+  --line-meta-rgb: 203, 213, 225;
+}
+
+:global(.dark) .line-position-tag {
+  border-color: rgba(var(--line-position-rgb), 0.36);
+  background: rgba(var(--line-position-rgb), 0.18);
+}
+
+:global(.dark) .line-more-tag {
+  border-color: rgba(var(--line-more-rgb), 0.36);
+  background: rgba(var(--line-more-rgb), 0.16);
+}
+
+:global(.dark) .line-active-tag {
+  border-color: rgba(var(--line-active-rgb), 0.36);
+  background: rgba(var(--line-active-rgb), 0.18);
+}
+
+:global(.dark) .line-inactive-tag {
+  border-color: rgba(var(--line-inactive-rgb), 0.36);
+  background: rgba(var(--line-inactive-rgb), 0.18);
+}
+
+@media (max-width: 768px) {
+  .line-filter-actions {
+    justify-content: stretch;
+  }
+
+  .line-filter-actions > * {
+    flex: 1 1 100%;
+  }
+}
+
+@media (min-width: 1024px) {
+  .line-filter-bar {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1280px) {
+  .line-filter-bar {
+    grid-template-columns:
+      minmax(260px, 1.3fr)
+      minmax(240px, 1.2fr)
+      minmax(170px, 0.8fr);
+  }
+
+  .line-filter-actions {
+    grid-column: 1 / -1;
+  }
+}
+</style>

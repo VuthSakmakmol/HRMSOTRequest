@@ -697,7 +697,7 @@ onBeforeUnmount(() => {
           <Column
             field="loginId"
             :header="t('auth.loginId')"
-            style="min-width: 10rem"
+            style="min-width: 8rem"
           >
             <template #body="{ data }">
               <span
@@ -740,7 +740,7 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('nav.roles')"
-            style="min-width: 18rem"
+            style="min-width: 10rem"
           >
             <template #body="{ data }">
               <span
@@ -754,7 +754,7 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('auth.account.directPermissions')"
-            style="min-width: 18rem"
+            style="min-width: 10rem"
           >
             <template #body="{ data }">
               <div
@@ -801,7 +801,7 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('common.createdAt')"
-            style="min-width: 13rem"
+            style="min-width: 10rem"
           >
             <template #body="{ data }">
               <span v-if="data">
@@ -811,9 +811,11 @@ onBeforeUnmount(() => {
           </Column>
 
           <Column
-            :header="t('common.actions')"
-            style="width: 13rem; min-width: 13rem"
-          >
+              :header="t('common.actions')"
+              frozen
+              align-frozen="right"
+              style="width: 7rem; min-width: 7rem"
+            >
             <template #body="{ data }">
               <div
                 v-if="data"

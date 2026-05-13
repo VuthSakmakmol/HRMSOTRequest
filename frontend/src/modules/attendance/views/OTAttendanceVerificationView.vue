@@ -146,7 +146,7 @@ const requestPolicyLabel = computed(() => {
       '',
   ).trim()
 
-  if (code && name) return `${code} · ${name}`
+  if (code && name) return ` ${name}`
 
   return code || name || '-'
 })
@@ -238,30 +238,37 @@ const summaryCards = computed(() => [
         verification.value?.requestedEmployeeCount ||
         0,
     ),
+    tone: 'info',
   },
   {
     label: t('attendance.verification.matched'),
     value: verificationRows.value.filter((row) => row.result === 'MATCH').length,
+    tone: 'match',
   },
   {
     label: t('attendance.verification.needsCheck'),
     value: needsCheckVerificationRows.value.length,
+    tone: 'danger',
   },
   {
     label: t('attendance.verification.forgetIn'),
     value: forgetScanInRows.value.length,
+    tone: 'purple',
   },
   {
     label: t('attendance.verification.forgetOut'),
     value: forgetScanOutRows.value.length,
+    tone: 'purple',
   },
   {
     label: t('attendance.verification.absent'),
     value: Number(verification.value?.absentFromApprovedCount || 0),
+    tone: 'danger',
   },
   {
     label: t('attendance.verification.notInOt'),
     value: Number(verification.value?.attendedButNotApprovedCount || 0),
+    tone: 'warning',
   },
 ])
 
@@ -457,38 +464,39 @@ function rowMatchesCategory(row, category) {
   return rowCategory === normalizedCategory
 }
 
-function statusSeverity(value) {
+function statusTagClass(value) {
   const normalized = upper(value)
 
-  if (['APPROVED', 'PRESENT', 'MATCH'].includes(normalized)) return 'success'
-  if (['PENDING', 'LATE'].includes(normalized)) return 'warning'
-
-  if (
-    [
-      'REJECTED',
-      'ABSENT',
-      'SHIFT_MISMATCH',
-      'MISMATCH',
-    ].includes(normalized)
-  ) {
-    return 'danger'
+  const map = {
+    APPROVED: 'verify-tag-match',
+    PRESENT: 'verify-tag-match',
+    MATCH: 'verify-tag-match',
+    PENDING: 'verify-tag-warning',
+    LATE: 'verify-tag-warning',
+    REJECTED: 'verify-tag-danger',
+    ABSENT: 'verify-tag-danger',
+    SHIFT_MISMATCH: 'verify-tag-danger',
+    MISMATCH: 'verify-tag-danger',
+    FORGET_SCAN_IN: 'verify-tag-info',
+    FORGET_SCAN_OUT: 'verify-tag-info',
+    CANCELLED: 'verify-tag-muted',
+    OFF: 'verify-tag-muted',
   }
 
-  if (['FORGET_SCAN_IN', 'FORGET_SCAN_OUT'].includes(normalized)) return 'info'
-  if (['CANCELLED', 'OFF'].includes(normalized)) return 'secondary'
-
-  return 'contrast'
+  return ['verify-tag', map[normalized] || 'verify-tag-muted']
 }
 
-function requestStatusSeverity(value) {
+function requestStatusTagClass(value) {
   const normalized = upper(value)
 
-  if (normalized === 'APPROVED') return 'success'
-  if (normalized === 'PENDING') return 'warning'
-  if (normalized === 'REJECTED') return 'danger'
-  if (normalized === 'CANCELLED') return 'secondary'
+  const map = {
+    APPROVED: 'verify-tag-match',
+    PENDING: 'verify-tag-warning',
+    REJECTED: 'verify-tag-danger',
+    CANCELLED: 'verify-tag-muted',
+  }
 
-  return 'secondary'
+  return ['verify-tag', map[normalized] || 'verify-tag-muted']
 }
 
 function timingModeLabel(value) {
@@ -500,8 +508,8 @@ function timingModeLabel(value) {
   return t('attendance.verification.otOption')
 }
 
-function timingModeSeverity(value) {
-  return upper(value) === 'FIXED_TIME' ? 'warning' : 'info'
+function timingModeTagClass(value) {
+  return ['verify-tag', upper(value) === 'FIXED_TIME' ? 'verify-tag-warning' : 'verify-tag-info']
 }
 
 function attendanceStatusLabel(value) {
@@ -892,7 +900,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="ot-page-shell">
+  <div class="ot-page-shell ot-verification-page">
     <section class="ot-filter-bar ot-verification-filter-bar">
       <div class="ot-field">
         <HolidayDatePicker
@@ -938,7 +946,7 @@ onBeforeUnmount(() => {
         />
       </div>
 
-      <div class="ot-filter-actions ot-verification-filter-actions">
+      <div class="ot-verification-filter-actions">
         <Button
           :label="t('common.clear')"
           icon="pi pi-filter-slash"
@@ -972,18 +980,19 @@ onBeforeUnmount(() => {
     />
 
     <template v-else-if="payload">
-      <section class="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
+      <section class="verification-summary-grid">
         <div
           v-for="card in summaryCards"
           :key="card.label"
-          class="ot-panel"
+          class="verification-summary-card"
+          :class="`is-${card.tone}`"
         >
-          <div class="ot-field-label">
-            {{ card.label }}
+          <div class="verification-summary-value">
+            {{ card.value }}
           </div>
 
-          <div class="mt-1 text-xl font-semibold text-[color:var(--ot-text)]">
-            {{ card.value }}
+          <div class="verification-summary-label">
+            {{ card.label }}
           </div>
         </div>
       </section>
@@ -999,74 +1008,74 @@ onBeforeUnmount(() => {
           <div class="ot-table-actions">
             <Tag
               :value="requestStatusLabel(otRequest.status)"
-              :severity="requestStatusSeverity(otRequest.status)"
+              :class="requestStatusTagClass(otRequest.status)"
             />
           </div>
         </div>
 
-        <div class="grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-6">
-          <div class="ot-panel">
+        <div class="verification-info-grid">
+          <div class="verification-info-card">
             <div class="ot-field-label">
               {{ t('attendance.verification.requester') }}
             </div>
 
-            <div class="mt-1 truncate text-sm font-semibold text-[color:var(--ot-text)]">
-              {{ otRequest.requesterEmployeeNo || '-' }} · {{ otRequest.requesterName || '-' }}
+            <div class="verification-info-value truncate">
+              {{ otRequest.requesterName || '-' }}
             </div>
           </div>
 
-          <div class="ot-panel">
+          <div class="verification-info-card">
             <div class="ot-field-label">
               {{ t('attendance.verification.shift') }}
             </div>
 
-            <div class="mt-1 text-sm font-semibold text-[color:var(--ot-text)]">
+            <div class="verification-info-value">
               {{ requestShiftTime }}
             </div>
           </div>
 
-          <div class="ot-panel">
+          <div class="verification-info-card">
             <div class="ot-field-label">
               {{ t('attendance.verification.expectedOt') }}
             </div>
 
-            <div class="mt-1 text-sm font-semibold text-[color:var(--ot-text)]">
+            <div class="verification-info-value">
               {{ requestExpectedOtTime }}
             </div>
           </div>
 
-          <div class="ot-panel">
+          <div class="verification-info-card">
             <div class="ot-field-label">
               {{ t('attendance.verification.requested') }}
             </div>
 
-            <div class="mt-1 text-sm font-semibold text-[color:var(--ot-text)]">
+            <div class="verification-info-value">
               {{ requestRequestedOtLabel }}
             </div>
           </div>
 
-          <div class="ot-panel">
+          <div class="verification-info-card">
             <div class="ot-field-label">
               {{ t('attendance.verification.policy') }}
             </div>
 
             <div
-              class="mt-1 truncate text-sm font-semibold text-[color:var(--ot-text)]"
+              class="verification-info-value truncate"
               :title="requestPolicyLabel"
             >
               {{ requestPolicyLabel }}
             </div>
           </div>
 
-          <div class="ot-panel">
+          <div class="verification-info-card">
             <div class="ot-field-label">
               {{ t('attendance.verification.otType') }}
             </div>
 
-            <div class="mt-2">
+            <div class="mt-1">
               <Tag
                 :value="timingModeLabel(requestTimingMode)"
-                :severity="timingModeSeverity(requestTimingMode)"
+                :class="timingModeTagClass(requestTimingMode)"
               />
             </div>
           </div>
@@ -1185,7 +1194,7 @@ onBeforeUnmount(() => {
               <template #body="{ data }">
                 <Tag
                   :value="data.isFixed ? t('attendance.verification.fixedOt') : timingModeLabel(data.timingMode)"
-                  :severity="timingModeSeverity(data.timingMode)"
+                  :class="timingModeTagClass(data.timingMode)"
                 />
               </template>
             </Column>
@@ -1225,7 +1234,7 @@ onBeforeUnmount(() => {
               <template #body="{ data }">
                 <Tag
                   :value="attendanceStatusLabel(data.attendanceStatus)"
-                  :severity="statusSeverity(data.attendanceStatus)"
+                  :class="statusTagClass(data.attendanceStatus)"
                 />
               </template>
             </Column>
@@ -1240,7 +1249,8 @@ onBeforeUnmount(() => {
                 </div>
 
                 <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
-                  {{ t('attendance.verification.requested') }}: {{ formatMinutesLabel(data.requestedMinutes) }}
+                  {{ t('attendance.verification.requested') }}:
+                  {{ formatMinutesLabel(data.requestedMinutes) }}
                 </div>
               </template>
             </Column>
@@ -1255,7 +1265,8 @@ onBeforeUnmount(() => {
                 </div>
 
                 <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
-                  {{ t('attendance.verification.actual') }}: {{ formatMinutesLabel(data.actualOtMinutes) }}
+                  {{ t('attendance.verification.actual') }}:
+                  {{ formatMinutesLabel(data.actualOtMinutes) }}
                 </div>
               </template>
             </Column>
@@ -1313,36 +1324,185 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.scan-time-chip {
-  display: inline-flex;
+.ot-verification-page {
+  --verify-match-rgb: 34 197 94;
+  --verify-warning-rgb: 245 158 11;
+  --verify-danger-rgb: 239 68 68;
+  --verify-info-rgb: 59 130 246;
+  --verify-purple-rgb: 139 92 246;
+  --verify-muted-rgb: 100 116 139;
+}
+
+.ot-verification-filter-bar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  align-items: end;
+}
+
+.ot-verification-filter-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.ot-verification-result-filter-bar {
+  border-radius: 0;
+  border-left: 0;
+  border-right: 0;
+  box-shadow: none;
+}
+
+.verification-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.verification-summary-card {
+  --summary-rgb: var(--verify-muted-rgb);
+  display: flex;
+  min-height: 4.2rem;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-width: 4.5rem;
+  border: 1px solid rgb(var(--summary-rgb) / 0.24);
+  border-radius: var(--ot-radius-md);
+  background:
+    linear-gradient(180deg, rgb(var(--summary-rgb) / 0.12), rgb(var(--summary-rgb) / 0.05)),
+    var(--ot-surface);
+  padding: 0.55rem 0.65rem;
+  text-align: center;
+}
+
+.verification-summary-card.is-match {
+  --summary-rgb: var(--verify-match-rgb);
+}
+
+.verification-summary-card.is-warning {
+  --summary-rgb: var(--verify-warning-rgb);
+}
+
+.verification-summary-card.is-danger {
+  --summary-rgb: var(--verify-danger-rgb);
+}
+
+.verification-summary-card.is-info {
+  --summary-rgb: var(--verify-info-rgb);
+}
+
+.verification-summary-card.is-purple {
+  --summary-rgb: var(--verify-purple-rgb);
+}
+
+.verification-summary-value {
+  color: rgb(var(--summary-rgb) / 1);
+  font-size: 1.35rem;
+  font-weight: 800;
+  line-height: 1.05;
+  text-align: center;
+}
+
+.verification-summary-label {
+  margin-top: 0.25rem;
+  color: var(--ot-text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.15;
+  text-align: center;
+}
+
+.verification-info-grid {
+  display: grid;
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+  gap: 0.6rem;
+  padding: 0.75rem;
+}
+
+.verification-info-card {
+  min-width: 0;
+  border: 1px solid var(--ot-border);
+  border-radius: var(--ot-radius-md);
+  background: var(--ot-bg);
+  padding: 0.6rem 0.7rem;
+}
+
+.verification-info-value {
+  margin-top: 0.2rem;
+  color: var(--ot-text);
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+:deep(.verify-tag) {
+  --verify-tag-rgb: var(--verify-muted-rgb);
+  min-height: 1.45rem;
+  border: 1px solid rgb(var(--verify-tag-rgb) / 0.28);
+  background: rgb(var(--verify-tag-rgb) / 0.11);
+  color: rgb(var(--verify-tag-rgb) / 1);
+  padding: 0.14rem 0.48rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+:deep(.verify-tag-match) {
+  --verify-tag-rgb: var(--verify-match-rgb);
+}
+
+:deep(.verify-tag-warning) {
+  --verify-tag-rgb: var(--verify-warning-rgb);
+}
+
+:deep(.verify-tag-danger) {
+  --verify-tag-rgb: var(--verify-danger-rgb);
+}
+
+:deep(.verify-tag-info) {
+  --verify-tag-rgb: var(--verify-info-rgb);
+}
+
+:deep(.verify-tag-muted) {
+  --verify-tag-rgb: var(--verify-muted-rgb);
+}
+
+.scan-time-chip {
+  --scan-rgb: var(--verify-muted-rgb);
+  display: inline-flex;
+  min-width: 4.25rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgb(var(--scan-rgb) / 0.28);
   border-radius: 999px;
-  padding: 0.24rem 0.65rem;
-  font-size: 0.76rem;
+  background: rgb(var(--scan-rgb) / 0.11);
+  color: rgb(var(--scan-rgb) / 1);
+  padding: 0.22rem 0.58rem;
+  font-size: 0.74rem;
   font-weight: 700;
   line-height: 1;
   white-space: nowrap;
 }
 
 .scan-time-chip.is-complete {
-  background: rgba(16, 185, 129, 0.12);
-  color: rgb(4, 120, 87);
+  --scan-rgb: var(--verify-match-rgb);
 }
 
 .scan-time-chip.is-missing {
-  background: rgba(239, 68, 68, 0.12);
-  color: rgb(185, 28, 28);
+  --scan-rgb: var(--verify-danger-rgb);
 }
 
 .result-meaning-label {
+  --meaning-rgb: var(--verify-muted-rgb);
   width: fit-content;
   max-width: 17rem;
   overflow: hidden;
+  border: 1px solid rgb(var(--meaning-rgb) / 0.28);
   border-radius: 999px;
-  padding: 0.24rem 0.65rem;
-  font-size: 0.72rem;
+  background: rgb(var(--meaning-rgb) / 0.11);
+  color: rgb(var(--meaning-rgb) / 1);
+  padding: 0.22rem 0.58rem;
+  font-size: 0.7rem;
   font-weight: 700;
   line-height: 1.1;
   text-overflow: ellipsis;
@@ -1350,47 +1510,69 @@ onBeforeUnmount(() => {
 }
 
 .result-meaning-label.is-match {
-  background: rgba(16, 185, 129, 0.12);
-  color: rgb(4, 120, 87);
+  --meaning-rgb: var(--verify-match-rgb);
 }
 
 .result-meaning-label.is-mismatch {
-  background: rgba(239, 68, 68, 0.12);
-  color: rgb(185, 28, 28);
+  --meaning-rgb: var(--verify-danger-rgb);
 }
 
 .result-meaning-label.is-warning {
-  background: rgba(245, 158, 11, 0.14);
-  color: rgb(180, 83, 9);
+  --meaning-rgb: var(--verify-warning-rgb);
 }
 
 .result-meaning-label.is-forget {
-  background: rgba(139, 92, 246, 0.13);
-  color: rgb(109, 40, 217);
+  --meaning-rgb: var(--verify-purple-rgb);
 }
 
-@media (min-width: 1280px) {
+@media (min-width: 640px) {
+  .verification-summary-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .verification-info-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .verification-summary-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
   .ot-verification-filter-bar {
     grid-template-columns:
       minmax(180px, 220px)
       minmax(320px, 1fr)
-      minmax(180px, 220px)
-      auto;
-    align-items: end;
+      minmax(180px, 220px);
   }
 
   .ot-verification-filter-actions {
-    flex-wrap: nowrap;
-    justify-content: flex-end;
-    min-width: max-content;
+    grid-column: 1 / -1;
+  }
+}
+
+@media (min-width: 1280px) {
+  .verification-summary-grid {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+  }
+
+  .verification-info-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 
   .ot-verification-result-filter-bar {
     grid-template-columns: minmax(260px, 1fr) minmax(220px, 280px);
-    border-radius: 0;
-    border-left: 0;
-    border-right: 0;
-    box-shadow: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .ot-verification-filter-actions {
+    justify-content: stretch;
+  }
+
+  .ot-verification-filter-actions > * {
+    flex: 1 1 100%;
   }
 }
 </style>

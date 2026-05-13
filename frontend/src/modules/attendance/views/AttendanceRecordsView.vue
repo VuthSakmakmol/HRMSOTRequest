@@ -124,6 +124,7 @@ function normalizeTimeValue(value) {
   if (!raw) return ''
 
   const timeMatch = raw.match(/(\d{1,2}):(\d{2})(?::\d{2})?$/)
+
   if (timeMatch) {
     const hh = String(Number(timeMatch[1])).padStart(2, '0')
     const mm = String(Number(timeMatch[2])).padStart(2, '0')
@@ -305,39 +306,46 @@ function refresh() {
   reloadFirstPage({ keepVisible: true })
 }
 
-function statusSeverity(value) {
+function statusTagClass(value) {
   const normalized = upper(value)
 
-  if (normalized === 'PRESENT') return 'success'
-  if (normalized === 'LATE') return 'warning'
-  if (normalized === 'ABSENT') return 'danger'
-  if (normalized === 'FORGET_SCAN_IN' || normalized === 'FORGET_SCAN_OUT') return 'info'
-  if (normalized === 'SHIFT_MISMATCH') return 'danger'
-  if (normalized === 'LEAVE') return 'help'
-  if (normalized === 'OFF') return 'secondary'
-  if (normalized === 'UNKNOWN') return 'contrast'
+  const map = {
+    PRESENT: 'attendance-tag-present',
+    LATE: 'attendance-tag-late',
+    ABSENT: 'attendance-tag-absent',
+    FORGET_SCAN_IN: 'attendance-tag-info',
+    FORGET_SCAN_OUT: 'attendance-tag-info',
+    SHIFT_MISMATCH: 'attendance-tag-absent',
+    LEAVE: 'attendance-tag-leave',
+    OFF: 'attendance-tag-off',
+    UNKNOWN: 'attendance-tag-unknown',
+  }
 
-  return 'secondary'
+  return ['attendance-status-tag', map[normalized] || 'attendance-tag-default']
 }
 
-function shiftMatchSeverity(value) {
+function shiftMatchTagClass(value) {
   const normalized = upper(value)
 
-  if (normalized === 'MATCHED') return 'success'
-  if (normalized === 'MISMATCH') return 'danger'
-  if (normalized === 'UNKNOWN') return 'secondary'
+  const map = {
+    MATCHED: 'attendance-tag-present',
+    MISMATCH: 'attendance-tag-absent',
+    UNKNOWN: 'attendance-tag-unknown',
+  }
 
-  return 'secondary'
+  return ['attendance-status-tag', map[normalized] || 'attendance-tag-default']
 }
 
-function dayTypeSeverity(value) {
+function dayTypeTagClass(value) {
   const normalized = upper(value)
 
-  if (normalized === 'HOLIDAY') return 'danger'
-  if (normalized === 'SUNDAY') return 'warning'
-  if (normalized === 'WORKING_DAY') return 'success'
+  const map = {
+    WORKING_DAY: 'attendance-tag-working',
+    SUNDAY: 'attendance-tag-sunday',
+    HOLIDAY: 'attendance-tag-holiday',
+  }
 
-  return 'secondary'
+  return ['attendance-status-tag', map[normalized] || 'attendance-tag-default']
 }
 
 function statusLabel(value) {
@@ -506,7 +514,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="ot-page-shell">
+  <div class="ot-page-shell attendance-records-page">
     <section class="ot-filter-bar attendance-records-filter-bar">
       <div class="ot-field attendance-filter-search">
         <label class="ot-field-label">
@@ -743,7 +751,8 @@ onBeforeUnmount(() => {
                   v-if="shouldShowImportedEmployee(data)"
                   class="text-xs text-[color:var(--ot-text-muted)]"
                 >
-                  {{ t('attendance.field.importedEmployee') }}: {{ formatImportedEmployee(data) }}
+                  {{ t('attendance.field.importedEmployee') }}:
+                  {{ formatImportedEmployee(data) }}
                 </span>
               </div>
             </template>
@@ -850,7 +859,7 @@ onBeforeUnmount(() => {
               <Tag
                 v-if="data"
                 :value="statusLabel(data.importedStatus)"
-                :severity="statusSeverity(data.importedStatus)"
+                :class="statusTagClass(data.importedStatus)"
               />
             </template>
           </Column>
@@ -864,7 +873,7 @@ onBeforeUnmount(() => {
               <Tag
                 v-if="data"
                 :value="statusLabel(data.status)"
-                :severity="statusSeverity(data.status)"
+                :class="statusTagClass(data.status)"
               />
             </template>
           </Column>
@@ -878,7 +887,7 @@ onBeforeUnmount(() => {
               <Tag
                 v-if="data"
                 :value="dayTypeLabel(data.dayType)"
-                :severity="dayTypeSeverity(data.dayType)"
+                :class="dayTypeTagClass(data.dayType)"
               />
             </template>
           </Column>
@@ -892,7 +901,7 @@ onBeforeUnmount(() => {
               <Tag
                 v-if="data"
                 :value="shiftMatchLabel(data.shiftMatchStatus)"
-                :severity="shiftMatchSeverity(data.shiftMatchStatus)"
+                :class="shiftMatchTagClass(data.shiftMatchStatus)"
               />
             </template>
           </Column>
@@ -979,53 +988,119 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.scan-time-chip {
+.attendance-records-page {
+  --attendance-present-rgb: 34 197 94;
+  --attendance-late-rgb: 245 158 11;
+  --attendance-absent-rgb: 239 68 68;
+  --attendance-info-rgb: 59 130 246;
+  --attendance-leave-rgb: 168 85 247;
+  --attendance-off-rgb: 100 116 139;
+  --attendance-unknown-rgb: 71 85 105;
+  --attendance-holiday-rgb: 239 68 68;
+  --attendance-sunday-rgb: 245 158 11;
+  --attendance-working-rgb: 34 197 94;
+  --attendance-normal-rgb: 14 165 233;
+  --attendance-zero-rgb: 100 116 139;
+  --attendance-complete-rgb: 16 185 129;
+  --attendance-missing-rgb: 239 68 68;
+}
+
+:deep(.attendance-status-tag) {
+  --attendance-tag-rgb: var(--attendance-off-rgb);
+  min-height: 1.45rem;
+  border: 1px solid rgb(var(--attendance-tag-rgb) / 0.28);
+  background: rgb(var(--attendance-tag-rgb) / 0.11);
+  color: rgb(var(--attendance-tag-rgb) / 1);
+  padding: 0.14rem 0.48rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+:deep(.attendance-tag-present) {
+  --attendance-tag-rgb: var(--attendance-present-rgb);
+}
+
+:deep(.attendance-tag-late) {
+  --attendance-tag-rgb: var(--attendance-late-rgb);
+}
+
+:deep(.attendance-tag-absent) {
+  --attendance-tag-rgb: var(--attendance-absent-rgb);
+}
+
+:deep(.attendance-tag-info) {
+  --attendance-tag-rgb: var(--attendance-info-rgb);
+}
+
+:deep(.attendance-tag-leave) {
+  --attendance-tag-rgb: var(--attendance-leave-rgb);
+}
+
+:deep(.attendance-tag-off) {
+  --attendance-tag-rgb: var(--attendance-off-rgb);
+}
+
+:deep(.attendance-tag-unknown),
+:deep(.attendance-tag-default) {
+  --attendance-tag-rgb: var(--attendance-unknown-rgb);
+}
+
+:deep(.attendance-tag-working) {
+  --attendance-tag-rgb: var(--attendance-working-rgb);
+}
+
+:deep(.attendance-tag-sunday) {
+  --attendance-tag-rgb: var(--attendance-sunday-rgb);
+}
+
+:deep(.attendance-tag-holiday) {
+  --attendance-tag-rgb: var(--attendance-holiday-rgb);
+}
+
+.scan-time-chip,
+.minute-chip {
+  --attendance-chip-rgb: var(--attendance-off-rgb);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 4.5rem;
+  border: 1px solid rgb(var(--attendance-chip-rgb) / 0.28);
   border-radius: 9999px;
-  padding: 0.25rem 0.65rem;
-  font-size: 0.78rem;
+  background: rgb(var(--attendance-chip-rgb) / 0.11);
+  color: rgb(var(--attendance-chip-rgb) / 1);
   font-weight: 700;
   white-space: nowrap;
+}
+
+.scan-time-chip {
+  min-width: 4.5rem;
+  padding: 0.25rem 0.65rem;
+  font-size: 0.78rem;
 }
 
 .scan-time-chip.is-complete {
-  background: rgba(16, 185, 129, 0.12);
-  color: rgb(4, 120, 87);
+  --attendance-chip-rgb: var(--attendance-complete-rgb);
 }
 
 .scan-time-chip.is-missing {
-  background: rgba(239, 68, 68, 0.12);
-  color: rgb(185, 28, 28);
+  --attendance-chip-rgb: var(--attendance-missing-rgb);
 }
 
 .minute-chip {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   min-width: 3.6rem;
-  border-radius: 9999px;
   padding: 0.25rem 0.6rem;
   font-size: 0.76rem;
-  font-weight: 700;
-  white-space: nowrap;
 }
 
 .minute-chip.is-zero {
-  background: rgba(100, 116, 139, 0.12);
-  color: rgb(100, 116, 139);
+  --attendance-chip-rgb: var(--attendance-zero-rgb);
 }
 
 .minute-chip.is-normal {
-  background: rgba(14, 165, 233, 0.12);
-  color: rgb(3, 105, 161);
+  --attendance-chip-rgb: var(--attendance-normal-rgb);
 }
 
 .minute-chip.is-warning {
-  background: rgba(245, 158, 11, 0.14);
-  color: rgb(180, 83, 9);
+  --attendance-chip-rgb: var(--attendance-late-rgb);
 }
 
 /* =========================================================

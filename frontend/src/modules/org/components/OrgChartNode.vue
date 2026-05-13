@@ -1,5 +1,7 @@
 <!-- frontend/src/modules/org/components/OrgChartNode.vue -->
 <script setup>
+// frontend/src/modules/org/components/OrgChartNode.vue
+
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
@@ -41,36 +43,26 @@ function buildLabel(...parts) {
     .join(' - ')
 }
 
-function avatarText(name) {
-  const value = s(name)
-
-  if (!value) return 'NA'
-
-  return value
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part.charAt(0))
-    .join('')
-    .toUpperCase()
-}
-
 const nodeKey = computed(() => s(props.node?.key || props.node?.data?.id))
 const nodeData = computed(() => props.node?.data || {})
 const children = computed(() =>
   Array.isArray(props.node?.children) ? props.node.children : [],
 )
+
 const hasChildren = computed(() => children.value.length > 0)
+const hasManyChildren = computed(() => children.value.length > 1)
 
 const isMatched = computed(() => {
   return props.matchedIds.includes(nodeKey.value) || !!nodeData.value.highlighted
 })
 
 const initialExpanded = computed(() => {
+  if (!hasChildren.value) return false
+
   if (props.expandedIds.includes(nodeKey.value)) return true
   if (props.node?.expanded === true) return true
 
-  return props.depth < 1
+  return true
 })
 
 const isOpen = ref(initialExpanded.value)
@@ -111,44 +103,35 @@ function toggleOpen() {
           compact ? 'org-node-card--compact' : '',
         ]"
       >
-        <div class="org-node-main">
+        <div class="org-node-content">
           <div
-            class="org-node-avatar"
-            :class="{ 'org-node-avatar--matched': isMatched }"
+            class="org-node-name"
+            :title="displayName || t('common.unknown')"
           >
-            {{ avatarText(displayName) }}
+            {{ displayName || t('common.unknown') }}
           </div>
 
-          <div class="org-node-content">
-            <div
-              class="org-node-name"
-              :title="displayName || t('common.unknown')"
-            >
-              {{ displayName || t('common.unknown') }}
-            </div>
+          <div
+            class="org-node-id"
+            :title="employeeCode || t('org.orgChart.noEmployeeCode')"
+          >
+            {{ employeeCode || t('org.orgChart.noEmployeeCode') }}
+          </div>
 
-            <div
-              class="org-node-id"
-              :title="employeeCode || t('org.orgChart.noEmployeeCode')"
-            >
-              {{ employeeCode || t('org.orgChart.noEmployeeCode') }}
-            </div>
+          <div
+            class="org-node-position"
+            :title="positionTitle || t('org.orgChart.noPosition')"
+          >
+            {{ positionTitle || t('org.orgChart.noPosition') }}
+          </div>
 
-            <div
-              class="org-node-position"
-              :title="positionTitle || t('org.orgChart.noPosition')"
-            >
-              {{ positionTitle || t('org.orgChart.noPosition') }}
-            </div>
-
-            <div
-              v-if="lineText"
-              class="org-node-line"
-              :title="lineText"
-            >
-              <i class="pi pi-sitemap" />
-              <span>{{ lineText }}</span>
-            </div>
+          <div
+            v-if="lineText"
+            class="org-node-mini-line"
+            :title="lineText"
+          >
+            <i class="pi pi-sitemap" />
+            <span>{{ lineText }}</span>
           </div>
         </div>
       </div>
@@ -163,6 +146,10 @@ function toggleOpen() {
           :aria-label="isOpen ? t('org.orgChart.collapseNode') : t('org.orgChart.expandNode')"
           @click="toggleOpen"
         >
+          <span class="org-toggle-count">
+            {{ children.length }}
+          </span>
+
           <i :class="isOpen ? 'pi pi-chevron-up' : 'pi pi-chevron-down'" />
         </button>
       </div>
@@ -171,7 +158,10 @@ function toggleOpen() {
     <template v-if="hasChildren && isOpen">
       <div class="org-line-down" />
 
-      <div class="org-children-row">
+      <div
+        class="org-children-row"
+        :class="{ 'org-children-row--single': !hasManyChildren }"
+      >
         <div
           v-for="child in children"
           :key="child.key"
@@ -194,10 +184,18 @@ function toggleOpen() {
 
 <style scoped>
 .org-node-wrap {
+  --org-node-primary-rgb: 37, 99, 235;
+  --org-node-card-rgb: 219, 234, 254;
+  --org-node-card-soft-rgb: 239, 246, 255;
+  --org-node-card-border-rgb: 147, 197, 253;
+  --org-node-muted-rgb: 71, 85, 105;
+  --org-node-text-rgb: 15, 23, 42;
+  --org-node-line-rgb: 148, 163, 184;
+
   display: flex;
+  min-width: max-content;
   flex-direction: column;
   align-items: center;
-  min-width: max-content;
 }
 
 .org-node-center {
@@ -207,147 +205,169 @@ function toggleOpen() {
 }
 
 .org-node-card {
-  width: 280px;
-  min-height: 112px;
-  border: 1px solid var(--ot-border);
-  border-radius: 1rem;
-  background: var(--ot-surface);
+  width: 245px;
+  min-height: 92px;
+  border: 1px solid rgba(var(--org-node-card-border-rgb), 0.95);
+  border-radius: 0.95rem;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(var(--org-node-card-rgb), 0.78),
+      rgba(var(--org-node-card-soft-rgb), 0.96)
+    );
   box-shadow: var(--ot-shadow-sm);
-  padding: 0.85rem;
+  padding: 0.72rem 0.78rem;
+  text-align: center;
   transition:
     transform 0.16s ease,
     box-shadow 0.16s ease,
-    border-color 0.16s ease;
+    border-color 0.16s ease,
+    background-color 0.16s ease;
 }
 
 .org-node-card--compact {
-  width: 255px;
-  min-height: 104px;
-  padding: 0.78rem;
+  width: 232px;
+  min-height: 86px;
+  padding: 0.68rem 0.74rem;
 }
 
 .org-node-card:hover {
-  transform: translateY(-2px);
+  transform: translateY(-1px);
+  border-color: rgba(var(--org-node-primary-rgb), 0.38);
   box-shadow: var(--ot-shadow-md);
 }
 
 .org-node-card--matched {
-  border-color: var(--ot-primary);
-  box-shadow: 0 0 0 1px var(--ot-primary);
-}
-
-.org-node-main {
-  display: flex;
-  min-width: 0;
-  align-items: flex-start;
-  gap: 0.7rem;
-}
-
-.org-node-avatar {
-  display: inline-flex;
-  width: 2.35rem;
-  height: 2.35rem;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  background: #0ea5e9;
-  color: #ffffff;
-  font-size: 0.8rem;
-  font-weight: 800;
-}
-
-.org-node-avatar--matched {
-  background: var(--ot-primary);
+  border-color: rgba(var(--org-node-primary-rgb), 0.62);
+  background:
+    linear-gradient(
+      180deg,
+      rgba(var(--org-node-primary-rgb), 0.18),
+      rgba(var(--org-node-card-rgb), 0.92)
+    );
+  box-shadow: 0 0 0 1px rgba(var(--org-node-primary-rgb), 0.26);
 }
 
 .org-node-content {
+  display: flex;
   min-width: 0;
-  flex: 1;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
 }
 
 .org-node-name {
+  width: 100%;
   overflow: hidden;
-  color: var(--ot-text);
-  font-size: 0.95rem;
+  color: rgb(var(--org-node-text-rgb));
+  font-size: 0.94rem;
   font-weight: 800;
   line-height: 1.2;
+  text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .org-node-id {
-  margin-top: 0.18rem;
+  margin-top: 0.16rem;
+  width: 100%;
   overflow: hidden;
-  color: var(--ot-text-muted);
-  font-size: 0.74rem;
+  color: rgb(var(--org-node-muted-rgb));
+  font-size: 0.72rem;
   font-weight: 700;
-  line-height: 1.2;
+  line-height: 1.18;
+  text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .org-node-position {
   margin-top: 0.3rem;
+  width: 100%;
   overflow: hidden;
-  color: var(--ot-text);
-  font-size: 0.8rem;
-  font-weight: 600;
-  line-height: 1.2;
+  color: rgb(var(--org-node-text-rgb));
+  font-size: 0.78rem;
+  font-weight: 650;
+  line-height: 1.22;
+  text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.org-node-line {
+.org-node-mini-line {
   display: flex;
+  max-width: 100%;
   min-width: 0;
   align-items: center;
-  gap: 0.35rem;
-  margin-top: 0.35rem;
-  color: var(--ot-text-muted);
-  font-size: 0.73rem;
-  line-height: 1.2;
+  justify-content: center;
+  gap: 0.32rem;
+  margin-top: 0.3rem;
+  color: rgb(var(--org-node-muted-rgb));
+  font-size: 0.7rem;
+  font-weight: 550;
+  line-height: 1.18;
+  text-align: center;
 }
 
-.org-node-line i {
+.org-node-mini-line i {
   flex: 0 0 auto;
-  font-size: 0.72rem;
+  color: rgb(var(--org-node-muted-rgb));
+  font-size: 0.66rem;
 }
 
-.org-node-line span {
+.org-node-mini-line span {
   overflow: hidden;
+  text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .org-toggle-wrap {
   position: relative;
-  margin-top: 0.45rem;
+  margin-top: 0.42rem;
 }
 
 .org-toggle-btn {
   display: inline-flex;
+  height: 1.6rem;
+  min-width: 2.9rem;
   align-items: center;
   justify-content: center;
-  width: 1.8rem;
-  height: 1.8rem;
-  border: 1px solid var(--ot-border);
+  gap: 0.32rem;
+  border: 1px solid rgba(var(--org-node-primary-rgb), 0.28);
   border-radius: 9999px;
-  background: var(--ot-surface);
-  color: var(--ot-text-muted);
+  background: rgba(var(--org-node-primary-rgb), 0.11);
+  color: rgb(var(--org-node-primary-rgb));
   box-shadow: var(--ot-shadow-sm);
   cursor: pointer;
+  padding: 0 0.52rem;
+  transition:
+    background-color 0.16s ease,
+    border-color 0.16s ease,
+    transform 0.16s ease;
 }
 
 .org-toggle-btn:hover {
-  border-color: var(--ot-primary);
-  color: var(--ot-text);
+  transform: translateY(-1px);
+  border-color: rgba(var(--org-node-primary-rgb), 0.45);
+  background: rgba(var(--org-node-primary-rgb), 0.16);
+}
+
+.org-toggle-btn i {
+  font-size: 0.62rem;
+}
+
+.org-toggle-count {
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1;
 }
 
 .org-line-down {
   width: 2px;
-  height: 1rem;
-  background: var(--ot-border);
+  height: 0.85rem;
+  background: rgba(var(--org-node-line-rgb), 0.65);
 }
 
 .org-children-row {
@@ -355,18 +375,22 @@ function toggleOpen() {
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  gap: 1.15rem;
-  padding-top: 1rem;
+  gap: 0.85rem;
+  padding-top: 0.85rem;
 }
 
 .org-children-row::before {
   position: absolute;
   top: 0;
-  right: 1.2rem;
-  left: 1.2rem;
+  right: 1.1rem;
+  left: 1.1rem;
   height: 2px;
-  background: var(--ot-border);
+  background: rgba(var(--org-node-line-rgb), 0.65);
   content: '';
+}
+
+.org-children-row--single::before {
+  display: none;
 }
 
 .org-child-col {
@@ -378,21 +402,48 @@ function toggleOpen() {
 
 .org-line-branch {
   width: 2px;
-  height: 1rem;
-  background: var(--ot-border);
+  height: 0.85rem;
+  background: rgba(var(--org-node-line-rgb), 0.65);
+}
+
+:global(.dark) .org-node-wrap {
+  --org-node-card-rgb: 30, 64, 175;
+  --org-node-card-soft-rgb: 15, 23, 42;
+  --org-node-card-border-rgb: 59, 130, 246;
+  --org-node-text-rgb: 226, 232, 240;
+  --org-node-muted-rgb: 203, 213, 225;
+  --org-node-line-rgb: 71, 85, 105;
+}
+
+:global(.dark) .org-node-card {
+  background:
+    linear-gradient(
+      180deg,
+      rgba(var(--org-node-card-rgb), 0.34),
+      rgba(var(--org-node-card-soft-rgb), 1)
+    );
+}
+
+:global(.dark) .org-node-card--matched {
+  background:
+    linear-gradient(
+      180deg,
+      rgba(var(--org-node-primary-rgb), 0.34),
+      rgba(var(--org-node-card-soft-rgb), 1)
+    );
 }
 
 @media (max-width: 1024px) {
   .org-node-card {
-    width: 250px;
+    width: 232px;
   }
 
   .org-node-card--compact {
-    width: 230px;
+    width: 220px;
   }
 
   .org-children-row {
-    gap: 0.85rem;
+    gap: 0.7rem;
   }
 }
 </style>

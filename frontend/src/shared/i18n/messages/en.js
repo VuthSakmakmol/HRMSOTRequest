@@ -198,7 +198,6 @@ export default {
       displayNameExample: 'Example: System Admin',
 
       permissionsByModule: 'Permissions by Module',
-      fullPermissions: 'Full Permissions',
       count: 'Count',
       selectedCount: '{count} selected',
       moduleSelectedCount: '{selected} of {total} selected',

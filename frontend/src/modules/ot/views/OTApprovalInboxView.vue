@@ -10,7 +10,6 @@ import Button from 'primevue/button'
 import Checkbox from 'primevue/checkbox'
 import Column from 'primevue/column'
 import DataTable from 'primevue/datatable'
-import DatePicker from 'primevue/datepicker'
 import Dialog from 'primevue/dialog'
 import IconField from 'primevue/iconfield'
 import InputIcon from 'primevue/inputicon'
@@ -19,6 +18,7 @@ import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 import Textarea from 'primevue/textarea'
 
+import HolidayDatePicker from '@/modules/calendar/components/HolidayDatePicker.vue'
 import AppTableLoading from '@/shared/components/AppTableLoading.vue'
 import {
   decideOTRequest,
@@ -46,8 +46,8 @@ const filters = reactive({
   search: '',
   status: '',
   dayType: '',
-  otDateFrom: null,
-  otDateTo: null,
+  otDateFrom: '',
+  otDateTo: '',
 })
 
 const decisionDialog = reactive({
@@ -87,6 +87,7 @@ const dayTypeOptions = computed(() => [
 
 const totalInbox = computed(() => Number(totalRecords.value || 0))
 const loadedCount = computed(() => rows.value.filter(Boolean).length)
+
 const summaryText = computed(() =>
   t('common.loaded', {
     loaded: loadedCount.value,
@@ -167,14 +168,6 @@ function firstText(...values) {
   }
 
   return ''
-}
-
-function normalizeClassKey(value) {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/_/g, '-')
-    .replace(/\s+/g, '-')
 }
 
 function errorMessage(error, fallback = '') {
@@ -281,21 +274,17 @@ function statusLabel(value, key = '') {
   return normalized || t('common.unknown')
 }
 
-function statusSeverity(value) {
+function statusTagClass(value) {
   const normalized = upper(value)
 
-  if (normalized === 'APPROVED') return 'success'
-  if (normalized === 'REJECTED') return 'danger'
-  if (normalized === 'REQUESTER_DISAGREED') return 'danger'
-  if (normalized === 'PENDING_REQUESTER_CONFIRMATION') return 'info'
-  if (normalized === 'CANCELLED') return 'contrast'
-  if (normalized === 'PENDING') return 'warning'
+  if (normalized === 'APPROVED') return ['ot-approval-rgb-tag', 'ot-approval-tag-approved']
+  if (normalized === 'REJECTED') return ['ot-approval-rgb-tag', 'ot-approval-tag-rejected']
+  if (normalized === 'REQUESTER_DISAGREED') return ['ot-approval-rgb-tag', 'ot-approval-tag-rejected']
+  if (normalized === 'PENDING_REQUESTER_CONFIRMATION') return ['ot-approval-rgb-tag', 'ot-approval-tag-info']
+  if (normalized === 'CANCELLED') return ['ot-approval-rgb-tag', 'ot-approval-tag-muted']
+  if (normalized === 'PENDING') return ['ot-approval-rgb-tag', 'ot-approval-tag-pending']
 
-  return 'secondary'
-}
-
-function statusClass(value) {
-  return `ot-status-${normalizeClassKey(value || 'unknown')}`
+  return ['ot-approval-rgb-tag', 'ot-approval-tag-muted']
 }
 
 function dayTypeLabel(value, key = '') {
@@ -310,18 +299,14 @@ function dayTypeLabel(value, key = '') {
   return normalized || t('common.unknown')
 }
 
-function dayTypeSeverity(value) {
+function dayTypeTagClass(value) {
   const normalized = upper(value)
 
-  if (normalized === 'HOLIDAY') return 'danger'
-  if (normalized === 'SUNDAY') return 'warning'
-  if (normalized === 'WORKING_DAY') return 'success'
+  if (normalized === 'HOLIDAY') return ['ot-approval-rgb-tag', 'ot-approval-tag-holiday']
+  if (normalized === 'SUNDAY') return ['ot-approval-rgb-tag', 'ot-approval-tag-sunday']
+  if (normalized === 'WORKING_DAY') return ['ot-approval-rgb-tag', 'ot-approval-tag-working']
 
-  return 'secondary'
-}
-
-function dayTypeClass(value) {
-  return `ot-day-${normalizeClassKey(value || 'unknown')}`
+  return ['ot-approval-rgb-tag', 'ot-approval-tag-muted']
 }
 
 function approvalDisplay(row) {
@@ -335,20 +320,41 @@ function approvalDisplay(row) {
       statusLabel(row?.status, row?.statusKey),
     ),
     subLabel: firstText(display.subLabel, row?.approvalDisplaySubLabel, ''),
-    severity: firstText(
-      display.severity,
-      row?.approvalDisplaySeverity,
-      statusSeverity(row?.status),
-    ),
+    severity: firstText(display.severity, row?.approvalDisplaySeverity, ''),
   }
 }
 
-function approvalDisplayClass(row) {
-  return `ot-approval-${normalizeClassKey(approvalDisplay(row).type || 'unknown')}`
-}
+function approvalDisplayTagClass(row) {
+  const display = approvalDisplay(row)
+  const type = upper(display.type)
+  const severity = upper(display.severity)
 
-function approvalDisplaySeverity(row) {
-  return approvalDisplay(row).severity || statusSeverity(row?.status)
+  if (severity === 'SUCCESS' || type.includes('APPROVED')) {
+    return ['ot-approval-rgb-tag', 'approval-display-tag', 'ot-approval-tag-approved']
+  }
+
+  if (
+    severity === 'DANGER' ||
+    severity === 'ERROR' ||
+    type.includes('REJECTED') ||
+    type.includes('DISAGREED')
+  ) {
+    return ['ot-approval-rgb-tag', 'approval-display-tag', 'ot-approval-tag-rejected']
+  }
+
+  if (severity === 'INFO' || type.includes('CONFIRMATION')) {
+    return ['ot-approval-rgb-tag', 'approval-display-tag', 'ot-approval-tag-info']
+  }
+
+  if (severity === 'WARNING' || severity === 'WARN' || type.includes('PENDING')) {
+    return ['ot-approval-rgb-tag', 'approval-display-tag', 'ot-approval-tag-pending']
+  }
+
+  if (type.includes('CANCELLED')) {
+    return ['ot-approval-rgb-tag', 'approval-display-tag', 'ot-approval-tag-muted']
+  }
+
+  return statusTagClass(row?.status)
 }
 
 function isLegacyManualMode(row) {
@@ -358,12 +364,6 @@ function isLegacyManualMode(row) {
   return !shiftId && !shiftOtOptionId
 }
 
-function requestModeLabel(row) {
-  return isLegacyManualMode(row)
-    ? t('ot.approval.legacyManual')
-    : t('ot.approval.shiftOption')
-}
-
 function timingSourceLabel(row) {
   const source = upper(row?.otTimingSource || row?.timingSource || 'SHIFT_OPTION')
 
@@ -371,11 +371,12 @@ function timingSourceLabel(row) {
   return t('ot.requests.preset')
 }
 
-function timingSourceSeverity(row) {
+function timingSourceTagClass(row) {
   const source = upper(row?.otTimingSource || row?.timingSource || 'SHIFT_OPTION')
 
-  if (source === 'CUSTOM_FIXED') return 'info'
-  return 'secondary'
+  if (source === 'CUSTOM_FIXED') return ['ot-approval-rgb-tag', 'ot-approval-tag-info']
+
+  return ['ot-approval-rgb-tag', 'ot-approval-tag-muted']
 }
 
 function formatTimeRange(row) {
@@ -657,8 +658,10 @@ function employeeTimeModeLabel(employee) {
     : t('ot.requests.timeMode.default')
 }
 
-function employeeTimeModeSeverity(employee) {
-  return employeeTimeModeOf(employee) === 'CUSTOM' ? 'warn' : 'success'
+function employeeTimeModeTagClass(employee) {
+  return employeeTimeModeOf(employee) === 'CUSTOM'
+    ? ['ot-approval-rgb-tag', 'ot-approval-tag-pending']
+    : ['ot-approval-rgb-tag', 'ot-approval-tag-approved']
 }
 
 function canDecide(row) {
@@ -883,8 +886,8 @@ function clearFilters() {
   filters.search = ''
   filters.status = ''
   filters.dayType = ''
-  filters.otDateFrom = null
-  filters.otDateTo = null
+  filters.otDateFrom = ''
+  filters.otDateTo = ''
 
   reloadFirstPage({ keepVisible: true, resetState: true })
 }
@@ -1072,15 +1075,100 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4">
-    <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-      <div class="flex flex-wrap items-center gap-2">
+  <div class="ot-page-shell ot-approval-page">
+    <section class="ot-filter-bar ot-approval-filter-bar">
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('common.search') }}
+        </label>
+
+        <IconField>
+          <InputIcon class="pi pi-search" />
+
+          <InputText
+            v-model="filters.search"
+            :placeholder="t('common.search')"
+            class="w-full"
+            size="small"
+            @input="onSearchInput"
+          />
+        </IconField>
+      </div>
+
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('common.status') }}
+        </label>
+
+        <Select
+          v-model="filters.status"
+          :options="statusOptions"
+          option-label="label"
+          option-value="value"
+          :placeholder="t('common.status')"
+          class="w-full"
+          size="small"
+          @change="onStatusChange"
+        />
+      </div>
+
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('ot.requests.dayType') }}
+        </label>
+
+        <Select
+          v-model="filters.dayType"
+          :options="dayTypeOptions"
+          option-label="label"
+          option-value="value"
+          :placeholder="t('ot.requests.dayType')"
+          class="w-full"
+          size="small"
+          @change="onDayTypeChange"
+        />
+      </div>
+
+      <div class="ot-field">
+        <HolidayDatePicker
+          v-model="filters.otDateFrom"
+          :label="t('ot.requests.otDateFrom')"
+          :placeholder="t('ot.requests.otDateFrom')"
+          @change="onDateChange"
+        />
+      </div>
+
+      <div class="ot-field">
+        <HolidayDatePicker
+          v-model="filters.otDateTo"
+          :label="t('ot.requests.otDateTo')"
+          :placeholder="t('ot.requests.otDateTo')"
+          @change="onDateChange"
+        />
+      </div>
+
+      <div class="ot-approval-filter-actions">
+        <span class="ot-loaded-badge">
+          {{ summaryText }}
+        </span>
+
+        <Button
+          :label="t('common.clear')"
+          icon="pi pi-filter-slash"
+          severity="secondary"
+          outlined
+          size="small"
+          class="ot-approval-action-button"
+          @click="clearFilters"
+        />
+
         <Button
           :label="t('ot.approval.exportExcel')"
           icon="pi pi-file-excel"
-          severity="success"
+          severity="secondary"
           outlined
           size="small"
+          class="ot-approval-action-button ot-approval-export-button"
           :loading="exporting"
           @click="onExportExcel"
         />
@@ -1093,6 +1181,7 @@ onBeforeUnmount(() => {
           "
           icon="pi pi-check"
           size="small"
+          class="ot-approval-action-button"
           :disabled="!selectedBulkCount"
           @click="openBulkApproveSelected"
         />
@@ -1104,94 +1193,28 @@ onBeforeUnmount(() => {
           severity="secondary"
           text
           size="small"
+          class="ot-approval-action-button"
           @click="clearBulkSelection"
         />
       </div>
-    </div>
+    </section>
 
-    <div class="overflow-hidden rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]">
-      <div class="border-b border-[color:var(--ot-border)] px-3 py-3">
-        <div class="ot-approval-filter-row">
-          <IconField class="w-full xl:w-[220px] xl:shrink-0">
-            <InputIcon class="pi pi-search" />
+    <section class="ot-table-card">
+      <div class="ot-table-toolbar">
+        <div>
+          <h2 class="ot-table-title">
+            {{ t('ot.approval.inbox') }}
+          </h2>
+        </div>
 
-            <InputText
-              v-model="filters.search"
-              :placeholder="t('common.search')"
-              class="w-full"
-              size="small"
-              @input="onSearchInput"
-            />
-          </IconField>
-
-          <div class="w-full xl:w-[190px] xl:shrink-0">
-            <Select
-              v-model="filters.status"
-              :options="statusOptions"
-              optionLabel="label"
-              optionValue="value"
-              :placeholder="t('common.status')"
-              class="w-full"
-              size="small"
-              @change="onStatusChange"
-            />
-          </div>
-
-          <div class="w-full xl:w-[190px] xl:shrink-0">
-            <Select
-              v-model="filters.dayType"
-              :options="dayTypeOptions"
-              optionLabel="label"
-              optionValue="value"
-              :placeholder="t('ot.requests.dayType')"
-              class="w-full"
-              size="small"
-              @change="onDayTypeChange"
-            />
-          </div>
-
-          <div class="w-full xl:w-[180px] xl:shrink-0">
-            <DatePicker
-              v-model="filters.otDateFrom"
-              dateFormat="dd/mm/yy"
-              showIcon
-              showButtonBar
-              class="w-full"
-              inputClass="w-full"
-              :placeholder="t('ot.requests.otDateFrom')"
-              @date-select="onDateChange"
-              @clear-click="onDateChange"
-            />
-          </div>
-
-          <div class="w-full xl:w-[180px] xl:shrink-0">
-            <DatePicker
-              v-model="filters.otDateTo"
-              dateFormat="dd/mm/yy"
-              showIcon
-              showButtonBar
-              class="w-full"
-              inputClass="w-full"
-              :placeholder="t('ot.requests.otDateTo')"
-              @date-select="onDateChange"
-              @clear-click="onDateChange"
-            />
-          </div>
-
-          <div class="flex flex-wrap items-center gap-2 xl:ml-auto xl:shrink-0">
-            <div class="rounded-lg border border-[color:var(--ot-border)] px-3 py-1.5 text-xs font-medium text-[color:var(--ot-text-muted)]">
-              {{ summaryText }}
-            </div>
-
-            <Button
-              :label="t('common.clear')"
-              icon="pi pi-refresh"
-              severity="secondary"
-              outlined
-              size="small"
-              @click="clearFilters"
-            />
-          </div>
+        <div class="ot-table-actions">
+          <span
+            v-if="backgroundLoading && hasAnyData"
+            class="ot-loaded-badge"
+          >
+            <i class="pi pi-spin pi-spinner" />
+            {{ t('common.updating') }}
+          </span>
         </div>
       </div>
 
@@ -1207,13 +1230,13 @@ onBeforeUnmount(() => {
         v-else
         v-model:expandedRows="expandedRows"
         :value="rows"
-        dataKey="id"
+        data-key="id"
         lazy
         scrollable
-        scrollHeight="500px"
-        tableStyle="width: max-content; min-width: 100%; table-layout: auto;"
-        class="ot-approval-table"
-        :virtualScrollerOptions="useVirtualScroll ? {
+        scroll-height="500px"
+        table-style="width: max-content; min-width: 100%; table-layout: auto;"
+        class="ot-approval-table ot-data-table ot-data-table-compact"
+        :virtual-scroller-options="useVirtualScroll ? {
           lazy: true,
           onLazyLoad: onVirtualLazyLoad,
           itemSize: 70,
@@ -1226,9 +1249,19 @@ onBeforeUnmount(() => {
         <template #empty>
           <div
             v-if="bootstrapped"
-            class="py-10 text-center text-sm text-[color:var(--ot-text-muted)]"
+            class="ot-empty-state"
           >
-            {{ t('ot.approval.noData') }}
+            <div class="ot-empty-icon">
+              <i class="pi pi-inbox" />
+            </div>
+
+            <div class="ot-empty-title">
+              {{ t('common.noData') }}
+            </div>
+
+            <div class="ot-empty-text">
+              {{ t('ot.approval.noData') }}
+            </div>
           </div>
         </template>
 
@@ -1242,9 +1275,9 @@ onBeforeUnmount(() => {
             >
               <Checkbox
                 binary
-                :modelValue="allLoadedActionableSelected"
+                :model-value="allLoadedActionableSelected"
                 :disabled="!actionableLoadedRows.length"
-                @update:modelValue="toggleLoadedSelection"
+                @update:model-value="toggleLoadedSelection"
               />
             </div>
           </template>
@@ -1257,9 +1290,9 @@ onBeforeUnmount(() => {
             >
               <Checkbox
                 binary
-                :modelValue="isRequestSelected(data)"
+                :model-value="isRequestSelected(data)"
                 :disabled="!canSelectForBulk(data)"
-                @update:modelValue="(checked) => toggleRequestSelection(data, checked)"
+                @update:model-value="(checked) => toggleRequestSelection(data, checked)"
               />
             </div>
           </template>
@@ -1307,9 +1340,7 @@ onBeforeUnmount(() => {
             >
               <Tag
                 :value="approvalDisplay(data).label"
-                :severity="approvalDisplaySeverity(data)"
-                class="ot-status-tag approval-display-tag"
-                :class="approvalDisplayClass(data)"
+                :class="approvalDisplayTagClass(data)"
               />
             </div>
           </template>
@@ -1320,8 +1351,7 @@ onBeforeUnmount(() => {
             <Tag
               v-if="data"
               :value="t('ot.requests.staffCount', { count: Number(data?.requestedEmployeeCount || getEmployeeCount(data)) })"
-              severity="secondary"
-              class="ot-status-tag ot-count-requested"
+              :class="['ot-approval-rgb-tag', 'ot-approval-tag-info']"
             />
           </template>
         </Column>
@@ -1375,8 +1405,7 @@ onBeforeUnmount(() => {
             <Tag
               v-if="data"
               :value="formatMinutesLabel(data.totalMinutes)"
-              severity="success"
-              class="ot-status-tag ot-status-approved"
+              :class="['ot-approval-rgb-tag', 'ot-approval-tag-approved']"
             />
           </template>
         </Column>
@@ -1392,8 +1421,7 @@ onBeforeUnmount(() => {
             <Tag
               v-if="data"
               :value="timingSourceLabel(data)"
-              :severity="timingSourceSeverity(data)"
-              class="ot-status-tag"
+              :class="timingSourceTagClass(data)"
             />
           </template>
         </Column>
@@ -1406,9 +1434,7 @@ onBeforeUnmount(() => {
             <Tag
               v-if="data"
               :value="dayTypeLabel(data.dayType, data.dayTypeKey)"
-              :severity="dayTypeSeverity(data.dayType)"
-              class="ot-status-tag"
-              :class="dayTypeClass(data.dayType)"
+              :class="dayTypeTagClass(data.dayType)"
             />
           </template>
         </Column>
@@ -1425,9 +1451,9 @@ onBeforeUnmount(() => {
         <Column
           :header="t('common.actions')"
           frozen
-          alignFrozen="right"
-          headerClass="ot-action-column-header"
-          bodyClass="ot-action-column-body"
+          align-frozen="right"
+          header-class="ot-action-column-header"
+          body-class="ot-action-column-body"
         >
           <template #body="{ data }">
             <div
@@ -1439,7 +1465,7 @@ onBeforeUnmount(() => {
                 :label="t('common.approve')"
                 icon="pi pi-check"
                 size="small"
-                class="action-btn"
+                class="action-btn ot-approval-action-button"
                 @click="openDecision(data, 'APPROVE')"
               />
 
@@ -1450,7 +1476,7 @@ onBeforeUnmount(() => {
                 size="small"
                 severity="danger"
                 outlined
-                class="action-btn"
+                class="action-btn ot-approval-action-button"
                 @click="openDecision(data, 'REJECT')"
               />
             </div>
@@ -1479,8 +1505,7 @@ onBeforeUnmount(() => {
 
                 <Tag
                   :value="timingSourceLabel(data)"
-                  :severity="timingSourceSeverity(data)"
-                  class="ot-status-tag"
+                  :class="timingSourceTagClass(data)"
                 />
               </div>
 
@@ -1507,15 +1532,15 @@ onBeforeUnmount(() => {
                     {{ index + 1 }}
                   </div>
 
-                  <div class="cell-mono cell-wrap">
+                  <div class="cell-center cell-mono cell-wrap">
                     {{ employeeCodeOf(employee) }}
                   </div>
 
-                  <div class="cell-strong cell-wrap">
+                  <div class="cell-center cell-strong cell-wrap">
                     {{ employeeNameOf(employee) }}
                   </div>
 
-                  <div class="cell-wrap">
+                  <div class="cell-center cell-wrap">
                     {{ employeePositionOf(employee) }}
                   </div>
 
@@ -1534,8 +1559,7 @@ onBeforeUnmount(() => {
                   <div class="cell-center">
                     <Tag
                       :value="employeeTimeModeLabel(employee)"
-                      :severity="employeeTimeModeSeverity(employee)"
-                      class="ot-status-tag"
+                      :class="employeeTimeModeTagClass(employee)"
                     />
                   </div>
 
@@ -1566,7 +1590,7 @@ onBeforeUnmount(() => {
       >
         {{ t('common.updating') }}
       </div>
-    </div>
+    </section>
 
     <Dialog
       v-model:visible="decisionDialog.visible"
@@ -1593,8 +1617,7 @@ onBeforeUnmount(() => {
           >
             <Tag
               :value="decisionDialog.row.requestNo || '-'"
-              severity="info"
-              class="ot-status-tag"
+              :class="['ot-approval-rgb-tag', 'ot-approval-tag-info']"
             />
           </div>
         </div>
@@ -1667,7 +1690,7 @@ onBeforeUnmount(() => {
           <Textarea
             v-model.trim="decisionDialog.remark"
             rows="3"
-            autoResize
+            auto-resize
             class="w-full"
             :placeholder="decisionIsApprove ? t('ot.approval.optionalApprovalRemark') : t('ot.approval.rejectionReasonPlaceholder')"
           />
@@ -1716,14 +1739,12 @@ onBeforeUnmount(() => {
           <div class="ot-decision-header-tags">
             <Tag
               :value="t('ot.approval.requestCount', { count: bulkRequestCount })"
-              severity="info"
-              class="ot-status-tag"
+              :class="['ot-approval-rgb-tag', 'ot-approval-tag-info']"
             />
 
             <Tag
               :value="t('ot.requests.staffCount', { count: bulkEmployeeCount })"
-              severity="success"
-              class="ot-status-tag ot-status-approved"
+              :class="['ot-approval-rgb-tag', 'ot-approval-tag-approved']"
             />
           </div>
         </div>
@@ -1742,7 +1763,7 @@ onBeforeUnmount(() => {
           <Textarea
             v-model.trim="bulkDialog.remark"
             rows="3"
-            autoResize
+            auto-resize
             class="w-full"
             :placeholder="t('ot.approval.bulkRemarkPlaceholder')"
           />
@@ -1772,17 +1793,98 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.ot-approval-filter-row {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
+.ot-approval-page {
+  --ot-approval-approved-rgb: 34 197 94;
+  --ot-approval-pending-rgb: 245 158 11;
+  --ot-approval-rejected-rgb: 239 68 68;
+  --ot-approval-info-rgb: 59 130 246;
+  --ot-approval-muted-rgb: 100 116 139;
+  --ot-approval-holiday-rgb: 239 68 68;
+  --ot-approval-sunday-rgb: 245 158 11;
+  --ot-approval-working-rgb: 34 197 94;
 }
 
-@media (min-width: 1280px) {
-  .ot-approval-filter-row {
-    flex-direction: row;
-    align-items: center;
-  }
+.ot-approval-filter-bar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  align-items: end;
+}
+
+.ot-approval-filter-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.ot-approval-filter-actions > * {
+  flex: 0 0 auto;
+}
+
+:deep(.ot-approval-action-button .p-button-icon) {
+  font-size: 0.76rem;
+}
+
+:deep(.ot-approval-export-button .p-button-icon) {
+  font-size: 0.72rem;
+}
+
+:deep(.ot-approval-rgb-tag) {
+  --ot-approval-tag-rgb: var(--ot-approval-muted-rgb);
+  min-height: 1.42rem;
+  border: 1px solid rgb(var(--ot-approval-tag-rgb) / 0.28);
+  background: rgb(var(--ot-approval-tag-rgb) / 0.11);
+  color: rgb(var(--ot-approval-tag-rgb) / 1);
+  padding: 0.12rem 0.48rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+:deep(.ot-approval-tag-approved) {
+  --ot-approval-tag-rgb: var(--ot-approval-approved-rgb);
+}
+
+:deep(.ot-approval-tag-pending) {
+  --ot-approval-tag-rgb: var(--ot-approval-pending-rgb);
+}
+
+:deep(.ot-approval-tag-rejected) {
+  --ot-approval-tag-rgb: var(--ot-approval-rejected-rgb);
+}
+
+:deep(.ot-approval-tag-info) {
+  --ot-approval-tag-rgb: var(--ot-approval-info-rgb);
+}
+
+:deep(.ot-approval-tag-muted) {
+  --ot-approval-tag-rgb: var(--ot-approval-muted-rgb);
+}
+
+:deep(.ot-approval-tag-working) {
+  --ot-approval-tag-rgb: var(--ot-approval-working-rgb);
+}
+
+:deep(.ot-approval-tag-sunday) {
+  --ot-approval-tag-rgb: var(--ot-approval-sunday-rgb);
+}
+
+:deep(.ot-approval-tag-holiday) {
+  --ot-approval-tag-rgb: var(--ot-approval-holiday-rgb);
+}
+
+:deep(.p-tag.approval-display-tag) {
+  max-width: 15rem;
+}
+
+:deep(.p-tag.approval-display-tag .p-tag-label) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 :deep(.ot-approval-table .p-datatable-table) {
@@ -1795,23 +1897,40 @@ onBeforeUnmount(() => {
   width: auto !important;
   min-width: auto !important;
   max-width: none !important;
-  padding: 0.62rem 0.72rem !important;
+  padding: 0.58rem 0.68rem !important;
   white-space: nowrap !important;
+  text-align: center !important;
+  vertical-align: middle !important;
+  font-size: 0.78rem !important;
+  font-weight: 650 !important;
 }
 
 :deep(.ot-approval-table .p-datatable-tbody > tr > td) {
   width: auto !important;
   min-width: auto !important;
   max-width: none !important;
-  height: 70px !important;
-  padding: 0.5rem 0.72rem !important;
+  height: 68px !important;
+  padding: 0.46rem 0.68rem !important;
   vertical-align: middle !important;
   white-space: nowrap !important;
+  text-align: center !important;
+  font-size: 0.8rem !important;
+}
+
+:deep(.ot-approval-table .p-column-header-content) {
+  justify-content: center !important;
+  text-align: center !important;
+}
+
+:deep(.ot-approval-table .p-datatable-tbody > tr > td > *) {
+  margin-left: auto !important;
+  margin-right: auto !important;
 }
 
 :deep(.ot-approval-table .p-row-toggler) {
-  width: 1.75rem !important;
-  height: 1.75rem !important;
+  width: 1.72rem !important;
+  height: 1.72rem !important;
+  margin-inline: auto !important;
 }
 
 :deep(.ot-approval-table .ot-action-column-header),
@@ -1836,7 +1955,6 @@ onBeforeUnmount(() => {
   box-shadow: -8px 0 18px rgba(0, 0, 0, 0.22) !important;
 }
 
-/* Expanded employee area */
 :deep(.ot-approval-table .p-datatable-row-expansion > td) {
   height: auto !important;
   padding: 0 !important;
@@ -1844,31 +1962,65 @@ onBeforeUnmount(() => {
   overflow: hidden !important;
 }
 
+.requester-cell,
+.ot-option-cell {
+  display: flex;
+  min-width: max-content;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.approval-status-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+
+.action-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+:deep(.ot-approval-table .p-button.p-button-sm) {
+  padding: 0.32rem 0.54rem !important;
+  font-size: 0.76rem !important;
+}
+
+:deep(.ot-approval-table .p-button.p-button-sm .p-button-icon) {
+  font-size: 0.74rem !important;
+}
+
+/* Expanded employee area */
 .ot-expanded-box {
-  position: sticky;
-  left: 0;
-  width: min(100%, 1120px);
+  width: 100%;
   max-width: none;
   overflow: visible;
   border-top: 1px solid var(--ot-border);
   border-bottom: 1px solid var(--ot-border);
   background:
-    linear-gradient(135deg, rgba(59, 130, 246, 0.05), transparent),
+    linear-gradient(135deg, rgb(var(--ot-approval-info-rgb) / 0.05), transparent),
     var(--ot-bg);
-  padding: 0.75rem;
+  padding: 0.55rem 0.7rem;
 }
 
 .ot-expanded-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 0.75rem;
-  margin-bottom: 0.55rem;
+  gap: 0.7rem;
+  margin-bottom: 0.5rem;
 }
 
 .ot-expanded-title {
-  font-size: 0.82rem;
-  font-weight: 600;
+  font-size: 0.8rem;
+  font-weight: 650;
   color: var(--ot-text);
 }
 
@@ -1890,7 +2042,7 @@ onBeforeUnmount(() => {
   max-width: 100%;
   overflow: hidden;
   border: 1px solid var(--ot-border);
-  border-radius: 0.85rem;
+  border-radius: 0.8rem;
   background: var(--ot-surface);
 }
 
@@ -1914,18 +2066,20 @@ onBeforeUnmount(() => {
   min-width: 0;
   display: flex;
   align-items: center;
+  justify-content: center;
   border-bottom: 1px solid var(--ot-border);
-  padding: 0.46rem 0.5rem;
-  font-size: 0.72rem;
+  padding: 0.42rem 0.48rem;
+  font-size: 0.7rem;
   font-weight: 500;
   color: var(--ot-text);
-  line-height: 1.28;
+  line-height: 1.25;
+  text-align: center;
 }
 
 .ot-expanded-grid-row.is-head > div {
   background: color-mix(in srgb, var(--ot-bg) 82%, transparent);
-  font-size: 0.66rem;
-  font-weight: 600;
+  font-size: 0.64rem;
+  font-weight: 650;
   color: var(--ot-text-muted);
   white-space: nowrap;
 }
@@ -1939,8 +2093,8 @@ onBeforeUnmount(() => {
 }
 
 .cell-center {
-  justify-content: center;
-  text-align: center;
+  justify-content: center !important;
+  text-align: center !important;
 }
 
 .cell-mono {
@@ -1948,7 +2102,7 @@ onBeforeUnmount(() => {
 }
 
 .cell-strong {
-  font-weight: 600 !important;
+  font-weight: 650 !important;
 }
 
 .cell-wrap {
@@ -1960,63 +2114,11 @@ onBeforeUnmount(() => {
 .ot-expanded-empty {
   border: 1px dashed var(--ot-border);
   border-radius: 0.75rem;
-  padding: 0.85rem;
+  padding: 0.8rem;
   text-align: center;
-  font-size: 0.74rem;
+  font-size: 0.72rem;
   font-weight: 500;
   color: var(--ot-text-muted);
-}
-
-.requester-cell,
-.ot-option-cell {
-  min-width: max-content;
-}
-
-.approval-status-cell {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-}
-
-.action-row {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.4rem;
-  flex-wrap: nowrap;
-  white-space: nowrap;
-}
-
-:deep(.ot-approval-table .p-button.p-button-sm) {
-  padding: 0.34rem 0.58rem !important;
-  font-size: 0.78rem !important;
-}
-
-:deep(.ot-approval-table .p-button.p-button-sm .p-button-icon) {
-  font-size: 0.78rem !important;
-}
-
-:deep(.ot-approval-table .p-tag.ot-status-tag),
-:deep(.ot-decision-dialog .p-tag.ot-status-tag),
-:deep(.ot-bulk-dialog .p-tag.ot-status-tag) {
-  min-height: 1.35rem !important;
-  padding: 0.12rem 0.48rem !important;
-  font-size: 0.7rem !important;
-  font-weight: 500 !important;
-  line-height: 1 !important;
-  border-radius: 999px !important;
-  border: 1px solid transparent !important;
-  white-space: nowrap !important;
-}
-
-:deep(.p-tag.approval-display-tag) {
-  max-width: 15rem;
-}
-
-:deep(.p-tag.approval-display-tag .p-tag-label) {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* Decision dialogs */
@@ -2029,7 +2131,7 @@ onBeforeUnmount(() => {
 }
 
 .ot-decision-eyebrow {
-  font-size: 0.72rem;
+  font-size: 0.7rem;
   font-weight: 700;
   color: var(--ot-text-muted);
   text-transform: uppercase;
@@ -2037,8 +2139,8 @@ onBeforeUnmount(() => {
 }
 
 .ot-decision-title {
-  margin-top: 0.15rem;
-  font-size: 1rem;
+  margin-top: 0.12rem;
+  font-size: 0.95rem;
   font-weight: 700;
   color: var(--ot-text);
 }
@@ -2053,23 +2155,23 @@ onBeforeUnmount(() => {
 .ot-decision-body,
 .ot-bulk-body {
   display: grid;
-  gap: 1rem;
+  gap: 0.85rem;
 }
 
 .ot-confirm-box {
   display: flex;
   align-items: flex-start;
-  gap: 0.75rem;
+  gap: 0.7rem;
   border: 1px solid var(--ot-border);
-  border-radius: 1rem;
+  border-radius: 0.9rem;
   background: var(--ot-surface-2);
-  padding: 1rem;
+  padding: 0.85rem;
 }
 
 .ot-confirm-icon {
   display: flex;
-  width: 2.25rem;
-  height: 2.25rem;
+  width: 2rem;
+  height: 2rem;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
@@ -2079,63 +2181,51 @@ onBeforeUnmount(() => {
 }
 
 .ot-confirm-title {
-  font-size: 0.95rem;
+  font-size: 0.9rem;
   font-weight: 700;
   color: var(--ot-text);
 }
 
 .ot-confirm-help {
-  margin-top: 0.25rem;
-  font-size: 0.82rem;
+  margin-top: 0.18rem;
+  font-size: 0.78rem;
   color: var(--ot-text-muted);
 }
 
 .ot-confirm-info-grid {
   display: grid;
-  gap: 0.75rem;
+  gap: 0.65rem;
   grid-template-columns: repeat(1, minmax(0, 1fr));
-}
-
-@media (min-width: 640px) {
-  .ot-confirm-info-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (min-width: 1024px) {
-  .ot-confirm-info-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
 }
 
 .ot-confirm-info-item {
   border: 1px solid var(--ot-border);
-  border-radius: 0.85rem;
+  border-radius: 0.8rem;
   background: var(--ot-surface);
-  padding: 0.75rem;
+  padding: 0.65rem;
 }
 
 .ot-confirm-info-item span {
   display: block;
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-weight: 700;
   color: var(--ot-text-muted);
 }
 
 .ot-confirm-info-item strong {
   display: block;
-  margin-top: 0.2rem;
-  font-size: 0.86rem;
+  margin-top: 0.16rem;
+  font-size: 0.8rem;
   color: var(--ot-text);
 }
 
 .ot-remark-box {
   display: grid;
-  gap: 0.45rem;
+  gap: 0.42rem;
 }
 
 .ot-remark-label {
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   font-weight: 700;
   color: var(--ot-text);
 }
@@ -2147,91 +2237,62 @@ onBeforeUnmount(() => {
 }
 
 .ot-bulk-warning {
-  border: 1px solid color-mix(in srgb, var(--ot-warning) 35%, transparent);
-  border-radius: 0.9rem;
-  background: var(--ot-warning-soft);
-  padding: 0.85rem;
-  font-size: 0.85rem;
+  border: 1px solid rgb(var(--ot-approval-pending-rgb) / 0.35);
+  border-radius: 0.85rem;
+  background: rgb(var(--ot-approval-pending-rgb) / 0.1);
+  padding: 0.75rem;
+  font-size: 0.8rem;
   font-weight: 600;
-  color: var(--ot-warning);
+  color: rgb(var(--ot-approval-pending-rgb) / 1);
 }
 
-/* Count colors */
-:deep(.p-tag.ot-count-requested) {
-  background: #f1f5f9 !important;
-  color: #475569 !important;
-  border-color: #cbd5e1 !important;
+@media (min-width: 640px) {
+  .ot-confirm-info-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
-:deep(.p-tag.ot-count-approved),
-:deep(.p-tag.ot-status-approved) {
-  background: #dcfce7 !important;
-  color: #166534 !important;
-  border-color: #22c55e !important;
+@media (min-width: 1024px) {
+  .ot-approval-filter-bar {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .ot-approval-filter-actions {
+    grid-column: 1 / -1;
+  }
+
+  .ot-confirm-info-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
-/* Status colors */
-:deep(.p-tag.ot-status-pending),
-:deep(.p-tag.ot-approval-waiting) {
-  background: #fef3c7 !important;
-  color: #92400e !important;
-  border-color: #f59e0b !important;
-}
-
-:deep(.p-tag.ot-status-approved),
-:deep(.p-tag.ot-approval-approved) {
-  background: #dcfce7 !important;
-  color: #166534 !important;
-  border-color: #22c55e !important;
-}
-
-:deep(.p-tag.ot-status-rejected),
-:deep(.p-tag.ot-status-requester-disagreed),
-:deep(.p-tag.ot-approval-rejected),
-:deep(.p-tag.ot-approval-requester-disagreed) {
-  background: #fee2e2 !important;
-  color: #991b1b !important;
-  border-color: #ef4444 !important;
-}
-
-:deep(.p-tag.ot-status-cancelled),
-:deep(.p-tag.ot-approval-cancelled) {
-  background: #e5e7eb !important;
-  color: #374151 !important;
-  border-color: #9ca3af !important;
-}
-
-/* Day type colors */
-:deep(.p-tag.ot-day-working-day) {
-  background: #dcfce7 !important;
-  color: #166534 !important;
-  border-color: #22c55e !important;
-}
-
-:deep(.p-tag.ot-day-sunday) {
-  background: #ffedd5 !important;
-  color: #9a3412 !important;
-  border-color: #f97316 !important;
-}
-
-:deep(.p-tag.ot-day-holiday) {
-  background: #fee2e2 !important;
-  color: #991b1b !important;
-  border-color: #ef4444 !important;
+@media (min-width: 1280px) {
+  .ot-approval-filter-bar {
+    grid-template-columns:
+      minmax(240px, 1.2fr)
+      minmax(180px, 0.85fr)
+      minmax(180px, 0.85fr)
+      minmax(170px, 0.8fr)
+      minmax(170px, 0.8fr);
+  }
 }
 
 @media (max-width: 1200px) {
-  .ot-expanded-box {
-    width: min(100%, 1120px);
-  }
-
   .ot-expanded-grid-row > div {
-    padding: 0.42rem 0.46rem;
-    font-size: 0.68rem;
+    padding: 0.4rem 0.46rem;
+    font-size: 0.67rem;
   }
 }
 
 @media (max-width: 768px) {
+  .ot-approval-filter-actions {
+    justify-content: stretch;
+  }
+
+  .ot-approval-filter-actions > * {
+    flex: 1 1 100%;
+  }
+
   .ot-expanded-header {
     flex-direction: column;
     align-items: stretch;
@@ -2241,7 +2302,7 @@ onBeforeUnmount(() => {
     width: max-content;
     min-width: 1080px;
     max-width: none;
-    padding: 0.6rem;
+    padding: 0.55rem;
   }
 
   .ot-expanded-content {
@@ -2273,13 +2334,13 @@ onBeforeUnmount(() => {
   }
 
   .ot-expanded-grid-row > div {
-    padding: 0.42rem 0.5rem;
-    font-size: 0.68rem;
+    padding: 0.4rem 0.48rem;
+    font-size: 0.67rem;
     line-height: 1.25;
   }
 
   .ot-expanded-grid-row.is-head > div {
-    font-size: 0.64rem;
+    font-size: 0.63rem;
   }
 
   .cell-wrap {

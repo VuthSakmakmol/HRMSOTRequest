@@ -1,5 +1,7 @@
 <!-- frontend/src/modules/shift/views/ShiftListView.vue -->
 <script setup>
+// frontend/src/modules/shift/views/ShiftListView.vue
+
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
@@ -426,16 +428,25 @@ function statusLabel(row) {
   return tr(row.statusKey, row.isActive ? t('common.active') : t('common.inactive'))
 }
 
-function statusSeverity(active) {
-  return active ? 'success' : 'secondary'
+function typeTagClass(type) {
+  return [
+    'shift-rgb-tag',
+    type === 'NIGHT' ? 'shift-tag-night' : 'shift-tag-day',
+  ]
 }
 
-function typeSeverity(type) {
-  return type === 'NIGHT' ? 'warning' : 'info'
+function statusTagClass(active) {
+  return [
+    'shift-rgb-tag',
+    active ? 'shift-tag-active' : 'shift-tag-inactive',
+  ]
 }
 
-function crossMidnightSeverity(value) {
-  return value ? 'warning' : 'secondary'
+function crossMidnightTagClass(value) {
+  return [
+    'shift-rgb-tag',
+    value ? 'shift-tag-warning' : 'shift-tag-inactive',
+  ]
 }
 
 function formatMinutes(minutes) {
@@ -542,13 +553,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="ot-page-shell">
+  <div class="ot-page-shell shift-list-page">
     <ShiftImportDialog
       v-model:visible="importDialogVisible"
       @success="handleImportSuccess"
     />
 
-    <section class="ot-filter-bar ot-filter-bar-3">
+    <section class="ot-filter-bar shift-filter-bar">
       <div class="ot-field">
         <label class="ot-field-label">
           {{ t('common.search') }}
@@ -599,7 +610,7 @@ onBeforeUnmount(() => {
         />
       </div>
 
-      <div class="ot-filter-actions xl:col-span-3">
+      <div class="shift-filter-actions">
         <span class="ot-loaded-badge">
           {{ loadedLabel }}
         </span>
@@ -610,6 +621,7 @@ onBeforeUnmount(() => {
           severity="secondary"
           outlined
           size="small"
+          class="shift-action-button"
           @click="clearFilters"
         />
 
@@ -620,6 +632,7 @@ onBeforeUnmount(() => {
           severity="secondary"
           outlined
           size="small"
+          class="shift-action-button"
           @click="importDialogVisible = true"
         />
 
@@ -629,6 +642,7 @@ onBeforeUnmount(() => {
           severity="secondary"
           outlined
           size="small"
+          class="shift-action-button shift-export-button"
           :loading="exporting"
           :disabled="!canView"
           @click="handleExport"
@@ -639,6 +653,7 @@ onBeforeUnmount(() => {
           :label="t('shift.action.newShift')"
           icon="pi pi-plus"
           size="small"
+          class="shift-action-button"
           @click="openCreateDialog"
         />
       </div>
@@ -743,7 +758,7 @@ onBeforeUnmount(() => {
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="font-bold"
+                class="font-semibold text-[color:var(--ot-text)]"
               >
                 {{ data.code || '-' }}
               </span>
@@ -776,7 +791,7 @@ onBeforeUnmount(() => {
               <Tag
                 v-if="data"
                 :value="typeLabel(data)"
-                :severity="typeSeverity(data.type)"
+                :class="typeTagClass(data.type)"
               />
             </template>
           </Column>
@@ -839,7 +854,7 @@ onBeforeUnmount(() => {
               <Tag
                 v-if="data"
                 :value="data.crossMidnight ? t('common.yes') : t('common.no')"
-                :severity="crossMidnightSeverity(data.crossMidnight)"
+                :class="crossMidnightTagClass(data.crossMidnight)"
               />
             </template>
           </Column>
@@ -865,7 +880,7 @@ onBeforeUnmount(() => {
               <Tag
                 v-if="data"
                 :value="statusLabel(data)"
-                :severity="statusSeverity(data.isActive)"
+                :class="statusTagClass(data.isActive)"
               />
             </template>
           </Column>
@@ -877,7 +892,10 @@ onBeforeUnmount(() => {
             style="min-width: 13rem"
           >
             <template #body="{ data }">
-              <span v-if="data">
+              <span
+                v-if="data"
+                class="text-sm text-[color:var(--ot-text-muted)]"
+              >
                 {{ formatDateTime(data.createdAt) }}
               </span>
             </template>
@@ -885,6 +903,8 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('common.actions')"
+            frozen
+            align-frozen="right"
             style="width: 7rem; min-width: 7rem"
           >
             <template #body="{ data }">
@@ -894,6 +914,7 @@ onBeforeUnmount(() => {
                 icon="pi pi-pencil"
                 size="small"
                 outlined
+                class="shift-action-button"
                 @click="openEditDialog(data)"
               />
             </template>
@@ -910,7 +931,7 @@ onBeforeUnmount(() => {
       @hide="resetForm"
     >
       <div class="ot-dialog-form">
-        <div class="ot-form-grid">
+        <div class="shift-dialog-grid">
           <div class="ot-field">
             <label class="ot-field-label">
               {{ t('shift.form.code') }}
@@ -952,7 +973,7 @@ onBeforeUnmount(() => {
             />
           </div>
 
-          <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] px-4 py-3">
+          <div class="shift-active-card">
             <span class="text-sm font-semibold text-[color:var(--ot-text)]">
               {{ t('shift.form.activeStatus') }}
             </span>
@@ -1044,3 +1065,123 @@ onBeforeUnmount(() => {
     </Dialog>
   </div>
 </template>
+
+<style scoped>
+.shift-list-page {
+  --shift-day-rgb: 14 165 233;
+  --shift-night-rgb: 99 102 241;
+  --shift-active-rgb: 34 197 94;
+  --shift-inactive-rgb: 100 116 139;
+  --shift-warning-rgb: 245 158 11;
+}
+
+.shift-filter-bar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  align-items: end;
+}
+
+.shift-filter-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.shift-filter-actions > * {
+  flex: 0 0 auto;
+}
+
+:deep(.shift-rgb-tag) {
+  --shift-tag-rgb: var(--shift-inactive-rgb);
+  min-height: 1.45rem;
+  border: 1px solid rgb(var(--shift-tag-rgb) / 0.28);
+  background: rgb(var(--shift-tag-rgb) / 0.11);
+  color: rgb(var(--shift-tag-rgb) / 1);
+  padding: 0.14rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+:deep(.shift-tag-day) {
+  --shift-tag-rgb: var(--shift-day-rgb);
+}
+
+:deep(.shift-tag-night) {
+  --shift-tag-rgb: var(--shift-night-rgb);
+}
+
+:deep(.shift-tag-active) {
+  --shift-tag-rgb: var(--shift-active-rgb);
+}
+
+:deep(.shift-tag-inactive) {
+  --shift-tag-rgb: var(--shift-inactive-rgb);
+}
+
+:deep(.shift-tag-warning) {
+  --shift-tag-rgb: var(--shift-warning-rgb);
+}
+
+:deep(.shift-action-button .p-button-icon) {
+  font-size: 0.76rem;
+}
+
+:deep(.shift-export-button .p-button-icon) {
+  font-size: 0.72rem;
+}
+
+.shift-dialog-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: start;
+}
+
+.shift-active-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border: 1px solid var(--ot-border);
+  border-radius: var(--ot-radius-md);
+  padding: 0.75rem 0.85rem;
+}
+
+@media (max-width: 768px) {
+  .shift-filter-actions {
+    justify-content: stretch;
+  }
+
+  .shift-filter-actions > * {
+    flex: 1 1 100%;
+  }
+}
+
+@media (min-width: 768px) {
+  .shift-dialog-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .shift-filter-bar {
+    grid-template-columns:
+      minmax(260px, 1.3fr)
+      minmax(180px, 0.9fr)
+      minmax(170px, 0.8fr);
+  }
+
+  .shift-filter-actions {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (min-width: 1280px) {
+  .shift-dialog-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+</style>

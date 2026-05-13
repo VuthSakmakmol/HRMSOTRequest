@@ -1,5 +1,7 @@
 <!-- frontend/src/modules/access/views/SystemRoleView.vue -->
 <script setup>
+// frontend/src/modules/access/views/SystemRoleView.vue
+
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
@@ -112,15 +114,61 @@ function normalizePayload(res) {
 }
 
 function normalizeItems(payload) {
-  return Array.isArray(payload?.items) ? payload.items : []
+  if (Array.isArray(payload)) return payload
+  if (Array.isArray(payload?.items)) return payload.items
+  if (Array.isArray(payload?.roles)) return payload.roles
+  if (Array.isArray(payload?.rows)) return payload.rows
+  return []
 }
 
-function normalizePaginationTotal(payload) {
-  return Number(payload?.pagination?.total || payload?.total || 0)
+function normalizeTotal(payload, items = []) {
+  return Number(
+    payload?.pagination?.total ||
+      payload?.total ||
+      payload?.count ||
+      items.length ||
+      0,
+  )
 }
 
 function normalizeId(row) {
   return String(row?.id || row?._id || '').trim()
+}
+
+function addQueryValue(query, key, value) {
+  const text = String(value ?? '').trim()
+
+  if (text) {
+    query[key] = text
+  }
+}
+
+function buildQuery(page) {
+  const query = {
+    page,
+    limit: PAGE_SIZE,
+    sortField: filters.sortField,
+    sortOrder: filters.sortOrder,
+  }
+
+  const search = String(filters.search || '').trim()
+
+  if (search) {
+    query.search = search
+  }
+
+  addQueryValue(query, 'isActive', filters.isActive)
+
+  return query
+}
+
+function showToast(severity, summary, detail, life = 3000) {
+  toast.add({
+    severity,
+    summary,
+    detail,
+    life,
+  })
 }
 
 function mapPermissionOption(item) {
@@ -163,26 +211,6 @@ function normalizeRoleRow(item) {
   }
 }
 
-function buildQuery(page) {
-  return {
-    page,
-    limit: PAGE_SIZE,
-    search: String(filters.search || '').trim(),
-    isActive: filters.isActive,
-    sortField: filters.sortField,
-    sortOrder: filters.sortOrder,
-  }
-}
-
-function showToast(severity, summary, detail, life = 3000) {
-  toast.add({
-    severity,
-    summary,
-    detail,
-    life,
-  })
-}
-
 function permissionPreviewItems(row) {
   const groups = Array.isArray(row?.permissionGroups) ? row.permissionGroups : []
   const items = []
@@ -191,9 +219,11 @@ function permissionPreviewItems(row) {
     const groupItems = Array.isArray(group?.items) ? group.items : []
 
     for (const item of groupItems) {
+      const name = String(item?.name || '').trim()
+
       items.push({
-        id: item.id || item.value || item.code,
-        code: item.code || item.name || '-',
+        id: item?.id || item?.value || item?.code || name,
+        name: name || '-',
       })
     }
   }
@@ -272,7 +302,7 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
     const payload = normalizePayload(res)
     const items = normalizeItems(payload).map(normalizeRoleRow)
-    const total = normalizePaginationTotal(payload)
+    const total = normalizeTotal(payload, items)
     const startIndex = (page - 1) * PAGE_SIZE
 
     totalRecords.value = total
@@ -347,13 +377,13 @@ function onStatusChange() {
   reloadFirstPage({ keepVisible: true })
 }
 
-function clearFilters() {
+async function clearFilters() {
   filters.search = ''
   filters.isActive = ''
   filters.sortField = 'createdAt'
   filters.sortOrder = -1
 
-  reloadFirstPage({ keepVisible: true })
+  await reloadFirstPage({ keepVisible: true })
 }
 
 function onSort(event) {
@@ -459,10 +489,6 @@ function collapseAll() {
   expandedRows.value = {}
 }
 
-function statusSeverity(active) {
-  return active ? 'success' : 'secondary'
-}
-
 onMounted(async () => {
   await Promise.all([
     reloadFirstPage({ keepVisible: false }),
@@ -476,8 +502,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="ot-page-shell">
-    <section class="ot-filter-bar ot-filter-bar-5">
+  <div class="ot-page-shell role-page">
+    <section class="ot-filter-bar role-filter-bar">
       <div class="ot-field">
         <label class="ot-field-label">
           {{ t('common.search') }}
@@ -512,7 +538,7 @@ onBeforeUnmount(() => {
         />
       </div>
 
-      <div class="ot-filter-actions xl:col-span-3">
+      <div class="role-filter-actions">
         <span class="ot-loaded-badge">
           {{ loadedLabel }}
         </span>
@@ -578,7 +604,7 @@ onBeforeUnmount(() => {
           :title="t('common.loadingData')"
           :message="t('common.fetchingRecords')"
           :rows="7"
-          :columns="7"
+          :columns="8"
           icon="pi pi-id-card"
         />
 
@@ -593,12 +619,12 @@ onBeforeUnmount(() => {
           scroll-height="500px"
           :sort-field="filters.sortField"
           :sort-order="filters.sortOrder"
-          table-style="min-width: 78rem"
-          class="ot-data-table ot-data-table-compact"
+          table-style="min-width: 82rem"
+          class="ot-data-table ot-data-table-compact role-data-table"
           :virtual-scroller-options="useVirtualScroll ? {
             lazy: true,
             onLazyLoad: onVirtualLazyLoad,
-            itemSize: 60,
+            itemSize: 58,
             delay: 0,
             showLoader: false,
             loading: false,
@@ -627,22 +653,24 @@ onBeforeUnmount(() => {
 
           <Column
             expander
-            style="width: 3rem"
+            style="width: 3rem; min-width: 3rem"
           />
 
           <Column
             field="code"
             :header="t('common.code')"
             sortable
-            style="min-width: 10rem"
+            style="min-width: 12rem"
           >
             <template #body="{ data }">
-              <span
+              <div
                 v-if="data"
-                class="font-bold"
+                class="role-cell"
               >
-                {{ data.code || '-' }}
-              </span>
+                <span class="role-code-text">
+                  {{ data.code || '-' }}
+                </span>
+              </div>
             </template>
           </Column>
 
@@ -653,37 +681,45 @@ onBeforeUnmount(() => {
             style="min-width: 15rem"
           >
             <template #body="{ data }">
-              <span v-if="data">
-                {{ data.displayName || '-' }}
-              </span>
+              <div
+                v-if="data"
+                class="role-cell"
+              >
+                <span
+                  class="role-truncate"
+                  :title="data.displayName || '-'"
+                >
+                  {{ data.displayName || '-' }}
+                </span>
+              </div>
             </template>
           </Column>
 
           <Column
             :header="t('access.role.permissionsByModule')"
-            style="min-width: 28rem"
+            style="min-width: 30rem"
           >
             <template #body="{ data }">
               <div
                 v-if="data"
-                class="flex flex-wrap items-center gap-1.5"
+                class="role-permission-preview"
               >
                 <Tag
                   v-for="item in permissionPreviewItems(data)"
-                  :key="item.id || item.code"
-                  :value="item.code"
-                  severity="info"
+                  :key="item.id || item.name"
+                  :value="item.name"
+                  class="role-rgb-tag role-permission-tag"
                 />
 
                 <Tag
                   v-if="hiddenPermissionCount(data)"
                   :value="t('access.role.morePermissions', { count: hiddenPermissionCount(data) })"
-                  severity="secondary"
+                  class="role-rgb-tag role-more-tag"
                 />
 
                 <span
                   v-if="!permissionPreviewItems(data).length"
-                  class="text-sm text-[color:var(--ot-text-muted)]"
+                  class="role-empty-text"
                 >
                   -
                 </span>
@@ -693,14 +729,18 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('access.role.count')"
-            style="min-width: 6rem"
+            style="min-width: 7rem"
           >
             <template #body="{ data }">
-              <Tag
+              <div
                 v-if="data"
-                :value="String(data.permissionCount || 0)"
-                severity="secondary"
-              />
+                class="role-cell"
+              >
+                <Tag
+                  :value="String(data.permissionCount || 0)"
+                  class="role-rgb-tag role-count-tag"
+                />
+              </div>
             </template>
           </Column>
 
@@ -708,14 +748,19 @@ onBeforeUnmount(() => {
             field="isActive"
             :header="t('common.status')"
             sortable
-            style="min-width: 7rem"
+            style="min-width: 8rem"
           >
             <template #body="{ data }">
-              <Tag
+              <div
                 v-if="data"
-                :value="data.isActive ? t('common.active') : t('common.inactive')"
-                :severity="statusSeverity(data.isActive)"
-              />
+                class="role-cell"
+              >
+                <Tag
+                  :value="data.isActive ? t('common.active') : t('common.inactive')"
+                  class="role-rgb-tag"
+                  :class="data.isActive ? 'role-active-tag' : 'role-inactive-tag'"
+                />
+              </div>
             </template>
           </Column>
 
@@ -723,50 +768,44 @@ onBeforeUnmount(() => {
             field="createdAt"
             :header="t('common.createdAt')"
             sortable
-            style="min-width: 13rem"
+            style="min-width: 14rem"
           >
             <template #body="{ data }">
-              <span v-if="data">
-                {{ formatDateTime(data.createdAt) }}
-              </span>
+              <div
+                v-if="data"
+                class="role-cell"
+              >
+                <span>
+                  {{ formatDateTime(data.createdAt) }}
+                </span>
+              </div>
             </template>
           </Column>
 
           <Column
             :header="t('common.actions')"
+            frozen
+            align-frozen="right"
             style="width: 7rem; min-width: 7rem"
           >
             <template #body="{ data }">
-              <Button
+              <div
                 v-if="data"
-                :label="t('common.edit')"
-                icon="pi pi-pencil"
-                size="small"
-                outlined
-                @click="openEditDialog(data)"
-              />
+                class="role-action-cell"
+              >
+                <Button
+                  :label="t('common.edit')"
+                  icon="pi pi-pencil"
+                  size="small"
+                  outlined
+                  @click="openEditDialog(data)"
+                />
+              </div>
             </template>
           </Column>
 
           <template #expansion="{ data }">
-            <div class="p-4">
-              <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <div class="text-sm font-bold text-[color:var(--ot-text)]">
-                    {{ t('access.role.fullPermissions') }}
-                  </div>
-
-                  <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
-                    {{ data.code || '-' }} · {{ data.displayName || '-' }}
-                  </div>
-                </div>
-
-                <Tag
-                  :value="t('access.role.selectedCount', { count: data.permissionCount || 0 })"
-                  severity="secondary"
-                />
-              </div>
-
+            <div class="role-expansion-panel">
               <RolePermissionSummary
                 :groups="data.permissionGroups || []"
                 :expanded="true"
@@ -786,7 +825,7 @@ onBeforeUnmount(() => {
       @hide="resetForm"
     >
       <div class="ot-dialog-form">
-        <div class="ot-form-grid">
+        <div class="role-dialog-grid">
           <div class="ot-field">
             <label class="ot-field-label">
               {{ t('access.role.roleCode') }}
@@ -812,8 +851,8 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] px-4 py-3">
-          <span class="text-sm font-semibold text-[color:var(--ot-text)]">
+        <div class="role-active-box">
+          <span class="role-active-label">
             {{ t('common.active') }}
           </span>
 
@@ -821,14 +860,14 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="space-y-3">
-          <div class="flex flex-wrap items-center justify-between gap-3">
+          <div class="role-dialog-section-header">
             <label class="ot-field-label">
               {{ t('access.role.permissionsByModule') }}
             </label>
 
             <Tag
               :value="t('access.role.selectedCount', { count: selectedPermissionCount })"
-              severity="secondary"
+              class="role-rgb-tag role-count-tag"
             />
           </div>
 
@@ -861,3 +900,225 @@ onBeforeUnmount(() => {
     </Dialog>
   </div>
 </template>
+
+<style scoped>
+.role-page {
+  --role-primary-rgb: 37, 99, 235;
+  --role-count-rgb: 15, 118, 110;
+  --role-more-rgb: 100, 116, 139;
+  --role-active-rgb: 22, 163, 74;
+  --role-inactive-rgb: 100, 116, 139;
+}
+
+.role-filter-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: end;
+}
+
+.role-filter-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.role-filter-actions > * {
+  flex: 0 0 auto;
+}
+
+.role-data-table :deep(.p-datatable-tbody > tr > td) {
+  padding-top: 0.42rem;
+  padding-bottom: 0.42rem;
+  vertical-align: middle;
+}
+
+.role-data-table :deep(.p-datatable-thead > tr > th) {
+  vertical-align: middle;
+}
+
+.role-data-table :deep(.p-column-header-content) {
+  width: 100%;
+}
+
+.role-cell,
+.role-action-cell {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.role-action-cell {
+  justify-content: center;
+}
+
+.role-code-text {
+  font-weight: 650;
+  color: var(--ot-text);
+}
+
+.role-truncate {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.role-empty-text {
+  color: var(--ot-text-muted);
+  font-size: 0.82rem;
+}
+
+.role-permission-preview {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.35rem;
+}
+
+.role-rgb-tag {
+  border-radius: 999px;
+  border: 1px solid transparent;
+  padding: 0.2rem 0.56rem;
+  font-size: 0.7rem;
+  font-weight: 650;
+  line-height: 1;
+}
+
+.role-permission-tag {
+  border-color: rgba(var(--role-primary-rgb), 0.24);
+  background: rgba(var(--role-primary-rgb), 0.11);
+  color: rgb(var(--role-primary-rgb));
+}
+
+.role-count-tag {
+  border-color: rgba(var(--role-count-rgb), 0.24);
+  background: rgba(var(--role-count-rgb), 0.1);
+  color: rgb(var(--role-count-rgb));
+}
+
+.role-more-tag {
+  border-color: rgba(var(--role-more-rgb), 0.24);
+  background: rgba(var(--role-more-rgb), 0.1);
+  color: rgb(var(--role-more-rgb));
+}
+
+.role-active-tag {
+  border-color: rgba(var(--role-active-rgb), 0.24);
+  background: rgba(var(--role-active-rgb), 0.12);
+  color: rgb(var(--role-active-rgb));
+}
+
+.role-inactive-tag {
+  border-color: rgba(var(--role-inactive-rgb), 0.24);
+  background: rgba(var(--role-inactive-rgb), 0.12);
+  color: rgb(var(--role-inactive-rgb));
+}
+
+.role-expansion-panel {
+  padding: 0.85rem;
+  background: var(--ot-surface-2);
+}
+
+.role-dialog-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: start;
+}
+
+.role-active-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border: 1px solid var(--ot-border);
+  border-radius: 0.85rem;
+  padding: 0.75rem 0.9rem;
+}
+
+.role-active-label {
+  color: var(--ot-text);
+  font-size: 0.86rem;
+  font-weight: 650;
+}
+
+.role-dialog-section-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.role-page :deep(.p-tag-value) {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:global(.dark) .role-permission-tag {
+  border-color: rgba(var(--role-primary-rgb), 0.36);
+  background: rgba(var(--role-primary-rgb), 0.18);
+}
+
+:global(.dark) .role-count-tag {
+  border-color: rgba(var(--role-count-rgb), 0.36);
+  background: rgba(var(--role-count-rgb), 0.16);
+}
+
+:global(.dark) .role-more-tag {
+  border-color: rgba(var(--role-more-rgb), 0.36);
+  background: rgba(var(--role-more-rgb), 0.16);
+}
+
+:global(.dark) .role-active-tag {
+  border-color: rgba(var(--role-active-rgb), 0.36);
+  background: rgba(var(--role-active-rgb), 0.18);
+}
+
+:global(.dark) .role-inactive-tag {
+  border-color: rgba(var(--role-inactive-rgb), 0.36);
+  background: rgba(var(--role-inactive-rgb), 0.18);
+}
+
+@media (max-width: 768px) {
+  .role-filter-actions {
+    justify-content: stretch;
+  }
+
+  .role-filter-actions > * {
+    flex: 1 1 100%;
+  }
+}
+
+@media (min-width: 768px) {
+  .role-filter-bar {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 220px);
+  }
+
+  .role-dialog-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1280px) {
+  .role-filter-bar {
+    grid-template-columns:
+      400px
+      220px
+      minmax(420px, 1fr);
+  }
+
+  .role-filter-actions {
+    grid-column: auto;
+  }
+}
+</style>

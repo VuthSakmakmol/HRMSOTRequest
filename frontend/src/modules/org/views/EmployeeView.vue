@@ -1,5 +1,7 @@
 <!-- frontend/src/modules/org/views/EmployeeView.vue -->
 <script setup>
+// frontend/src/modules/org/views/EmployeeView.vue
+
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
@@ -15,6 +17,7 @@ import InputText from 'primevue/inputtext'
 import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 
+import HolidayDatePicker from '@/modules/calendar/components/HolidayDatePicker.vue'
 import EmployeeImportDialog from '@/modules/org/components/EmployeeImportDialog.vue'
 import { getDepartmentLookupOptions } from '@/modules/org/department.api'
 import { getPositionLookupOptions } from '@/modules/org/position.api'
@@ -859,16 +862,16 @@ async function handleImportSuccess(payload) {
   await reloadFirstPage({ keepVisible: false })
 }
 
-function statusSeverity(active) {
-  return active ? 'success' : 'secondary'
-}
-
-function accountSeverity(row) {
-  return row?.hasAccount ? 'success' : 'warn'
-}
-
 function accountStatusLabel(row) {
   return row?.hasAccount ? t('org.employee.hasAccount') : t('org.employee.noAccount')
+}
+
+function accountTagClass(row) {
+  return row?.hasAccount ? 'employee-account-tag' : 'employee-no-account-tag'
+}
+
+function activeTagClass(active) {
+  return active ? 'employee-active-tag' : 'employee-inactive-tag'
 }
 
 function otWorkflowRoleLabel(value) {
@@ -880,13 +883,13 @@ function otWorkflowRoleLabel(value) {
   return t('org.employee.otWorkflowRole.none')
 }
 
-function otWorkflowRoleSeverity(value) {
+function otWorkflowRoleTagClass(value) {
   const role = String(value || 'NONE').toUpperCase()
 
-  if (role === 'APPROVER') return 'success'
-  if (role === 'ACKNOWLEDGE') return 'info'
+  if (role === 'APPROVER') return 'employee-ot-approver-tag'
+  if (role === 'ACKNOWLEDGE') return 'employee-ot-acknowledge-tag'
 
-  return 'secondary'
+  return 'employee-ot-none-tag'
 }
 
 function departmentLabel(row) {
@@ -947,13 +950,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="ot-page-shell">
+  <div class="ot-page-shell employee-page">
     <EmployeeImportDialog
       v-model:visible="importDialogVisible"
       @success="handleImportSuccess"
     />
 
-    <section class="ot-filter-bar ot-filter-bar-6">
+    <section class="ot-filter-bar employee-filter-bar">
       <div class="ot-field">
         <label class="ot-field-label">
           {{ t('common.search') }}
@@ -1056,7 +1059,7 @@ onBeforeUnmount(() => {
         />
       </div>
 
-      <div class="ot-filter-actions xl:col-span-6">
+      <div class="employee-filter-actions">
         <span class="ot-loaded-badge">
           {{ loadedLabel }}
         </span>
@@ -1139,7 +1142,7 @@ onBeforeUnmount(() => {
           :sort-field="filters.sortBy"
           :sort-order="filters.sortOrder"
           table-style="min-width: 112rem"
-          class="ot-data-table ot-data-table-compact"
+          class="ot-data-table ot-data-table-compact employee-data-table"
           :virtual-scroller-options="useVirtualScroll ? {
             lazy: true,
             onLazyLoad: onVirtualLazyLoad,
@@ -1179,7 +1182,7 @@ onBeforeUnmount(() => {
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="font-semibold"
+                class="employee-code-text"
               >
                 {{ data.employeeCode || '-' }}
               </span>
@@ -1193,7 +1196,10 @@ onBeforeUnmount(() => {
             style="min-width: 14rem"
           >
             <template #body="{ data }">
-              <span v-if="data">
+              <span
+                v-if="data"
+                class="employee-name-text"
+              >
                 {{ data.displayName || '-' }}
               </span>
             </template>
@@ -1206,7 +1212,7 @@ onBeforeUnmount(() => {
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="ot-truncate-2"
+                class="ot-truncate-2 employee-meta-text"
               >
                 {{ departmentLabel(data) }}
               </span>
@@ -1220,7 +1226,7 @@ onBeforeUnmount(() => {
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="ot-truncate-2"
+                class="ot-truncate-2 employee-meta-text"
               >
                 {{ positionLabel(data) }}
               </span>
@@ -1234,7 +1240,7 @@ onBeforeUnmount(() => {
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="ot-truncate-2"
+                class="ot-truncate-2 employee-meta-text"
               >
                 {{ lineLabel(data) }}
               </span>
@@ -1248,7 +1254,7 @@ onBeforeUnmount(() => {
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="ot-truncate-2"
+                class="ot-truncate-2 employee-meta-text"
               >
                 {{ shiftLabel(data) }}
               </span>
@@ -1262,7 +1268,7 @@ onBeforeUnmount(() => {
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="ot-truncate-2"
+                class="ot-truncate-2 employee-meta-text"
                 :title="managerLabel(data)"
               >
                 {{ managerLabel(data) }}
@@ -1280,7 +1286,8 @@ onBeforeUnmount(() => {
               <Tag
                 v-if="data"
                 :value="otWorkflowRoleLabel(data.otWorkflowRole)"
-                :severity="otWorkflowRoleSeverity(data.otWorkflowRole)"
+                class="employee-rgb-tag"
+                :class="otWorkflowRoleTagClass(data.otWorkflowRole)"
               />
             </template>
           </Column>
@@ -1291,7 +1298,10 @@ onBeforeUnmount(() => {
             style="min-width: 10rem"
           >
             <template #body="{ data }">
-              <span v-if="data">
+              <span
+                v-if="data"
+                class="employee-meta-text"
+              >
                 {{ data.phone || '-' }}
               </span>
             </template>
@@ -1304,16 +1314,17 @@ onBeforeUnmount(() => {
             <template #body="{ data }">
               <div
                 v-if="data"
-                class="flex flex-col gap-1"
+                class="employee-account-stack"
               >
                 <Tag
                   :value="accountStatusLabel(data)"
-                  :severity="accountSeverity(data)"
+                  class="employee-rgb-tag"
+                  :class="accountTagClass(data)"
                 />
 
                 <span
                   v-if="data.hasAccount"
-                  class="text-xs text-[color:var(--ot-text-muted)]"
+                  class="employee-account-login"
                 >
                   {{ data.accountLoginId || '-' }}
                 </span>
@@ -1328,7 +1339,10 @@ onBeforeUnmount(() => {
             style="min-width: 10rem"
           >
             <template #body="{ data }">
-              <span v-if="data">
+              <span
+                v-if="data"
+                class="employee-meta-text"
+              >
                 {{ data.joinDateText || formatDate(data.joinDate) }}
               </span>
             </template>
@@ -1344,7 +1358,8 @@ onBeforeUnmount(() => {
               <Tag
                 v-if="data"
                 :value="data.isActive ? t('common.active') : t('common.inactive')"
-                :severity="statusSeverity(data.isActive)"
+                class="employee-rgb-tag"
+                :class="activeTagClass(data.isActive)"
               />
             </template>
           </Column>
@@ -1356,7 +1371,10 @@ onBeforeUnmount(() => {
             style="min-width: 14rem"
           >
             <template #body="{ data }">
-              <span v-if="data">
+              <span
+                v-if="data"
+                class="employee-meta-text"
+              >
                 {{ formatDateTime(data.createdAt) }}
               </span>
             </template>
@@ -1387,11 +1405,11 @@ onBeforeUnmount(() => {
       v-model:visible="employeeDialogVisible"
       modal
       :header="dialogTitle"
-      :style="{ width: '60rem', maxWidth: '96vw' }"
+      :style="{ width: '72rem', maxWidth: '96vw' }"
       @hide="resetForm"
     >
       <div class="ot-dialog-form">
-        <div class="ot-form-grid">
+        <div class="employee-dialog-grid">
           <div class="ot-field">
             <label class="ot-field-label">
               {{ t('org.employee.employeeCode') }}
@@ -1509,7 +1527,7 @@ onBeforeUnmount(() => {
           />
         </div>
 
-        <div class="ot-form-grid">
+        <div class="employee-dialog-grid">
           <div class="ot-field">
             <label class="ot-field-label">
               {{ t('org.employee.otRole') }}
@@ -1525,14 +1543,10 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="ot-field">
-            <label class="ot-field-label">
-              {{ t('org.employee.joinDate') }}
-            </label>
-
-            <InputText
+            <HolidayDatePicker
               v-model="form.joinDate"
-              type="date"
-              class="w-full"
+              :label="t('org.employee.joinDate')"
+              :placeholder="t('org.employee.joinDate')"
             />
           </div>
 
@@ -1549,24 +1563,24 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div class="rounded-2xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface-2)] p-4">
+        <div class="employee-account-card">
           <div
             v-if="form.hasAccount"
-            class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+            class="employee-account-card-header"
           >
-            <div class="text-sm font-semibold text-[color:var(--ot-text)]">
+            <div class="employee-section-title">
               {{ t('org.employee.accountAlreadyExists') }}
             </div>
 
             <Tag
               :value="form.currentAccountLoginId || t('org.employee.hasAccount')"
-              severity="success"
+              class="employee-rgb-tag employee-account-tag"
             />
           </div>
 
           <template v-else>
-            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div class="text-sm font-semibold text-[color:var(--ot-text)]">
+            <div class="employee-account-card-header">
+              <div class="employee-section-title">
                 {{ t('org.employee.createLoginAccount') }}
               </div>
 
@@ -1577,7 +1591,7 @@ onBeforeUnmount(() => {
               v-if="showCreateAccountFields"
               class="mt-4 space-y-4"
             >
-              <div class="ot-form-grid">
+              <div class="employee-dialog-grid">
                 <div class="ot-field">
                   <label class="ot-field-label">
                     {{ t('auth.loginId') }}
@@ -1611,16 +1625,16 @@ onBeforeUnmount(() => {
               </div>
 
               <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-                <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-4 py-3">
-                  <div class="text-sm font-semibold text-[color:var(--ot-text)]">
+                <div class="employee-switch-box">
+                  <div class="employee-section-title">
                     {{ t('auth.account.forcePasswordChange') }}
                   </div>
 
                   <InputSwitch v-model="form.accountMustChangePassword" />
                 </div>
 
-                <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] px-4 py-3">
-                  <div class="text-sm font-semibold text-[color:var(--ot-text)]">
+                <div class="employee-switch-box">
+                  <div class="employee-section-title">
                     {{ t('org.employee.accountActive') }}
                   </div>
 
@@ -1642,8 +1656,8 @@ onBeforeUnmount(() => {
           </template>
         </div>
 
-        <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] px-4 py-3">
-          <span class="text-sm font-semibold text-[color:var(--ot-text)]">
+        <div class="employee-active-box">
+          <span class="employee-section-title">
             {{ t('common.active') }}
           </span>
 
@@ -1672,3 +1686,275 @@ onBeforeUnmount(() => {
     </Dialog>
   </div>
 </template>
+
+<style scoped>
+.employee-page {
+  --employee-code-rgb: 37, 99, 235;
+  --employee-name-rgb: 15, 23, 42;
+  --employee-meta-rgb: 71, 85, 105;
+
+  --employee-active-rgb: 22, 163, 74;
+  --employee-inactive-rgb: 100, 116, 139;
+
+  --employee-account-rgb: 16, 185, 129;
+  --employee-no-account-rgb: 217, 119, 6;
+
+  --employee-ot-approver-rgb: 22, 163, 74;
+  --employee-ot-acknowledge-rgb: 37, 99, 235;
+  --employee-ot-none-rgb: 100, 116, 139;
+}
+
+.employee-dialog-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: start;
+}
+
+.employee-filter-bar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  align-items: end;
+}
+
+.employee-filter-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.employee-filter-actions > * {
+  flex: 0 0 auto;
+}
+
+.employee-code-text {
+  color: rgb(var(--employee-code-rgb));
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.employee-name-text {
+  color: rgb(var(--employee-name-rgb));
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.employee-meta-text {
+  color: rgb(var(--employee-meta-rgb));
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.employee-rgb-tag {
+  max-width: 100%;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  padding: 0.2rem 0.58rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.employee-active-tag {
+  border-color: rgba(var(--employee-active-rgb), 0.24);
+  background: rgba(var(--employee-active-rgb), 0.12);
+  color: rgb(var(--employee-active-rgb));
+}
+
+.employee-inactive-tag {
+  border-color: rgba(var(--employee-inactive-rgb), 0.24);
+  background: rgba(var(--employee-inactive-rgb), 0.12);
+  color: rgb(var(--employee-inactive-rgb));
+}
+
+.employee-account-tag {
+  border-color: rgba(var(--employee-account-rgb), 0.24);
+  background: rgba(var(--employee-account-rgb), 0.12);
+  color: rgb(var(--employee-account-rgb));
+}
+
+.employee-no-account-tag {
+  border-color: rgba(var(--employee-no-account-rgb), 0.24);
+  background: rgba(var(--employee-no-account-rgb), 0.12);
+  color: rgb(var(--employee-no-account-rgb));
+}
+
+.employee-ot-approver-tag {
+  border-color: rgba(var(--employee-ot-approver-rgb), 0.24);
+  background: rgba(var(--employee-ot-approver-rgb), 0.12);
+  color: rgb(var(--employee-ot-approver-rgb));
+}
+
+.employee-ot-acknowledge-tag {
+  border-color: rgba(var(--employee-ot-acknowledge-rgb), 0.24);
+  background: rgba(var(--employee-ot-acknowledge-rgb), 0.12);
+  color: rgb(var(--employee-ot-acknowledge-rgb));
+}
+
+.employee-ot-none-tag {
+  border-color: rgba(var(--employee-ot-none-rgb), 0.24);
+  background: rgba(var(--employee-ot-none-rgb), 0.12);
+  color: rgb(var(--employee-ot-none-rgb));
+}
+
+.employee-account-stack {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+}
+
+.employee-account-login {
+  max-width: 100%;
+  overflow: hidden;
+  color: rgb(var(--employee-meta-rgb));
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.employee-account-card {
+  border: 1px solid var(--ot-border);
+  border-radius: 1rem;
+  background: var(--ot-surface-2);
+  padding: 1rem;
+}
+
+.employee-account-card-header,
+.employee-switch-box,
+.employee-active-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.employee-account-card-header {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.employee-switch-box,
+.employee-active-box {
+  border: 1px solid var(--ot-border);
+  border-radius: 0.85rem;
+  background: var(--ot-surface);
+  padding: 0.75rem 0.9rem;
+}
+
+.employee-active-box {
+  background: transparent;
+}
+
+.employee-section-title {
+  color: var(--ot-text);
+  font-size: 0.86rem;
+  font-weight: 650;
+}
+
+.employee-page :deep(.p-tag-value) {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:global(.dark) .employee-page {
+  --employee-name-rgb: 226, 232, 240;
+  --employee-meta-rgb: 203, 213, 225;
+}
+
+:global(.dark) .employee-active-tag {
+  border-color: rgba(var(--employee-active-rgb), 0.36);
+  background: rgba(var(--employee-active-rgb), 0.18);
+}
+
+:global(.dark) .employee-inactive-tag {
+  border-color: rgba(var(--employee-inactive-rgb), 0.36);
+  background: rgba(var(--employee-inactive-rgb), 0.18);
+}
+
+:global(.dark) .employee-account-tag {
+  border-color: rgba(var(--employee-account-rgb), 0.36);
+  background: rgba(var(--employee-account-rgb), 0.18);
+}
+
+:global(.dark) .employee-no-account-tag {
+  border-color: rgba(var(--employee-no-account-rgb), 0.36);
+  background: rgba(var(--employee-no-account-rgb), 0.18);
+}
+
+:global(.dark) .employee-ot-approver-tag {
+  border-color: rgba(var(--employee-ot-approver-rgb), 0.36);
+  background: rgba(var(--employee-ot-approver-rgb), 0.18);
+}
+
+:global(.dark) .employee-ot-acknowledge-tag {
+  border-color: rgba(var(--employee-ot-acknowledge-rgb), 0.36);
+  background: rgba(var(--employee-ot-acknowledge-rgb), 0.18);
+}
+
+:global(.dark) .employee-ot-none-tag {
+  border-color: rgba(var(--employee-ot-none-rgb), 0.36);
+  background: rgba(var(--employee-ot-none-rgb), 0.18);
+}
+
+@media (max-width: 768px) {
+  .employee-filter-actions {
+    justify-content: stretch;
+  }
+
+  .employee-filter-actions > * {
+    flex: 1 1 100%;
+  }
+}
+
+@media (min-width: 640px) {
+  .employee-account-card-header {
+    flex-direction: row;
+    align-items: center;
+  }
+}
+
+@media (min-width: 768px) {
+  .employee-dialog-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .employee-filter-bar {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1280px) {
+  .employee-dialog-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .employee-filter-bar {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1536px) {
+  .employee-filter-bar {
+    grid-template-columns:
+      minmax(230px, 1.2fr)
+      minmax(190px, 1fr)
+      minmax(190px, 1fr)
+      minmax(170px, 0.9fr)
+      minmax(170px, 0.9fr)
+      minmax(150px, 0.8fr);
+  }
+
+  .employee-filter-actions {
+    grid-column: 1 / -1;
+  }
+}
+</style>

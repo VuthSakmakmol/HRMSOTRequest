@@ -82,15 +82,15 @@ const form = reactive({
 })
 
 const canView = computed(() =>
-  auth.user?.isRootAdmin || auth.hasAnyPermission(['SHIFT_OT_OPTION_VIEW']),
+  auth.user?.isRootAdmin || auth.hasAnyPermission?.(['SHIFT_OT_OPTION_VIEW']),
 )
 
 const canCreate = computed(() =>
-  auth.user?.isRootAdmin || auth.hasAnyPermission(['SHIFT_OT_OPTION_CREATE']),
+  auth.user?.isRootAdmin || auth.hasAnyPermission?.(['SHIFT_OT_OPTION_CREATE']),
 )
 
 const canUpdate = computed(() =>
-  auth.user?.isRootAdmin || auth.hasAnyPermission(['SHIFT_OT_OPTION_UPDATE']),
+  auth.user?.isRootAdmin || auth.hasAnyPermission?.(['SHIFT_OT_OPTION_UPDATE']),
 )
 
 const statusOptions = computed(() => [
@@ -151,9 +151,7 @@ const loadedLabel = computed(() =>
 )
 
 const dialogTitle = computed(() =>
-  isEditMode.value
-    ? t('ot.shiftOption.editTitle')
-    : t('ot.shiftOption.createTitle'),
+  isEditMode.value ? t('ot.shiftOption.editTitle') : t('ot.shiftOption.createTitle'),
 )
 
 const saveLabel = computed(() =>
@@ -168,6 +166,7 @@ const isSaveDisabled = computed(() => {
   if (!String(form.shiftId || '').trim()) return true
   if (!String(form.label || '').trim()) return true
   if (!String(form.timingMode || '').trim()) return true
+
   if (!Array.isArray(form.applicableDayTypes) || !form.applicableDayTypes.length) {
     return true
   }
@@ -211,6 +210,10 @@ function buildLabel(...parts) {
     .map((part) => String(part || '').trim())
     .filter(Boolean)
     .join(' - ')
+}
+
+function upper(value) {
+  return String(value || '').trim().toUpperCase()
 }
 
 function showToast(severity, summary, detail, life = 3000) {
@@ -280,32 +283,37 @@ function isHHmm(value) {
   return /^([01]\d|2[0-3]):([0-5]\d)$/.test(String(value || '').trim())
 }
 
-function activeSeverity(value) {
-  return value === false ? 'secondary' : 'success'
-}
-
 function activeLabel(row) {
   if (row?.statusKey) return t(row.statusKey)
 
   return row?.isActive === false ? t('common.inactive') : t('common.active')
 }
 
+function activeTagClass(value) {
+  return [
+    'shift-option-rgb-tag',
+    value === false ? 'shift-option-tag-inactive' : 'shift-option-tag-active',
+  ]
+}
+
 function timingModeLabel(value) {
-  const mode = String(value || '').trim().toUpperCase()
+  const mode = upper(value)
 
   if (mode === 'FIXED_TIME') return t('ot.shiftOption.timing.fixedTime')
   return t('ot.shiftOption.timing.afterShiftEnd')
 }
 
-function timingModeSeverity(value) {
-  const mode = String(value || '').trim().toUpperCase()
+function timingModeTagClass(value) {
+  const mode = upper(value)
 
-  if (mode === 'FIXED_TIME') return 'info'
-  return 'secondary'
+  return [
+    'shift-option-rgb-tag',
+    mode === 'FIXED_TIME' ? 'shift-option-tag-info' : 'shift-option-tag-muted',
+  ]
 }
 
 function dayTypeLabel(value) {
-  const dayType = String(value || '').trim().toUpperCase()
+  const dayType = upper(value)
 
   if (dayType === 'SUNDAY') return t('ot.dayType.sunday')
   if (dayType === 'HOLIDAY') return t('ot.dayType.holiday')
@@ -313,13 +321,21 @@ function dayTypeLabel(value) {
   return t('ot.dayType.workingDay')
 }
 
-function dayTypeSeverity(value) {
-  const dayType = String(value || '').trim().toUpperCase()
+function dayTypeTagClass(value) {
+  const dayType = upper(value)
 
-  if (dayType === 'HOLIDAY') return 'danger'
-  if (dayType === 'SUNDAY') return 'warning'
+  if (dayType === 'HOLIDAY') return ['shift-option-rgb-tag', 'shift-option-tag-holiday']
+  if (dayType === 'SUNDAY') return ['shift-option-rgb-tag', 'shift-option-tag-sunday']
 
-  return 'success'
+  return ['shift-option-rgb-tag', 'shift-option-tag-working']
+}
+
+function infoTagClass() {
+  return ['shift-option-rgb-tag', 'shift-option-tag-info']
+}
+
+function paidTagClass() {
+  return ['shift-option-rgb-tag', 'shift-option-tag-active']
 }
 
 function minutesLabel(value) {
@@ -344,6 +360,7 @@ function minutesLabel(value) {
 
 function shiftLabel(row) {
   const shift = row?.shift || {}
+
   return (
     row?.shiftLabel ||
     shift?.label ||
@@ -351,17 +368,6 @@ function shiftLabel(row) {
     buildLabel(shift?.code, shift?.name) ||
     '-'
   )
-}
-
-function shiftSubLabel(row) {
-  const shift = row?.shift || {}
-
-  const type = row?.shiftType || shift?.type || ''
-  const start = row?.shiftStartTime || shift?.startTime || ''
-  const end = row?.shiftEndTime || shift?.endTime || ''
-  const time = start && end ? `${start} - ${end}` : ''
-
-  return [type, time].filter(Boolean).join(' · ') || '-'
 }
 
 function policyLabel(row) {
@@ -387,6 +393,7 @@ function policySubLabel(row) {
   const parts = []
 
   if (roundMethod) parts.push(roundMethod)
+
   if (roundUnit) {
     parts.push(
       t('ot.shiftOption.roundEvery', {
@@ -394,6 +401,7 @@ function policySubLabel(row) {
       }),
     )
   }
+
   if (minEligible) {
     parts.push(
       t('ot.shiftOption.minEligibleValue', {
@@ -429,7 +437,7 @@ function optionTimingSubLabel(row) {
   const timingMode = timingModeLabel(row?.timingMode)
   const offset = Number(row?.startAfterShiftEndMinutes || 0)
 
-  if (String(row?.timingMode || '').toUpperCase() === 'AFTER_SHIFT_END') {
+  if (upper(row?.timingMode) === 'AFTER_SHIFT_END') {
     return offset > 0
       ? t('ot.shiftOption.afterShiftOffset', {
           offset: minutesLabel(offset),
@@ -492,6 +500,7 @@ async function fetchShiftLookup() {
     shiftOptions.value = mapLookupOptions(normalizeItems(normalizePayload(res)))
   } catch (error) {
     shiftOptions.value = []
+
     showToast(
       'error',
       t('common.loadFailed'),
@@ -516,6 +525,7 @@ async function fetchPolicyLookup() {
     policyOptions.value = mapPolicyLookupOptions(normalizeItems(normalizePayload(res)))
   } catch (error) {
     policyOptions.value = []
+
     showToast(
       'error',
       t('common.loadFailed'),
@@ -636,6 +646,7 @@ function clearFilters() {
 function onSort(event) {
   filters.sortField = event.sortField || 'sequence'
   filters.sortOrder = typeof event.sortOrder === 'number' ? event.sortOrder : 1
+
   reloadFirstPage({ keepVisible: true })
 }
 
@@ -683,18 +694,20 @@ function openEditDialog(row) {
 
   form.shiftId = String(row.shiftId || row.shift?.id || row.shift?._id || '').trim()
   form.label = String(row.label || '').trim()
-  form.timingMode = String(row.timingMode || 'AFTER_SHIFT_END').trim().toUpperCase()
+  form.timingMode = upper(row.timingMode || 'AFTER_SHIFT_END')
   form.applicableDayTypes = normalizeApplicableDayTypes(row.applicableDayTypes)
   form.startAfterShiftEndMinutes = Number(row.startAfterShiftEndMinutes || 0)
   form.fixedStartTime = String(row.fixedStartTime || '').trim()
   form.fixedEndTime = String(row.fixedEndTime || '').trim()
   form.requestedMinutes = Number(row.requestedMinutes || 0)
+
   form.calculationPolicyId = String(
     row.calculationPolicyId ||
       row.calculationPolicy?.id ||
       row.calculationPolicy?._id ||
       '',
   ).trim()
+
   form.sequence = Number(row.sequence || 1)
   form.isActive = row.isActive !== false
 
@@ -705,7 +718,7 @@ function buildPayload() {
   const payload = {
     shiftId: String(form.shiftId || '').trim(),
     label: String(form.label || '').trim(),
-    timingMode: String(form.timingMode || 'AFTER_SHIFT_END').trim().toUpperCase(),
+    timingMode: upper(form.timingMode || 'AFTER_SHIFT_END'),
     applicableDayTypes: normalizeApplicableDayTypes(form.applicableDayTypes),
     startAfterShiftEndMinutes: Number(form.startAfterShiftEndMinutes || 0),
     fixedStartTime: String(form.fixedStartTime || '').trim(),
@@ -731,6 +744,7 @@ function buildPayload() {
 function validateForm() {
   if (!String(form.shiftId || '').trim()) return t('ot.shiftOption.validation.shiftRequired')
   if (!String(form.label || '').trim()) return t('ot.shiftOption.validation.labelRequired')
+
   if (!String(form.timingMode || '').trim()) {
     return t('ot.shiftOption.validation.timingModeRequired')
   }
@@ -807,6 +821,7 @@ async function submitOption() {
 
     optionDialogVisible.value = false
     resetForm()
+
     await reloadFirstPage({ keepVisible: false })
   } catch (error) {
     showToast(
@@ -831,8 +846,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="ot-page-shell">
-    <section class="ot-filter-bar ot-filter-bar-6">
+  <div class="ot-page-shell shift-option-page">
+    <section class="ot-filter-bar shift-option-filter-bar">
       <div class="ot-field">
         <label class="ot-field-label">
           {{ t('common.search') }}
@@ -935,7 +950,7 @@ onBeforeUnmount(() => {
         />
       </div>
 
-      <div class="ot-filter-actions xl:col-span-6">
+      <div class="shift-option-filter-actions">
         <span class="ot-loaded-badge">
           {{ loadedLabel }}
         </span>
@@ -946,6 +961,7 @@ onBeforeUnmount(() => {
           severity="secondary"
           outlined
           size="small"
+          class="shift-option-action-button"
           @click="clearFilters"
         />
 
@@ -954,6 +970,7 @@ onBeforeUnmount(() => {
           :label="t('ot.shiftOption.newOption')"
           icon="pi pi-plus"
           size="small"
+          class="shift-option-action-button"
           @click="openCreateDialog"
         />
       </div>
@@ -982,19 +999,40 @@ onBeforeUnmount(() => {
             severity="secondary"
             outlined
             size="small"
+            class="shift-option-action-button"
             :loading="backgroundLoading && bootstrapped"
             @click="reloadFirstPage({ keepVisible: true })"
           />
         </div>
       </div>
 
-      <div class="ot-table-wrapper">
+      <div
+        v-if="!canView"
+        class="ot-empty-state"
+      >
+        <div class="ot-empty-icon">
+          <i class="pi pi-lock" />
+        </div>
+
+        <div class="ot-empty-title">
+          {{ t('auth.accessDenied') }}
+        </div>
+
+        <div class="ot-empty-text">
+          {{ t('common.noPermission') }}
+        </div>
+      </div>
+
+      <div
+        v-else
+        class="ot-table-wrapper"
+      >
         <AppTableLoading
           v-if="isFirstLoading"
           :title="t('common.loadingData')"
           :message="t('common.fetchingRecords')"
           :rows="7"
-          :columns="10"
+          :columns="12"
           icon="pi pi-clock"
         />
 
@@ -1007,8 +1045,8 @@ onBeforeUnmount(() => {
           scroll-height="500px"
           :sort-field="filters.sortField"
           :sort-order="filters.sortOrder"
-          table-style="min-width: 118rem"
-          class="ot-data-table ot-data-table-compact"
+          table-style="width: max-content; min-width: 100%; table-layout: auto;"
+          class="shift-option-table ot-data-table ot-data-table-compact"
           :virtual-scroller-options="useVirtualScroll ? {
             lazy: true,
             onLazyLoad: onVirtualLazyLoad,
@@ -1041,17 +1079,15 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('nav.shift')"
-            style="min-width: 10rem"
+            style="min-width: 12rem"
           >
             <template #body="{ data }">
-              <div
+              <span
                 v-if="data"
-                class="flex flex-col"
+                class="font-semibold text-[color:var(--ot-text)]"
               >
-                <span class="font-medium text-[color:var(--ot-text)]">
-                  {{ shiftLabel(data) }}
-                </span>
-              </div>
+                {{ shiftLabel(data) }}
+              </span>
             </template>
           </Column>
 
@@ -1059,12 +1095,12 @@ onBeforeUnmount(() => {
             field="label"
             :header="t('ot.shiftOption.optionLabel')"
             sortable
-            style="min-width: 10rem"
+            style="min-width: 12rem"
           >
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="font-medium text-[color:var(--ot-text)]"
+                class="font-semibold text-[color:var(--ot-text)]"
               >
                 {{ data.label || '-' }}
               </span>
@@ -1073,19 +1109,18 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('ot.shiftOption.dayType')"
-            style="min-width: 8rem"
+            style="min-width: 11rem"
           >
             <template #body="{ data }">
               <div
                 v-if="data"
-                class="flex flex-wrap gap-1"
+                class="shift-option-tag-row"
               >
                 <Tag
                   v-for="type in normalizeApplicableDayTypes(data.applicableDayTypes)"
                   :key="type"
                   :value="dayTypeLabel(type)"
-                  :severity="dayTypeSeverity(type)"
-                  class="ot-status-tag"
+                  :class="dayTypeTagClass(type)"
                 />
               </div>
             </template>
@@ -1095,26 +1130,25 @@ onBeforeUnmount(() => {
             field="timingMode"
             :header="t('ot.shiftOption.timingMode')"
             sortable
-            style="min-width: 10rem"
+            style="min-width: 12rem"
           >
             <template #body="{ data }">
               <Tag
                 v-if="data"
                 :value="timingModeLabel(data.timingMode)"
-                :severity="timingModeSeverity(data.timingMode)"
-                class="ot-status-tag"
+                :class="timingModeTagClass(data.timingMode)"
               />
             </template>
           </Column>
 
           <Column
             :header="t('ot.shiftOption.otWindow')"
-            style="min-width: 10rem"
+            style="min-width: 13rem"
           >
             <template #body="{ data }">
               <div
                 v-if="data"
-                class="flex flex-col"
+                class="shift-option-stack-cell"
               >
                 <span class="font-semibold text-[color:var(--ot-text)]">
                   {{ optionTimeWindow(data) }}
@@ -1135,15 +1169,14 @@ onBeforeUnmount(() => {
               <Tag
                 v-if="data"
                 :value="minutesLabel(rowRequestedMinutes(data))"
-                severity="info"
-                class="ot-status-tag"
+                :class="infoTagClass()"
               />
             </template>
           </Column>
 
           <Column
             :header="t('ot.shiftOption.break')"
-            style="min-width: 5rem"
+            style="min-width: 7rem"
           >
             <template #body="{ data }">
               <span
@@ -1157,28 +1190,27 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('ot.shiftOption.paid')"
-            style="min-width: 5rem"
+            style="min-width: 7rem"
           >
             <template #body="{ data }">
               <Tag
                 v-if="data"
                 :value="minutesLabel(rowPaidMinutes(data))"
-                severity="success"
-                class="ot-status-tag"
+                :class="paidTagClass()"
               />
             </template>
           </Column>
 
           <Column
             :header="t('ot.shiftOption.policy')"
-            style="min-width: 15rem"
+            style="min-width: 16rem"
           >
             <template #body="{ data }">
               <div
                 v-if="data"
-                class="flex flex-col"
+                class="shift-option-stack-cell"
               >
-                <span class="font-medium text-[color:var(--ot-text)]">
+                <span class="font-semibold text-[color:var(--ot-text)]">
                   {{ policyLabel(data) }}
                 </span>
 
@@ -1212,8 +1244,7 @@ onBeforeUnmount(() => {
               <Tag
                 v-if="data"
                 :value="activeLabel(data)"
-                :severity="activeSeverity(data.isActive)"
-                class="ot-status-tag"
+                :class="activeTagClass(data.isActive)"
               />
             </template>
           </Column>
@@ -1225,7 +1256,10 @@ onBeforeUnmount(() => {
             style="min-width: 13rem"
           >
             <template #body="{ data }">
-              <span v-if="data">
+              <span
+                v-if="data"
+                class="text-sm text-[color:var(--ot-text-muted)]"
+              >
                 {{ formatDateTime(data.createdAt) }}
               </span>
             </template>
@@ -1234,24 +1268,19 @@ onBeforeUnmount(() => {
           <Column
             :header="t('common.actions')"
             frozen
-            alignFrozen="right"
-            headerClass="ot-action-column-header"
-            bodyClass="ot-action-column-body"
+            align-frozen="right"
+            style="width: 7rem; min-width: 7rem"
           >
             <template #body="{ data }">
-              <div
-                v-if="data"
-                class="ot-row-actions"
-              >
-                <Button
-                  v-if="canUpdate"
-                  :label="t('common.edit')"
-                  icon="pi pi-pencil"
-                  size="small"
-                  outlined
-                  @click="openEditDialog(data)"
-                />
-              </div>
+              <Button
+                v-if="data && canUpdate"
+                :label="t('common.edit')"
+                icon="pi pi-pencil"
+                size="small"
+                outlined
+                class="shift-option-action-button"
+                @click="openEditDialog(data)"
+              />
             </template>
           </Column>
         </DataTable>
@@ -1263,11 +1292,11 @@ onBeforeUnmount(() => {
       modal
       :closable="!saving"
       :header="dialogTitle"
-      :style="{ width: '64rem', maxWidth: '96vw' }"
+      :style="{ width: '76rem', maxWidth: '96vw' }"
       @hide="resetForm"
     >
       <div class="ot-dialog-form">
-        <div class="ot-form-grid">
+        <div class="shift-option-dialog-grid">
           <div class="ot-field">
             <label class="ot-field-label">
               {{ t('nav.shift') }}
@@ -1290,20 +1319,18 @@ onBeforeUnmount(() => {
               {{ t('ot.shiftOption.policy') }}
             </label>
 
-          <Select
-            v-model="form.calculationPolicyId"
-            :options="policyOptions"
-            option-label="label"
-            option-value="value"
-            :placeholder="t('ot.shiftOption.selectPolicy')"
-            class="w-full"
-            filter
-            :loading="loadingPolicies"
-          />
+            <Select
+              v-model="form.calculationPolicyId"
+              :options="policyOptions"
+              option-label="label"
+              option-value="value"
+              :placeholder="t('ot.shiftOption.selectPolicy')"
+              class="w-full"
+              filter
+              :loading="loadingPolicies"
+            />
           </div>
-        </div>
 
-        <div class="ot-form-grid">
           <div class="ot-field">
             <label class="ot-field-label">
               {{ t('ot.shiftOption.optionLabel') }}
@@ -1329,9 +1356,7 @@ onBeforeUnmount(() => {
               class="w-full"
             />
           </div>
-        </div>
 
-        <div class="ot-form-grid">
           <div class="ot-field">
             <label class="ot-field-label">
               {{ t('ot.shiftOption.applicableDayTypes') }}
@@ -1356,18 +1381,16 @@ onBeforeUnmount(() => {
             <InputNumber
               v-model="form.sequence"
               class="w-full"
-              inputClass="w-full"
+              input-class="w-full"
               :min="1"
-              :useGrouping="false"
+              :use-grouping="false"
             />
           </div>
-        </div>
 
-        <div
-          v-if="isAfterShiftEndMode"
-          class="ot-form-grid"
-        >
-          <div class="ot-field">
+          <div
+            v-if="isAfterShiftEndMode"
+            class="ot-field"
+          >
             <label class="ot-field-label">
               {{ t('ot.shiftOption.startAfterShiftEnd') }}
             </label>
@@ -1375,38 +1398,17 @@ onBeforeUnmount(() => {
             <InputNumber
               v-model="form.startAfterShiftEndMinutes"
               class="w-full"
-              inputClass="w-full"
+              input-class="w-full"
               :min="0"
-              :useGrouping="false"
-              :suffix="` ${t('ot.common.min')}`"
-            />
-
-            <p class="ot-field-help">
-              {{ t('ot.shiftOption.startAfterShiftEndHelp') }}
-            </p>
-          </div>
-
-          <div class="ot-field">
-            <label class="ot-field-label">
-              {{ t('ot.shiftOption.requestedMinutes') }}
-            </label>
-
-            <InputNumber
-              v-model="form.requestedMinutes"
-              class="w-full"
-              inputClass="w-full"
-              :min="1"
-              :useGrouping="false"
+              :use-grouping="false"
               :suffix="` ${t('ot.common.min')}`"
             />
           </div>
-        </div>
 
-        <div
-          v-else
-          class="ot-form-grid-3"
-        >
-          <div class="ot-field">
+          <div
+            v-if="isFixedTimeMode"
+            class="ot-field"
+          >
             <label class="ot-field-label">
               {{ t('ot.shiftOption.fixedStartTime') }}
             </label>
@@ -1418,7 +1420,10 @@ onBeforeUnmount(() => {
             />
           </div>
 
-          <div class="ot-field">
+          <div
+            v-if="isFixedTimeMode"
+            class="ot-field"
+          >
             <label class="ot-field-label">
               {{ t('ot.shiftOption.fixedEndTime') }}
             </label>
@@ -1438,30 +1443,37 @@ onBeforeUnmount(() => {
             <InputNumber
               v-model="form.requestedMinutes"
               class="w-full"
-              inputClass="w-full"
+              input-class="w-full"
               :min="1"
-              :useGrouping="false"
+              :use-grouping="false"
               :suffix="` ${t('ot.common.min')}`"
             />
           </div>
+
+          <label class="shift-option-active-card">
+            <Checkbox
+              v-model="form.isActive"
+              binary
+            />
+
+            <span class="grid gap-0.5">
+              <span class="text-sm font-semibold text-[color:var(--ot-text)]">
+                {{ t('common.active') }}
+              </span>
+
+              <span class="text-xs text-[color:var(--ot-text-muted)]">
+                {{ t('ot.shiftOption.activeHelp') }}
+              </span>
+            </span>
+          </label>
         </div>
 
-        <label class="flex items-center gap-3 rounded-xl border border-[color:var(--ot-border)] px-4 py-3">
-          <Checkbox
-            v-model="form.isActive"
-            binary
-          />
-
-          <span class="grid gap-0.5">
-            <span class="text-sm font-semibold text-[color:var(--ot-text)]">
-              {{ t('common.active') }}
-            </span>
-
-            <span class="text-xs text-[color:var(--ot-text-muted)]">
-              {{ t('ot.shiftOption.activeHelp') }}
-            </span>
-          </span>
-        </label>
+        <p
+          v-if="isAfterShiftEndMode"
+          class="ot-field-help"
+        >
+          {{ t('ot.shiftOption.startAfterShiftEndHelp') }}
+        </p>
       </div>
 
       <template #footer>
@@ -1489,14 +1501,196 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-:deep(.ot-status-tag) {
-  min-height: 1.35rem !important;
-  padding: 0.12rem 0.48rem !important;
-  border: 1px solid transparent !important;
-  border-radius: 999px !important;
-  font-size: 0.7rem !important;
-  font-weight: 500 !important;
-  line-height: 1 !important;
+.shift-option-page {
+  --shift-option-active-rgb: 34 197 94;
+  --shift-option-inactive-rgb: 100 116 139;
+  --shift-option-info-rgb: 59 130 246;
+  --shift-option-warning-rgb: 245 158 11;
+  --shift-option-danger-rgb: 239 68 68;
+  --shift-option-working-rgb: 34 197 94;
+  --shift-option-sunday-rgb: 245 158 11;
+  --shift-option-holiday-rgb: 239 68 68;
+}
+
+.shift-option-filter-bar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  align-items: end;
+}
+
+.shift-option-filter-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.shift-option-filter-actions > * {
+  flex: 0 0 auto;
+}
+
+.shift-option-tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.35rem;
+}
+
+.shift-option-stack-cell {
+  display: flex;
+  min-width: max-content;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+:deep(.shift-option-rgb-tag) {
+  --shift-option-tag-rgb: var(--shift-option-inactive-rgb);
+  min-height: 1.42rem;
+  border: 1px solid rgb(var(--shift-option-tag-rgb) / 0.28);
+  background: rgb(var(--shift-option-tag-rgb) / 0.11);
+  color: rgb(var(--shift-option-tag-rgb) / 1);
+  padding: 0.12rem 0.48rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+:deep(.shift-option-tag-active) {
+  --shift-option-tag-rgb: var(--shift-option-active-rgb);
+}
+
+:deep(.shift-option-tag-inactive) {
+  --shift-option-tag-rgb: var(--shift-option-inactive-rgb);
+}
+
+:deep(.shift-option-tag-info) {
+  --shift-option-tag-rgb: var(--shift-option-info-rgb);
+}
+
+:deep(.shift-option-tag-muted) {
+  --shift-option-tag-rgb: var(--shift-option-inactive-rgb);
+}
+
+:deep(.shift-option-tag-working) {
+  --shift-option-tag-rgb: var(--shift-option-working-rgb);
+}
+
+:deep(.shift-option-tag-sunday) {
+  --shift-option-tag-rgb: var(--shift-option-sunday-rgb);
+}
+
+:deep(.shift-option-tag-holiday) {
+  --shift-option-tag-rgb: var(--shift-option-holiday-rgb);
+}
+
+:deep(.shift-option-action-button .p-button-icon) {
+  font-size: 0.76rem;
+}
+
+:deep(.shift-option-table .p-datatable-table) {
+  width: max-content !important;
+  min-width: 100% !important;
+  table-layout: auto !important;
+}
+
+:deep(.shift-option-table .p-datatable-thead > tr > th) {
+  width: auto !important;
+  min-width: auto !important;
+  max-width: none !important;
+  padding: 0.58rem 0.68rem !important;
   white-space: nowrap !important;
+  text-align: center !important;
+  vertical-align: middle !important;
+  font-size: 0.78rem !important;
+  font-weight: 650 !important;
+}
+
+:deep(.shift-option-table .p-datatable-tbody > tr > td) {
+  width: auto !important;
+  min-width: auto !important;
+  max-width: none !important;
+  height: 68px !important;
+  padding: 0.46rem 0.68rem !important;
+  vertical-align: middle !important;
+  white-space: nowrap !important;
+  text-align: center !important;
+  font-size: 0.8rem !important;
+}
+
+:deep(.shift-option-table .p-column-header-content) {
+  justify-content: center !important;
+  text-align: center !important;
+}
+
+:deep(.shift-option-table .p-datatable-tbody > tr > td > *) {
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+.shift-option-dialog-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: start;
+}
+
+.shift-option-active-card {
+  display: flex;
+  min-height: 4.55rem;
+  align-items: center;
+  gap: 0.75rem;
+  border: 1px solid var(--ot-border);
+  border-radius: var(--ot-radius-md);
+  background: var(--ot-bg);
+  padding: 0.75rem 0.85rem;
+  cursor: pointer;
+}
+
+@media (max-width: 768px) {
+  .shift-option-filter-actions {
+    justify-content: stretch;
+  }
+
+  .shift-option-filter-actions > * {
+    flex: 1 1 100%;
+  }
+}
+
+@media (min-width: 768px) {
+  .shift-option-dialog-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .shift-option-filter-bar {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .shift-option-filter-actions {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (min-width: 1280px) {
+  .shift-option-filter-bar {
+    grid-template-columns:
+      minmax(240px, 1.15fr)
+      minmax(180px, 0.85fr)
+      minmax(180px, 0.85fr)
+      minmax(170px, 0.8fr)
+      minmax(160px, 0.75fr)
+      minmax(150px, 0.7fr);
+  }
+
+  .shift-option-dialog-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 </style>
