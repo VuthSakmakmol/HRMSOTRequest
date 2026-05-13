@@ -21,6 +21,7 @@ const paymentExportBodySchema = z
     fromDate: ymdSchema,
     toDate: ymdSchema,
     formulaId: objectIdSchema,
+    exchangeRateId: objectIdSchema,
   })
   .superRefine((data, ctx) => {
     if (data.fromDate && data.toDate && data.fromDate > data.toDate) {

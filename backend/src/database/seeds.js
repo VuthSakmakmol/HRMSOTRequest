@@ -9,6 +9,7 @@ const { connectMongo } = require('./mongoose')
 const Permission = require('../modules/access/models/Permission')
 const SystemRole = require('../modules/access/models/SystemRole')
 const Account = require('../modules/auth/models/Account')
+const PaymentExchangeRate = require('../modules/payment/models/PaymentExchangeRate.model')
 
 const ROOT_ADMIN_ROLE_CODE = 'ROOT_ADMIN'
 
@@ -257,7 +258,7 @@ const PERMISSIONS = [
     'Allow updating shift OT options',
   ),
 
-  // =========================
+    // =========================
   // Payment
   // =========================
   permission(
@@ -278,6 +279,26 @@ const PERMISSIONS = [
     'PAYMENT',
     'Allow updating payment formulas',
   ),
+
+  permission(
+    'PAYMENT_EXCHANGE_RATE_VIEW',
+    'View Payment Exchange Rates',
+    'PAYMENT',
+    'Allow viewing payment exchange rate master records',
+  ),
+  permission(
+    'PAYMENT_EXCHANGE_RATE_CREATE',
+    'Create Payment Exchange Rates',
+    'PAYMENT',
+    'Allow creating payment exchange rate master records',
+  ),
+  permission(
+    'PAYMENT_EXCHANGE_RATE_UPDATE',
+    'Update Payment Exchange Rates',
+    'PAYMENT',
+    'Allow updating payment exchange rate master records',
+  ),
+
   permission(
     'PAYMENT_PROCESS',
     'Process Payment',

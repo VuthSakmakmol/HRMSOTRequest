@@ -1,6 +1,41 @@
 // frontend/src/modules/payment/payment.api.js
+
 import api from '@/shared/services/api'
-import { toFileFormData } from '@/shared/utils/formData'
+
+// =========================
+// Helpers
+// =========================
+function hasValue(value) {
+  return value !== undefined && value !== null && String(value).trim() !== ''
+}
+
+function buildPaymentProcessFormData(input = {}) {
+  const formData = new FormData()
+
+  const salaryFile = input.salaryFile || input.file
+
+  if (salaryFile) {
+    formData.append('salaryFile', salaryFile)
+  }
+
+  if (hasValue(input.fromDate)) {
+    formData.append('fromDate', input.fromDate)
+  }
+
+  if (hasValue(input.toDate)) {
+    formData.append('toDate', input.toDate)
+  }
+
+  if (hasValue(input.formulaId)) {
+    formData.append('formulaId', input.formulaId)
+  }
+
+  if (hasValue(input.exchangeRateId)) {
+    formData.append('exchangeRateId', input.exchangeRateId)
+  }
+
+  return formData
+}
 
 // =========================
 // Payment Formulas
@@ -26,6 +61,29 @@ export function updatePaymentFormula(id, payload) {
 }
 
 // =========================
+// Payment Exchange Rates
+// =========================
+export function getPaymentExchangeRates(params = {}) {
+  return api.get('/payment/exchange-rates', { params })
+}
+
+export function getPaymentExchangeRateLookupOptions(params = {}) {
+  return api.get('/payment/exchange-rates/lookup', { params })
+}
+
+export function getPaymentExchangeRateById(id) {
+  return api.get(`/payment/exchange-rates/${id}`)
+}
+
+export function createPaymentExchangeRate(payload) {
+  return api.post('/payment/exchange-rates', payload)
+}
+
+export function updatePaymentExchangeRate(id, payload) {
+  return api.patch(`/payment/exchange-rates/${id}`, payload)
+}
+
+// =========================
 // Payment Process
 // =========================
 export function downloadSalaryTemplate() {
@@ -34,10 +92,10 @@ export function downloadSalaryTemplate() {
   })
 }
 
-export function previewPayment(input, options = {}) {
+export function previewPayment(input = {}, options = {}) {
   const { onUploadProgress } = options
 
-  return api.post('/payment/preview', toFileFormData(input), {
+  return api.post('/payment/preview', buildPaymentProcessFormData(input), {
     headers: {
       'Content-Type': 'multipart/form-data',
     },
@@ -45,14 +103,17 @@ export function previewPayment(input, options = {}) {
   })
 }
 
-export function calculatePaymentExport(input, options = {}) {
+export function calculateAndExportPayment(input = {}, options = {}) {
   const { onUploadProgress } = options
 
-  return api.post('/payment/calculate-export', toFileFormData(input), {
+  return api.post('/payment/calculate-export', buildPaymentProcessFormData(input), {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
     responseType: 'blob',
-    headers: {
-      'Content-Type': 'multipart/form-data',
-    },
     onUploadProgress,
   })
 }
+
+// Keep old PaymentProcessView import working
+export const calculatePaymentExport = calculateAndExportPayment

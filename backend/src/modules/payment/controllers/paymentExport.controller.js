@@ -36,6 +36,7 @@ async function previewPayment(req, res, next) {
       fromDate: payload.fromDate,
       toDate: payload.toDate,
       formulaId: payload.formulaId,
+      exchangeRateId: payload.exchangeRateId,
       actor: req.user,
     })
 
@@ -57,6 +58,7 @@ async function calculateAndExportPayment(req, res, next) {
       fromDate: payload.fromDate,
       toDate: payload.toDate,
       formulaId: payload.formulaId,
+      exchangeRateId: payload.exchangeRateId,
       actor: req.user,
     })
 

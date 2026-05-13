@@ -45,9 +45,7 @@ function parseExcelSerialDate(value) {
 
 function parseDateValue(value) {
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return `${value.getUTCFullYear()}-${pad2(value.getUTCMonth() + 1)}-${pad2(
-      value.getUTCDate(),
-    )}`
+    return `${value.getFullYear()}-${pad2(value.getMonth() + 1)}-${pad2(value.getDate())}`
   }
 
   const raw = s(value)
@@ -71,10 +69,10 @@ function parseDateValue(value) {
     const part2 = Number(match[2])
     const year = Number(match[3])
 
-    // Prefer DD/MM/YYYY. If impossible, safely swap.
     let day = part1
     let month = part2
 
+    // Prefer DD/MM/YYYY. If impossible, safely swap.
     if (part1 <= 12 && part2 > 12) {
       month = part1
       day = part2
@@ -87,9 +85,7 @@ function parseDateValue(value) {
 
   const parsed = new Date(raw)
   if (!Number.isNaN(parsed.getTime())) {
-    return `${parsed.getUTCFullYear()}-${pad2(parsed.getUTCMonth() + 1)}-${pad2(
-      parsed.getUTCDate(),
-    )}`
+    return `${parsed.getFullYear()}-${pad2(parsed.getMonth() + 1)}-${pad2(parsed.getDate())}`
   }
 
   return ''
@@ -114,14 +110,27 @@ function parseExcelTimeFraction(value) {
 function parseDateTimeTimeValue(value) {
   if (!(value instanceof Date) || Number.isNaN(value.getTime())) return ''
 
-  const hh = value.getUTCHours()
-  const mm = value.getUTCMinutes()
+  // Important:
+  // Do NOT use getUTCHours() here.
+  // Excel time-only cells can be converted to Date objects around the old Excel epoch.
+  // UTC extraction can shift the time and produce wrong values like 10:47 / 11:17.
+  const hh = value.getHours()
+  const mm = value.getMinutes()
+
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return ''
 
   return `${pad2(hh)}:${pad2(mm)}`
 }
 
 function parseTimeValue(value) {
   if (value == null || value === '') return ''
+
+  // Most reliable for Excel time cells when cellDates is false:
+  // 0.75 => 18:00
+  // 0.7291666667 => 17:30
+  if (typeof value === 'number') {
+    return parseExcelTimeFraction(value)
+  }
 
   if (value instanceof Date) {
     const parsedDateTime = parseDateTimeTimeValue(value)
@@ -328,7 +337,11 @@ function parseAttendanceWorkbook(buffer, options = {}) {
   try {
     workbook = XLSX.read(buffer, {
       type: 'buffer',
-      cellDates: true,
+
+      // Important:
+      // Keep Excel time cells as numeric serial values.
+      // This prevents time-only cells from becoming Date objects and shifting by timezone.
+      cellDates: false,
     })
   } catch (error) {
     throw createHttpError('Unable to read attendance file', 400)
@@ -386,6 +399,7 @@ function parseAttendanceWorkbook(buffer, options = {}) {
     const rawData = buildRawRowObject(headerRow, row)
 
     const importedEmployeeId = normalizeEmployeeId(getCell(row, columnIndexes.employeeId))
+
     const importedEmployeeName =
       columnIndexes.employeeName >= 0 ? s(getCell(row, columnIndexes.employeeName)) : ''
 

@@ -166,6 +166,7 @@ export default {
     payment: 'Payment',
     paymentProcess: 'Payment Process',
     paymentFormulas: 'Payment Formulas',
+    paymentExchangeRates: 'Exchange Rates',
   },
 
 
@@ -1653,7 +1654,6 @@ export default {
       workingDays: 'Working Days',
       roundDecimals: 'Round Decimals',
       dayTypeMultipliers: 'Day Type Multipliers',
-      previewTitle: 'Formula Preview',
 
       codePlaceholder: 'Example: STD_OT_2026',
       namePlaceholder: 'Example: Standard OT Formula 2026',
@@ -1663,7 +1663,7 @@ export default {
         'Formula setup is saved. Salary Excel and generated payment result are not saved.',
 
       hourlyRatePreview:
-        'Hourly Rate = Monthly Salary ÷ Working Days ÷ Hours Per Day',
+        'Hourly Rate',
       otAmountPreview:
         'OT Amount = Payable OT Hours × Hourly Rate × Day Type Multiplier',
 
@@ -1688,6 +1688,8 @@ export default {
     process: {
       field: {
         paymentFormula: 'Payment Formula',
+        exchangeRate: 'Exchange Rate',
+        noExchangeRate: 'No exchange rate selected',
         salaryExcel: 'Salary Excel',
         noFile: 'No file selected',
         formula: 'Formula',
@@ -1709,16 +1711,13 @@ export default {
 
       card: {
         processingTitle: 'Payment Processing',
-        processingSubtitle: 'Preview first, then generate final OT payment Excel.',
         formulaTitle: 'Formula Preview',
-        formulaSubtitle: 'Formula selected for this payment calculation.',
       },
 
       status: {
         previewReady: 'Preview Ready',
         notPreviewed: 'Not Previewed',
         ready: 'Ready',
-        selectFormula: 'Select Formula',
       },
 
       note: {
@@ -1728,8 +1727,6 @@ export default {
 
       calendar: {
         title: 'Internal Calendar Check',
-        subtitle:
-          'Frontend displays active holidays from Calendar module. Backend payment still recalculates the official day type.',
         loading: 'Loading Calendar',
         holidayCount: '{count} holiday(s)',
         workingDays: 'Working Days',
@@ -1739,20 +1736,21 @@ export default {
 
       preview: {
         title: 'Payment Preview',
-        subtitle: 'Review the calculated result before generating Excel.',
-        notSaved: 'Preview rows are not saved in database.',
       },
 
       summary: {
         payableEmployees: 'Payable Employees',
         totalOtHours: 'Total OT Hours',
         totalAmount: 'Total Amount',
+        totalUsd: 'Total USD',
+        totalKhr: 'Total KHR',
         missingSalary: 'Missing Salary',
         warnings: 'Warnings',
       },
 
       table: {
-        detail: 'Payment Detail Preview',
+        setup: 'Payment setup',
+        detail: 'Payment Detail',
         missingSalary: 'Missing Salary',
         warnings: 'Warnings',
       },
@@ -1761,22 +1759,22 @@ export default {
         requestNo: 'Request No',
         otOption: 'OT Option',
         otTime: 'OT Time',
-        paymentDayType: 'Payment Day Type',
-        internalCalendar: 'Internal Calendar',
-        storedType: 'Stored Type',
-        employeeId: 'ID',
-        employeeName: 'Name',
-        salary: 'Salary',
-        otOptionTime: 'OT Option Time',
-        breakTime: 'Break Time',
-        totalRequestPaid: 'Total Request Paid',
-        actual: 'Actual',
-        eligible: 'Eligible',
+        paymentDayType: 'Day Type',
+        employeeId: 'Employee ID',
+        employeeName: 'Employee Name',
+        requested: 'Requested',
+        break: 'Break',
         payable: 'Payable',
-        backendCap: 'Backend Cap',
-        hours: 'Hours',
+        salary: 'Salary',
+        hourlyRate: 'Hourly Rate',
         multiplier: 'Multiplier',
         amount: 'Amount',
+        amountUsd: 'Amount USD',
+        exchangeRate: 'Rate',
+        rawKhr: 'Raw KHR',
+        roundedKhr: 'Rounded KHR',
+        roundDiffKhr: 'Round Diff',
+        salaryFound: 'Salary Found',
         currency: 'Currency',
         decision: 'Decision',
         reason: 'Reason',
@@ -1791,6 +1789,7 @@ export default {
       empty: {
         noFormula: 'No formula selected',
         selectFormula: 'Select an active payment formula before preview.',
+        selectFormulaFirst: 'Choose formula first',
         noPaymentDetail: 'No payable payment detail found.',
         noMissingSalary: 'No missing salary.',
         noWarnings: 'No warnings.',
@@ -1803,12 +1802,14 @@ export default {
         fromDateRequired: 'From date is required.',
         toDateRequired: 'To date is required.',
         formulaRequired: 'Payment formula is required.',
+        exchangeRateRequired: 'Exchange rate is required.',
         salaryRequired: 'Salary Excel file is required.',
         invalidDateRange: 'From date cannot be after To date.',
       },
 
       message: {
         loadFormulasFailed: 'Failed to load payment formulas.',
+        loadExchangeRatesFailed: 'Failed to load payment exchange rates.',
         calendarFailedTitle: 'Calendar failed',
         calendarFailed: 'Failed to load internal holiday calendar.',
 
@@ -1836,5 +1837,46 @@ export default {
         generateFailed: 'Failed to generate payment Excel.',
       },
     },
+    exchangeRates: {
+      tableTitle: 'Payment exchange rates',
+      newExchangeRate: 'New rate',
+      createTitle: 'Create exchange rate',
+      editTitle: 'Edit exchange rate',
+      searchPlaceholder: 'Search code, name, currency, or description...',
+      noData: 'No exchange rates found.',
+      loadFailed: 'Unable to load payment exchange rates.',
+      saveFailed: 'Unable to save payment exchange rate.',
+      createdSuccess: 'Payment exchange rate created successfully.',
+      updatedSuccess: 'Payment exchange rate updated successfully.',
+
+      rateName: 'Rate name',
+      currencyPair: 'Currency pair',
+      rate: 'Rate',
+      rounding: 'Rounding',
+      mode: 'Mode',
+      unit: 'Unit',
+      fromCurrency: 'From currency',
+      toCurrency: 'To currency',
+      roundingUnit: 'Rounding unit',
+      roundingMode: 'Rounding mode',
+      denominations: 'Denominations',
+
+      codePlaceholder: 'Example: KHR_4020',
+      namePlaceholder: 'Example: USD to KHR 4020',
+      descriptionPlaceholder: 'Optional note for this exchange rate',
+      dialogNote: 'Exchange rates are managed separately from payment formulas. Create any rate you need, then choose it during payment processing.',
+
+      roundingPreviewTitle: 'Rounding behavior',
+      roundRulePreview: 'ROUND by 100 means 101–149 becomes 100 and 150–199 becomes 200.',
+      cashBreakdownPreview: 'Denominations are used to calculate cash paper breakdown from large to small.',
+
+      roundingModes: {
+        round: 'Round nearest',
+        ceil: 'Round up',
+        floor: 'Round down',
+        none: 'No rounding',
+      },
+    },
   },
+  
 }

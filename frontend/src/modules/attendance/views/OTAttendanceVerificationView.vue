@@ -1,5 +1,7 @@
 <!-- frontend/src/modules/attendance/views/OTAttendanceVerificationView.vue -->
 <script setup>
+// frontend/src/modules/attendance/views/OTAttendanceVerificationView.vue
+
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -40,12 +42,13 @@ const tableCategory = ref('')
 
 let requestSearchTimer = null
 let suppressRequestSearch = false
+let currentVerifyRequestId = 0
 
 const requestStatusOptions = computed(() => [
   { label: t('common.allStatus'), value: '' },
   { label: t('attendance.statusLabel.pending'), value: 'PENDING' },
-  { label: t('common.approve'), value: 'APPROVED' },
-  { label: t('common.reject'), value: 'REJECTED' },
+  { label: t('ot.status.approved'), value: 'APPROVED' },
+  { label: t('ot.status.rejected'), value: 'REJECTED' },
   { label: t('attendance.statusLabel.cancelled'), value: 'CANCELLED' },
 ])
 
@@ -574,8 +577,8 @@ function requestStatusLabel(value) {
   const normalized = upper(value)
 
   if (normalized === 'PENDING') return t('attendance.statusLabel.pending')
-  if (normalized === 'APPROVED') return t('common.approve')
-  if (normalized === 'REJECTED') return t('common.reject')
+  if (normalized === 'APPROVED') return t('ot.status.approved')
+  if (normalized === 'REJECTED') return t('ot.status.rejected')
   if (normalized === 'CANCELLED') return t('attendance.statusLabel.cancelled')
   if (normalized === 'DRAFT') return t('attendance.statusLabel.draft')
 
@@ -702,24 +705,43 @@ function clearCurrentResultOnly() {
 }
 
 async function loadData() {
-  if (!activeOtRequestId.value) {
+  const otRequestId = activeOtRequestId.value
+
+  if (!otRequestId) {
     clearCurrentResultOnly()
     return
   }
 
+  const requestId = ++currentVerifyRequestId
   loading.value = true
 
   try {
-    const response = await verifyOTAttendance(activeOtRequestId.value)
-    const nextPayload = response?.data?.data || null
+    const response = await verifyOTAttendance(otRequestId)
+    const nextPayload = normalizePayload(response)
 
-    payload.value = nextPayload
+    if (requestId !== currentVerifyRequestId) return
 
-    if (!verificationDate.value && nextPayload?.otRequest?.otDate) {
+    payload.value = nextPayload || null
+
+    if (!payload.value?.otRequest) {
+      toast.add({
+        severity: 'warn',
+        summary: t('attendance.verification.loadFailed'),
+        detail: t('attendance.verification.loadVerificationFailed'),
+        life: 3500,
+      })
+      return
+    }
+
+    if (!verificationDate.value && payload.value?.otRequest?.otDate) {
       suppressRequestSearch = true
-      verificationDate.value = formatDateYMD(nextPayload.otRequest.otDate)
+      verificationDate.value = formatDateYMD(payload.value.otRequest.otDate)
     }
   } catch (error) {
+    if (requestId !== currentVerifyRequestId) return
+
+    clearCurrentResultOnly()
+
     toast.add({
       severity: 'error',
       summary: t('attendance.verification.loadFailed'),
@@ -730,7 +752,9 @@ async function loadData() {
       life: 4000,
     })
   } finally {
-    loading.value = false
+    if (requestId === currentVerifyRequestId) {
+      loading.value = false
+    }
   }
 }
 
@@ -817,15 +841,6 @@ function scheduleRequestSearch() {
   }, 250)
 }
 
-async function onRequestSelected() {
-  if (!selectedOtRequestId.value) {
-    clearCurrentResultOnly()
-    return
-  }
-
-  await loadData()
-}
-
 function clearAll() {
   window.clearTimeout(requestSearchTimer)
 
@@ -851,10 +866,23 @@ watch(
   },
 )
 
+watch(
+  () => selectedOtRequestId.value,
+  async (value, oldValue) => {
+    if (value === oldValue) return
+
+    if (!value) {
+      clearCurrentResultOnly()
+      return
+    }
+
+    await loadData()
+  },
+)
+
 onMounted(() => {
   if (routeOtRequestId.value) {
     selectedOtRequestId.value = routeOtRequestId.value
-    loadData()
   }
 })
 
@@ -890,7 +918,7 @@ onBeforeUnmount(() => {
           :disabled="!requestOptions.length || searchLoading"
           filter
           size="small"
-          @change="onRequestSelected"
+          @update:model-value="loadData"
         />
       </div>
 

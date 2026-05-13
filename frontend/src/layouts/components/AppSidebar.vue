@@ -272,18 +272,25 @@ const navGroups = computed(() => {
       icon: 'pi pi-wallet',
       items: [
         {
-          key: 'payment-process',
-          label: t('nav.paymentProcess'),
-          icon: 'pi pi-file-excel',
-          to: '/payment/process',
-          permissions: ['PAYMENT_PROCESS'],
-        },
-        {
           key: 'payment-formulas',
           label: t('nav.paymentFormulas'),
           icon: 'pi pi-calculator',
           to: '/payment/formulas',
           permissions: ['PAYMENT_FORMULA_VIEW'],
+        },
+        {
+          key: 'payment-exchange-rates',
+          label: t('nav.paymentExchangeRates'),
+          icon: 'pi pi-money-bill',
+          to: '/payment/exchange-rates',
+          permissions: ['PAYMENT_EXCHANGE_RATE_VIEW'],
+        },
+        {
+          key: 'payment-process',
+          label: t('nav.paymentProcess'),
+          icon: 'pi pi-file-excel',
+          to: '/payment/process',
+          permissions: ['PAYMENT_PROCESS'],
         },
       ],
     },

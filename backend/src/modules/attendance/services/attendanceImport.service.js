@@ -517,10 +517,10 @@ function buildImportRemark(baseRemark, extraRemarks = []) {
 async function fetchEmployeesByNos(employeeNos = []) {
   if (!employeeNos.length) return []
 
-  return Employee.find({ employeeNo: { $in: employeeNos } })
+  return Employee.find({ employeeCode: { $in: employeeNos } })
     .select({
       _id: 1,
-      employeeNo: 1,
+      employeeCode: 1,
       displayName: 1,
       departmentId: 1,
       positionId: 1,
@@ -633,7 +633,7 @@ async function buildRecordPayloadFromParsedRow({
     importId: importDoc._id,
 
     employeeId: matchedEmployee?._id || null,
-    employeeNo: upper(matchedEmployee?.employeeNo || parsedRow.importedEmployeeId),
+    employeeNo: upper(matchedEmployee?.employeeCode || parsedRow.importedEmployeeId),
     employeeName: s(matchedEmployee?.displayName || parsedRow.importedEmployeeName),
 
     departmentId: departmentDoc?._id || null,
@@ -733,7 +733,9 @@ async function importExcel(file, payload, authUser) {
     )
 
     const employees = await fetchEmployeesByNos(employeeNos)
-    const employeeMap = new Map(employees.map((employee) => [upper(employee.employeeNo), employee]))
+    const employeeMap = new Map(
+      employees.map((employee) => [upper(employee.employeeCode), employee]),
+    )
 
     const recordsPayload = await Promise.all(
       parsed.rows.map((parsedRow) =>
