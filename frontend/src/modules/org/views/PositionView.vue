@@ -531,13 +531,12 @@ async function handleImportSuccess(payload) {
   const summary = payload?.summary || {}
   const created = Number(summary.created || payload?.created || payload?.createdCount || 0)
   const updated = Number(summary.updated || payload?.updated || payload?.updatedCount || 0)
-  const failed = Number(summary.failed || payload?.failed || payload?.failedCount || 0)
 
   showToast(
-    failed > 0 ? 'warn' : 'success',
+    'success',
     t('org.position.imported'),
-    t('org.position.importedSuccess', { created, updated, failed }),
-    4500,
+    t('org.position.importedSuccess', { created, updated }),
+    3500,
   )
 
   await Promise.all([

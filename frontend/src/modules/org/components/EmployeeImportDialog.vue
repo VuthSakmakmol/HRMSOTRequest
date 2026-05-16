@@ -31,13 +31,17 @@ const fileInputRef = ref(null)
 const selectedFile = ref(null)
 const downloading = ref(false)
 const importing = ref(false)
+const processing = ref(false)
 const uploadProgress = ref(0)
 
 const errorTitle = ref('')
 const errorMessage = ref('')
+const errorRows = ref([])
 const successMessage = ref('')
 
 const fileName = computed(() => selectedFile.value?.name || '')
+const hasImportErrors = computed(() => errorRows.value.length > 0)
+const importErrorCount = computed(() => errorRows.value.length)
 
 watch(
   () => props.visible,
@@ -51,8 +55,10 @@ watch(
 function resetState() {
   selectedFile.value = null
   uploadProgress.value = 0
+  processing.value = false
   errorTitle.value = ''
   errorMessage.value = ''
+  errorRows.value = []
   successMessage.value = ''
 
   if (fileInputRef.value) {
@@ -68,6 +74,7 @@ function closeDialog() {
 function clearMessage() {
   errorTitle.value = ''
   errorMessage.value = ''
+  errorRows.value = []
   successMessage.value = ''
 }
 
@@ -116,6 +123,69 @@ function normalizeImportPayload(res) {
   return payload.item || payload
 }
 
+function normalizeErrorPayload(error) {
+  const data = error?.response?.data || {}
+
+  return data?.data || data || {}
+}
+
+function firstArray(...values) {
+  for (const value of values) {
+    if (Array.isArray(value)) return value
+  }
+
+  return []
+}
+
+function normalizeImportErrorRow(item, index) {
+  if (typeof item === 'string') {
+    return {
+      id: `error-${index}`,
+      rowNo: '',
+      field: '',
+      value: '',
+      reason: item,
+    }
+  }
+
+  const rowNo = item?.rowNo ?? item?.row ?? item?.line ?? ''
+  const field = item?.field ?? item?.column ?? item?.key ?? ''
+  const value = item?.value ?? item?.input ?? ''
+  const reason =
+    item?.reason ||
+    item?.message ||
+    item?.detail ||
+    item?.error ||
+    t('org.employee.importUnknownError')
+
+  return {
+    id: `${rowNo || 'row'}-${field || 'field'}-${index}`,
+    rowNo,
+    field,
+    value,
+    reason,
+  }
+}
+
+function getImportErrorRows(error) {
+  const payload = normalizeErrorPayload(error)
+
+  const rows = firstArray(
+    payload?.params?.errors,
+    payload?.meta?.errors,
+    payload?.details?.errors,
+    payload?.data?.params?.errors,
+    payload?.data?.errors,
+    payload?.errors,
+    payload?.issues,
+    payload?.error?.params?.errors,
+    payload?.error?.errors,
+    payload?.error?.issues,
+  )
+
+  return rows.map(normalizeImportErrorRow)
+}
+
 function getErrorTitle(error) {
   const status = getApiErrorStatus(error)
 
@@ -127,44 +197,6 @@ function getErrorTitle(error) {
   if (status >= 500) return t('org.employee.serverError')
 
   return t('org.employee.importFailed')
-}
-
-function makeFriendlyImportMessage(error) {
-  const text = getApiErrorMessage(error, t('org.employee.importFailed'))
-
-  if (/Employee Code.*required|employeeCodeRequired/i.test(text)) {
-    return `${text}. ${t('org.employee.employeeCodeRequiredHelp')}`
-  }
-
-  if (/joinDate|join date|Invalid Join Date/i.test(text)) {
-    return `${text}. ${t('org.employee.joinDateFormatHelp')}`
-  }
-
-  if (/Department Code not found/i.test(text)) {
-    return `${text}. ${t('org.employee.checkDepartmentMaster')}`
-  }
-
-  if (/Position Code not found/i.test(text)) {
-    return `${text}. ${t('org.employee.checkPositionMaster')}`
-  }
-
-  if (/Position does not belong to Department/i.test(text)) {
-    return `${text}. ${t('org.employee.positionDepartmentMismatchHelp')}`
-  }
-
-  if (/Line Code not found/i.test(text)) {
-    return `${text}. ${t('org.employee.checkLineMaster')}`
-  }
-
-  if (/Shift Code not found/i.test(text)) {
-    return `${text}. ${t('org.employee.checkShiftMaster')}`
-  }
-
-  if (/Reports To Employee Code not found|manager.*not found/i.test(text)) {
-    return `${text}. ${t('org.employee.checkManagerEmployeeCode')}`
-  }
-
-  return text
 }
 
 function getFilenameFromHeader(res, fallback) {
@@ -205,7 +237,7 @@ async function handleDownloadSample() {
     successMessage.value = t('org.employee.sampleDownloaded')
   } catch (error) {
     errorTitle.value = getErrorTitle(error)
-    errorMessage.value = makeFriendlyImportMessage(error)
+    errorMessage.value = getApiErrorMessage(error, t('org.employee.downloadSampleFailed'))
   } finally {
     downloading.value = false
   }
@@ -215,6 +247,7 @@ async function handleImport() {
   if (!selectedFile.value || importing.value) return
 
   importing.value = true
+  processing.value = false
   uploadProgress.value = 0
   clearMessage()
 
@@ -222,19 +255,30 @@ async function handleImport() {
     const res = await importEmployeesExcel(selectedFile.value, {
       onUploadProgress(event) {
         if (!event.total) return
+
         uploadProgress.value = Math.round((event.loaded * 100) / event.total)
+
+        if (uploadProgress.value >= 100) {
+          processing.value = true
+        }
       },
     })
 
     const payload = normalizeImportPayload(res)
 
     emit('success', payload)
-    closeDialog()
+    emit('update:visible', false)
   } catch (error) {
-    errorTitle.value = getErrorTitle(error)
-    errorMessage.value = makeFriendlyImportMessage(error)
+    const rows = getImportErrorRows(error)
+
+    errorRows.value = rows
+    errorTitle.value = rows.length
+      ? t('org.employee.importValidationFailed')
+      : getErrorTitle(error)
+    errorMessage.value = getApiErrorMessage(error, t('org.employee.importFailed'))
   } finally {
     importing.value = false
+    processing.value = false
   }
 }
 </script>
@@ -244,26 +288,86 @@ async function handleImport() {
     :visible="visible"
     modal
     :header="t('org.employee.importTitle')"
-    :style="{ width: '36rem', maxWidth: '96vw' }"
+    :style="{ width: '54rem', maxWidth: '96vw' }"
     @update:visible="emit('update:visible', $event)"
   >
-    <div class="space-y-4">
+    <div class="employee-import-dialog">
       <div
         v-if="errorMessage"
         class="ot-inline-error"
       >
-        <div class="flex items-start gap-3">
-          <i class="pi pi-exclamation-triangle mt-0.5" />
+        <div class="employee-import-message">
+          <i class="pi pi-exclamation-triangle employee-import-message__icon" />
 
-          <div class="min-w-0">
-            <div class="font-semibold">
+          <div class="min-w-0 flex-1">
+            <div class="employee-import-message__title">
               {{ errorTitle || t('org.employee.importFailed') }}
             </div>
 
-            <div class="mt-1 whitespace-pre-line leading-6">
+            <div class="employee-import-message__text">
               {{ errorMessage }}
             </div>
+
+            <div
+              v-if="hasImportErrors"
+              class="employee-import-error-count"
+            >
+              {{ t('org.employee.importErrorCount', { count: importErrorCount }) }}
+            </div>
           </div>
+        </div>
+      </div>
+
+      <div
+        v-if="hasImportErrors"
+        class="employee-import-errors"
+      >
+        <div class="employee-import-errors__header">
+          <div>
+            <div class="employee-import-errors__title">
+              {{ t('org.employee.importErrorListTitle') }}
+            </div>
+
+            <div class="employee-import-errors__subtitle">
+              {{ t('org.employee.importAllOrNothingNote') }}
+            </div>
+          </div>
+        </div>
+
+        <div class="employee-import-errors__table-wrap">
+          <table class="employee-import-errors__table">
+            <thead>
+              <tr>
+                <th>{{ t('org.employee.importRow') }}</th>
+                <th>{{ t('org.employee.importField') }}</th>
+                <th>{{ t('org.employee.importValue') }}</th>
+                <th>{{ t('org.employee.importReason') }}</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              <tr
+                v-for="item in errorRows"
+                :key="item.id"
+              >
+                <td>
+                  <span class="employee-import-row-badge">
+                    {{ item.rowNo || '-' }}
+                  </span>
+                </td>
+
+                <td>{{ item.field || '-' }}</td>
+
+                <td>
+                  <span class="employee-import-value">
+                    {{ item.value || '-' }}
+                  </span>
+                </td>
+
+                <td>{{ item.reason || '-' }}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
 
@@ -271,8 +375,8 @@ async function handleImport() {
         v-if="successMessage"
         class="ot-inline-info"
       >
-        <div class="flex items-start gap-3">
-          <i class="pi pi-check-circle mt-0.5" />
+        <div class="employee-import-message">
+          <i class="pi pi-check-circle employee-import-message__icon" />
 
           <div class="min-w-0">
             {{ successMessage }}
@@ -293,6 +397,11 @@ async function handleImport() {
           <div>5. {{ t('org.employee.importGuideStep5') }}</div>
         </div>
 
+        <div class="employee-import-note">
+          <i class="pi pi-shield" />
+          <span>{{ t('org.employee.importAllOrNothingNote') }}</span>
+        </div>
+
         <div class="mt-4">
           <Button
             :label="t('org.employee.downloadSample')"
@@ -306,7 +415,7 @@ async function handleImport() {
         </div>
       </div>
 
-      <div class="rounded-2xl border border-dashed border-[color:var(--ot-border)] px-4 py-4">
+      <div class="employee-import-file-box">
         <input
           ref="fileInputRef"
           type="file"
@@ -315,7 +424,7 @@ async function handleImport() {
           @change="onFileChange"
         >
 
-        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div class="employee-import-file-row">
           <div class="min-w-0">
             <div class="text-sm font-semibold text-[color:var(--ot-text)]">
               {{ t('org.employee.excelFile') }}
@@ -338,11 +447,30 @@ async function handleImport() {
         </div>
       </div>
 
-      <ProgressBar
+      <div
         v-if="importing"
-        :value="uploadProgress"
-        style="height: 6px"
-      />
+        class="employee-import-progress"
+      >
+        <ProgressBar
+          v-if="!processing"
+          :value="uploadProgress"
+          style="height: 6px"
+        />
+
+        <ProgressBar
+          v-else
+          mode="indeterminate"
+          style="height: 6px"
+        />
+
+        <div class="employee-import-progress__text">
+          {{
+            processing
+              ? t('org.employee.importProcessing')
+              : t('org.employee.importUploading', { percent: uploadProgress })
+          }}
+        </div>
+      </div>
     </div>
 
     <template #footer>
@@ -367,3 +495,201 @@ async function handleImport() {
     </template>
   </Dialog>
 </template>
+
+<style scoped>
+.employee-import-dialog {
+  display: grid;
+  gap: 1rem;
+}
+
+.employee-import-message {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.employee-import-message__icon {
+  margin-top: 0.16rem;
+  flex: 0 0 auto;
+}
+
+.employee-import-message__title {
+  font-weight: 750;
+}
+
+.employee-import-message__text {
+  margin-top: 0.28rem;
+  white-space: pre-line;
+  line-height: 1.55;
+}
+
+.employee-import-error-count {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 0.55rem;
+  border-radius: 999px;
+  background: rgba(220, 38, 38, 0.1);
+  padding: 0.22rem 0.6rem;
+  color: rgb(185, 28, 28);
+  font-size: 0.75rem;
+  font-weight: 750;
+}
+
+.employee-import-errors {
+  overflow: hidden;
+  border: 1px solid rgba(220, 38, 38, 0.18);
+  border-radius: 1rem;
+  background: rgba(254, 242, 242, 0.72);
+}
+
+.employee-import-errors__header {
+  border-bottom: 1px solid rgba(220, 38, 38, 0.15);
+  padding: 0.8rem 0.9rem;
+}
+
+.employee-import-errors__title {
+  color: rgb(127, 29, 29);
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.employee-import-errors__subtitle {
+  margin-top: 0.18rem;
+  color: rgb(153, 27, 27);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.employee-import-errors__table-wrap {
+  max-height: 20rem;
+  overflow: auto;
+}
+
+.employee-import-errors__table {
+  width: 100%;
+  min-width: 48rem;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+
+.employee-import-errors__table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: rgb(254, 226, 226);
+  color: rgb(127, 29, 29);
+  font-weight: 800;
+  text-align: left;
+}
+
+.employee-import-errors__table th,
+.employee-import-errors__table td {
+  border-bottom: 1px solid rgba(220, 38, 38, 0.12);
+  padding: 0.55rem 0.65rem;
+  vertical-align: top;
+}
+
+.employee-import-errors__table td {
+  color: var(--ot-text);
+  line-height: 1.45;
+}
+
+.employee-import-row-badge {
+  display: inline-flex;
+  min-width: 2.1rem;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(220, 38, 38, 0.1);
+  padding: 0.12rem 0.45rem;
+  color: rgb(185, 28, 28);
+  font-weight: 800;
+}
+
+.employee-import-value {
+  display: inline-block;
+  max-width: 14rem;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.employee-import-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.85rem;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.08);
+  padding: 0.38rem 0.7rem;
+  color: rgb(37, 99, 235);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.employee-import-file-box {
+  border: 1px dashed var(--ot-border);
+  border-radius: 1rem;
+  padding: 1rem;
+}
+
+.employee-import-file-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.employee-import-progress {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.employee-import-progress__text {
+  color: var(--ot-text-muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+:global(.dark) .employee-import-error-count {
+  background: rgba(248, 113, 113, 0.14);
+  color: rgb(252, 165, 165);
+}
+
+:global(.dark) .employee-import-errors {
+  border-color: rgba(248, 113, 113, 0.26);
+  background: rgba(127, 29, 29, 0.12);
+}
+
+:global(.dark) .employee-import-errors__header {
+  border-bottom-color: rgba(248, 113, 113, 0.22);
+}
+
+:global(.dark) .employee-import-errors__title {
+  color: rgb(252, 165, 165);
+}
+
+:global(.dark) .employee-import-errors__subtitle {
+  color: rgb(254, 202, 202);
+}
+
+:global(.dark) .employee-import-errors__table th {
+  background: rgb(69, 10, 10);
+  color: rgb(254, 202, 202);
+}
+
+:global(.dark) .employee-import-row-badge {
+  background: rgba(248, 113, 113, 0.16);
+  color: rgb(252, 165, 165);
+}
+
+:global(.dark) .employee-import-note {
+  background: rgba(96, 165, 250, 0.14);
+  color: rgb(147, 197, 253);
+}
+
+@media (min-width: 640px) {
+  .employee-import-file-row {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+}
+</style>

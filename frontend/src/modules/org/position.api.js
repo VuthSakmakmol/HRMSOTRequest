@@ -3,6 +3,10 @@
 import api from '@/shared/services/api'
 import { toFileFormData } from '@/shared/utils/formData'
 
+const IMPORT_TIMEOUT_MS = 120000
+const EXPORT_TIMEOUT_MS = 120000
+const SAMPLE_TIMEOUT_MS = 60000
+
 function cleanId(id) {
   return encodeURIComponent(String(id ?? '').trim())
 }
@@ -31,12 +35,14 @@ export function exportPositionsExcel(params = {}) {
   return api.get('/org/positions/export', {
     params,
     responseType: 'blob',
+    timeout: EXPORT_TIMEOUT_MS,
   })
 }
 
 export function downloadPositionImportSample() {
   return api.get('/org/positions/import-sample', {
     responseType: 'blob',
+    timeout: SAMPLE_TIMEOUT_MS,
   })
 }
 
@@ -47,6 +53,7 @@ export function importPositionsExcel(input, options = {}) {
     headers: {
       'Content-Type': 'multipart/form-data',
     },
+    timeout: IMPORT_TIMEOUT_MS,
     onUploadProgress,
   })
 }

@@ -11,7 +11,6 @@ const ProductionLine = require('../models/ProductionLine')
 const Shift = require('../../shift/models/Shift')
 const Account = require('../../auth/models/Account')
 const employeeScopeService = require('./employeeScope.service')
-const { importEmployeeRowSchema } = require('../validators/employee.validation')
 
 function s(value) {
   return String(value ?? '').trim()
@@ -139,9 +138,7 @@ function formatDateDDMMYYYY(value) {
 function parseExcelSerialDate(value) {
   const serial = Number(value)
 
-  if (!Number.isFinite(serial) || serial <= 0) {
-    return null
-  }
+  if (!Number.isFinite(serial) || serial <= 0) return null
 
   const excelEpoch = new Date(Date.UTC(1899, 11, 30))
   const date = new Date(excelEpoch.getTime() + serial * 24 * 60 * 60 * 1000)
@@ -150,17 +147,13 @@ function parseExcelSerialDate(value) {
   const month = date.getUTCMonth() + 1
   const day = date.getUTCDate()
 
-  if (!isValidDateParts(year, month, day)) {
-    return null
-  }
+  if (!isValidDateParts(year, month, day)) return null
 
   return new Date(Date.UTC(year, month - 1, day))
 }
 
 function parseImportDate(value) {
-  if (value === null || value === undefined || value === '') {
-    return null
-  }
+  if (value === null || value === undefined || value === '') return null
 
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
     return value
@@ -472,7 +465,6 @@ function buildEmployeeListFilter(
   scopeFilter = {},
 ) {
   const filter = { ...scopeFilter }
-
   const keyword = s(search)
 
   if (keyword) {
@@ -555,6 +547,23 @@ function normalizePhoneForPassword(phone = '') {
 
 function buildDefaultAccountPassword(employeeCode = '', phone = '') {
   return `${upper(employeeCode)}${normalizePhoneForPassword(phone)}`
+}
+
+function buildImportAccountLoginId(employeeCode = '') {
+  return normalizeAccountLoginId(employeeCode)
+}
+
+function buildImportAccountPassword(row = {}) {
+  const cleanEmployeeCode = upper(row.employeeCode)
+  const cleanPhone = normalizePhoneForPassword(row.phone)
+
+  return `${cleanEmployeeCode}${cleanPhone}`
+}
+
+function isPasswordLengthValid(password = '') {
+  const text = s(password)
+
+  return text.length >= 6 && text.length <= 100
 }
 
 async function ensureAccountLoginIdAvailable(loginId) {
@@ -935,9 +944,7 @@ async function findAutoManagerIdsByPositionAndLine({
   position,
   lineId,
 }) {
-  if (!position?.reportsToPositionId) {
-    return []
-  }
+  if (!position?.reportsToPositionId) return []
 
   const hierarchyScope = getPositionHierarchyScope(position)
 
@@ -947,9 +954,7 @@ async function findAutoManagerIdsByPositionAndLine({
   }
 
   if (hierarchyScope === 'SAME_LINE') {
-    if (!lineId || !departmentId) {
-      return []
-    }
+    if (!lineId || !departmentId) return []
 
     filter.departmentId = departmentId
     filter.lineId = lineId
@@ -1321,11 +1326,17 @@ async function downloadImportSample() {
       'Optional. Use employee code of the manager/supervisor. Do not use Mongo ID.',
     ],
     ['OT Workflow Role', 'Use NONE, APPROVER, or ACKNOWLEDGE. Blank = NONE.'],
-    ['Phone', 'Optional.'],
+    [
+      'Phone',
+      'Required when import needs to create a login account. Default password = Employee Code + Phone.',
+    ],
     ['Email', 'Optional. Must be unique if provided.'],
     ['Join Date', 'Optional. Use DD/MM/YYYY format.'],
     ['Status', 'Use Active or Inactive. Blank = Active.'],
-    ['Account', 'Employee import does not create login accounts. Create accounts from Account module only.'],
+    [
+      'Account',
+      'Employee import automatically creates a login account if the employee has no account. Login ID = employee code lowercase. Default password = Employee Code + Phone. Existing accounts are not reset.',
+    ],
   ]
 
   const workbook = XLSX.utils.book_new()
@@ -1341,36 +1352,913 @@ async function downloadImportSample() {
   }
 }
 
-function normalizeImportRow(raw = {}) {
+function normalizeImportOTWorkflowRole(value) {
+  const raw = s(value)
+
+  if (!raw) return 'NONE'
+
+  const role = upper(raw)
+
+  if (['NONE', 'APPROVER', 'ACKNOWLEDGE'].includes(role)) return role
+
+  return 'INVALID_ROLE'
+}
+
+function isValidImportEmail(value) {
+  const email = s(value).toLowerCase()
+
+  if (!email) return true
+
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+}
+
+function makeImportError({
+  rowNo,
+  field,
+  value = '',
+  code,
+  messageKey,
+  reason,
+  params = {},
+}) {
+  return {
+    rowNo,
+    row: rowNo,
+    field,
+    value: s(value),
+    code,
+    messageKey,
+    reason,
+    message: reason,
+    params: {
+      rowNo,
+      field,
+      value: s(value),
+      ...params,
+    },
+  }
+}
+
+function addImportError(errors, error) {
+  errors.push(makeImportError(error))
+}
+
+function throwImportValidationError(errors) {
+  if (!errors.length) return
+
+  throw appError({
+    statusCode: 400,
+    code: 'EMPLOYEE_IMPORT_VALIDATION_FAILED',
+    messageKey: 'org.employee.import.error.validationFailed',
+    message: `Import failed. ${errors.length} problem${errors.length > 1 ? 's' : ''} found. Please fix all errors and try again.`,
+    params: {
+      errorCount: errors.length,
+      errors,
+    },
+  })
+}
+
+function normalizeImportRow(raw = {}, index = 0) {
+  const rowNo = index + 2
+
+  const rawEmployeeCode = getImportField(raw, [
+    'Employee Code',
+    'employeeCode',
+    'EmployeeCode',
+  ])
+  const rawDisplayName = getImportField(raw, ['Display Name', 'displayName', 'Name'])
+  const rawDepartmentCode = getImportField(raw, [
+    'Department Code',
+    'departmentCode',
+  ])
+  const rawPositionCode = getImportField(raw, ['Position Code', 'positionCode'])
+  const rawLineCode = getImportField(raw, ['Line Code', 'lineCode'])
+  const rawShiftCode = getImportField(raw, ['Shift Code', 'shiftCode'])
+  const rawReportsToEmployeeCode = getImportField(raw, [
+    'Reports To Employee Code',
+    'reportsToEmployeeCode',
+    'ReportsToEmployeeCode',
+  ])
+  const rawOTWorkflowRole = getImportField(raw, [
+    'OT Workflow Role',
+    'otWorkflowRole',
+  ])
+  const rawPhone = getImportField(raw, ['Phone', 'phone'])
+  const rawEmail = getImportField(raw, ['Email', 'email'])
   const rawJoinDate = getImportField(raw, ['joinDate', 'Join Date', 'JOIN DATE'])
   const rawStatus = getImportField(raw, ['isActive', 'Status', 'STATUS'])
+
   const joinDate = parseImportDate(rawJoinDate)
 
-  return {
-    employeeCode: upper(
-      getImportField(raw, ['Employee Code', 'employeeCode', 'EmployeeCode']),
-    ),
-    displayName: s(getImportField(raw, ['Display Name', 'displayName', 'Name'])),
-    departmentCode: upper(getImportField(raw, ['Department Code', 'departmentCode'])),
-    positionCode: upper(getImportField(raw, ['Position Code', 'positionCode'])),
-    lineCode: upper(getImportField(raw, ['Line Code', 'lineCode'])),
-    shiftCode: upper(getImportField(raw, ['Shift Code', 'shiftCode'])),
-    reportsToEmployeeCode: upper(
-      getImportField(raw, [
-        'Reports To Employee Code',
-        'reportsToEmployeeCode',
-        'ReportsToEmployeeCode',
-      ]),
-    ),
-    otWorkflowRole: normalizeOTWorkflowRole(
-      getImportField(raw, ['OT Workflow Role', 'otWorkflowRole']),
-    ),
-    phone: s(getImportField(raw, ['Phone', 'phone'])),
-    email: s(getImportField(raw, ['Email', 'email'])).toLowerCase(),
-    joinDate,
+  const isBlankRow = [
+    rawEmployeeCode,
+    rawDisplayName,
+    rawDepartmentCode,
+    rawPositionCode,
+    rawLineCode,
+    rawShiftCode,
+    rawReportsToEmployeeCode,
+    rawOTWorkflowRole,
+    rawPhone,
+    rawEmail,
     rawJoinDate,
-    isActive: normalizeImportStatus(rawStatus),
     rawStatus,
+  ].every((value) => !s(value))
+
+  if (isBlankRow) return null
+
+  return {
+    rowNo,
+
+    rawEmployeeCode,
+    rawDisplayName,
+    rawDepartmentCode,
+    rawPositionCode,
+    rawLineCode,
+    rawShiftCode,
+    rawReportsToEmployeeCode,
+    rawOTWorkflowRole,
+    rawPhone,
+    rawEmail,
+    rawJoinDate,
+    rawStatus,
+
+    employeeCode: upper(rawEmployeeCode),
+    displayName: s(rawDisplayName),
+    departmentCode: upper(rawDepartmentCode),
+    positionCode: upper(rawPositionCode),
+    lineCode: upper(rawLineCode),
+    shiftCode: upper(rawShiftCode),
+    reportsToEmployeeCode: upper(rawReportsToEmployeeCode),
+    otWorkflowRole: normalizeImportOTWorkflowRole(rawOTWorkflowRole),
+    phone: s(rawPhone),
+    email: s(rawEmail).toLowerCase(),
+    joinDate,
+    isActive: normalizeImportStatus(rawStatus),
+  }
+}
+
+function validateBasicEmployeeImportRows(normalizedRows = []) {
+  const errors = []
+  const seenEmployeeCodes = new Map()
+  const seenEmails = new Map()
+  const candidateRows = []
+
+  for (const row of normalizedRows) {
+    let hasRowError = false
+
+    if (!row.employeeCode) {
+      hasRowError = true
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Employee Code',
+        value: row.rawEmployeeCode,
+        code: 'EMPLOYEE_IMPORT_EMPLOYEE_CODE_REQUIRED',
+        messageKey: 'org.employee.import.error.employeeCodeRequired',
+        reason: `Row ${row.rowNo}: Employee Code is required.`,
+      })
+    } else if (row.employeeCode.length > 50) {
+      hasRowError = true
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Employee Code',
+        value: row.rawEmployeeCode,
+        code: 'EMPLOYEE_IMPORT_EMPLOYEE_CODE_TOO_LONG',
+        messageKey: 'org.employee.import.error.employeeCodeTooLong',
+        reason: `Row ${row.rowNo}: Employee Code must not be longer than 50 characters.`,
+      })
+    }
+
+    if (!row.displayName) {
+      hasRowError = true
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Display Name',
+        value: row.rawDisplayName,
+        code: 'EMPLOYEE_IMPORT_DISPLAY_NAME_REQUIRED',
+        messageKey: 'org.employee.import.error.displayNameRequired',
+        reason: `Row ${row.rowNo}: Display Name is required.`,
+      })
+    } else if (row.displayName.length > 150) {
+      hasRowError = true
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Display Name',
+        value: row.rawDisplayName,
+        code: 'EMPLOYEE_IMPORT_DISPLAY_NAME_TOO_LONG',
+        messageKey: 'org.employee.import.error.displayNameTooLong',
+        reason: `Row ${row.rowNo}: Display Name must not be longer than 150 characters.`,
+      })
+    }
+
+    if (!row.departmentCode) {
+      hasRowError = true
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Department Code',
+        value: row.rawDepartmentCode,
+        code: 'EMPLOYEE_IMPORT_DEPARTMENT_CODE_REQUIRED',
+        messageKey: 'org.employee.import.error.departmentCodeRequired',
+        reason: `Row ${row.rowNo}: Department Code is required.`,
+      })
+    } else if (row.departmentCode.length > 50) {
+      hasRowError = true
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Department Code',
+        value: row.rawDepartmentCode,
+        code: 'EMPLOYEE_IMPORT_DEPARTMENT_CODE_TOO_LONG',
+        messageKey: 'org.employee.import.error.departmentCodeTooLong',
+        reason: `Row ${row.rowNo}: Department Code must not be longer than 50 characters.`,
+      })
+    }
+
+    if (!row.positionCode) {
+      hasRowError = true
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Position Code',
+        value: row.rawPositionCode,
+        code: 'EMPLOYEE_IMPORT_POSITION_CODE_REQUIRED',
+        messageKey: 'org.employee.import.error.positionCodeRequired',
+        reason: `Row ${row.rowNo}: Position Code is required.`,
+      })
+    } else if (row.positionCode.length > 50) {
+      hasRowError = true
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Position Code',
+        value: row.rawPositionCode,
+        code: 'EMPLOYEE_IMPORT_POSITION_CODE_TOO_LONG',
+        messageKey: 'org.employee.import.error.positionCodeTooLong',
+        reason: `Row ${row.rowNo}: Position Code must not be longer than 50 characters.`,
+      })
+    }
+
+    if (row.lineCode.length > 50) {
+      hasRowError = true
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Line Code',
+        value: row.rawLineCode,
+        code: 'EMPLOYEE_IMPORT_LINE_CODE_TOO_LONG',
+        messageKey: 'org.employee.import.error.lineCodeTooLong',
+        reason: `Row ${row.rowNo}: Line Code must not be longer than 50 characters.`,
+      })
+    }
+
+    if (!row.shiftCode) {
+      hasRowError = true
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Shift Code',
+        value: row.rawShiftCode,
+        code: 'EMPLOYEE_IMPORT_SHIFT_CODE_REQUIRED',
+        messageKey: 'org.employee.import.error.shiftCodeRequired',
+        reason: `Row ${row.rowNo}: Shift Code is required.`,
+      })
+    } else if (row.shiftCode.length > 50) {
+      hasRowError = true
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Shift Code',
+        value: row.rawShiftCode,
+        code: 'EMPLOYEE_IMPORT_SHIFT_CODE_TOO_LONG',
+        messageKey: 'org.employee.import.error.shiftCodeTooLong',
+        reason: `Row ${row.rowNo}: Shift Code must not be longer than 50 characters.`,
+      })
+    }
+
+    if (row.reportsToEmployeeCode.length > 50) {
+      hasRowError = true
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Reports To Employee Code',
+        value: row.rawReportsToEmployeeCode,
+        code: 'EMPLOYEE_IMPORT_MANAGER_CODE_TOO_LONG',
+        messageKey: 'org.employee.import.error.managerCodeTooLong',
+        reason: `Row ${row.rowNo}: Reports To Employee Code must not be longer than 50 characters.`,
+      })
+    }
+
+    if (row.reportsToEmployeeCode && row.reportsToEmployeeCode === row.employeeCode) {
+      hasRowError = true
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Reports To Employee Code',
+        value: row.rawReportsToEmployeeCode,
+        code: 'EMPLOYEE_IMPORT_REPORT_TO_SELF',
+        messageKey: 'org.employee.import.error.reportToSelf',
+        reason: `Row ${row.rowNo}: Employee cannot report to self.`,
+      })
+    }
+
+    if (row.otWorkflowRole === 'INVALID_ROLE') {
+      hasRowError = true
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'OT Workflow Role',
+        value: row.rawOTWorkflowRole,
+        code: 'EMPLOYEE_IMPORT_INVALID_OT_WORKFLOW_ROLE',
+        messageKey: 'org.employee.import.error.invalidOTWorkflowRole',
+        reason: `Row ${row.rowNo}: OT Workflow Role must be NONE, APPROVER, or ACKNOWLEDGE.`,
+      })
+    }
+
+    if (row.phone.length > 30) {
+      hasRowError = true
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Phone',
+        value: row.rawPhone,
+        code: 'EMPLOYEE_IMPORT_PHONE_TOO_LONG',
+        messageKey: 'org.employee.import.error.phoneTooLong',
+        reason: `Row ${row.rowNo}: Phone must not be longer than 30 characters.`,
+      })
+    }
+
+    if (row.email.length > 150) {
+      hasRowError = true
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Email',
+        value: row.rawEmail,
+        code: 'EMPLOYEE_IMPORT_EMAIL_TOO_LONG',
+        messageKey: 'org.employee.import.error.emailTooLong',
+        reason: `Row ${row.rowNo}: Email must not be longer than 150 characters.`,
+      })
+    } else if (row.email && !isValidImportEmail(row.email)) {
+      hasRowError = true
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Email',
+        value: row.rawEmail,
+        code: 'EMPLOYEE_IMPORT_EMAIL_INVALID',
+        messageKey: 'org.employee.import.error.emailInvalid',
+        reason: `Row ${row.rowNo}: Email format is invalid.`,
+      })
+    }
+
+    if (row.rawJoinDate && row.joinDate === 'INVALID_DATE') {
+      hasRowError = true
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Join Date',
+        value: row.rawJoinDate,
+        code: 'EMPLOYEE_IMPORT_INVALID_JOIN_DATE',
+        messageKey: 'org.employee.import.error.invalidJoinDate',
+        reason: `Row ${row.rowNo}: Join Date must use DD/MM/YYYY or YYYY-MM-DD format.`,
+      })
+    }
+
+    if (row.rawStatus && row.isActive === 'INVALID_BOOLEAN') {
+      hasRowError = true
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Status',
+        value: row.rawStatus,
+        code: 'EMPLOYEE_IMPORT_INVALID_STATUS',
+        messageKey: 'org.employee.import.error.invalidStatus',
+        reason: `Row ${row.rowNo}: Status must be Active or Inactive.`,
+      })
+    }
+
+    if (row.employeeCode) {
+      const firstRowNo = seenEmployeeCodes.get(row.employeeCode)
+
+      if (firstRowNo) {
+        hasRowError = true
+        addImportError(errors, {
+          rowNo: row.rowNo,
+          field: 'Employee Code',
+          value: row.rawEmployeeCode,
+          code: 'EMPLOYEE_IMPORT_DUPLICATE_EMPLOYEE_CODE',
+          messageKey: 'org.employee.import.error.duplicateEmployeeCode',
+          reason: `Row ${row.rowNo}: Duplicate Employee Code "${row.employeeCode}" in Excel file. First found at row ${firstRowNo}.`,
+          params: {
+            employeeCode: row.employeeCode,
+            firstRowNo,
+          },
+        })
+      } else {
+        seenEmployeeCodes.set(row.employeeCode, row.rowNo)
+      }
+    }
+
+    if (row.email) {
+      const firstRowNo = seenEmails.get(row.email)
+
+      if (firstRowNo) {
+        hasRowError = true
+        addImportError(errors, {
+          rowNo: row.rowNo,
+          field: 'Email',
+          value: row.rawEmail,
+          code: 'EMPLOYEE_IMPORT_DUPLICATE_EMAIL',
+          messageKey: 'org.employee.import.error.duplicateEmail',
+          reason: `Row ${row.rowNo}: Duplicate Email "${row.email}" in Excel file. First found at row ${firstRowNo}.`,
+          params: {
+            email: row.email,
+            firstRowNo,
+          },
+        })
+      } else {
+        seenEmails.set(row.email, row.rowNo)
+      }
+    }
+
+    if (!hasRowError) {
+      candidateRows.push(row)
+    }
+  }
+
+  return {
+    errors,
+    candidateRows,
+  }
+}
+
+async function validateEmployeeImportRows(normalizedRows = []) {
+  const { errors, candidateRows } = validateBasicEmployeeImportRows(normalizedRows)
+
+  const employeeCodes = [
+    ...new Set(
+      candidateRows
+        .flatMap((row) => [row.employeeCode, row.reportsToEmployeeCode])
+        .map(upper)
+        .filter(Boolean),
+    ),
+  ]
+
+  const candidateEmployeeCodeSet = new Set(
+    candidateRows.map((row) => row.employeeCode).filter(Boolean),
+  )
+
+  const emails = [...new Set(candidateRows.map((row) => row.email).filter(Boolean))]
+  const departmentCodes = [
+    ...new Set(candidateRows.map((row) => row.departmentCode).filter(Boolean)),
+  ]
+  const positionCodes = [
+    ...new Set(candidateRows.map((row) => row.positionCode).filter(Boolean)),
+  ]
+  const lineCodes = [
+    ...new Set(candidateRows.map((row) => row.lineCode).filter(Boolean)),
+  ]
+  const shiftCodes = [
+    ...new Set(candidateRows.map((row) => row.shiftCode).filter(Boolean)),
+  ]
+  const importLoginIds = [
+    ...new Set(
+      candidateRows
+        .map((row) => buildImportAccountLoginId(row.employeeCode))
+        .filter(Boolean),
+    ),
+  ]
+
+  const [
+    departments,
+    positions,
+    lines,
+    shifts,
+    existingEmployees,
+    existingEmailOwners,
+  ] = await Promise.all([
+    departmentCodes.length
+      ? Department.find({ code: { $in: departmentCodes } }, '_id code name isActive').lean()
+      : [],
+
+    positionCodes.length
+      ? Position.find(
+          { code: { $in: positionCodes } },
+          '_id code name departmentId reportsToPositionId reportsToPositionCode reportsToPositionName hierarchyScope managerScope isActive',
+        ).lean()
+      : [],
+
+    lineCodes.length
+      ? ProductionLine.find(
+          { code: { $in: lineCodes } },
+          '_id code name departmentId positionIds isActive',
+        ).lean()
+      : [],
+
+    shiftCodes.length
+      ? Shift.find(
+          {
+            code: { $in: shiftCodes },
+            isActive: true,
+          },
+          '_id code name type startTime endTime breakStartTime breakEndTime crossMidnight isActive',
+        ).lean()
+      : [],
+
+    employeeCodes.length
+      ? Employee.find(
+          { employeeCode: { $in: employeeCodes } },
+          '_id employeeCode displayName email departmentId positionId lineId shiftId reportsToEmployeeId lineManagerIds otWorkflowRole isActive',
+        ).lean()
+      : [],
+
+    emails.length
+      ? Employee.find(
+          { email: { $in: emails } },
+          '_id employeeCode email',
+        ).lean()
+      : [],
+  ])
+
+  const existingEmployeeIds = existingEmployees.map((item) => item._id).filter(Boolean)
+  const accountOr = []
+
+  if (importLoginIds.length) {
+    accountOr.push({
+      loginId: {
+        $in: importLoginIds,
+      },
+    })
+  }
+
+  if (existingEmployeeIds.length) {
+    accountOr.push({
+      employeeId: {
+        $in: existingEmployeeIds,
+      },
+    })
+  }
+
+  const existingAccounts = accountOr.length
+    ? await Account.find(
+        {
+          $or: accountOr,
+        },
+        '_id loginId employeeId isActive',
+      ).lean()
+    : []
+
+  const departmentByCode = new Map(
+    departments.map((item) => [upper(item.code), item]),
+  )
+  const positionByCode = new Map(positions.map((item) => [upper(item.code), item]))
+  const lineByCode = new Map(lines.map((item) => [upper(item.code), item]))
+  const shiftByCode = new Map(shifts.map((item) => [upper(item.code), item]))
+  const employeeByCode = new Map(
+    existingEmployees.map((item) => [upper(item.employeeCode), item]),
+  )
+  const emailOwnerByEmail = new Map(
+    existingEmailOwners.map((item) => [s(item.email).toLowerCase(), item]),
+  )
+  const accountByEmployeeId = new Map(
+    existingAccounts
+      .filter((item) => item.employeeId)
+      .map((item) => [id(item.employeeId), item]),
+  )
+  const accountByLoginId = new Map(
+    existingAccounts
+      .filter((item) => item.loginId)
+      .map((item) => [s(item.loginId).toLowerCase(), item]),
+  )
+
+  const validRows = []
+
+  for (const row of candidateRows) {
+    let hasRowError = false
+    const existing = employeeByCode.get(row.employeeCode) || null
+
+    const department = departmentByCode.get(row.departmentCode)
+
+    if (!department) {
+      hasRowError = true
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Department Code',
+        value: row.rawDepartmentCode,
+        code: 'EMPLOYEE_IMPORT_DEPARTMENT_NOT_FOUND',
+        messageKey: 'org.employee.import.error.departmentNotFound',
+        reason: `Row ${row.rowNo}: Department Code "${row.departmentCode}" was not found.`,
+        params: {
+          departmentCode: row.departmentCode,
+        },
+      })
+    }
+
+    const position = positionByCode.get(row.positionCode)
+
+    if (!position) {
+      hasRowError = true
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Position Code',
+        value: row.rawPositionCode,
+        code: 'EMPLOYEE_IMPORT_POSITION_NOT_FOUND',
+        messageKey: 'org.employee.import.error.positionNotFound',
+        reason: `Row ${row.rowNo}: Position Code "${row.positionCode}" was not found.`,
+        params: {
+          positionCode: row.positionCode,
+        },
+      })
+    }
+
+    if (department && position && !sameId(position.departmentId, department._id)) {
+      hasRowError = true
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Position Code',
+        value: row.rawPositionCode,
+        code: 'EMPLOYEE_IMPORT_POSITION_DEPARTMENT_MISMATCH',
+        messageKey: 'org.employee.import.error.positionDepartmentMismatch',
+        reason: `Row ${row.rowNo}: Position Code "${row.positionCode}" does not belong to Department Code "${row.departmentCode}".`,
+        params: {
+          departmentCode: row.departmentCode,
+          positionCode: row.positionCode,
+        },
+      })
+    }
+
+    const line = row.lineCode ? lineByCode.get(row.lineCode) : null
+
+    if (row.lineCode && !line) {
+      hasRowError = true
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Line Code',
+        value: row.rawLineCode,
+        code: 'EMPLOYEE_IMPORT_LINE_NOT_FOUND',
+        messageKey: 'org.employee.import.error.lineNotFound',
+        reason: `Row ${row.rowNo}: Line Code "${row.lineCode}" was not found.`,
+        params: {
+          lineCode: row.lineCode,
+        },
+      })
+    }
+
+    if (line && line.isActive === false) {
+      hasRowError = true
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Line Code',
+        value: row.rawLineCode,
+        code: 'EMPLOYEE_IMPORT_LINE_INACTIVE',
+        messageKey: 'org.employee.import.error.lineInactive',
+        reason: `Row ${row.rowNo}: Line Code "${row.lineCode}" is inactive.`,
+        params: {
+          lineCode: row.lineCode,
+        },
+      })
+    }
+
+    if (department && line && !sameId(line.departmentId, department._id)) {
+      hasRowError = true
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Line Code',
+        value: row.rawLineCode,
+        code: 'EMPLOYEE_IMPORT_LINE_DEPARTMENT_MISMATCH',
+        messageKey: 'org.employee.import.error.lineDepartmentMismatch',
+        reason: `Row ${row.rowNo}: Line Code "${row.lineCode}" does not belong to Department Code "${row.departmentCode}".`,
+        params: {
+          departmentCode: row.departmentCode,
+          lineCode: row.lineCode,
+        },
+      })
+    }
+
+    if (line && position) {
+      const allowedPositionIds = uniqueIds(line.positionIds || [])
+
+      if (
+        allowedPositionIds.length &&
+        !allowedPositionIds.includes(id(position._id))
+      ) {
+        hasRowError = true
+        addImportError(errors, {
+          rowNo: row.rowNo,
+          field: 'Line Code',
+          value: row.rawLineCode,
+          code: 'EMPLOYEE_IMPORT_LINE_POSITION_NOT_ALLOWED',
+          messageKey: 'org.employee.import.error.linePositionNotAllowed',
+          reason: `Row ${row.rowNo}: Line Code "${row.lineCode}" does not allow Position Code "${row.positionCode}".`,
+          params: {
+            lineCode: row.lineCode,
+            positionCode: row.positionCode,
+          },
+        })
+      }
+    }
+
+    const shift = shiftByCode.get(row.shiftCode)
+
+    if (!shift) {
+      hasRowError = true
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Shift Code',
+        value: row.rawShiftCode,
+        code: 'EMPLOYEE_IMPORT_SHIFT_NOT_FOUND',
+        messageKey: 'org.employee.import.error.shiftNotFound',
+        reason: `Row ${row.rowNo}: Shift Code "${row.shiftCode}" was not found or is inactive.`,
+        params: {
+          shiftCode: row.shiftCode,
+        },
+      })
+    }
+
+    if (row.reportsToEmployeeCode) {
+      const managerExists =
+        employeeByCode.has(row.reportsToEmployeeCode) ||
+        candidateEmployeeCodeSet.has(row.reportsToEmployeeCode)
+
+      if (!managerExists) {
+        hasRowError = true
+        addImportError(errors, {
+          rowNo: row.rowNo,
+          field: 'Reports To Employee Code',
+          value: row.rawReportsToEmployeeCode,
+          code: 'EMPLOYEE_IMPORT_MANAGER_NOT_FOUND',
+          messageKey: 'org.employee.import.error.managerNotFound',
+          reason: `Row ${row.rowNo}: Reports To Employee Code "${row.reportsToEmployeeCode}" was not found in Employee master or this import file.`,
+          params: {
+            reportsToEmployeeCode: row.reportsToEmployeeCode,
+          },
+        })
+      }
+    }
+
+    if (row.email) {
+      const owner = emailOwnerByEmail.get(row.email)
+
+      if (owner && !sameId(owner._id, existing?._id)) {
+        hasRowError = true
+        addImportError(errors, {
+          rowNo: row.rowNo,
+          field: 'Email',
+          value: row.rawEmail,
+          code: 'EMPLOYEE_IMPORT_EMAIL_EXISTS',
+          messageKey: 'org.employee.import.error.emailExists',
+          reason: `Row ${row.rowNo}: Email "${row.email}" already belongs to Employee Code "${owner.employeeCode}".`,
+          params: {
+            email: row.email,
+            ownerEmployeeCode: owner.employeeCode,
+          },
+        })
+      }
+    }
+
+    const existingAccount = existing
+      ? accountByEmployeeId.get(id(existing._id))
+      : null
+
+    const shouldCreateAccount = !existingAccount
+    const accountLoginId = buildImportAccountLoginId(row.employeeCode)
+    const accountPassword = buildImportAccountPassword(row)
+    const cleanPhone = normalizePhoneForPassword(row.phone)
+
+    if (shouldCreateAccount) {
+      if (!cleanPhone) {
+        hasRowError = true
+        addImportError(errors, {
+          rowNo: row.rowNo,
+          field: 'Phone',
+          value: row.rawPhone,
+          code: 'EMPLOYEE_IMPORT_PHONE_REQUIRED_FOR_ACCOUNT',
+          messageKey: 'org.employee.import.error.phoneRequiredForAccount',
+          reason: `Row ${row.rowNo}: Phone is required because import will create a login account. Default password = Employee Code + Phone.`,
+          params: {
+            employeeCode: row.employeeCode,
+          },
+        })
+      }
+
+      if (!isPasswordLengthValid(accountPassword)) {
+        hasRowError = true
+        addImportError(errors, {
+          rowNo: row.rowNo,
+          field: 'Phone',
+          value: row.rawPhone,
+          code: 'EMPLOYEE_IMPORT_DEFAULT_PASSWORD_INVALID',
+          messageKey: 'org.employee.import.error.defaultPasswordInvalid',
+          reason: `Row ${row.rowNo}: Default password must be 6 to 100 characters. It is generated from Employee Code + Phone.`,
+          params: {
+            employeeCode: row.employeeCode,
+          },
+        })
+      }
+
+      const loginOwner = accountByLoginId.get(accountLoginId)
+
+      if (loginOwner) {
+        hasRowError = true
+        addImportError(errors, {
+          rowNo: row.rowNo,
+          field: 'Employee Code',
+          value: row.rawEmployeeCode,
+          code: 'EMPLOYEE_IMPORT_ACCOUNT_LOGIN_ID_EXISTS',
+          messageKey: 'org.employee.import.error.accountLoginIdExists',
+          reason: `Row ${row.rowNo}: Account Login ID "${accountLoginId}" already exists.`,
+          params: {
+            loginId: accountLoginId,
+          },
+        })
+      }
+    }
+
+    if (!hasRowError) {
+      validRows.push({
+        ...row,
+        existing,
+        department,
+        position,
+        line,
+        shift,
+        shouldCreateAccount,
+        accountLoginId,
+        accountPassword,
+      })
+    }
+  }
+
+  throwImportValidationError(errors)
+
+  return {
+    validRows,
+  }
+}
+
+function sortManagerCandidates(items = []) {
+  return [...items].sort((a, b) =>
+    `${a.employeeCode || ''} ${a.displayName || ''} ${a._id || ''}`.localeCompare(
+      `${b.employeeCode || ''} ${b.displayName || ''} ${b._id || ''}`,
+    ),
+  )
+}
+
+function resolveImportManagerIds({
+  row,
+  employeeDoc,
+  position,
+  department,
+  line,
+  allEmployees = [],
+  employeeByCode = new Map(),
+}) {
+  if (!employeeDoc) {
+    return {
+      primaryManagerId: null,
+      lineManagerIds: [],
+    }
+  }
+
+  const employeeId = id(employeeDoc._id)
+  const parentPositionId = id(position?.reportsToPositionId)
+  const hierarchyScope = getPositionHierarchyScope(position)
+
+  let autoManagers = []
+
+  if (parentPositionId) {
+    autoManagers = allEmployees.filter((item) => {
+      if (!item?.isActive) return false
+      if (sameId(item._id, employeeId)) return false
+      if (!sameId(item.positionId, parentPositionId)) return false
+
+      if (hierarchyScope === 'SAME_LINE') {
+        return sameId(item.departmentId, department?._id) && sameId(item.lineId, line?._id)
+      }
+
+      if (hierarchyScope === 'GLOBAL') {
+        return sameId(item.departmentId, department?._id)
+      }
+
+      if (hierarchyScope === 'CROSS_DEPARTMENT') {
+        return true
+      }
+
+      return false
+    })
+  }
+
+  const sortedAutoManagers = sortManagerCandidates(autoManagers)
+
+  if (sortedAutoManagers.length) {
+    const lineManagerIds = uniqueIds(sortedAutoManagers.map((item) => item._id))
+
+    return {
+      primaryManagerId: lineManagerIds[0] || null,
+      lineManagerIds,
+    }
+  }
+
+  if (row.reportsToEmployeeCode) {
+    const manualManager = employeeByCode.get(row.reportsToEmployeeCode)
+
+    if (manualManager && !sameId(manualManager._id, employeeId)) {
+      return {
+        primaryManagerId: manualManager._id,
+        lineManagerIds: [manualManager._id],
+      }
+    }
+  }
+
+  return {
+    primaryManagerId: null,
+    lineManagerIds: [],
   }
 }
 
@@ -1416,405 +2304,236 @@ async function importExcel(file, currentUser = null) {
     })
   }
 
-  const parsedRows = rawRows.map((raw, index) => {
-    const normalized = normalizeImportRow(raw)
-    const rowNo = index + 2
+  const normalizedRows = rawRows
+    .map((raw, index) => normalizeImportRow(raw, index))
+    .filter(Boolean)
 
-    if (normalized.rawJoinDate && normalized.joinDate === 'INVALID_DATE') {
-      throw appError({
-        statusCode: 400,
-        code: 'EMPLOYEE_IMPORT_INVALID_JOIN_DATE',
-        messageKey: 'org.employee.import.error.invalidJoinDate',
-        message: `Row ${rowNo}: Invalid Join Date`,
-        params: {
-          rowNo,
-        },
-      })
-    }
-
-    if (normalized.rawStatus && normalized.isActive === 'INVALID_BOOLEAN') {
-      throw appError({
-        statusCode: 400,
-        code: 'EMPLOYEE_IMPORT_INVALID_STATUS',
-        messageKey: 'org.employee.import.error.invalidStatus',
-        message: `Row ${rowNo}: Invalid Status`,
-        params: {
-          rowNo,
-        },
-      })
-    }
-
-    const result = importEmployeeRowSchema.safeParse(normalized)
-
-    if (!result.success) {
-      throw appError({
-        statusCode: 400,
-        code: 'EMPLOYEE_IMPORT_ROW_INVALID',
-        messageKey:
-          result.error.issues[0]?.message || 'org.employee.import.error.rowInvalid',
-        message: `Row ${rowNo}: ${
-          result.error.issues[0]?.message || 'Invalid data'
-        }`,
-        params: {
-          rowNo,
-        },
-      })
-    }
-
-    return {
-      ...result.data,
-      employeeCode: upper(result.data.employeeCode),
-      departmentCode: upper(result.data.departmentCode),
-      positionCode: upper(result.data.positionCode),
-      lineCode: upper(result.data.lineCode),
-      shiftCode: upper(result.data.shiftCode),
-      reportsToEmployeeCode: upper(result.data.reportsToEmployeeCode),
-      otWorkflowRole: normalizeOTWorkflowRole(result.data.otWorkflowRole),
-      email: s(result.data.email).toLowerCase(),
-      isActive:
-        typeof result.data.isActive === 'boolean' ? result.data.isActive : true,
-      rowNo,
-    }
-  })
-
-  const seenEmployeeCodes = new Set()
-  const seenEmails = new Set()
-
-  for (const row of parsedRows) {
-    if (seenEmployeeCodes.has(row.employeeCode)) {
-      throw appError({
-        statusCode: 400,
-        code: 'EMPLOYEE_IMPORT_DUPLICATE_EMPLOYEE_CODE',
-        messageKey: 'org.employee.import.error.duplicateEmployeeCode',
-        message: `Row ${row.rowNo}: Duplicate Employee Code in import file`,
-        params: {
-          rowNo: row.rowNo,
-          employeeCode: row.employeeCode,
-        },
-      })
-    }
-
-    seenEmployeeCodes.add(row.employeeCode)
-
-    if (row.email) {
-      if (seenEmails.has(row.email)) {
-        throw appError({
-          statusCode: 400,
-          code: 'EMPLOYEE_IMPORT_DUPLICATE_EMAIL',
-          messageKey: 'org.employee.import.error.duplicateEmail',
-          message: `Row ${row.rowNo}: Duplicate Email in import file`,
-          params: {
-            rowNo: row.rowNo,
-            email: row.email,
-          },
-        })
-      }
-
-      seenEmails.add(row.email)
-    }
+  if (!normalizedRows.length) {
+    throw appError({
+      statusCode: 400,
+      code: 'EMPLOYEE_EXCEL_NO_VALID_ROWS',
+      messageKey: 'org.employee.error.excelNoValidRows',
+      message: 'Excel file has no valid rows',
+    })
   }
 
-  const employeeCodes = [
-    ...new Set(
-      parsedRows
-        .flatMap((row) => [row.employeeCode, row.reportsToEmployeeCode])
-        .map(upper)
-        .filter(Boolean),
-    ),
-  ]
+  const { validRows } = await validateEmployeeImportRows(normalizedRows)
+  const session = await mongoose.startSession()
 
-  const emails = [...seenEmails]
+  let summary = {
+    totalRows: validRows.length,
+    created: 0,
+    updated: 0,
+    accountsCreated: 0,
+  }
 
-  const departmentCodes = [
-    ...new Set(parsedRows.map((row) => row.departmentCode).filter(Boolean)),
-  ]
-  const positionCodes = [
-    ...new Set(parsedRows.map((row) => row.positionCode).filter(Boolean)),
-  ]
-  const lineCodes = [
-    ...new Set(parsedRows.map((row) => row.lineCode).filter(Boolean)),
-  ]
-  const shiftCodes = [
-    ...new Set(parsedRows.map((row) => row.shiftCode).filter(Boolean)),
-  ]
+  let createdEmployeeIds = []
 
-  const [
-    departments,
-    positions,
-    lines,
-    shifts,
-    existingEmployees,
-    existingEmailOwners,
-  ] = await Promise.all([
-    Department.find({ code: { $in: departmentCodes } }, '_id code name isActive').lean(),
+  try {
+    await session.withTransaction(async () => {
+      const employeeCodes = validRows.map((row) => row.employeeCode)
 
-    Position.find(
-      { code: { $in: positionCodes } },
-      '_id code name departmentId reportsToPositionId reportsToPositionCode reportsToPositionName hierarchyScope managerScope isActive',
-    ).lean(),
-
-    lineCodes.length
-      ? ProductionLine.find(
-          { code: { $in: lineCodes } },
-          '_id code name departmentId positionIds isActive',
-        ).lean()
-      : [],
-
-    Shift.find(
-      { code: { $in: shiftCodes }, isActive: true },
-      '_id code name type startTime endTime breakStartTime breakEndTime crossMidnight isActive',
-    ).lean(),
-
-    employeeCodes.length
-      ? Employee.find(
-          { employeeCode: { $in: employeeCodes } },
-          '_id employeeCode displayName email departmentId positionId lineId shiftId reportsToEmployeeId lineManagerIds otWorkflowRole isActive',
-        ).lean()
-      : [],
-
-    emails.length
-      ? Employee.find({ email: { $in: emails } }, '_id employeeCode email').lean()
-      : [],
-  ])
-
-  const departmentByCode = new Map(departments.map((item) => [upper(item.code), item]))
-  const positionByCode = new Map(positions.map((item) => [upper(item.code), item]))
-  const lineByCode = new Map(lines.map((item) => [upper(item.code), item]))
-  const shiftByCode = new Map(shifts.map((item) => [upper(item.code), item]))
-
-  const employeeByCode = new Map(
-    existingEmployees.map((employee) => [upper(employee.employeeCode), employee]),
-  )
-
-  const emailOwnerByEmail = new Map(
-    existingEmailOwners.map((item) => [s(item.email).toLowerCase(), item]),
-  )
-
-  const createdEmployeeIds = []
-  let createdCount = 0
-  let updatedCount = 0
-
-  for (const row of parsedRows) {
-    const existing = employeeByCode.get(row.employeeCode) || null
-    const department = departmentByCode.get(row.departmentCode)
-
-    if (!department) {
-      throw appError({
-        statusCode: 400,
-        code: 'EMPLOYEE_IMPORT_DEPARTMENT_NOT_FOUND',
-        messageKey: 'org.employee.import.error.departmentNotFound',
-        message: `Row ${row.rowNo}: Department Code not found`,
-        params: {
-          rowNo: row.rowNo,
-          departmentCode: row.departmentCode,
+      const existingEmployees = await Employee.find({
+        employeeCode: {
+          $in: employeeCodes,
         },
       })
-    }
+        .select('_id employeeCode')
+        .session(session)
+        .lean()
 
-    const position = positionByCode.get(row.positionCode)
+      const existingCodeSet = new Set(
+        existingEmployees.map((item) => upper(item.employeeCode)),
+      )
 
-    if (!position) {
-      throw appError({
-        statusCode: 400,
-        code: 'EMPLOYEE_IMPORT_POSITION_NOT_FOUND',
-        messageKey: 'org.employee.import.error.positionNotFound',
-        message: `Row ${row.rowNo}: Position Code not found`,
-        params: {
-          rowNo: row.rowNo,
-          positionCode: row.positionCode,
-        },
-      })
-    }
+      const created = validRows.filter(
+        (row) => !existingCodeSet.has(row.employeeCode),
+      ).length
+      const updated = validRows.length - created
 
-    if (!sameId(position.departmentId, department._id)) {
-      throw appError({
-        statusCode: 400,
-        code: 'EMPLOYEE_IMPORT_POSITION_DEPARTMENT_MISMATCH',
-        messageKey: 'org.employee.import.error.positionDepartmentMismatch',
-        message: `Row ${row.rowNo}: Position does not belong to Department`,
-        params: {
-          rowNo: row.rowNo,
-        },
-      })
-    }
-
-    const line = row.lineCode ? lineByCode.get(row.lineCode) : null
-
-    if (row.lineCode && !line) {
-      throw appError({
-        statusCode: 400,
-        code: 'EMPLOYEE_IMPORT_LINE_NOT_FOUND',
-        messageKey: 'org.employee.import.error.lineNotFound',
-        message: `Row ${row.rowNo}: Line Code not found`,
-        params: {
-          rowNo: row.rowNo,
-          lineCode: row.lineCode,
-        },
-      })
-    }
-
-    if (line) {
-      await ensureLineAllowed(line._id, department._id, position._id)
-    }
-
-    const shift = shiftByCode.get(row.shiftCode)
-
-    if (!shift) {
-      throw appError({
-        statusCode: 400,
-        code: 'EMPLOYEE_IMPORT_SHIFT_NOT_FOUND',
-        messageKey: 'org.employee.import.error.shiftNotFound',
-        message: `Row ${row.rowNo}: Shift Code not found or inactive`,
-        params: {
-          rowNo: row.rowNo,
-          shiftCode: row.shiftCode,
-        },
-      })
-    }
-
-    if (row.email) {
-      const owner = emailOwnerByEmail.get(row.email)
-
-      if (owner && !sameId(owner._id, existing?._id)) {
-        throw appError({
-          statusCode: 409,
-          code: 'EMPLOYEE_EMAIL_EXISTS',
-          messageKey: 'org.employee.error.emailExists',
-          message: `Row ${row.rowNo}: Email already exists`,
-          field: 'email',
-          params: {
-            rowNo: row.rowNo,
-            email: row.email,
+      const baseOperations = validRows.map((row) => ({
+        updateOne: {
+          filter: {
+            employeeCode: row.employeeCode,
           },
+          update: {
+            $set: {
+              employeeCode: row.employeeCode,
+              displayName: row.displayName,
+              departmentId: row.department._id,
+              positionId: row.position._id,
+              lineId: row.line?._id || null,
+              shiftId: row.shift._id,
+              otWorkflowRole: normalizeOTWorkflowRole(row.otWorkflowRole),
+              phone: row.phone || '',
+              email: row.email || '',
+              joinDate: row.joinDate || null,
+              isActive: typeof row.isActive === 'boolean' ? row.isActive : true,
+            },
+          },
+          upsert: true,
+        },
+      }))
+
+      await Employee.bulkWrite(baseOperations, {
+        ordered: true,
+        session,
+      })
+
+      const allEmployees = await Employee.find(
+        {},
+        '_id employeeCode displayName departmentId positionId lineId reportsToEmployeeId lineManagerIds isActive',
+      )
+        .session(session)
+        .lean()
+
+      const employeeByCode = new Map(
+        allEmployees.map((item) => [upper(item.employeeCode), item]),
+      )
+
+      const managerOperations = validRows
+        .map((row) => {
+          const employeeDoc = employeeByCode.get(row.employeeCode)
+
+          if (!employeeDoc) return null
+
+          const managerResult = resolveImportManagerIds({
+            row,
+            employeeDoc,
+            position: row.position,
+            department: row.department,
+            line: row.line,
+            allEmployees,
+            employeeByCode,
+          })
+
+          return {
+            updateOne: {
+              filter: {
+                _id: employeeDoc._id,
+              },
+              update: {
+                $set: {
+                  reportsToEmployeeId: managerResult.primaryManagerId || null,
+                  lineManagerIds: managerResult.lineManagerIds || [],
+                },
+              },
+            },
+          }
         })
-      }
-    }
+        .filter(Boolean)
 
-    let manualReportsToEmployeeId = null
-
-    if (row.reportsToEmployeeCode) {
-      const manager = employeeByCode.get(row.reportsToEmployeeCode)
-
-      if (!manager) {
-        throw appError({
-          statusCode: 400,
-          code: 'EMPLOYEE_IMPORT_MANAGER_NOT_FOUND',
-          messageKey: 'org.employee.import.error.managerNotFound',
-          message: `Row ${row.rowNo}: Reports To Employee Code not found`,
-          params: {
-            rowNo: row.rowNo,
-            reportsToEmployeeCode: row.reportsToEmployeeCode,
-          },
+      if (managerOperations.length) {
+        await Employee.bulkWrite(managerOperations, {
+          ordered: true,
+          session,
         })
       }
 
-      if (existing && sameId(existing._id, manager._id)) {
-        throw appError({
-          statusCode: 400,
-          code: 'EMPLOYEE_REPORT_TO_SELF',
-          messageKey: 'org.employee.error.reportToSelf',
-          message: `Row ${row.rowNo}: Employee cannot report to self`,
-          params: {
-            rowNo: row.rowNo,
-          },
+      const importedEmployees = await Employee.find({
+        employeeCode: {
+          $in: employeeCodes,
+        },
+      })
+        .select('_id employeeCode displayName')
+        .session(session)
+        .lean()
+
+      const importedEmployeeByCode = new Map(
+        importedEmployees.map((item) => [upper(item.employeeCode), item]),
+      )
+
+      const importedEmployeeIds = importedEmployees
+        .map((item) => item._id)
+        .filter(Boolean)
+
+      const existingAccountsForImportedEmployees = importedEmployeeIds.length
+        ? await Account.find(
+            {
+              employeeId: {
+                $in: importedEmployeeIds,
+              },
+            },
+            '_id loginId employeeId',
+          )
+            .session(session)
+            .lean()
+        : []
+
+      const accountByEmployeeId = new Map(
+        existingAccountsForImportedEmployees
+          .filter((item) => item.employeeId)
+          .map((item) => [id(item.employeeId), item]),
+      )
+
+      const accountDocs = []
+
+      for (const row of validRows) {
+        if (!row.shouldCreateAccount) continue
+
+        const employeeDoc = importedEmployeeByCode.get(row.employeeCode)
+
+        if (!employeeDoc) continue
+        if (accountByEmployeeId.has(id(employeeDoc._id))) continue
+
+        const passwordHash = await Account.hashPassword(row.accountPassword)
+
+        accountDocs.push({
+          loginId: row.accountLoginId,
+          passwordHash,
+          displayName: s(employeeDoc.displayName || row.displayName),
+          employeeId: employeeDoc._id,
+          roleIds: [],
+          directPermissionCodes: [],
+          passwordVersion: 1,
+          mustChangePassword: true,
+          isActive: true,
         })
       }
 
-      manualReportsToEmployeeId = manager._id
-    }
+      if (accountDocs.length) {
+        await Account.create(accountDocs, {
+          session,
+        })
+      }
 
-    const managerResult = await resolveFinalManagerIds({
-      employeeId: existing?._id || null,
-      departmentId: department._id,
-      position,
-      lineId: line?._id || null,
-      manualReportsToEmployeeId,
+      createdEmployeeIds = importedEmployees
+        .filter((item) => !existingCodeSet.has(upper(item.employeeCode)))
+        .map((item) => id(item._id))
+
+      summary = {
+        totalRows: validRows.length,
+        created,
+        updated,
+        accountsCreated: accountDocs.length,
+      }
     })
-
-    const payload = {
-      employeeCode: row.employeeCode,
-      displayName: row.displayName,
-      departmentId: department._id,
-      positionId: position._id,
-      lineId: line?._id || null,
-      shiftId: shift._id,
-      reportsToEmployeeId: managerResult.primaryManagerId || null,
-      lineManagerIds: managerResult.lineManagerIds || [],
-      otWorkflowRole: normalizeOTWorkflowRole(row.otWorkflowRole),
-      phone: row.phone || '',
-      email: row.email || '',
-      joinDate: row.joinDate || null,
-      isActive: typeof row.isActive === 'boolean' ? row.isActive : true,
-    }
-
-    if (!existing) {
-      const created = await Employee.create(payload)
-
-      createdEmployeeIds.push(id(created._id))
-      createdCount += 1
-
-      employeeByCode.set(row.employeeCode, {
-        _id: created._id,
-        employeeCode: row.employeeCode,
-        displayName: row.displayName,
-        email: row.email || '',
-        departmentId: department._id,
-        positionId: position._id,
-        lineId: line?._id || null,
-        shiftId: shift._id,
-        reportsToEmployeeId: managerResult.primaryManagerId || null,
-        lineManagerIds: managerResult.lineManagerIds || [],
-        otWorkflowRole: normalizeOTWorkflowRole(row.otWorkflowRole),
-        isActive: true,
-      })
-
-      if (row.email) {
-        emailOwnerByEmail.set(row.email, {
-          _id: created._id,
-          employeeCode: row.employeeCode,
-          email: row.email,
-        })
-      }
-
-      continue
-    }
-
-    await Employee.updateOne(
-      {
-        _id: existing._id,
-      },
-      {
-        $set: payload,
-      },
-    )
-
-    employeeByCode.set(row.employeeCode, {
-      ...existing,
-      ...payload,
-      _id: existing._id,
-    })
-
-    if (row.email) {
-      emailOwnerByEmail.set(row.email, {
-        _id: existing._id,
-        employeeCode: row.employeeCode,
-        email: row.email,
+  } catch (error) {
+    if (Number(error?.code) === 11000) {
+      throw appError({
+        statusCode: 409,
+        code: 'EMPLOYEE_IMPORT_DUPLICATE_DATABASE_VALUE',
+        messageKey: 'org.employee.import.error.duplicateDatabaseValue',
+        message: 'Import failed because one or more values already conflict with existing employee data.',
+        params: {
+          keyPattern: error.keyPattern || {},
+          keyValue: error.keyValue || {},
+        },
       })
     }
 
-    updatedCount += 1
+    throw error
+  } finally {
+    await session.endSession()
   }
 
   await syncSameLineManagersForAllEmployees()
 
   return {
     fileName: file.fileName || 'employee-import.xlsx',
-    summary: {
-      totalRows: parsedRows.length,
-      created: createdCount,
-      updated: updatedCount,
-    },
+    summary,
     createdEmployeeIds,
+    errors: [],
     messageKey: 'org.employee.import.success.completed',
   }
 }
@@ -2441,7 +3160,6 @@ async function syncSameLineManagersForAllEmployees() {
     const currentLineManagerIds = uniqueIds(employee.lineManagerIds || [])
 
     const primaryChanged = currentPrimaryManagerId !== id(nextPrimaryManagerId)
-
     const lineManagersChanged =
       currentLineManagerIds.length !== nextLineManagerIds.length ||
       currentLineManagerIds.some(

@@ -850,11 +850,14 @@ async function handleImportSuccess(payload) {
   const summary = payload?.summary || {}
   const created = Number(summary.created || payload?.created || payload?.createdCount || 0)
   const updated = Number(summary.updated || payload?.updated || payload?.updatedCount || 0)
+  const accountsCreated = Number(
+    summary.accountsCreated || payload?.accountsCreated || 0,
+  )
 
   showToast(
     'success',
     t('org.employee.imported'),
-    t('org.employee.importedSuccess', { created, updated }),
+    t('org.employee.importedSuccess', { created, updated, accountsCreated }),
     4000,
   )
 

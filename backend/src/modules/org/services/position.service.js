@@ -739,52 +739,428 @@ function getCell(row, names = []) {
   return ''
 }
 
+function makeImportError({
+  rowNo,
+  field,
+  value = '',
+  code,
+  messageKey,
+  reason,
+  params = {},
+}) {
+  return {
+    rowNo,
+    row: rowNo,
+    field,
+    value: s(value),
+    code,
+    messageKey,
+    reason,
+    message: reason,
+    params: {
+      rowNo,
+      field,
+      value: s(value),
+      ...params,
+    },
+  }
+}
+
+function addImportError(errors, error) {
+  errors.push(makeImportError(error))
+}
+
+function throwImportValidationError(errors) {
+  if (!errors.length) return
+
+  throw appError({
+    statusCode: 400,
+    code: 'POSITION_IMPORT_VALIDATION_FAILED',
+    messageKey: 'org.position.import.error.validationFailed',
+    message: `Import failed. ${errors.length} problem${errors.length > 1 ? 's' : ''} found. Please fix all errors and try again.`,
+    params: {
+      errorCount: errors.length,
+      errors,
+    },
+  })
+}
+
 function normalizeImportRow(row, index) {
   const rowNo = index + 2
 
-  const code = upper(getCell(row, ['Code', 'Position Code', 'PositionCode']))
-  const name = s(getCell(row, ['Name', 'Position Name', 'PositionName']))
-  const departmentCode = upper(
-    getCell(row, ['Department Code', 'DepartmentCode', 'Department', 'Dept Code']),
-  )
-  const reportsToPositionCode = upper(
-    getCell(row, [
-      'Reports To Position Code',
-      'ReportsToPositionCode',
-      'Parent Position Code',
-      'ParentPositionCode',
-      'Reports To',
-    ]),
-  )
-  const hierarchyScope = normalizeImportScope(
-    getCell(row, ['Hierarchy Scope', 'HierarchyScope', 'Scope']),
-  )
-  const level = normalizeImportLevel(getCell(row, ['Level', 'Position Level']))
-  const description = s(getCell(row, ['Description', 'Remark', 'Remarks']))
-  const isActive = normalizeImportStatus(
-    getCell(row, ['Status', 'Active', 'Is Active', 'IsActive']),
-  )
+  const rawCode = getCell(row, ['Code', 'Position Code', 'PositionCode'])
+  const rawName = getCell(row, ['Name', 'Position Name', 'PositionName'])
+  const rawDepartmentCode = getCell(row, [
+    'Department Code',
+    'DepartmentCode',
+    'Department',
+    'Dept Code',
+  ])
+  const rawReportsToPositionCode = getCell(row, [
+    'Reports To Position Code',
+    'ReportsToPositionCode',
+    'Parent Position Code',
+    'ParentPositionCode',
+    'Reports To',
+  ])
+  const rawHierarchyScope = getCell(row, [
+    'Hierarchy Scope',
+    'HierarchyScope',
+    'Scope',
+  ])
+  const rawLevel = getCell(row, ['Level', 'Position Level'])
+  const rawDescription = getCell(row, ['Description', 'Remark', 'Remarks'])
+  const rawStatus = getCell(row, ['Status', 'Active', 'Is Active', 'IsActive'])
 
-  if (
-    !code &&
-    !name &&
-    !departmentCode &&
-    !reportsToPositionCode &&
-    !description
-  ) {
-    return null
-  }
+  const isBlankRow = [
+    rawCode,
+    rawName,
+    rawDepartmentCode,
+    rawReportsToPositionCode,
+    rawHierarchyScope,
+    rawLevel,
+    rawDescription,
+    rawStatus,
+  ].every((value) => !s(value))
+
+  if (isBlankRow) return null
 
   return {
     rowNo,
-    code,
-    name,
-    departmentCode,
-    reportsToPositionCode,
-    hierarchyScope,
-    level,
-    description,
-    isActive,
+
+    rawCode,
+    rawName,
+    rawDepartmentCode,
+    rawReportsToPositionCode,
+    rawHierarchyScope,
+    rawLevel,
+    rawDescription,
+    rawStatus,
+
+    code: upper(rawCode),
+    name: s(rawName),
+    departmentCode: upper(rawDepartmentCode),
+    reportsToPositionCode: upper(rawReportsToPositionCode),
+    hierarchyScope: normalizeImportScope(rawHierarchyScope),
+    level: normalizeImportLevel(rawLevel),
+    description: s(rawDescription),
+    isActive: normalizeImportStatus(rawStatus),
+  }
+}
+
+async function validatePositionImportRows(normalizedRows = []) {
+  const errors = []
+  const seenCodes = new Map()
+
+  const departmentCodes = Array.from(
+    new Set(
+      normalizedRows
+        .map((row) => row.departmentCode)
+        .filter((code) => code && code.length <= 50),
+    ),
+  )
+
+  const reportsToPositionCodes = Array.from(
+    new Set(
+      normalizedRows
+        .map((row) => row.reportsToPositionCode)
+        .filter((code) => code && code.length <= 50),
+    ),
+  )
+
+  const [departments, existingReportsToPositions] = await Promise.all([
+    departmentCodes.length
+      ? Department.find({ code: { $in: departmentCodes } }).lean()
+      : [],
+    reportsToPositionCodes.length
+      ? Position.find({ code: { $in: reportsToPositionCodes } }).lean()
+      : [],
+  ])
+
+  const departmentMap = new Map(
+    departments.map((department) => [upper(department.code), department]),
+  )
+
+  const existingReportsToCodeSet = new Set(
+    existingReportsToPositions.map((position) => upper(position.code)),
+  )
+
+  const candidateRows = []
+
+  for (const row of normalizedRows) {
+    let hasRowError = false
+
+    if (!row.code) {
+      hasRowError = true
+
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Code',
+        value: row.rawCode,
+        code: 'POSITION_IMPORT_CODE_REQUIRED',
+        messageKey: 'org.position.import.error.codeRequired',
+        reason: `Row ${row.rowNo}: Code is required.`,
+      })
+    } else if (row.code.length < 2) {
+      hasRowError = true
+
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Code',
+        value: row.rawCode,
+        code: 'POSITION_IMPORT_CODE_MIN_LENGTH',
+        messageKey: 'org.position.import.error.codeMinLength',
+        reason: `Row ${row.rowNo}: Code must be at least 2 characters.`,
+        params: {
+          min: 2,
+          code: row.code,
+        },
+      })
+    } else if (row.code.length > 50) {
+      hasRowError = true
+
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Code',
+        value: row.rawCode,
+        code: 'POSITION_IMPORT_CODE_TOO_LONG',
+        messageKey: 'org.position.import.error.codeTooLong',
+        reason: `Row ${row.rowNo}: Code must not be longer than 50 characters.`,
+        params: {
+          max: 50,
+          code: row.code,
+        },
+      })
+    }
+
+    if (!row.name) {
+      hasRowError = true
+
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Name',
+        value: row.rawName,
+        code: 'POSITION_IMPORT_NAME_REQUIRED',
+        messageKey: 'org.position.import.error.nameRequired',
+        reason: `Row ${row.rowNo}: Name is required.`,
+      })
+    } else if (row.name.length < 2) {
+      hasRowError = true
+
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Name',
+        value: row.rawName,
+        code: 'POSITION_IMPORT_NAME_MIN_LENGTH',
+        messageKey: 'org.position.import.error.nameMinLength',
+        reason: `Row ${row.rowNo}: Name must be at least 2 characters.`,
+        params: {
+          min: 2,
+        },
+      })
+    } else if (row.name.length > 150) {
+      hasRowError = true
+
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Name',
+        value: row.rawName,
+        code: 'POSITION_IMPORT_NAME_TOO_LONG',
+        messageKey: 'org.position.import.error.nameTooLong',
+        reason: `Row ${row.rowNo}: Name must not be longer than 150 characters.`,
+        params: {
+          max: 150,
+        },
+      })
+    }
+
+    if (row.departmentCode.length > 50) {
+      hasRowError = true
+
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Department Code',
+        value: row.rawDepartmentCode,
+        code: 'POSITION_IMPORT_DEPARTMENT_CODE_TOO_LONG',
+        messageKey: 'org.position.import.error.departmentCodeTooLong',
+        reason: `Row ${row.rowNo}: Department Code must not be longer than 50 characters.`,
+        params: {
+          max: 50,
+        },
+      })
+    } else if (row.departmentCode && !departmentMap.has(row.departmentCode)) {
+      hasRowError = true
+
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Department Code',
+        value: row.rawDepartmentCode,
+        code: 'POSITION_IMPORT_DEPARTMENT_NOT_FOUND',
+        messageKey: 'org.position.import.error.departmentNotFound',
+        reason: `Row ${row.rowNo}: Department Code "${row.departmentCode}" was not found.`,
+        params: {
+          departmentCode: row.departmentCode,
+        },
+      })
+    }
+
+    if (row.reportsToPositionCode.length > 50) {
+      hasRowError = true
+
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Reports To Position Code',
+        value: row.rawReportsToPositionCode,
+        code: 'POSITION_IMPORT_REPORTS_TO_CODE_TOO_LONG',
+        messageKey: 'org.position.import.error.reportsToCodeTooLong',
+        reason: `Row ${row.rowNo}: Reports To Position Code must not be longer than 50 characters.`,
+        params: {
+          max: 50,
+        },
+      })
+    }
+
+    if (row.reportsToPositionCode && row.reportsToPositionCode === row.code) {
+      hasRowError = true
+
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Reports To Position Code',
+        value: row.rawReportsToPositionCode,
+        code: 'POSITION_IMPORT_CANNOT_REPORT_TO_SELF',
+        messageKey: 'org.position.import.error.cannotReportToSelf',
+        reason: `Row ${row.rowNo}: Position cannot report to itself.`,
+        params: {
+          code: row.code,
+        },
+      })
+    }
+
+    if (row.hierarchyScope === 'INVALID_SCOPE') {
+      hasRowError = true
+
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Hierarchy Scope',
+        value: row.rawHierarchyScope,
+        code: 'POSITION_IMPORT_INVALID_SCOPE',
+        messageKey: 'org.position.import.error.invalidScope',
+        reason: `Row ${row.rowNo}: Hierarchy Scope must be SAME_LINE, GLOBAL, or CROSS_DEPARTMENT.`,
+        params: {
+          allowedValues: POSITION_HIERARCHY_SCOPE,
+        },
+      })
+    }
+
+    if (row.level === 'INVALID_LEVEL') {
+      hasRowError = true
+
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Level',
+        value: row.rawLevel,
+        code: 'POSITION_IMPORT_INVALID_LEVEL',
+        messageKey: 'org.position.import.error.invalidLevel',
+        reason: `Row ${row.rowNo}: Level must be a number greater than or equal to 0.`,
+      })
+    }
+
+    if (row.description.length > 1000) {
+      hasRowError = true
+
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Description',
+        value: row.rawDescription,
+        code: 'POSITION_IMPORT_DESCRIPTION_TOO_LONG',
+        messageKey: 'org.position.import.error.descriptionTooLong',
+        reason: `Row ${row.rowNo}: Description must not be longer than 1000 characters.`,
+        params: {
+          max: 1000,
+        },
+      })
+    }
+
+    if (row.isActive === 'INVALID_STATUS') {
+      hasRowError = true
+
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Status',
+        value: row.rawStatus,
+        code: 'POSITION_IMPORT_INVALID_STATUS',
+        messageKey: 'org.position.import.error.invalidStatus',
+        reason: `Row ${row.rowNo}: Status must be Active or Inactive.`,
+        params: {
+          allowedValues: ['Active', 'Inactive'],
+        },
+      })
+    }
+
+    if (row.code) {
+      const firstRowNo = seenCodes.get(row.code)
+
+      if (firstRowNo) {
+        hasRowError = true
+
+        addImportError(errors, {
+          rowNo: row.rowNo,
+          field: 'Code',
+          value: row.rawCode,
+          code: 'POSITION_IMPORT_DUPLICATE_CODE',
+          messageKey: 'org.position.import.error.duplicateCode',
+          reason: `Row ${row.rowNo}: Duplicate code "${row.code}" in Excel file. First found at row ${firstRowNo}.`,
+          params: {
+            code: row.code,
+            firstRowNo,
+          },
+        })
+      } else {
+        seenCodes.set(row.code, row.rowNo)
+      }
+    }
+
+    if (!hasRowError) {
+      candidateRows.push(row)
+    }
+  }
+
+  const candidateCodeSet = new Set(candidateRows.map((row) => row.code))
+  const validRows = []
+
+  for (const row of candidateRows) {
+    let hasRowError = false
+
+    if (
+      row.reportsToPositionCode &&
+      !existingReportsToCodeSet.has(row.reportsToPositionCode) &&
+      !candidateCodeSet.has(row.reportsToPositionCode)
+    ) {
+      hasRowError = true
+
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Reports To Position Code',
+        value: row.rawReportsToPositionCode,
+        code: 'POSITION_IMPORT_REPORTS_TO_NOT_FOUND',
+        messageKey: 'org.position.import.error.reportsToNotFound',
+        reason: `Row ${row.rowNo}: Reports To Position Code "${row.reportsToPositionCode}" was not found.`,
+        params: {
+          reportsToPositionCode: row.reportsToPositionCode,
+        },
+      })
+    }
+
+    if (!hasRowError) {
+      validRows.push(row)
+    }
+  }
+
+  throwImportValidationError(errors)
+
+  return {
+    validRows,
+    departmentMap,
   }
 }
 
@@ -822,221 +1198,201 @@ async function importPositionsExcel(fileBuffer, actor = '') {
     })
   }
 
-  const departmentCodes = Array.from(
-    new Set(normalizedRows.map((row) => row.departmentCode).filter(Boolean)),
-  )
+  const { validRows, departmentMap } = await validatePositionImportRows(normalizedRows)
 
-  const positionCodes = Array.from(
-    new Set(normalizedRows.map((row) => row.code).filter(Boolean)),
-  )
-
-  const reportsToPositionCodes = Array.from(
-    new Set(normalizedRows.map((row) => row.reportsToPositionCode).filter(Boolean)),
-  )
-
-  const [departments, existingPositions, existingReportsToPositions] =
-    await Promise.all([
-      departmentCodes.length
-        ? Department.find({ code: { $in: departmentCodes } }).lean()
-        : [],
-      positionCodes.length
-        ? Position.find({ code: { $in: positionCodes } }).lean()
-        : [],
-      reportsToPositionCodes.length
-        ? Position.find({ code: { $in: reportsToPositionCodes } }).lean()
-        : [],
-    ])
-
-  const departmentMap = new Map(
-    departments.map((department) => [upper(department.code), department]),
-  )
-
-  const existingPositionMap = new Map(
-    existingPositions.map((position) => [upper(position.code), position]),
-  )
-
-  const existingReportsToCodeSet = new Set(
-    existingReportsToPositions.map((position) => upper(position.code)),
-  )
-
-  const seenCodes = new Set()
-  const candidateRows = []
-  const validRows = []
-  const results = []
-
-  let failed = 0
-
-  for (const row of normalizedRows) {
-    try {
-      if (!row.code) {
-        throw new Error(`Row ${row.rowNo}: Code is required`)
-      }
-
-      if (!row.name) {
-        throw new Error(`Row ${row.rowNo}: Name is required`)
-      }
-
-      if (seenCodes.has(row.code)) {
-        throw new Error(`Row ${row.rowNo}: Duplicate code in import file`)
-      }
-
-      if (row.isActive === 'INVALID_STATUS') {
-        throw new Error(`Row ${row.rowNo}: Invalid status`)
-      }
-
-      if (row.hierarchyScope === 'INVALID_SCOPE') {
-        throw new Error(`Row ${row.rowNo}: Invalid hierarchy scope`)
-      }
-
-      if (row.level === 'INVALID_LEVEL') {
-        throw new Error(`Row ${row.rowNo}: Invalid level`)
-      }
-
-      if (row.departmentCode && !departmentMap.has(row.departmentCode)) {
-        throw new Error(`Row ${row.rowNo}: Department not found: ${row.departmentCode}`)
-      }
-
-      if (row.reportsToPositionCode && row.reportsToPositionCode === row.code) {
-        throw new Error(`Row ${row.rowNo}: Position cannot report to itself`)
-      }
-
-      seenCodes.add(row.code)
-      candidateRows.push(row)
-    } catch (error) {
-      failed += 1
-
-      results.push({
-        rowNo: row.rowNo,
-        code: row.code,
-        name: row.name,
-        status: 'FAILED',
-        message: error.message,
-      })
-    }
+  if (!validRows.length) {
+    throw appError({
+      statusCode: 400,
+      code: 'POSITION_EXCEL_NO_VALID_ROWS',
+      messageKey: 'org.position.error.excelNoValidRows',
+      message: 'Excel file has no valid rows',
+    })
   }
 
-  const candidateCodeSet = new Set(candidateRows.map((row) => row.code))
+  const session = await mongoose.startSession()
 
-  for (const row of candidateRows) {
-    try {
-      if (
-        row.reportsToPositionCode &&
-        !existingReportsToCodeSet.has(row.reportsToPositionCode) &&
-        !candidateCodeSet.has(row.reportsToPositionCode)
-      ) {
-        throw new Error(
-          `Row ${row.rowNo}: Reports-to position not found: ${row.reportsToPositionCode}`,
+  let summary = {
+    totalRows: validRows.length,
+    created: 0,
+    updated: 0,
+    failed: 0,
+  }
+
+  let results = []
+
+  try {
+    await session.withTransaction(async () => {
+      const positionCodes = validRows.map((row) => row.code)
+
+      const existingPositions = await Position.find({
+        code: {
+          $in: positionCodes,
+        },
+      })
+        .select('code')
+        .session(session)
+        .lean()
+
+      const existingCodeSet = new Set(
+        existingPositions.map((position) => upper(position.code)),
+      )
+
+      const created = validRows.filter(
+        (row) => !existingCodeSet.has(row.code),
+      ).length
+
+      const updated = validRows.length - created
+
+      const baseOperations = validRows.map((row) => {
+        const department = row.departmentCode
+          ? departmentMap.get(row.departmentCode)
+          : null
+
+        return {
+          updateOne: {
+            filter: {
+              code: row.code,
+            },
+            update: {
+              $set: {
+                code: row.code,
+                name: row.name,
+                description: row.description,
+
+                departmentId: department?._id || null,
+                departmentCode: upper(department?.code),
+                departmentName: s(department?.name),
+
+                hierarchyScope: row.hierarchyScope || 'SAME_LINE',
+                level: row.level,
+                isActive: row.isActive,
+                updatedBy: s(actor),
+              },
+              $setOnInsert: {
+                createdBy: s(actor),
+              },
+            },
+            upsert: true,
+          },
+        }
+      })
+
+      await Position.bulkWrite(baseOperations, {
+        ordered: true,
+        session,
+      })
+
+      const neededPositionCodes = Array.from(
+        new Set([
+          ...validRows.map((row) => row.code),
+          ...validRows.map((row) => row.reportsToPositionCode).filter(Boolean),
+        ]),
+      )
+
+      const neededPositions = neededPositionCodes.length
+        ? await Position.find({
+            code: {
+              $in: neededPositionCodes,
+            },
+          })
+            .session(session)
+            .lean()
+        : []
+
+      const positionMap = new Map(
+        neededPositions.map((position) => [upper(position.code), position]),
+      )
+
+      const parentOperations = validRows.map((row) => {
+        const parent = row.reportsToPositionCode
+          ? positionMap.get(row.reportsToPositionCode)
+          : null
+
+        return {
+          updateOne: {
+            filter: {
+              code: row.code,
+            },
+            update: {
+              $set: {
+                reportsToPositionId: parent?._id || null,
+                reportsToPositionCode: upper(parent?.code),
+                reportsToPositionName: s(parent?.name),
+              },
+            },
+          },
+        }
+      })
+
+      await Position.bulkWrite(parentOperations, {
+        ordered: true,
+        session,
+      })
+
+      const importedPositions = await Position.find({
+        code: {
+          $in: positionCodes,
+        },
+      })
+        .select('code name')
+        .session(session)
+        .lean()
+
+      for (const position of importedPositions) {
+        await Position.updateMany(
+          {
+            reportsToPositionId: position._id,
+          },
+          {
+            $set: {
+              reportsToPositionCode: upper(position.code),
+              reportsToPositionName: s(position.name),
+            },
+          },
+          {
+            session,
+          },
         )
       }
 
-      validRows.push(row)
-    } catch (error) {
-      failed += 1
+      summary = {
+        totalRows: validRows.length,
+        created,
+        updated,
+        failed: 0,
+      }
 
-      results.push({
-        rowNo: row.rowNo,
-        code: row.code,
-        name: row.name,
-        status: 'FAILED',
-        message: error.message,
-      })
-    }
-  }
-
-  let created = 0
-  let updated = 0
-
-  for (const row of validRows) {
-    const department = row.departmentCode ? departmentMap.get(row.departmentCode) : null
-    const existing = existingPositionMap.get(row.code)
-
-    await Position.updateOne(
-      { code: row.code },
-      {
-        $set: {
+      results = validRows
+        .map((row) => ({
+          rowNo: row.rowNo,
           code: row.code,
           name: row.name,
-          description: row.description,
-          departmentId: department?._id || null,
-          departmentCode: upper(department?.code),
-          departmentName: s(department?.name),
-          hierarchyScope: row.hierarchyScope || 'SAME_LINE',
-          level: row.level,
-          isActive: row.isActive,
-          updatedBy: s(actor),
+          status: existingCodeSet.has(row.code) ? 'UPDATED' : 'CREATED',
+        }))
+        .sort((a, b) => Number(a.rowNo || 0) - Number(b.rowNo || 0))
+    })
+  } catch (error) {
+    if (Number(error?.code) === 11000) {
+      throw appError({
+        statusCode: 409,
+        code: 'POSITION_IMPORT_DUPLICATE_DATABASE_CODE',
+        messageKey: 'org.position.import.error.duplicateDatabaseCode',
+        message: 'Import failed because one or more position codes already conflict with existing data.',
+        params: {
+          keyValue: error.keyValue || {},
         },
-        $setOnInsert: {
-          createdBy: s(actor),
-        },
-      },
-      {
-        upsert: true,
-        runValidators: true,
-      },
-    )
-
-    if (existing) {
-      updated += 1
-      results.push({
-        rowNo: row.rowNo,
-        code: row.code,
-        name: row.name,
-        status: 'UPDATED',
-      })
-    } else {
-      created += 1
-      results.push({
-        rowNo: row.rowNo,
-        code: row.code,
-        name: row.name,
-        status: 'CREATED',
       })
     }
-  }
 
-  const neededPositionCodes = Array.from(
-    new Set([
-      ...validRows.map((row) => row.code),
-      ...validRows.map((row) => row.reportsToPositionCode).filter(Boolean),
-    ]),
-  )
-
-  const neededPositions = neededPositionCodes.length
-    ? await Position.find({ code: { $in: neededPositionCodes } }).lean()
-    : []
-
-  const positionMap = new Map(
-    neededPositions.map((position) => [upper(position.code), position]),
-  )
-
-  for (const row of validRows) {
-    const parent = row.reportsToPositionCode
-      ? positionMap.get(row.reportsToPositionCode)
-      : null
-
-    await Position.updateOne(
-      { code: row.code },
-      {
-        $set: {
-          reportsToPositionId: parent?._id || null,
-          reportsToPositionCode: upper(parent?.code),
-          reportsToPositionName: s(parent?.name),
-        },
-      },
-      {
-        runValidators: true,
-      },
-    )
+    throw error
+  } finally {
+    await session.endSession()
   }
 
   return {
-    summary: {
-      totalRows: normalizedRows.length,
-      created,
-      updated,
-      failed,
-    },
-    results: results.sort((a, b) => Number(a.rowNo || 0) - Number(b.rowNo || 0)),
+    summary,
+    results,
+    errors: [],
     messageKey: 'org.position.import.success.completed',
   }
 }

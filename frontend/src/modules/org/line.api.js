@@ -3,6 +3,10 @@
 import api from '@/shared/services/api'
 import { toFileFormData } from '@/shared/utils/formData'
 
+const IMPORT_TIMEOUT_MS = 120000
+const EXPORT_TIMEOUT_MS = 120000
+const SAMPLE_TIMEOUT_MS = 60000
+
 function cleanId(id) {
   return encodeURIComponent(String(id ?? '').trim())
 }
@@ -31,12 +35,14 @@ export function exportLinesExcel(params = {}) {
   return api.get('/org/lines/export', {
     params,
     responseType: 'blob',
+    timeout: EXPORT_TIMEOUT_MS,
   })
 }
 
 export function downloadLineImportSample() {
   return api.get('/org/lines/import-sample', {
     responseType: 'blob',
+    timeout: SAMPLE_TIMEOUT_MS,
   })
 }
 
@@ -47,6 +53,7 @@ export function importLinesExcel(input, options = {}) {
     headers: {
       'Content-Type': 'multipart/form-data',
     },
+    timeout: IMPORT_TIMEOUT_MS,
     onUploadProgress,
   })
 }
