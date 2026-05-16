@@ -213,6 +213,16 @@ export default {
 
   org: {
     department: {
+      importValidationFailed: 'Import validation failed',
+      importErrorCount: '{count} error(s) found',
+      importErrorListTitle: 'Fix these Excel rows before importing',
+      importAllOrNothingNote:
+        'All rows must be 100% valid. If any row has an error, nothing will be saved.',
+      importRow: 'Row',
+      importField: 'Field',
+      importValue: 'Value',
+      importReason: 'Reason',
+      importUnknownError: 'Unknown import error',
       tableTitle: 'Department List',
       searchPlaceholder: 'Search code, name, or description',
 

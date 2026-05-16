@@ -416,6 +416,212 @@ function getCell(row, names = []) {
   return ''
 }
 
+function makeImportError({
+  rowNo,
+  field,
+  value = '',
+  code,
+  messageKey,
+  reason,
+  params = {},
+}) {
+  return {
+    rowNo,
+    row: rowNo,
+    field,
+    value: s(value),
+    code,
+    messageKey,
+    reason,
+    message: reason,
+    params: {
+      rowNo,
+      field,
+      value: s(value),
+      ...params,
+    },
+  }
+}
+
+function addImportError(errors, error) {
+  errors.push(makeImportError(error))
+}
+
+function throwImportValidationError(errors) {
+  if (!errors.length) return
+
+  throw appError({
+    statusCode: 400,
+    code: 'DEPARTMENT_IMPORT_VALIDATION_FAILED',
+    messageKey: 'org.department.import.error.validationFailed',
+    message: `Import failed. ${errors.length} problem${errors.length > 1 ? 's' : ''} found. Please fix all errors and try again.`,
+    params: {
+      errorCount: errors.length,
+      errors,
+    },
+  })
+}
+
+function validateDepartmentImportRows(rows = []) {
+  const errors = []
+  const seenCodes = new Map()
+  const normalizedRows = []
+
+  rows.forEach((row, index) => {
+    const rowNo = index + 2
+
+    const rawCode = getCell(row, ['Code', 'Department Code'])
+    const rawName = getCell(row, ['Name', 'Department Name'])
+    const rawStatus = getCell(row, ['Status', 'Active', 'Is Active'])
+
+    const code = upper(rawCode)
+    const name = s(rawName)
+    const isActive = normalizeImportStatus(rawStatus)
+
+    const isBlankRow = !code && !name && !s(rawStatus)
+
+    if (isBlankRow) return
+
+    let hasRowError = false
+
+    if (!code) {
+      hasRowError = true
+
+      addImportError(errors, {
+        rowNo,
+        field: 'Code',
+        value: rawCode,
+        code: 'DEPARTMENT_IMPORT_CODE_REQUIRED',
+        messageKey: 'org.department.import.error.codeRequired',
+        reason: `Row ${rowNo}: Code is required.`,
+      })
+    } else if (code.length < 2) {
+      hasRowError = true
+
+      addImportError(errors, {
+        rowNo,
+        field: 'Code',
+        value: rawCode,
+        code: 'DEPARTMENT_IMPORT_CODE_MIN_LENGTH',
+        messageKey: 'org.department.import.error.codeMinLength',
+        reason: `Row ${rowNo}: Code must be at least 2 characters.`,
+        params: {
+          min: 2,
+          code,
+        },
+      })
+    } else if (code.length > 30) {
+      hasRowError = true
+
+      addImportError(errors, {
+        rowNo,
+        field: 'Code',
+        value: rawCode,
+        code: 'DEPARTMENT_IMPORT_CODE_TOO_LONG',
+        messageKey: 'org.department.import.error.codeTooLong',
+        reason: `Row ${rowNo}: Code must not be longer than 30 characters.`,
+        params: {
+          max: 30,
+          code,
+        },
+      })
+    }
+
+    if (!name) {
+      hasRowError = true
+
+      addImportError(errors, {
+        rowNo,
+        field: 'Name',
+        value: rawName,
+        code: 'DEPARTMENT_IMPORT_NAME_REQUIRED',
+        messageKey: 'org.department.import.error.nameRequired',
+        reason: `Row ${rowNo}: Name is required.`,
+      })
+    } else if (name.length < 2) {
+      hasRowError = true
+
+      addImportError(errors, {
+        rowNo,
+        field: 'Name',
+        value: rawName,
+        code: 'DEPARTMENT_IMPORT_NAME_MIN_LENGTH',
+        messageKey: 'org.department.import.error.nameMinLength',
+        reason: `Row ${rowNo}: Name must be at least 2 characters.`,
+        params: {
+          min: 2,
+        },
+      })
+    } else if (name.length > 120) {
+      hasRowError = true
+
+      addImportError(errors, {
+        rowNo,
+        field: 'Name',
+        value: rawName,
+        code: 'DEPARTMENT_IMPORT_NAME_TOO_LONG',
+        messageKey: 'org.department.import.error.nameTooLong',
+        reason: `Row ${rowNo}: Name must not be longer than 120 characters.`,
+        params: {
+          max: 120,
+        },
+      })
+    }
+
+    if (isActive === 'INVALID_STATUS') {
+      hasRowError = true
+
+      addImportError(errors, {
+        rowNo,
+        field: 'Status',
+        value: rawStatus,
+        code: 'DEPARTMENT_IMPORT_INVALID_STATUS',
+        messageKey: 'org.department.import.error.invalidStatus',
+        reason: `Row ${rowNo}: Status must be Active or Inactive.`,
+        params: {
+          allowedValues: ['Active', 'Inactive'],
+        },
+      })
+    }
+
+    if (code) {
+      const firstRowNo = seenCodes.get(code)
+
+      if (firstRowNo) {
+        hasRowError = true
+
+        addImportError(errors, {
+          rowNo,
+          field: 'Code',
+          value: rawCode,
+          code: 'DEPARTMENT_IMPORT_DUPLICATE_CODE',
+          messageKey: 'org.department.import.error.duplicateCode',
+          reason: `Row ${rowNo}: Duplicate code "${code}" in Excel file. First found at row ${firstRowNo}.`,
+          params: {
+            code,
+            firstRowNo,
+          },
+        })
+      } else {
+        seenCodes.set(code, rowNo)
+      }
+    }
+
+    if (hasRowError) return
+
+    normalizedRows.push({
+      rowNo,
+      code,
+      name,
+      isActive,
+    })
+  })
+
+  throwImportValidationError(errors)
+
+  return normalizedRows
+}
+
 async function importDepartmentsExcel(fileBuffer) {
   if (!fileBuffer) {
     throw appError({
@@ -437,101 +643,96 @@ async function importDepartmentsExcel(fileBuffer) {
     })
   }
 
-  const seenCodes = new Set()
+  const normalizedRows = validateDepartmentImportRows(rows)
 
-  const normalizedRows = rows
-    .map((row, index) => {
-      const rowNo = index + 2
-      const code = upper(getCell(row, ['Code', 'Department Code']))
-      const name = s(getCell(row, ['Name', 'Department Name']))
-      const status = getCell(row, ['Status', 'Active', 'Is Active'])
-      const isActive = normalizeImportStatus(status)
+  if (!normalizedRows.length) {
+    throw appError({
+      statusCode: 400,
+      code: 'DEPARTMENT_IMPORT_NO_VALID_ROWS',
+      messageKey: 'org.department.import.error.noValidRows',
+      message: 'Excel file has no valid department rows',
+    })
+  }
 
-      if (!code && !name && !s(status)) {
-        return null
-      }
+  const session = await mongoose.startSession()
 
-      if (!code) {
-        throw appError({
-          statusCode: 400,
-          code: 'DEPARTMENT_IMPORT_CODE_REQUIRED',
-          messageKey: 'org.department.import.error.codeRequired',
-          message: `Row ${rowNo}: Code is required`,
-          params: { rowNo },
-        })
-      }
+  let summary = {
+    totalRows: normalizedRows.length,
+    created: 0,
+    updated: 0,
+  }
 
-      if (!name) {
-        throw appError({
-          statusCode: 400,
-          code: 'DEPARTMENT_IMPORT_NAME_REQUIRED',
-          messageKey: 'org.department.import.error.nameRequired',
-          message: `Row ${rowNo}: Name is required`,
-          params: { rowNo },
-        })
-      }
+  try {
+    await session.withTransaction(async () => {
+      const codes = normalizedRows.map((row) => row.code)
 
-      if (isActive === 'INVALID_STATUS') {
-        throw appError({
-          statusCode: 400,
-          code: 'DEPARTMENT_IMPORT_INVALID_STATUS',
-          messageKey: 'org.department.import.error.invalidStatus',
-          message: `Row ${rowNo}: Invalid status`,
-          params: { rowNo },
-        })
-      }
+      const existingDepartments = await Department.find({
+        code: {
+          $in: codes,
+        },
+      })
+        .select('code')
+        .session(session)
+        .lean()
 
-      if (seenCodes.has(code)) {
-        throw appError({
-          statusCode: 400,
-          code: 'DEPARTMENT_IMPORT_DUPLICATE_CODE',
-          messageKey: 'org.department.import.error.duplicateCode',
-          message: `Row ${rowNo}: Duplicate code in import file`,
-          params: { rowNo, code },
-        })
-      }
+      const existingCodeSet = new Set(
+        existingDepartments.map((item) => upper(item.code)),
+      )
 
-      seenCodes.add(code)
+      const created = normalizedRows.filter(
+        (row) => !existingCodeSet.has(row.code),
+      ).length
 
-      return {
-        rowNo,
-        code,
-        name,
-        isActive,
+      const updated = normalizedRows.length - created
+
+      const operations = normalizedRows.map((row) => ({
+        updateOne: {
+          filter: {
+            code: row.code,
+          },
+          update: {
+            $set: {
+              code: row.code,
+              name: row.name,
+              isActive: row.isActive,
+            },
+          },
+          upsert: true,
+        },
+      }))
+
+      await Department.bulkWrite(operations, {
+        ordered: true,
+        session,
+      })
+
+      summary = {
+        totalRows: normalizedRows.length,
+        created,
+        updated,
       }
     })
-    .filter(Boolean)
-
-  let created = 0
-  let updated = 0
-
-  for (const row of normalizedRows) {
-    const existing = await Department.findOne({ code: row.code })
-
-    if (existing) {
-      existing.name = row.name
-      existing.isActive = row.isActive
-
-      await existing.save()
-      updated += 1
-      continue
+  } catch (error) {
+    if (Number(error?.code) === 11000) {
+      throw appError({
+        statusCode: 409,
+        code: 'DEPARTMENT_IMPORT_DUPLICATE_DATABASE_CODE',
+        messageKey: 'org.department.import.error.duplicateDatabaseCode',
+        message: 'Import failed because one or more department codes already conflict with existing data.',
+        params: {
+          keyValue: error.keyValue || {},
+        },
+      })
     }
 
-    await Department.create({
-      code: row.code,
-      name: row.name,
-      isActive: row.isActive,
-    })
-
-    created += 1
+    throw error
+  } finally {
+    await session.endSession()
   }
 
   return {
-    summary: {
-      totalRows: normalizedRows.length,
-      created,
-      updated,
-    },
+    summary,
+    errors: [],
     messageKey: 'org.department.import.success.completed',
   }
 }

@@ -31,7 +31,6 @@ const holidaySchema = new Schema(
     date: {
       type: Date,
       required: true,
-      index: true,
     },
 
     code: {

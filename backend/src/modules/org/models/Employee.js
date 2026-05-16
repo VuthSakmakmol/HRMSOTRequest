@@ -38,7 +38,6 @@ const employeeSchema = new Schema(
       trim: true,
       uppercase: true,
       maxlength: 50,
-      index: true,
     },
 
     displayName: {
