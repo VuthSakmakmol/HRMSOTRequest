@@ -14,6 +14,7 @@ import IconField from 'primevue/iconfield'
 import InputIcon from 'primevue/inputicon'
 import InputSwitch from 'primevue/inputswitch'
 import InputText from 'primevue/inputtext'
+import MultiSelect from 'primevue/multiselect'
 import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 
@@ -84,7 +85,7 @@ const form = reactive({
   displayName: '',
   departmentId: '',
   positionId: '',
-  lineId: null,
+  lineIds: [],
   shiftId: '',
   reportsToEmployeeId: null,
   otWorkflowRole: 'NONE',
@@ -157,7 +158,9 @@ const accountPreviewText = computed(() => {
     return t('org.employee.accountAlreadyExists')
   }
 
-  if (!form.createAccount) return t('org.employee.accountDefaultNoAccount')
+  if (!form.createAccount) {
+    return t('org.employee.accountDefaultNoAccount')
+  }
 
   return t('org.employee.accountPreview', {
     loginId: generatedAccountLoginId.value || '-',
@@ -229,13 +232,119 @@ function normalizeTotal(payload) {
 }
 
 function normalizeId(row) {
-  return String(row?.id || row?._id || row?.employeeId || '').trim()
+  return String(row?.value || row?._id || row?.id || row?.employeeId || '').trim()
 }
 
 function normalizeRefId(value) {
-  if (!value) return null
-  if (typeof value === 'string') return value
-  return value?.id || value?._id || value?.employeeId || null
+  if (!value) return ''
+
+  if (typeof value === 'string') {
+    return value.trim()
+  }
+
+  return String(value.value || value._id || value.id || '').trim()
+}
+
+function isMongoId(value) {
+  return /^[a-f\d]{24}$/i.test(String(value || '').trim())
+}
+
+/**
+ * Important:
+ * This helper is ONLY for line IDs.
+ * Do not use employeeId here.
+ */
+function normalizeLineRefId(value) {
+  if (!value) return ''
+
+  if (typeof value === 'string') {
+    return value.trim()
+  }
+
+  return String(
+    value.value ||
+      value.lineId ||
+      value._id ||
+      value.id ||
+      '',
+  ).trim()
+}
+
+function normalizeLineOptionValue(item = {}) {
+  return normalizeLineRefId(item)
+}
+
+function findLineOptionByAnyValue(value) {
+  const raw = String(value || '').trim()
+
+  if (!raw) return null
+
+  return (
+    lineOptions.value.find((option) => {
+      return [
+        option.value,
+        option.id,
+        option._id,
+        option.lineId,
+        option.code,
+        option.name,
+        option.label,
+      ]
+        .map((item) => String(item || '').trim())
+        .includes(raw)
+    }) || null
+  )
+}
+
+function normalizeSelectedLineIds(values = []) {
+  const result = []
+  const currentEmployeeId = String(editingEmployeeId.value || '').trim()
+
+  for (const value of Array.isArray(values) ? values : []) {
+    let raw = normalizeLineRefId(value)
+
+    if (!raw) continue
+
+    // Main protection for your current bug:
+    // never allow the employee _id to be sent as a lineId.
+    if (currentEmployeeId && raw === currentEmployeeId) {
+      continue
+    }
+
+    const matched = findLineOptionByAnyValue(raw)
+    const matchedValue = normalizeLineOptionValue(matched)
+
+    if (isMongoId(matchedValue)) {
+      result.push(matchedValue)
+      continue
+    }
+
+    // Keep valid Mongo ID only when it does not equal employee ID.
+    // This supports existing saved line ids even if the option list is not loaded.
+    if (isMongoId(raw)) {
+      result.push(raw)
+    }
+  }
+
+  return [...new Set(result)]
+}
+
+function getRowLineIds(row = {}) {
+  const values = []
+
+  if (Array.isArray(row.lines) && row.lines.length) {
+    values.push(...row.lines)
+  }
+
+  if (Array.isArray(row.lineIds) && row.lineIds.length) {
+    values.push(...row.lineIds)
+  }
+
+  if (row.lineId) {
+    values.push(row.lineId)
+  }
+
+  return normalizeSelectedLineIds(values)
 }
 
 function buildLabel(...parts) {
@@ -273,14 +382,28 @@ function mapPositionOptions(items = []) {
 
 function mapLineOptions(items = []) {
   return items
-    .map((item) => ({
-      label: item.label || buildLabel(item.code, item.name),
-      value: normalizeId(item),
-      code: item.code || '',
-      name: item.name || '',
-      departmentId: item.departmentId || null,
-    }))
-    .filter((item) => item.value)
+    .map((item) => {
+      const value = normalizeLineOptionValue(item)
+      const code = item.code || item.lineCode || ''
+      const name = item.name || item.lineName || ''
+      const label = item.label || buildLabel(code, name) || value
+
+      if (!value) return null
+
+      return {
+        label,
+        value,
+        id: value,
+        _id: value,
+        lineId: value,
+        code,
+        name,
+        departmentId: item.departmentId || null,
+        departmentIds: Array.isArray(item.departmentIds) ? item.departmentIds : [],
+        departments: Array.isArray(item.departments) ? item.departments : [],
+      }
+    })
+    .filter(Boolean)
 }
 
 function mapShiftOptions(items = []) {
@@ -311,6 +434,7 @@ function mapManagerOptions(items = []) {
       .filter(Boolean)
       .filter((item) => {
         const itemId = normalizeId(item)
+
         return !editingEmployeeId.value || itemId !== editingEmployeeId.value
       })
       .map((item) => ({
@@ -636,7 +760,7 @@ function resetForm() {
   form.displayName = ''
   form.departmentId = ''
   form.positionId = ''
-  form.lineId = null
+  form.lineIds = []
   form.shiftId = ''
   form.reportsToEmployeeId = null
   form.otWorkflowRole = 'NONE'
@@ -678,7 +802,10 @@ async function openEditDialog(row) {
   ])
 
   form.positionId = normalizeRefId(row?.positionId) || row?.positionId || ''
-  form.lineId = normalizeRefId(row?.lineId) || row?.lineId || null
+
+  // Fixed: use real ProductionLine ids only.
+  form.lineIds = getRowLineIds(row)
+
   form.shiftId = normalizeRefId(row?.shiftId) || row?.shiftId || ''
   form.reportsToEmployeeId =
     normalizeRefId(row?.reportsToEmployeeId) ||
@@ -701,7 +828,7 @@ async function openEditDialog(row) {
 
 async function onFormDepartmentChange() {
   form.positionId = ''
-  form.lineId = null
+  form.lineIds = []
   form.reportsToEmployeeId = null
 
   await Promise.all([
@@ -715,6 +842,7 @@ function onFormPositionChange() {
 }
 
 function onFormLineChange() {
+  form.lineIds = normalizeSelectedLineIds(form.lineIds)
   form.reportsToEmployeeId = null
 }
 
@@ -722,12 +850,15 @@ async function submitEmployee() {
   saving.value = true
 
   try {
+    const lineIds = normalizeSelectedLineIds(form.lineIds)
+
     const payload = {
       employeeCode: String(form.employeeCode || '').trim().toUpperCase(),
       displayName: String(form.displayName || '').trim(),
       departmentId: String(form.departmentId || '').trim(),
       positionId: String(form.positionId || '').trim(),
-      lineId: form.lineId || null,
+      lineId: lineIds[0] || null,
+      lineIds,
       shiftId: String(form.shiftId || '').trim(),
       reportsToEmployeeId: form.reportsToEmployeeId || null,
       otWorkflowRole: String(form.otWorkflowRole || 'NONE').trim().toUpperCase(),
@@ -833,7 +964,12 @@ async function handleExport() {
 
     downloadBlob(blob, getFilenameFromHeader(res, `employees-${Date.now()}.xlsx`))
 
-    showToast('success', t('org.employee.exported'), t('org.employee.exportedSuccess'), 2500)
+    showToast(
+      'success',
+      t('org.employee.exported'),
+      t('org.employee.exportedSuccess'),
+      2500,
+    )
   } catch (error) {
     showToast(
       'error',
@@ -904,6 +1040,19 @@ function positionLabel(row) {
 }
 
 function lineLabel(row) {
+  const lines = Array.isArray(row?.lines) ? row.lines : []
+
+  if (lines.length) {
+    return (
+      lines
+        .map((line) => buildLabel(line.code, line.name) || line.label)
+        .filter(Boolean)
+        .join(', ') || '-'
+    )
+  }
+
+  if (row?.linesLabel) return row.linesLabel
+
   return buildLabel(row?.lineCode, row?.lineName) || '-'
 }
 
@@ -1131,7 +1280,7 @@ onBeforeUnmount(() => {
           :title="t('common.loadingData')"
           :message="t('common.fetchingRecords')"
           :rows="7"
-          :columns="11"
+          :columns="12"
           icon="pi pi-users"
         />
 
@@ -1144,7 +1293,7 @@ onBeforeUnmount(() => {
           scroll-height="500px"
           :sort-field="filters.sortBy"
           :sort-order="filters.sortOrder"
-          table-style="min-width: 112rem"
+          table-style="min-width: 128rem"
           class="ot-data-table ot-data-table-compact employee-data-table"
           :virtual-scroller-options="useVirtualScroll ? {
             lazy: true,
@@ -1209,13 +1358,14 @@ onBeforeUnmount(() => {
           </Column>
 
           <Column
+            field="departmentId"
             :header="t('nav.departments')"
-            style="min-width: 14rem"
+            style="min-width: 16rem"
           >
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="ot-truncate-2 employee-meta-text"
+                class="employee-meta-text"
               >
                 {{ departmentLabel(data) }}
               </span>
@@ -1223,13 +1373,14 @@ onBeforeUnmount(() => {
           </Column>
 
           <Column
+            field="positionId"
             :header="t('nav.positions')"
-            style="min-width: 14rem"
+            style="min-width: 15rem"
           >
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="ot-truncate-2 employee-meta-text"
+                class="employee-meta-text"
               >
                 {{ positionLabel(data) }}
               </span>
@@ -1237,13 +1388,14 @@ onBeforeUnmount(() => {
           </Column>
 
           <Column
+            field="lineId"
             :header="t('nav.lines')"
-            style="min-width: 13rem"
+            style="min-width: 18rem"
           >
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="ot-truncate-2 employee-meta-text"
+                class="employee-meta-text employee-line-text"
               >
                 {{ lineLabel(data) }}
               </span>
@@ -1251,13 +1403,14 @@ onBeforeUnmount(() => {
           </Column>
 
           <Column
+            field="shiftId"
             :header="t('nav.shift')"
             style="min-width: 16rem"
           >
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="ot-truncate-2 employee-meta-text"
+                class="employee-meta-text"
               >
                 {{ shiftLabel(data) }}
               </span>
@@ -1265,14 +1418,14 @@ onBeforeUnmount(() => {
           </Column>
 
           <Column
+            field="reportsToEmployeeId"
             :header="t('org.employee.manager')"
-            style="min-width: 22rem"
+            style="min-width: 18rem"
           >
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="ot-truncate-2 employee-meta-text"
-                :title="managerLabel(data)"
+                class="employee-meta-text"
               >
                 {{ managerLabel(data) }}
               </span>
@@ -1281,8 +1434,7 @@ onBeforeUnmount(() => {
 
           <Column
             field="otWorkflowRole"
-            :header="t('org.employee.otRole')"
-            sortable
+            :header="t('org.employee.otWorkflowRole.title')"
             style="min-width: 11rem"
           >
             <template #body="{ data }">
@@ -1371,7 +1523,7 @@ onBeforeUnmount(() => {
             field="createdAt"
             :header="t('common.createdAt')"
             sortable
-            style="min-width: 14rem"
+            style="min-width: 13rem"
           >
             <template #body="{ data }">
               <span
@@ -1379,6 +1531,22 @@ onBeforeUnmount(() => {
                 class="employee-meta-text"
               >
                 {{ formatDateTime(data.createdAt) }}
+              </span>
+            </template>
+          </Column>
+
+          <Column
+            field="updatedAt"
+            :header="t('common.updatedAt')"
+            sortable
+            style="min-width: 13rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="employee-meta-text"
+              >
+                {{ formatDateTime(data.updatedAt) }}
               </span>
             </template>
           </Column>
@@ -1421,7 +1589,8 @@ onBeforeUnmount(() => {
             <InputText
               v-model="form.employeeCode"
               class="w-full"
-              :placeholder="t('org.employee.employeeCodeExample')"
+              :placeholder="t('org.employee.employeeCode')"
+              size="small"
             />
           </div>
 
@@ -1433,7 +1602,8 @@ onBeforeUnmount(() => {
             <InputText
               v-model="form.displayName"
               class="w-full"
-              :placeholder="t('org.employee.displayNameExample')"
+              :placeholder="t('org.employee.displayName')"
+              size="small"
             />
           </div>
 
@@ -1447,8 +1617,8 @@ onBeforeUnmount(() => {
               :options="departmentOptions"
               option-label="label"
               option-value="value"
-              :placeholder="t('org.employee.selectDepartment')"
               class="w-full"
+              size="small"
               filter
               :loading="loadingDepartments"
               @change="onFormDepartmentChange"
@@ -1465,11 +1635,10 @@ onBeforeUnmount(() => {
               :options="positionOptions"
               option-label="label"
               option-value="value"
-              :placeholder="t('org.employee.selectPosition')"
               class="w-full"
+              size="small"
               filter
               :loading="loadingPositions"
-              :disabled="!form.departmentId"
               @change="onFormPositionChange"
             />
           </div>
@@ -1479,19 +1648,22 @@ onBeforeUnmount(() => {
               {{ t('nav.lines') }}
             </label>
 
-            <Select
-              v-model="form.lineId"
+            <MultiSelect
+              v-model="form.lineIds"
               :options="lineOptions"
               option-label="label"
               option-value="value"
-              :placeholder="t('org.employee.selectLine')"
-              class="w-full"
+              display="chip"
               filter
-              show-clear
+              class="w-full"
               :loading="loadingLines"
-              :disabled="!form.departmentId"
+              :placeholder="t('org.employee.selectLines')"
               @change="onFormLineChange"
             />
+
+            <small class="employee-help-text">
+              {{ t('org.employee.lineHelp') }}
+            </small>
           </div>
 
           <div class="ot-field">
@@ -1504,36 +1676,35 @@ onBeforeUnmount(() => {
               :options="shiftOptions"
               option-label="label"
               option-value="value"
-              :placeholder="t('org.employee.selectShift')"
               class="w-full"
+              size="small"
               filter
               :loading="loadingShifts"
             />
           </div>
-        </div>
 
-        <div class="ot-field">
-          <label class="ot-field-label">
-            {{ t('org.employee.manager') }}
-          </label>
+          <div class="ot-field employee-dialog-full">
+            <label class="ot-field-label">
+              {{ t('org.employee.manager') }}
+            </label>
 
-          <Select
-            v-model="form.reportsToEmployeeId"
-            :options="managerOptions"
-            option-label="label"
-            option-value="value"
-            :placeholder="t('org.employee.selectManager')"
-            class="w-full"
-            filter
-            show-clear
-            :loading="loadingManagers"
-          />
-        </div>
+            <Select
+              v-model="form.reportsToEmployeeId"
+              :options="managerOptions"
+              option-label="label"
+              option-value="value"
+              class="w-full"
+              size="small"
+              filter
+              show-clear
+              :loading="loadingManagers"
+              :placeholder="t('org.employee.selectManager')"
+            />
+          </div>
 
-        <div class="employee-dialog-grid">
           <div class="ot-field">
             <label class="ot-field-label">
-              {{ t('org.employee.otRole') }}
+              {{ t('org.employee.otWorkflowRole.title') }}
             </label>
 
             <Select
@@ -1542,14 +1713,18 @@ onBeforeUnmount(() => {
               option-label="label"
               option-value="value"
               class="w-full"
+              size="small"
             />
           </div>
 
           <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('org.employee.joinDate') }}
+            </label>
+
             <HolidayDatePicker
               v-model="form.joinDate"
-              :label="t('org.employee.joinDate')"
-              :placeholder="t('org.employee.joinDate')"
+              class="w-full"
             />
           </div>
 
@@ -1561,102 +1736,88 @@ onBeforeUnmount(() => {
             <InputText
               v-model="form.phone"
               class="w-full"
-              :placeholder="t('org.employee.phonePlaceholder')"
+              :placeholder="t('org.employee.phone')"
+              size="small"
             />
           </div>
         </div>
 
         <div class="employee-account-card">
-          <div
-            v-if="form.hasAccount"
-            class="employee-account-card-header"
-          >
-            <div class="employee-section-title">
-              {{ t('org.employee.accountAlreadyExists') }}
+          <div class="employee-account-card-header">
+            <div>
+              <div class="employee-section-title">
+                {{ t('nav.accounts') }}
+              </div>
+
+              <p class="employee-help-text">
+                {{ accountPreviewText }}
+              </p>
             </div>
 
             <Tag
-              :value="form.currentAccountLoginId || t('org.employee.hasAccount')"
-              class="employee-rgb-tag employee-account-tag"
+              v-if="form.hasAccount"
+              :value="form.currentAccountLoginId || generatedAccountLoginId || '-'"
+              rounded
             />
           </div>
 
-          <template v-else>
-            <div class="employee-account-card-header">
-              <div class="employee-section-title">
-                {{ t('org.employee.createLoginAccount') }}
-              </div>
+          <div
+            v-if="!form.hasAccount"
+            class="employee-switch-box"
+          >
+            <span class="employee-section-title">
+              {{ t('org.employee.createLoginAccount') }}
+            </span>
 
-              <InputSwitch v-model="form.createAccount" />
+            <InputSwitch v-model="form.createAccount" />
+          </div>
+
+          <div
+            v-if="showCreateAccountFields"
+            class="employee-dialog-grid employee-account-grid"
+          >
+            <div class="ot-field">
+              <label class="ot-field-label">
+                {{ t('org.employee.accountLoginId') }}
+              </label>
+
+              <InputText
+                v-model="form.accountLoginId"
+                class="w-full"
+                :placeholder="generatedAccountLoginId || form.employeeCode"
+                size="small"
+              />
             </div>
 
-            <div
-              v-if="showCreateAccountFields"
-              class="mt-4 space-y-4"
-            >
-              <div class="employee-dialog-grid">
-                <div class="ot-field">
-                  <label class="ot-field-label">
-                    {{ t('auth.loginId') }}
-                  </label>
+            <div class="ot-field">
+              <label class="ot-field-label">
+                {{ t('org.employee.accountPassword') }}
+              </label>
 
-                  <InputText
-                    v-model="form.accountLoginId"
-                    class="w-full"
-                    :placeholder="t('org.employee.accountLoginIdPlaceholder')"
-                  />
-                </div>
-
-                <div class="ot-field">
-                  <label class="ot-field-label">
-                    {{ t('org.employee.defaultPassword') }}
-                  </label>
-
-                  <InputText
-                    v-model="form.accountPassword"
-                    class="w-full"
-                    :placeholder="t('org.employee.defaultPasswordPlaceholder')"
-                  />
-                </div>
-              </div>
-
-              <div
-                v-if="!String(form.phone || '').trim()"
-                class="ot-inline-error"
-              >
-                {{ t('org.employee.accountPhoneRequired') }}
-              </div>
-
-              <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-                <div class="employee-switch-box">
-                  <div class="employee-section-title">
-                    {{ t('auth.account.forcePasswordChange') }}
-                  </div>
-
-                  <InputSwitch v-model="form.accountMustChangePassword" />
-                </div>
-
-                <div class="employee-switch-box">
-                  <div class="employee-section-title">
-                    {{ t('org.employee.accountActive') }}
-                  </div>
-
-                  <InputSwitch v-model="form.accountIsActive" />
-                </div>
-              </div>
-
-              <div class="ot-inline-info">
-                {{ accountPreviewText }}
-              </div>
+              <InputText
+                v-model="form.accountPassword"
+                class="w-full"
+                :placeholder="generatedAccountPassword || 'EmployeeCodePhone'"
+                size="small"
+              />
             </div>
 
-            <div
-              v-else
-              class="ot-inline-info mt-4"
-            >
-              {{ accountPreviewText }}
+            <div class="employee-switch-box">
+              <span class="employee-section-title">
+                {{ t('org.employee.mustChangePassword') }}
+              </span>
+
+              <InputSwitch v-model="form.accountMustChangePassword" />
             </div>
-          </template>
+
+            <div class="employee-switch-box">
+              <span class="employee-section-title">
+                {{ t('common.active') }}
+              </span>
+
+              <InputSwitch v-model="form.accountIsActive" />
+            </div>
+          </div>
         </div>
 
         <div class="employee-active-box">
@@ -1669,22 +1830,21 @@ onBeforeUnmount(() => {
       </div>
 
       <template #footer>
-        <div class="ot-form-footer">
-          <Button
-            :label="t('common.cancel')"
-            text
-            size="small"
-            @click="employeeDialogVisible = false"
-          />
+        <Button
+          :label="t('common.cancel')"
+          severity="secondary"
+          text
+          :disabled="saving"
+          @click="employeeDialogVisible = false"
+        />
 
-          <Button
-            :label="saveLabel"
-            :loading="saving"
-            :disabled="isSaveDisabled"
-            size="small"
-            @click="submitEmployee"
-          />
-        </div>
+        <Button
+          :label="saveLabel"
+          icon="pi pi-check"
+          :loading="saving"
+          :disabled="isSaveDisabled"
+          @click="submitEmployee"
+        />
       </template>
     </Dialog>
   </div>
@@ -1692,158 +1852,65 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .employee-page {
-  --employee-code-rgb: 37, 99, 235;
   --employee-name-rgb: 15, 23, 42;
   --employee-meta-rgb: 71, 85, 105;
-
-  --employee-active-rgb: 22, 163, 74;
-  --employee-inactive-rgb: 100, 116, 139;
-
-  --employee-account-rgb: 16, 185, 129;
-  --employee-no-account-rgb: 217, 119, 6;
-
-  --employee-ot-approver-rgb: 22, 163, 74;
-  --employee-ot-acknowledge-rgb: 37, 99, 235;
+  --employee-active-rgb: 16, 185, 129;
+  --employee-inactive-rgb: 239, 68, 68;
+  --employee-account-rgb: 14, 165, 233;
+  --employee-no-account-rgb: 100, 116, 139;
+  --employee-ot-approver-rgb: 34, 197, 94;
+  --employee-ot-acknowledge-rgb: 168, 85, 247;
   --employee-ot-none-rgb: 100, 116, 139;
 }
 
-.employee-dialog-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0.75rem;
-  align-items: start;
-}
-
 .employee-filter-bar {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
   align-items: end;
 }
 
 .employee-filter-actions {
-  grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
   gap: 0.5rem;
-  min-width: 0;
 }
 
-.employee-filter-actions > * {
-  flex: 0 0 auto;
+.employee-dialog-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.85rem;
 }
 
-.employee-code-text {
-  color: rgb(var(--employee-code-rgb));
-  font-size: 0.82rem;
-  font-weight: 700;
-}
-
-.employee-name-text {
-  color: rgb(var(--employee-name-rgb));
-  font-size: 0.82rem;
-  font-weight: 650;
-}
-
-.employee-meta-text {
-  color: rgb(var(--employee-meta-rgb));
-  font-size: 0.8rem;
-  font-weight: 500;
-}
-
-.employee-rgb-tag {
-  max-width: 100%;
-  border-radius: 999px;
-  border: 1px solid transparent;
-  padding: 0.2rem 0.58rem;
-  font-size: 0.7rem;
-  font-weight: 700;
-  line-height: 1;
-}
-
-.employee-active-tag {
-  border-color: rgba(var(--employee-active-rgb), 0.24);
-  background: rgba(var(--employee-active-rgb), 0.12);
-  color: rgb(var(--employee-active-rgb));
-}
-
-.employee-inactive-tag {
-  border-color: rgba(var(--employee-inactive-rgb), 0.24);
-  background: rgba(var(--employee-inactive-rgb), 0.12);
-  color: rgb(var(--employee-inactive-rgb));
-}
-
-.employee-account-tag {
-  border-color: rgba(var(--employee-account-rgb), 0.24);
-  background: rgba(var(--employee-account-rgb), 0.12);
-  color: rgb(var(--employee-account-rgb));
-}
-
-.employee-no-account-tag {
-  border-color: rgba(var(--employee-no-account-rgb), 0.24);
-  background: rgba(var(--employee-no-account-rgb), 0.12);
-  color: rgb(var(--employee-no-account-rgb));
-}
-
-.employee-ot-approver-tag {
-  border-color: rgba(var(--employee-ot-approver-rgb), 0.24);
-  background: rgba(var(--employee-ot-approver-rgb), 0.12);
-  color: rgb(var(--employee-ot-approver-rgb));
-}
-
-.employee-ot-acknowledge-tag {
-  border-color: rgba(var(--employee-ot-acknowledge-rgb), 0.24);
-  background: rgba(var(--employee-ot-acknowledge-rgb), 0.12);
-  color: rgb(var(--employee-ot-acknowledge-rgb));
-}
-
-.employee-ot-none-tag {
-  border-color: rgba(var(--employee-ot-none-rgb), 0.24);
-  background: rgba(var(--employee-ot-none-rgb), 0.12);
-  color: rgb(var(--employee-ot-none-rgb));
-}
-
-.employee-account-stack {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.25rem;
-}
-
-.employee-account-login {
-  max-width: 100%;
-  overflow: hidden;
-  color: rgb(var(--employee-meta-rgb));
-  font-size: 0.72rem;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.employee-dialog-full {
+  grid-column: 1 / -1;
 }
 
 .employee-account-card {
+  margin-top: 1rem;
   border: 1px solid var(--ot-border);
   border-radius: 1rem;
-  background: var(--ot-surface-2);
-  padding: 1rem;
+  background: color-mix(in srgb, var(--ot-surface) 92%, transparent);
+  padding: 0.85rem;
 }
 
-.employee-account-card-header,
+.employee-account-card-header {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.employee-account-grid {
+  margin-top: 0.85rem;
+}
+
 .employee-switch-box,
 .employee-active-box {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-}
-
-.employee-account-card-header {
-  flex-direction: column;
-  align-items: flex-start;
-}
-
-.employee-switch-box,
-.employee-active-box {
   border: 1px solid var(--ot-border);
   border-radius: 0.85rem;
   background: var(--ot-surface);
@@ -1851,6 +1918,7 @@ onBeforeUnmount(() => {
 }
 
 .employee-active-box {
+  margin-top: 1rem;
   background: transparent;
 }
 
@@ -1860,10 +1928,143 @@ onBeforeUnmount(() => {
   font-weight: 650;
 }
 
+.employee-help-text {
+  display: block;
+  margin-top: 0.25rem;
+  color: var(--ot-muted);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.employee-code-text {
+  color: rgb(37, 99, 235);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.employee-name-text {
+  color: rgba(var(--employee-name-rgb), 1);
+  font-size: 0.8rem;
+  font-weight: 650;
+}
+
+.employee-meta-text {
+  color: rgba(var(--employee-meta-rgb), 1);
+  font-size: 0.76rem;
+  font-weight: 500;
+}
+
+.employee-line-text {
+  display: inline-block;
+  max-width: 17rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.employee-account-stack {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.employee-account-login {
+  max-width: 10rem;
+  overflow: hidden;
+  color: var(--ot-muted);
+  font-size: 0.7rem;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.employee-rgb-tag {
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 750;
+  line-height: 1;
+}
+
+.employee-active-tag {
+  border-color: rgba(var(--employee-active-rgb), 0.28);
+  background: rgba(var(--employee-active-rgb), 0.12);
+  color: rgb(var(--employee-active-rgb));
+}
+
+.employee-inactive-tag {
+  border-color: rgba(var(--employee-inactive-rgb), 0.28);
+  background: rgba(var(--employee-inactive-rgb), 0.12);
+  color: rgb(var(--employee-inactive-rgb));
+}
+
+.employee-account-tag {
+  border-color: rgba(var(--employee-account-rgb), 0.28);
+  background: rgba(var(--employee-account-rgb), 0.12);
+  color: rgb(var(--employee-account-rgb));
+}
+
+.employee-no-account-tag {
+  border-color: rgba(var(--employee-no-account-rgb), 0.28);
+  background: rgba(var(--employee-no-account-rgb), 0.12);
+  color: rgb(var(--employee-no-account-rgb));
+}
+
+.employee-ot-approver-tag {
+  border-color: rgba(var(--employee-ot-approver-rgb), 0.28);
+  background: rgba(var(--employee-ot-approver-rgb), 0.12);
+  color: rgb(var(--employee-ot-approver-rgb));
+}
+
+.employee-ot-acknowledge-tag {
+  border-color: rgba(var(--employee-ot-acknowledge-rgb), 0.28);
+  background: rgba(var(--employee-ot-acknowledge-rgb), 0.12);
+  color: rgb(var(--employee-ot-acknowledge-rgb));
+}
+
+.employee-ot-none-tag {
+  border-color: rgba(var(--employee-ot-none-rgb), 0.28);
+  background: rgba(var(--employee-ot-none-rgb), 0.12);
+  color: rgb(var(--employee-ot-none-rgb));
+}
+
+.employee-page :deep(.employee-data-table .p-datatable-thead > tr > th),
+.employee-page :deep(.employee-data-table .p-datatable-tbody > tr > td) {
+  text-align: center;
+  vertical-align: middle;
+}
+
+.employee-page :deep(.employee-data-table .p-column-header-content) {
+  justify-content: center;
+  gap: 0.25rem;
+}
+
+.employee-page :deep(.employee-data-table .p-datatable-tbody > tr > td) {
+  padding-block: 0.42rem;
+  font-size: 0.78rem;
+}
+
+.employee-page :deep(.employee-data-table .p-datatable-thead > tr > th) {
+  padding-block: 0.5rem;
+  font-size: 0.74rem;
+  font-weight: 750;
+}
+
 .employee-page :deep(.p-tag-value) {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.employee-page :deep(.p-multiselect-label) {
+  align-items: center;
+}
+
+.employee-page :deep(.p-multiselect-token) {
+  max-width: 100%;
+  border-radius: 999px;
+  font-size: 0.72rem;
 }
 
 :global(.dark) .employee-page {
@@ -1933,31 +2134,13 @@ onBeforeUnmount(() => {
   .employee-filter-bar {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
-}
-
-@media (min-width: 1280px) {
-  .employee-dialog-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .employee-filter-bar {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-}
-
-@media (min-width: 1536px) {
-  .employee-filter-bar {
-    grid-template-columns:
-      minmax(230px, 1.2fr)
-      minmax(190px, 1fr)
-      minmax(190px, 1fr)
-      minmax(170px, 0.9fr)
-      minmax(170px, 0.9fr)
-      minmax(150px, 0.8fr);
-  }
 
   .employee-filter-actions {
     grid-column: 1 / -1;
+  }
+
+  .employee-dialog-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 </style>

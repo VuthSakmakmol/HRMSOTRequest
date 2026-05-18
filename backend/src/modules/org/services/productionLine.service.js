@@ -68,6 +68,32 @@ function makeLabel(code, name) {
   return n
 }
 
+function uniqueStrings(values = []) {
+  return [
+    ...new Set(
+      (Array.isArray(values) ? values : [])
+        .map((value) => s(value))
+        .filter(Boolean),
+    ),
+  ]
+}
+
+function normalizeIdList(values = []) {
+  return uniqueStrings(values)
+}
+
+function mapDepartment(department) {
+  if (!department) return null
+
+  return {
+    id: id(department),
+    _id: id(department),
+    code: department.code || '',
+    name: department.name || '',
+    label: makeLabel(department.code, department.name),
+  }
+}
+
 function mapPosition(position) {
   if (!position) return null
 
@@ -77,14 +103,46 @@ function mapPosition(position) {
     code: position.code || '',
     name: position.name || '',
     label: makeLabel(position.code, position.name),
+    departmentId: id(position.departmentId),
   }
+}
+
+function getDepartmentsFromLineDoc(doc) {
+  const rawDepartments = []
+
+  if (doc?.departmentId) {
+    rawDepartments.push(doc.departmentId)
+  }
+
+  if (Array.isArray(doc?.departmentIds)) {
+    rawDepartments.push(...doc.departmentIds)
+  }
+
+  const seen = new Set()
+  const departments = []
+
+  rawDepartments.forEach((department) => {
+    const departmentId = id(department)
+
+    if (!departmentId || seen.has(departmentId)) return
+
+    seen.add(departmentId)
+    departments.push(department)
+  })
+
+  return departments
 }
 
 function mapLine(doc) {
   if (!doc) return null
 
-  const department = doc.departmentId
-  const departmentId = id(department)
+  const primaryDepartment = doc.departmentId
+  const primaryDepartmentId = id(primaryDepartment)
+
+  const departments = getDepartmentsFromLineDoc(doc)
+    .map(mapDepartment)
+    .filter(Boolean)
+
   const positions = Array.isArray(doc.positionIds)
     ? doc.positionIds.map(mapPosition).filter(Boolean)
     : []
@@ -98,11 +156,21 @@ function mapLine(doc) {
     label: makeLabel(doc.code, doc.name),
     description: doc.description || '',
 
-    departmentId,
-    departmentCode: department?.code || '',
-    departmentName: department?.name || '',
-    departmentLabel: departmentId
-      ? makeLabel(department?.code, department?.name)
+    // Legacy / primary department fields.
+    departmentId: primaryDepartmentId,
+    departmentCode: primaryDepartment?.code || '',
+    departmentName: primaryDepartment?.name || '',
+    departmentLabel: primaryDepartmentId
+      ? makeLabel(primaryDepartment?.code, primaryDepartment?.name)
+      : '',
+
+    // New multi-department fields.
+    departmentIds: departments.map((department) => department.id),
+    departments,
+    departmentCodes: departments.map((department) => department.code).filter(Boolean),
+    departmentNames: departments.map((department) => department.name).filter(Boolean),
+    departmentsLabel: departments.length
+      ? departments.map((department) => department.label).filter(Boolean).join(', ')
       : '',
 
     positionIds: positions.map((position) => position.id),
@@ -138,6 +206,12 @@ function mapLookupItem(doc) {
     departmentName: item.departmentName,
     departmentLabel: item.departmentLabel,
 
+    departmentIds: item.departmentIds,
+    departments: item.departments,
+    departmentCodes: item.departmentCodes,
+    departmentNames: item.departmentNames,
+    departmentsLabel: item.departmentsLabel,
+
     positionIds: item.positionIds,
     positions: item.positions,
 
@@ -147,20 +221,32 @@ function mapLookupItem(doc) {
 
 function buildFilter(query = {}) {
   const filter = {}
+  const andFilters = []
 
   const keyword = s(query.search)
 
   if (keyword) {
     const regex = new RegExp(escapeRegex(keyword), 'i')
 
-    filter.$or = [{ code: regex }, { name: regex }, { description: regex }]
+    andFilters.push({
+      $or: [{ code: regex }, { name: regex }, { description: regex }],
+    })
   }
 
   if (query.isActive === 'true' || query.isActive === true) filter.isActive = true
   if (query.isActive === 'false' || query.isActive === false) filter.isActive = false
 
   if (isObjectId(query.departmentId)) {
-    filter.departmentId = query.departmentId
+    andFilters.push({
+      $or: [
+        { departmentId: query.departmentId },
+        { departmentIds: query.departmentId },
+      ],
+    })
+  }
+
+  if (andFilters.length) {
+    filter.$and = andFilters
   }
 
   return filter
@@ -221,34 +307,74 @@ async function ensureUniqueCode(code, excludeId = null) {
   }
 }
 
-async function ensureDepartmentExists(departmentId) {
-  await ensureObjectId(departmentId, 'departmentId')
+function normalizeDepartmentIdsFromPayload(payload = {}) {
+  const ids = []
 
-  const department = await Department.findById(departmentId)
+  if (Array.isArray(payload.departmentIds)) {
+    ids.push(...payload.departmentIds)
+  }
+
+  if (payload.departmentId) {
+    ids.push(payload.departmentId)
+  }
+
+  return normalizeIdList(ids)
+}
+
+async function ensureDepartmentsExist(departmentIds = []) {
+  const ids = normalizeIdList(departmentIds)
+
+  if (!ids.length) {
+    throw appError({
+      statusCode: 400,
+      code: 'LINE_DEPARTMENT_REQUIRED',
+      messageKey: 'org.line.validation.departmentRequired',
+      message: 'At least one department is required',
+      field: 'departmentIds',
+    })
+  }
+
+  ids.forEach((departmentId) => {
+    if (!isObjectId(departmentId)) {
+      throw appError({
+        statusCode: 400,
+        code: 'INVALID_DEPARTMENT_ID',
+        messageKey: 'org.department.error.invalidId',
+        message: 'Invalid department id',
+        field: 'departmentIds',
+        params: {
+          departmentId,
+        },
+      })
+    }
+  })
+
+  const departments = await Department.find({
+    _id: {
+      $in: ids,
+    },
+  })
     .select('_id code name isActive')
     .lean()
 
-  if (!department) {
+  if (departments.length !== ids.length) {
     throw appError({
       statusCode: 404,
       code: 'DEPARTMENT_NOT_FOUND',
       messageKey: 'org.department.error.notFound',
-      message: 'Department not found',
-      field: 'departmentId',
+      message: 'Some selected departments were not found',
+      field: 'departmentIds',
     })
   }
 
-  return department
+  const byId = new Map(departments.map((department) => [id(department._id), department]))
+
+  return ids.map((departmentId) => byId.get(departmentId)).filter(Boolean)
 }
 
-async function ensurePositionsAllowed(positionIds = [], departmentId) {
-  const ids = [
-    ...new Set(
-      (Array.isArray(positionIds) ? positionIds : [])
-        .map((positionId) => s(positionId))
-        .filter(Boolean),
-    ),
-  ]
+async function ensurePositionsAllowed(positionIds = [], departmentIds = []) {
+  const ids = normalizeIdList(positionIds)
+  const allowedDepartmentIdSet = new Set(normalizeIdList(departmentIds))
 
   ids.forEach((positionId) => {
     if (!isObjectId(positionId)) {
@@ -286,7 +412,7 @@ async function ensurePositionsAllowed(positionIds = [], departmentId) {
   }
 
   const invalidDepartment = positions.find(
-    (position) => id(position.departmentId) !== id(departmentId),
+    (position) => !allowedDepartmentIdSet.has(id(position.departmentId)),
   )
 
   if (invalidDepartment) {
@@ -294,35 +420,17 @@ async function ensurePositionsAllowed(positionIds = [], departmentId) {
       statusCode: 400,
       code: 'LINE_POSITION_DEPARTMENT_MISMATCH',
       messageKey: 'org.line.error.positionDepartmentMismatch',
-      message: 'Selected position does not belong to selected department',
+      message: 'Selected position does not belong to selected line departments',
       field: 'positionIds',
       params: {
         positionId: id(invalidDepartment._id),
+        positionDepartmentId: id(invalidDepartment.departmentId),
+        departmentIds: Array.from(allowedDepartmentIdSet),
       },
     })
   }
 
   return positions
-}
-
-async function findDepartmentByCode(code) {
-  const departmentCode = upper(code)
-
-  if (!departmentCode) return null
-
-  return Department.findOne({ code: departmentCode })
-    .select('_id code name isActive')
-    .lean()
-}
-
-async function findPositionsByCodes(codes = []) {
-  const cleanCodes = [...new Set(codes.map(upper).filter(Boolean))]
-
-  if (!cleanCodes.length) return []
-
-  return Position.find({ code: { $in: cleanCodes } })
-    .select('_id code name departmentId isActive')
-    .lean()
 }
 
 async function list(query = {}) {
@@ -336,7 +444,8 @@ async function list(query = {}) {
   const [items, total] = await Promise.all([
     ProductionLine.find(filter)
       .populate('departmentId', 'code name')
-      .populate('positionIds', 'code name')
+      .populate('departmentIds', 'code name')
+      .populate('positionIds', 'code name departmentId')
       .sort(sort)
       .skip(skip)
       .limit(limit)
@@ -363,7 +472,8 @@ async function lookup(query = {}) {
 
   const items = await ProductionLine.find(filter)
     .populate('departmentId', 'code name')
-    .populate('positionIds', 'code name')
+    .populate('departmentIds', 'code name')
+    .populate('positionIds', 'code name departmentId')
     .sort({ name: 1, code: 1, _id: 1 })
     .limit(limit)
     .lean()
@@ -382,7 +492,8 @@ async function getById(lineId) {
 
   const doc = await ProductionLine.findById(lineId)
     .populate('departmentId', 'code name')
-    .populate('positionIds', 'code name')
+    .populate('departmentIds', 'code name')
+    .populate('positionIds', 'code name departmentId')
     .lean()
 
   if (!doc) {
@@ -403,14 +514,22 @@ async function create(payload = {}, currentUser = null) {
 
   await ensureUniqueCode(code)
 
-  const department = await ensureDepartmentExists(payload.departmentId)
-  const positions = await ensurePositionsAllowed(payload.positionIds || [], department._id)
+  const departmentIds = normalizeDepartmentIdsFromPayload(payload)
+  const departments = await ensureDepartmentsExist(departmentIds)
+  const departmentObjectIds = departments.map((department) => department._id)
+
+  const positions = await ensurePositionsAllowed(
+    payload.positionIds || [],
+    departmentObjectIds,
+  )
+
   const actorId = getActorId(currentUser)
 
   const doc = await ProductionLine.create({
     code,
     name: s(payload.name),
-    departmentId: department._id,
+    departmentId: departmentObjectIds[0],
+    departmentIds: departmentObjectIds,
     positionIds: positions.map((position) => position._id),
     description: s(payload.description),
     isActive: payload.isActive ?? true,
@@ -450,17 +569,32 @@ async function update(lineId, payload = {}, currentUser = null) {
     doc.name = s(payload.name)
   }
 
-  if (payload.departmentId !== undefined || payload.positionIds !== undefined) {
-    const nextDepartmentId =
-      payload.departmentId !== undefined ? payload.departmentId : doc.departmentId
-
-    const department = await ensureDepartmentExists(nextDepartmentId)
-    const positions = await ensurePositionsAllowed(
-      payload.positionIds !== undefined ? payload.positionIds : doc.positionIds,
-      department._id,
+  if (
+    payload.departmentId !== undefined ||
+    payload.departmentIds !== undefined ||
+    payload.positionIds !== undefined
+  ) {
+    const existingDepartmentIds = normalizeIdList(
+      Array.isArray(doc.departmentIds) && doc.departmentIds.length
+        ? doc.departmentIds
+        : [doc.departmentId],
     )
 
-    doc.departmentId = department._id
+    const nextDepartmentIds =
+      payload.departmentId !== undefined || payload.departmentIds !== undefined
+        ? normalizeDepartmentIdsFromPayload(payload)
+        : existingDepartmentIds
+
+    const departments = await ensureDepartmentsExist(nextDepartmentIds)
+    const departmentObjectIds = departments.map((department) => department._id)
+
+    const positions = await ensurePositionsAllowed(
+      payload.positionIds !== undefined ? payload.positionIds : doc.positionIds,
+      departmentObjectIds,
+    )
+
+    doc.departmentId = departmentObjectIds[0]
+    doc.departmentIds = departmentObjectIds
     doc.positionIds = positions.map((position) => position._id)
   }
 
@@ -523,7 +657,8 @@ async function exportExcel(query = {}) {
 
   const items = await ProductionLine.find(filter)
     .populate('departmentId', 'code name')
-    .populate('positionIds', 'code name')
+    .populate('departmentIds', 'code name')
+    .populate('positionIds', 'code name departmentId')
     .sort(sort)
     .lean()
 
@@ -534,10 +669,12 @@ async function exportExcel(query = {}) {
       No: index + 1,
       Code: item.code,
       Name: item.name,
-      'Department Code': item.departmentCode,
-      Department: item.departmentName,
+      'Department Codes': item.departmentCodes.join(','),
+      Departments: item.departmentNames.join(', '),
+      'Primary Department Code': item.departmentCode,
+      'Primary Department': item.departmentName,
       'Position Codes': item.positionCodes.join(','),
-      'Allowed Positions': item.allowedPositionsLabel || 'All positions in department',
+      'Allowed Positions': item.allowedPositionsLabel || 'All positions in selected departments',
       Description: item.description,
       Status: item.isActive ? 'Active' : 'Inactive',
       CreatedAt: formatExcelDate(item.createdAt),
@@ -552,8 +689,11 @@ async function exportExcel(query = {}) {
           No: '',
           Code: '',
           Name: '',
-          'Department Code': '',
-          Department: '',
+          'Department Codes': '',
+          Departments: '',
+          'Primary Department Code': '',
+          'Primary Department': '',
+          'Position Codes': '',
           'Allowed Positions': '',
           Description: '',
           Status: '',
@@ -578,19 +718,19 @@ async function exportExcel(query = {}) {
 async function downloadImportSample() {
   const sampleRows = [
     {
-      Code: 'LINE-01',
-      Name: 'Sewing Line 01',
-      'Department Code': 'SEWING',
-      'Position Codes': 'SEWER,SEWER_SUPERVISOR',
-      Description: 'Production sewing line 01',
+      Code: 'LINE-02',
+      Name: 'Sewing Line 02',
+      'Department Codes': 'SEWING,PROD-MGT',
+      'Position Codes': 'SEWER,FM',
+      Description: 'Sewing line managed with Production Management support',
       Status: 'Active',
     },
     {
-      Code: 'LINE-02',
-      Name: 'Sewing Line 02',
-      'Department Code': 'SEWING',
+      Code: 'LINE-03',
+      Name: 'Sewing Line 03',
+      'Department Codes': 'SEWING',
       'Position Codes': '',
-      Description: 'Empty Position Codes means all positions in department',
+      Description: 'Empty Position Codes means all positions in selected departments',
       Status: 'Active',
     },
   ]
@@ -599,12 +739,14 @@ async function downloadImportSample() {
     ['Production Line Import Guide', ''],
     ['', ''],
     ['Field', 'Rule'],
-    ['Code', 'Required. Unique line code. Example: LINE-01'],
+    ['Code', 'Required. Unique line code. Example: LINE-02'],
     ['Name', 'Required. Line display name.'],
-    ['Department Code', 'Required. Must exist in Department master.'],
-    ['Position Codes', 'Optional. Comma-separated position codes. Blank = all positions in department.'],
+    ['Department Codes', 'Required. Comma-separated department codes. Example: SEWING,PROD-MGT'],
+    ['Position Codes', 'Optional. Comma-separated position codes. Blank = all positions in selected departments.'],
     ['Description', 'Optional. Maximum 500 characters.'],
     ['Status', 'Optional. Use Active or Inactive. Blank = Active.'],
+    ['', ''],
+    ['Important', 'Each Position Code must belong to at least one selected Department Code.'],
   ]
 
   const workbook = XLSX.utils.book_new()
@@ -612,7 +754,7 @@ async function downloadImportSample() {
   const guideSheet = XLSX.utils.aoa_to_sheet(guideRows)
 
   sampleSheet['!cols'] = autoFitColumns(sampleRows)
-  guideSheet['!cols'] = [{ wch: 30 }, { wch: 90 }]
+  guideSheet['!cols'] = [{ wch: 30 }, { wch: 100 }]
 
   XLSX.utils.book_append_sheet(workbook, sampleSheet, 'Sample')
   XLSX.utils.book_append_sheet(workbook, guideSheet, 'Guide')
@@ -674,7 +816,7 @@ function getMatchingCells(row, headerPrefixes = []) {
     .map(([, value]) => value)
 }
 
-function normalizePositionCodeToken(value) {
+function normalizeCodeToken(value) {
   const text = upper(value)
     .replace(/\u00a0/g, ' ')
     .replace(/\s+/g, ' ')
@@ -682,33 +824,34 @@ function normalizePositionCodeToken(value) {
 
   if (!text) return ''
 
-  // Accept exported labels like: W2-SW - Sewer Worker
+  // Accept exported labels like: SEWING - Sewing Department
   // Keep only the real code before " - ".
   const labelParts = text.split(/\s+-\s+/)
 
   return upper(labelParts[0])
 }
 
-function uniqueStrings(values = []) {
-  return [
-    ...new Set(
-      values
-        .map((value) => s(value))
-        .filter(Boolean),
-    ),
-  ]
-}
-
-function splitPositionCodes(...values) {
+function splitCodes(...values) {
   return uniqueStrings(
     values
       .flatMap((value) =>
         String(value || '')
           .split(/[,，;\n\r\t|]+/)
-          .map(normalizePositionCodeToken),
+          .map(normalizeCodeToken),
       )
       .filter(Boolean),
   )
+}
+
+function getRawDepartmentCodeCells(row) {
+  return getMatchingCells(row, [
+    'Department Codes',
+    'Department Code',
+    'DepartmentCodes',
+    'DepartmentCode',
+    'Departments',
+    'Department',
+  ])
 }
 
 function getRawPositionCodeCells(row) {
@@ -804,11 +947,12 @@ function normalizeImportRow(row, index) {
 
   const rawCode = getCell(row, ['Code', 'Line Code', 'LineCode'])
   const rawName = getCell(row, ['Name', 'Line Name', 'LineName'])
-  const rawDepartmentCode = getCell(row, [
-    'Department Code',
-    'DepartmentCode',
-    'Department',
-  ])
+
+  const rawDepartmentCodeCells = getRawDepartmentCodeCells(row)
+  const rawDepartmentCodes = rawDepartmentCodeCells
+    .map((value) => s(value))
+    .filter(Boolean)
+    .join(', ')
 
   const rawPositionCodeCells = getRawPositionCodeCells(row)
   const rawPositionCodes = rawPositionCodeCells
@@ -819,12 +963,13 @@ function normalizeImportRow(row, index) {
   const rawDescription = getCell(row, ['Description', 'Remark', 'Remarks'])
   const rawStatus = getCell(row, ['Status', 'Active', 'Is Active', 'IsActive'])
 
-  const positionCodes = splitPositionCodes(...rawPositionCodeCells)
+  const departmentCodes = splitCodes(...rawDepartmentCodeCells)
+  const positionCodes = splitCodes(...rawPositionCodeCells)
 
   const isBlankRow = [
     rawCode,
     rawName,
-    rawDepartmentCode,
+    rawDepartmentCodes,
     rawPositionCodes,
     rawDescription,
     rawStatus,
@@ -837,14 +982,14 @@ function normalizeImportRow(row, index) {
 
     rawCode,
     rawName,
-    rawDepartmentCode,
+    rawDepartmentCodes,
     rawPositionCodes,
     rawDescription,
     rawStatus,
 
     code: upper(rawCode),
     name: s(rawName),
-    departmentCode: upper(rawDepartmentCode),
+    departmentCodes,
     positionCodes,
     description: s(rawDescription),
     isActive: normalizeImportStatus(rawStatus),
@@ -858,7 +1003,7 @@ async function validateLineImportRows(normalizedRows = []) {
   const departmentCodes = Array.from(
     new Set(
       normalizedRows
-        .map((row) => row.departmentCode)
+        .flatMap((row) => row.departmentCodes || [])
         .filter((code) => code && code.length <= 50),
     ),
   )
@@ -900,16 +1045,6 @@ async function validateLineImportRows(normalizedRows = []) {
 
     positionsByCode.get(code).push(position)
   })
-
-  function resolvePositionForDepartment(positionCode, departmentId) {
-    const candidates = positionsByCode.get(upper(positionCode)) || []
-
-    return (
-      candidates.find(
-        (position) => id(position.departmentId) === id(departmentId),
-      ) || null
-    )
-  }
 
   const validRows = []
 
@@ -971,45 +1106,75 @@ async function validateLineImportRows(normalizedRows = []) {
       })
     }
 
-    const department = departmentMap.get(row.departmentCode)
+    const duplicateDepartmentCodes = findDuplicateValues(row.departmentCodes)
 
-    if (!row.departmentCode) {
+    if (duplicateDepartmentCodes.length) {
       hasRowError = true
 
       addImportError(errors, {
         rowNo: row.rowNo,
-        field: 'Department Code',
-        value: row.rawDepartmentCode,
-        code: 'LINE_IMPORT_DEPARTMENT_REQUIRED',
-        messageKey: 'org.line.import.error.departmentRequired',
-        reason: `Row ${row.rowNo}: Department Code is required.`,
+        field: 'Department Codes',
+        value: row.rawDepartmentCodes,
+        code: 'LINE_IMPORT_DUPLICATE_DEPARTMENT_CODE_IN_ROW',
+        messageKey: 'org.line.import.error.duplicateDepartmentCodeInRow',
+        reason: `Row ${row.rowNo}: Duplicate Department Code in the same row: ${duplicateDepartmentCodes.join(', ')}.`,
+        params: {
+          departmentCodes: duplicateDepartmentCodes,
+        },
       })
-    } else if (row.departmentCode.length > 50) {
+    }
+
+    const tooLongDepartmentCodes = row.departmentCodes.filter(
+      (departmentCode) => departmentCode.length > 50,
+    )
+
+    if (tooLongDepartmentCodes.length) {
       hasRowError = true
 
       addImportError(errors, {
         rowNo: row.rowNo,
-        field: 'Department Code',
-        value: row.rawDepartmentCode,
+        field: 'Department Codes',
+        value: row.rawDepartmentCodes,
         code: 'LINE_IMPORT_DEPARTMENT_CODE_TOO_LONG',
         messageKey: 'org.line.import.error.departmentCodeTooLong',
-        reason: `Row ${row.rowNo}: Department Code must not be longer than 50 characters.`,
+        reason: `Row ${row.rowNo}: Department Code must not be longer than 50 characters: ${tooLongDepartmentCodes.join(', ')}.`,
         params: {
+          departmentCodes: tooLongDepartmentCodes,
           max: 50,
         },
       })
-    } else if (!department) {
+    }
+
+    if (!row.departmentCodes.length) {
       hasRowError = true
 
       addImportError(errors, {
         rowNo: row.rowNo,
-        field: 'Department Code',
-        value: row.rawDepartmentCode,
+        field: 'Department Codes',
+        value: row.rawDepartmentCodes,
+        code: 'LINE_IMPORT_DEPARTMENT_REQUIRED',
+        messageKey: 'org.line.import.error.departmentRequired',
+        reason: `Row ${row.rowNo}: Department Codes is required.`,
+      })
+    }
+
+    const missingDepartmentCodes = row.departmentCodes.filter(
+      (departmentCode) =>
+        departmentCode.length <= 50 && !departmentMap.has(departmentCode),
+    )
+
+    if (missingDepartmentCodes.length) {
+      hasRowError = true
+
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Department Codes',
+        value: row.rawDepartmentCodes,
         code: 'LINE_IMPORT_DEPARTMENT_NOT_FOUND',
         messageKey: 'org.line.import.error.departmentNotFound',
-        reason: `Row ${row.rowNo}: Department Code "${row.departmentCode}" was not found.`,
+        reason: `Row ${row.rowNo}: Department Code not found: ${missingDepartmentCodes.join(', ')}.`,
         params: {
-          departmentCode: row.departmentCode,
+          departmentCodes: missingDepartmentCodes,
         },
       })
     }
@@ -1052,31 +1217,38 @@ async function validateLineImportRows(normalizedRows = []) {
       })
     }
 
+    const selectedDepartments = row.departmentCodes
+      .map((departmentCode) => departmentMap.get(departmentCode))
+      .filter(Boolean)
+
+    const selectedDepartmentIdSet = new Set(
+      selectedDepartments.map((department) => id(department._id)),
+    )
+
     const missingPositionCodes = []
     const mismatchedPositionCodes = []
     const resolvedPositionIds = []
 
-    if (department) {
-      row.positionCodes.forEach((positionCode) => {
-        const candidates = positionsByCode.get(positionCode) || []
-        const matchedPosition = resolvePositionForDepartment(
-          positionCode,
-          department._id,
-        )
+    row.positionCodes.forEach((positionCode) => {
+      const candidates = positionsByCode.get(positionCode) || []
+      const matchedPositions = candidates.filter((position) =>
+        selectedDepartmentIdSet.has(id(position.departmentId)),
+      )
 
-        if (!candidates.length) {
-          missingPositionCodes.push(positionCode)
-          return
-        }
+      if (!candidates.length) {
+        missingPositionCodes.push(positionCode)
+        return
+      }
 
-        if (!matchedPosition) {
-          mismatchedPositionCodes.push(positionCode)
-          return
-        }
+      if (!matchedPositions.length) {
+        mismatchedPositionCodes.push(positionCode)
+        return
+      }
 
-        resolvedPositionIds.push(matchedPosition._id)
+      matchedPositions.forEach((position) => {
+        resolvedPositionIds.push(position._id)
       })
-    }
+    })
 
     if (missingPositionCodes.length) {
       hasRowError = true
@@ -1088,7 +1260,7 @@ async function validateLineImportRows(normalizedRows = []) {
       const reason = departmentLikeCodes.length
         ? `Row ${row.rowNo}: Position Codes contains Department Code(s): ${departmentLikeCodes.join(
             ', ',
-          )}. Put these values in Department Code column, or leave Position Codes blank to allow all positions in the department.`
+          )}. Put these values in Department Codes column, or leave Position Codes blank to allow all positions in selected departments.`
         : `Row ${row.rowNo}: Position Code not found: ${missingPositionCodes.join(
             ', ',
           )}. Position Codes must use codes from Position master, not Department codes.`
@@ -1116,9 +1288,9 @@ async function validateLineImportRows(normalizedRows = []) {
         value: row.rawPositionCodes,
         code: 'LINE_IMPORT_POSITION_DEPARTMENT_MISMATCH',
         messageKey: 'org.line.import.error.positionDepartmentMismatch',
-        reason: `Row ${row.rowNo}: These Position Code(s) do not belong to Department "${row.departmentCode}": ${mismatchedPositionCodes.join(', ')}.`,
+        reason: `Row ${row.rowNo}: These Position Code(s) do not belong to selected Department Codes "${row.departmentCodes.join(', ')}": ${mismatchedPositionCodes.join(', ')}.`,
         params: {
-          departmentCode: row.departmentCode,
+          departmentCodes: row.departmentCodes,
           positionCodes: mismatchedPositionCodes,
         },
       })
@@ -1182,6 +1354,9 @@ async function validateLineImportRows(normalizedRows = []) {
     if (!hasRowError) {
       validRows.push({
         ...row,
+        resolvedDepartmentIds: uniqueStrings(
+          selectedDepartments.map((department) => id(department._id)),
+        ),
         resolvedPositionIds: uniqueStrings(resolvedPositionIds.map(id)),
       })
     }
@@ -1191,7 +1366,6 @@ async function validateLineImportRows(normalizedRows = []) {
 
   return {
     validRows,
-    departmentMap,
   }
 }
 
@@ -1229,8 +1403,7 @@ async function importExcel(fileBuffer, currentUser = null) {
     })
   }
 
-  const { validRows, departmentMap } =
-    await validateLineImportRows(normalizedRows)
+  const { validRows } = await validateLineImportRows(normalizedRows)
 
   if (!validRows.length) {
     throw appError({
@@ -1273,10 +1446,7 @@ async function importExcel(fileBuffer, currentUser = null) {
 
       const updated = validRows.length - created
 
-      const operations = validRows.map((row) => {
-      const department = departmentMap.get(row.departmentCode)
-
-      return {
+      const operations = validRows.map((row) => ({
         updateOne: {
           filter: {
             code: row.code,
@@ -1285,7 +1455,8 @@ async function importExcel(fileBuffer, currentUser = null) {
             $set: {
               code: row.code,
               name: row.name,
-              departmentId: department._id,
+              departmentId: row.resolvedDepartmentIds[0],
+              departmentIds: row.resolvedDepartmentIds,
               positionIds: row.resolvedPositionIds,
               description: row.description,
               isActive: row.isActive,
@@ -1297,8 +1468,7 @@ async function importExcel(fileBuffer, currentUser = null) {
           },
           upsert: true,
         },
-      }
-    })
+      }))
 
       await ProductionLine.bulkWrite(operations, {
         ordered: true,

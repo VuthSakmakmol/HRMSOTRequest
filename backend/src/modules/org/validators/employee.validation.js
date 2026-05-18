@@ -49,6 +49,17 @@ const optionalObjectIdField = (fieldKey) =>
     })
     .refine((value) => value === null || isObjectId(value), `${fieldKey}.invalid`)
 
+const objectIdArrayField = (fieldKey) =>
+  z
+    .array(
+      z
+        .string()
+        .trim()
+        .refine((value) => isObjectId(value), `${fieldKey}.invalid`),
+    )
+    .optional()
+    .default([])
+
 const booleanLike = z.union([z.boolean(), z.string(), z.number()]).optional()
 
 const employeeCodeRequiredField = z
@@ -196,6 +207,7 @@ const createEmployeeSchema = z.object({
   departmentId: objectIdField('org.employee.field.departmentId'),
   positionId: objectIdField('org.employee.field.positionId'),
   lineId: optionalObjectIdField('org.employee.field.lineId'),
+  lineIds: objectIdArrayField('org.employee.field.lineIds'),
   shiftId: objectIdField('org.employee.field.shiftId'),
 
   reportsToEmployeeId: optionalObjectIdField('org.employee.field.reportsToEmployeeId'),
@@ -219,6 +231,7 @@ const updateEmployeeSchema = z
     departmentId: objectIdField('org.employee.field.departmentId').optional(),
     positionId: objectIdField('org.employee.field.positionId').optional(),
     lineId: optionalObjectIdField('org.employee.field.lineId').optional(),
+    lineIds: objectIdArrayField('org.employee.field.lineIds').optional(),
     shiftId: objectIdField('org.employee.field.shiftId').optional(),
 
     reportsToEmployeeId: optionalObjectIdField(
@@ -245,6 +258,7 @@ const updateEmployeeSchema = z
       value.departmentId !== undefined ||
       value.positionId !== undefined ||
       value.lineId !== undefined ||
+      value.lineIds !== undefined ||
       value.shiftId !== undefined ||
       value.reportsToEmployeeId !== undefined ||
       value.otWorkflowRole !== undefined ||
@@ -256,7 +270,6 @@ const updateEmployeeSchema = z
       message: 'org.employee.validation.updatePayloadRequired',
     },
   )
-
 // Import rule:
 // - Employee Code is required.
 // - If Employee Code already exists, update that employee.

@@ -29,9 +29,6 @@ function uniqueObjectIdStrings(values = []) {
 
 const employeeSchema = new Schema(
   {
-    // Human-readable business key.
-    // Users see/use this in UI and Excel.
-    // Mongo _id remains the hidden internal relational key.
     employeeCode: {
       type: String,
       required: true,
@@ -62,12 +59,24 @@ const employeeSchema = new Schema(
       index: true,
     },
 
+    // Primary / legacy line.
+    // Keep this for old code compatibility.
     lineId: {
       type: Schema.Types.ObjectId,
       ref: 'ProductionLine',
       default: null,
       index: true,
     },
+
+    // New: employee can belong to / manage multiple lines.
+    // Example: FM can manage LINE-01, LINE-02, LINE-03.
+    lineIds: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: 'ProductionLine',
+        index: true,
+      },
+    ],
 
     shiftId: {
       type: Schema.Types.ObjectId,
@@ -130,9 +139,25 @@ employeeSchema.pre('validate', function normalize(next) {
   this.phone = s(this.phone)
   this.otWorkflowRole = s(this.otWorkflowRole || 'NONE').toUpperCase()
 
+  this.lineIds = uniqueObjectIdStrings(this.lineIds)
+
   if (!this.lineId) {
     this.lineId = null
   }
+
+  // Backward compatibility:
+  // old employee has lineId only.
+  if (this.lineId && !this.lineIds.includes(s(this.lineId))) {
+    this.lineIds = [s(this.lineId), ...this.lineIds]
+  }
+
+  // New frontend can send lineIds only.
+  // lineId remains first/primary line.
+  if (!this.lineId && this.lineIds.length) {
+    this.lineId = this.lineIds[0]
+  }
+
+  this.lineIds = uniqueObjectIdStrings(this.lineIds)
 
   if (!this.reportsToEmployeeId) {
     this.reportsToEmployeeId = null
@@ -163,7 +188,9 @@ employeeSchema.index(
 employeeSchema.index({ displayName: 'text', employeeCode: 'text' })
 employeeSchema.index({ departmentId: 1, positionId: 1, isActive: 1 })
 employeeSchema.index({ departmentId: 1, lineId: 1, positionId: 1, isActive: 1 })
+employeeSchema.index({ departmentId: 1, lineIds: 1, positionId: 1, isActive: 1 })
 employeeSchema.index({ lineId: 1, positionId: 1, isActive: 1 })
+employeeSchema.index({ lineIds: 1, positionId: 1, isActive: 1 })
 employeeSchema.index({ shiftId: 1, isActive: 1 })
 employeeSchema.index({ reportsToEmployeeId: 1, isActive: 1 })
 employeeSchema.index({ lineManagerIds: 1, isActive: 1 })

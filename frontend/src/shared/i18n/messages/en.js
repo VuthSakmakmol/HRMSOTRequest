@@ -479,6 +479,9 @@ export default {
       checkManagerEmployeeCode:
         'Please import the manager first or use an existing manager Employee Code.',
       uniqueEmailHelp: 'Email must be unique or left blank.',
+      selectLines: 'Select lines',
+      multiLineHelp:
+        'Select one or many lines. The first selected line becomes the primary line for old reports and compatibility.',
 
       noData: 'No employees matched your filters.',
       loadFailed: 'Failed to load employees.',

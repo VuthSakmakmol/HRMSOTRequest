@@ -48,6 +48,20 @@ const objectIdArrayField = (fieldKey) =>
     .optional()
     .default([])
 
+function uniqueStrings(values = []) {
+  return [
+    ...new Set(
+      (Array.isArray(values) ? values : [])
+        .map((value) => s(value))
+        .filter(Boolean),
+    ),
+  ]
+}
+
+function hasAnyDepartment(value = {}) {
+  return !!s(value.departmentId) || uniqueStrings(value.departmentIds).length > 0
+}
+
 const listProductionLineQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(10),
@@ -96,33 +110,44 @@ const productionLineLookupQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
 })
 
-const createProductionLineSchema = z.object({
-  code: z
-    .string()
-    .trim()
-    .min(1, 'org.line.validation.codeRequired')
-    .max(50, 'org.line.validation.codeTooLong')
-    .transform((value) => s(value).toUpperCase()),
+const createProductionLineSchema = z
+  .object({
+    code: z
+      .string()
+      .trim()
+      .min(1, 'org.line.validation.codeRequired')
+      .max(50, 'org.line.validation.codeTooLong')
+      .transform((value) => s(value).toUpperCase()),
 
-  name: z
-    .string()
-    .trim()
-    .min(1, 'org.line.validation.nameRequired')
-    .max(120, 'org.line.validation.nameTooLong'),
+    name: z
+      .string()
+      .trim()
+      .min(1, 'org.line.validation.nameRequired')
+      .max(120, 'org.line.validation.nameTooLong'),
 
-  departmentId: objectIdField('org.line.field.departmentId'),
+    // Legacy single department support.
+    departmentId: optionalObjectIdField('org.line.field.departmentId')
+      .optional()
+      .default(''),
 
-  positionIds: objectIdArrayField('org.line.field.positionIds'),
+    // New multi-department support.
+    departmentIds: objectIdArrayField('org.line.field.departmentIds'),
 
-  description: z
-    .string()
-    .trim()
-    .max(500, 'org.line.validation.descriptionTooLong')
-    .optional()
-    .default(''),
+    positionIds: objectIdArrayField('org.line.field.positionIds'),
 
-  isActive: z.boolean().optional().default(true),
-})
+    description: z
+      .string()
+      .trim()
+      .max(500, 'org.line.validation.descriptionTooLong')
+      .optional()
+      .default(''),
+
+    isActive: z.boolean().optional().default(true),
+  })
+  .refine(hasAnyDepartment, {
+    message: 'org.line.validation.departmentRequired',
+    path: ['departmentIds'],
+  })
 
 const updateProductionLineSchema = z
   .object({
@@ -141,7 +166,11 @@ const updateProductionLineSchema = z
       .max(120, 'org.line.validation.nameTooLong')
       .optional(),
 
-    departmentId: objectIdField('org.line.field.departmentId').optional(),
+    // Legacy single department support.
+    departmentId: optionalObjectIdField('org.line.field.departmentId').optional(),
+
+    // New multi-department support.
+    departmentIds: objectIdArrayField('org.line.field.departmentIds').optional(),
 
     positionIds: objectIdArrayField('org.line.field.positionIds').optional(),
 
@@ -158,11 +187,25 @@ const updateProductionLineSchema = z
       value.code !== undefined ||
       value.name !== undefined ||
       value.departmentId !== undefined ||
+      value.departmentIds !== undefined ||
       value.positionIds !== undefined ||
       value.description !== undefined ||
       value.isActive !== undefined,
     {
       message: 'org.line.validation.updatePayloadRequired',
+    },
+  )
+  .refine(
+    (value) => {
+      if (value.departmentId === undefined && value.departmentIds === undefined) {
+        return true
+      }
+
+      return hasAnyDepartment(value)
+    },
+    {
+      message: 'org.line.validation.departmentRequired',
+      path: ['departmentIds'],
     },
   )
 

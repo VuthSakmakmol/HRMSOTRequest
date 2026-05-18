@@ -71,7 +71,7 @@ const filters = reactive({
 const form = reactive({
   code: '',
   name: '',
-  departmentId: '',
+  departmentIds: [],
   positionIds: [],
   description: '',
   isActive: true,
@@ -118,7 +118,7 @@ const isSaveDisabled = computed(() => {
     saving.value ||
     !String(form.code || '').trim() ||
     !String(form.name || '').trim() ||
-    !String(form.departmentId || '').trim()
+    !normalizeIdList(form.departmentIds).length
   )
 })
 
@@ -139,6 +139,16 @@ function normalizeTotal(payload) {
 
 function normalizeId(row) {
   return String(row?.id || row?._id || row?.lineId || '').trim()
+}
+
+function normalizeIdList(values = []) {
+  return [
+    ...new Set(
+      (Array.isArray(values) ? values : [])
+        .map((value) => String(value || '').trim())
+        .filter(Boolean),
+    ),
+  ]
 }
 
 function buildLabel(...parts) {
@@ -223,8 +233,10 @@ async function loadDepartmentOptions() {
   }
 }
 
-async function loadPositionOptions(departmentId = '') {
-  if (!departmentId) {
+async function loadPositionOptions(departmentIds = []) {
+  const ids = normalizeIdList(departmentIds)
+
+  if (!ids.length) {
     positionOptions.value = []
     return
   }
@@ -232,13 +244,28 @@ async function loadPositionOptions(departmentId = '') {
   positionLoading.value = true
 
   try {
-    const res = await getPositionLookupOptions({
-      limit: 100,
-      isActive: true,
-      departmentId,
+    const responses = await Promise.all(
+      ids.map((departmentId) =>
+        getPositionLookupOptions({
+          limit: 100,
+          isActive: true,
+          departmentId,
+        }),
+      ),
+    )
+
+    const optionMap = new Map()
+
+    responses.forEach((res) => {
+      normalizeLookupOptions(normalizePayload(res)).forEach((item) => {
+        if (!item?.id) return
+        optionMap.set(item.id, item)
+      })
     })
 
-    positionOptions.value = normalizeLookupOptions(normalizePayload(res))
+    positionOptions.value = Array.from(optionMap.values()).sort((a, b) =>
+      String(a.label || '').localeCompare(String(b.label || '')),
+    )
   } catch (error) {
     showToast(
       'error',
@@ -378,7 +405,7 @@ function resetForm() {
   editingLineId.value = ''
   form.code = ''
   form.name = ''
-  form.departmentId = ''
+  form.departmentIds = []
   form.positionIds = []
   form.description = ''
   form.isActive = true
@@ -395,13 +422,25 @@ async function openCreateDialog() {
   lineDialogVisible.value = true
 }
 
+function getRowDepartmentIds(row) {
+  if (Array.isArray(row?.departmentIds) && row.departmentIds.length) {
+    return normalizeIdList(row.departmentIds)
+  }
+
+  if (Array.isArray(row?.departments) && row.departments.length) {
+    return normalizeIdList(row.departments.map((item) => normalizeId(item)))
+  }
+
+  return row?.departmentId ? [String(row.departmentId)] : []
+}
+
 async function openEditDialog(row) {
   if (!row) return
 
   editingLineId.value = normalizeId(row)
   form.code = row?.code || ''
   form.name = row?.name || ''
-  form.departmentId = row?.departmentId ? String(row.departmentId) : ''
+  form.departmentIds = getRowDepartmentIds(row)
 
   const rowPositionIds = Array.isArray(row?.positionIds)
     ? row.positionIds
@@ -409,7 +448,7 @@ async function openEditDialog(row) {
       ? row.positions.map((item) => normalizeId(item))
       : []
 
-  form.positionIds = rowPositionIds.map((id) => String(id)).filter(Boolean)
+  form.positionIds = normalizeIdList(rowPositionIds)
   form.description = row?.description || ''
   form.isActive = row?.isActive !== false
 
@@ -417,27 +456,30 @@ async function openEditDialog(row) {
     await loadDepartmentOptions()
   }
 
-  if (form.departmentId) {
-    await loadPositionOptions(form.departmentId)
+  if (form.departmentIds.length) {
+    await loadPositionOptions(form.departmentIds)
   }
 
   lineDialogVisible.value = true
 }
 
-async function onFormDepartmentChange() {
+async function onFormDepartmentsChange() {
   form.positionIds = []
-  await loadPositionOptions(form.departmentId)
+  await loadPositionOptions(form.departmentIds)
 }
 
 async function submitLine() {
   saving.value = true
 
   try {
+    const departmentIds = normalizeIdList(form.departmentIds)
+
     const payload = {
       code: String(form.code || '').trim().toUpperCase(),
       name: String(form.name || '').trim(),
-      departmentId: String(form.departmentId || '').trim(),
-      positionIds: Array.isArray(form.positionIds) ? form.positionIds : [],
+      departmentId: departmentIds[0] || '',
+      departmentIds,
+      positionIds: normalizeIdList(form.positionIds),
       description: String(form.description || '').trim(),
       isActive: !!form.isActive,
     }
@@ -533,9 +575,37 @@ function activeTagClass(active) {
   return active ? 'line-active-tag' : 'line-inactive-tag'
 }
 
-function departmentLabel(row) {
-  if (!row) return '-'
-  return buildLabel(row.departmentCode, row.departmentName) || '-'
+function departmentSummary(row) {
+  const departments = Array.isArray(row?.departments) ? row.departments : []
+
+  if (!departments.length && row?.departmentId) {
+    return {
+      visible: [
+        {
+          id: row.departmentId,
+          code: row.departmentCode,
+          name: row.departmentName,
+          label: row.departmentLabel,
+        },
+      ],
+      hidden: 0,
+      emptyText: '-',
+    }
+  }
+
+  if (!departments.length) {
+    return {
+      visible: [],
+      hidden: 0,
+      emptyText: '-',
+    }
+  }
+
+  return {
+    visible: departments.slice(0, 3),
+    hidden: Math.max(0, departments.length - 3),
+    emptyText: '',
+  }
 }
 
 function positionSummary(row) {
@@ -545,7 +615,7 @@ function positionSummary(row) {
     return {
       visible: [],
       hidden: 0,
-      emptyText: t('org.line.allPositionsInDepartment'),
+      emptyText: t('org.line.allPositionsInDepartments'),
     }
   }
 
@@ -554,6 +624,10 @@ function positionSummary(row) {
     hidden: Math.max(0, positions.length - 3),
     emptyText: '',
   }
+}
+
+function departmentTagLabel(department) {
+  return department?.code || department?.name || department?.label || '-'
 }
 
 function positionTagLabel(position) {
@@ -701,7 +775,7 @@ onBeforeUnmount(() => {
           :title="t('common.loadingData')"
           :message="t('common.fetchingRecords')"
           :rows="7"
-          :columns="7"
+          :columns="8"
           icon="pi pi-sitemap"
         />
 
@@ -714,7 +788,7 @@ onBeforeUnmount(() => {
           scroll-height="500px"
           :sort-field="filters.sortField"
           :sort-order="filters.sortOrder"
-          table-style="min-width: 74rem"
+          table-style="min-width: 86rem"
           class="ot-data-table ot-data-table-compact line-data-table"
           :virtual-scroller-options="useVirtualScroll ? {
             lazy: true,
@@ -788,28 +862,48 @@ onBeforeUnmount(() => {
           </Column>
 
           <Column
-            :header="t('org.line.department')"
-            style="min-width: 16rem"
-          >
-            <template #body="{ data }">
-              <span
-                v-if="data"
-                class="line-meta-text"
-              >
-                {{ departmentLabel(data) }}
-              </span>
-            </template>
-          </Column>
-
-          <Column
-            :header="t('org.line.allowedPositions')"
+            :header="t('org.line.departments')"
             style="min-width: 19rem"
           >
             <template #body="{ data }">
               <div v-if="data">
                 <div
+                  v-if="departmentSummary(data).visible.length"
+                  class="line-tag-list"
+                >
+                  <Tag
+                    v-for="department in departmentSummary(data).visible"
+                    :key="department.id || department._id || department.code || department.name"
+                    :value="departmentTagLabel(department)"
+                    class="line-rgb-tag line-department-tag"
+                  />
+
+                  <Tag
+                    v-if="departmentSummary(data).hidden"
+                    :value="`+${departmentSummary(data).hidden}`"
+                    class="line-rgb-tag line-more-tag"
+                  />
+                </div>
+
+                <span
+                  v-else
+                  class="line-empty-text"
+                >
+                  {{ departmentSummary(data).emptyText }}
+                </span>
+              </div>
+            </template>
+          </Column>
+
+          <Column
+            :header="t('org.line.allowedPositions')"
+            style="min-width: 21rem"
+          >
+            <template #body="{ data }">
+              <div v-if="data">
+                <div
                   v-if="positionSummary(data).visible.length"
-                  class="line-position-tags"
+                  class="line-tag-list"
                 >
                   <Tag
                     v-for="position in positionSummary(data).visible"
@@ -892,7 +986,7 @@ onBeforeUnmount(() => {
       v-model:visible="lineDialogVisible"
       modal
       :header="dialogTitle"
-      :style="{ width: '44rem', maxWidth: '96vw' }"
+      :style="{ width: '50rem', maxWidth: '96vw' }"
       @hide="resetForm"
     >
       <div class="ot-dialog-form">
@@ -924,20 +1018,20 @@ onBeforeUnmount(() => {
 
         <div class="ot-field">
           <label class="ot-field-label">
-            {{ t('org.line.department') }}
+            {{ t('org.line.departments') }}
           </label>
 
-          <Select
-            v-model="form.departmentId"
+          <MultiSelect
+            v-model="form.departmentIds"
             :options="departmentOptions"
             option-label="label"
             option-value="value"
-            :placeholder="t('org.line.selectDepartment')"
+            :placeholder="t('org.line.selectDepartments')"
+            display="chip"
             class="w-full"
             filter
-            show-clear
             :loading="departmentLoading"
-            @change="onFormDepartmentChange"
+            @change="onFormDepartmentsChange"
           />
         </div>
 
@@ -956,8 +1050,12 @@ onBeforeUnmount(() => {
             filter
             class="w-full"
             :loading="positionLoading"
-            :disabled="!form.departmentId"
+            :disabled="!form.departmentIds.length"
           />
+
+          <div class="line-help-text">
+            {{ t('org.line.allowedPositionsMultiDepartmentHelp') }}
+          </div>
         </div>
 
         <div class="ot-field">
@@ -1010,6 +1108,7 @@ onBeforeUnmount(() => {
   --line-name-rgb: 15, 23, 42;
   --line-meta-rgb: 71, 85, 105;
 
+  --line-department-rgb: 14, 116, 144;
   --line-position-rgb: 37, 99, 235;
   --line-more-rgb: 100, 116, 139;
 
@@ -1066,7 +1165,7 @@ onBeforeUnmount(() => {
   font-weight: 500;
 }
 
-.line-position-tags {
+.line-tag-list {
   display: flex;
   min-width: 0;
   flex-wrap: wrap;
@@ -1082,6 +1181,12 @@ onBeforeUnmount(() => {
   font-size: 0.7rem;
   font-weight: 700;
   line-height: 1;
+}
+
+.line-department-tag {
+  border-color: rgba(var(--line-department-rgb), 0.24);
+  background: rgba(var(--line-department-rgb), 0.1);
+  color: rgb(var(--line-department-rgb));
 }
 
 .line-position-tag {
@@ -1113,6 +1218,13 @@ onBeforeUnmount(() => {
   font-size: 0.8rem;
 }
 
+.line-help-text {
+  margin-top: 0.35rem;
+  color: var(--ot-text-muted);
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
 .line-active-box {
   display: flex;
   align-items: center;
@@ -1138,6 +1250,11 @@ onBeforeUnmount(() => {
 :global(.dark) .line-page {
   --line-name-rgb: 226, 232, 240;
   --line-meta-rgb: 203, 213, 225;
+}
+
+:global(.dark) .line-department-tag {
+  border-color: rgba(var(--line-department-rgb), 0.36);
+  background: rgba(var(--line-department-rgb), 0.18);
 }
 
 :global(.dark) .line-position-tag {

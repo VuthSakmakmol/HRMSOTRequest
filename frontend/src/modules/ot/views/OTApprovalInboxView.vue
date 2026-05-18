@@ -1462,7 +1462,6 @@ onBeforeUnmount(() => {
             >
               <Button
                 v-if="canDecide(data)"
-                :label="t('common.approve')"
                 icon="pi pi-check"
                 size="small"
                 class="action-btn ot-approval-action-button"
@@ -1471,7 +1470,6 @@ onBeforeUnmount(() => {
 
               <Button
                 v-if="canDecide(data)"
-                :label="t('common.reject')"
                 icon="pi pi-times"
                 size="small"
                 severity="danger"

@@ -67,7 +67,6 @@ function appError({
   })
 }
 
-
 const importProgressJobs = new Map()
 const IMPORT_PROGRESS_JOB_TTL_MS = 60 * 60 * 1000
 
@@ -549,6 +548,28 @@ function getImportField(raw = {}, keys = []) {
   return ''
 }
 
+function normalizeImportCodeToken(value) {
+  const text = upper(value)
+    .replace(/\u00a0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  if (!text) return ''
+
+  const labelParts = text.split(/\s+-\s+/)
+
+  return upper(labelParts[0])
+}
+
+function splitImportCodes(value) {
+  return uniqueStrings(
+    String(value || '')
+      .split(/[,，;\n\r\t|]+/)
+      .map(normalizeImportCodeToken)
+      .filter(Boolean),
+  )
+}
+
 function excelBufferFromWorkbook(workbook) {
   return XLSX.write(workbook, {
     type: 'buffer',
@@ -621,22 +642,90 @@ function buildShiftSummary(shiftValue) {
   }
 }
 
-function buildLineSummary(lineValue) {
+function buildLineItem(lineValue) {
   const lineId = id(lineValue)
 
+  if (!lineId) return null
+
   return {
-    lineId: lineId || null,
-    lineCode: lineValue?.code || '',
-    lineName: lineValue?.name || '',
-    line: lineId
-      ? {
-          id: lineId,
-          _id: lineId,
-          code: lineValue?.code || '',
-          name: lineValue?.name || '',
-        }
-      : null,
+    id: lineId,
+    _id: lineId,
+    code: lineValue?.code || '',
+    name: lineValue?.name || '',
+    label: [lineValue?.code, lineValue?.name].filter(Boolean).join(' - '),
   }
+}
+
+function buildLineSummary(docOrLineValue) {
+  const rawLines = []
+
+  if (Array.isArray(docOrLineValue?.lineIds)) {
+    rawLines.push(...docOrLineValue.lineIds)
+  }
+
+  if (docOrLineValue?.lineId) {
+    rawLines.unshift(docOrLineValue.lineId)
+  }
+
+  if (!rawLines.length && id(docOrLineValue)) {
+    rawLines.push(docOrLineValue)
+  }
+
+  const seen = new Set()
+  const lines = rawLines
+    .map(buildLineItem)
+    .filter(Boolean)
+    .filter((line) => {
+      if (seen.has(line.id)) return false
+      seen.add(line.id)
+      return true
+    })
+
+  const primaryLine = lines[0] || null
+
+  return {
+    lineId: primaryLine?.id || null,
+    lineCode: primaryLine?.code || '',
+    lineName: primaryLine?.name || '',
+    line: primaryLine,
+
+    lineIds: lines.map((line) => line.id),
+    lines,
+    lineCodes: lines.map((line) => line.code).filter(Boolean),
+    lineNames: lines.map((line) => line.name).filter(Boolean),
+    linesLabel: lines
+      .map((line) => line.label || line.code || line.name)
+      .filter(Boolean)
+      .join(', '),
+  }
+}
+
+function normalizeLineIdsFromPayload(payload = {}) {
+  const values = []
+
+  if (Array.isArray(payload.lineIds)) {
+    values.push(...payload.lineIds)
+  }
+
+  if (payload.lineId) {
+    values.unshift(payload.lineId)
+  }
+
+  return uniqueIds(values)
+}
+
+function employeeLineIds(employee = {}) {
+  return uniqueIds([
+    ...(Array.isArray(employee.lineIds) ? employee.lineIds : []),
+    employee.lineId,
+  ])
+}
+
+function hasAnySameLine(a = {}, b = {}) {
+  const aLineIds = employeeLineIds(a)
+  const bLineIds = new Set(employeeLineIds(b))
+
+  return aLineIds.some((lineId) => bLineIds.has(lineId))
 }
 
 function buildLineManagersSummary(lineManagers = []) {
@@ -699,7 +788,7 @@ function sanitize(doc, accountDoc = null) {
     hierarchyScope,
     managerScope: hierarchyScope,
 
-    ...buildLineSummary(doc.lineId),
+    ...buildLineSummary(doc),
     ...buildShiftSummary(doc.shiftId),
 
     reportsToEmployeeId: id(doc.reportsToEmployeeId) || null,
@@ -752,6 +841,11 @@ function sanitizeOrgNode(doc) {
     lineId: item.lineId,
     lineCode: item.lineCode,
     lineName: item.lineName,
+    lineIds: item.lineIds,
+    lines: item.lines,
+    lineCodes: item.lineCodes,
+    lineNames: item.lineNames,
+    linesLabel: item.linesLabel,
 
     shiftId: item.shiftId,
     shiftCode: item.shiftCode,
@@ -774,6 +868,16 @@ function sanitizeOrgNode(doc) {
   }
 }
 
+function addAndFilter(filter, condition) {
+  if (!condition || !Object.keys(condition).length) return
+
+  if (!Array.isArray(filter.$and)) {
+    filter.$and = []
+  }
+
+  filter.$and.push(condition)
+}
+
 function buildEmployeeListFilter(
   {
     search = '',
@@ -791,13 +895,15 @@ function buildEmployeeListFilter(
   if (keyword) {
     const regex = new RegExp(escapeRegex(keyword), 'i')
 
-    filter.$or = [
-      { employeeCode: regex },
-      { displayName: regex },
-      { phone: regex },
-      { email: regex },
-      { otWorkflowRole: regex },
-    ]
+    addAndFilter(filter, {
+      $or: [
+        { employeeCode: regex },
+        { displayName: regex },
+        { phone: regex },
+        { email: regex },
+        { otWorkflowRole: regex },
+      ],
+    })
   }
 
   if (departmentId && isObjectId(departmentId)) {
@@ -809,7 +915,12 @@ function buildEmployeeListFilter(
   }
 
   if (lineId && isObjectId(lineId)) {
-    filter.lineId = objectId(lineId)
+    addAndFilter(filter, {
+      $or: [
+        { lineId: objectId(lineId) },
+        { lineIds: objectId(lineId) },
+      ],
+    })
   }
 
   if (shiftId && isObjectId(shiftId)) {
@@ -1084,62 +1195,137 @@ async function ensurePositionExists(positionId, departmentId = null) {
   return position
 }
 
-async function ensureLineAllowed(lineId, departmentId, positionId) {
-  if (!lineId) return null
+async function ensureLinesAllowed(lineIds = [], departmentId, positionId) {
+  const ids = uniqueIds(lineIds)
 
-  await ensureObjectId(lineId, 'lineId')
+  if (!ids.length) return []
 
-  const line = await ProductionLine.findById(lineId)
-    .select('_id code name departmentId positionIds isActive')
-    .lean()
+  const objectIdValues = ids.filter(isObjectId).map(objectId)
+  const codeValues = ids.map(upper).filter(Boolean)
 
-  if (!line) {
+  const queryOr = []
+
+  if (objectIdValues.length) {
+    queryOr.push({
+      _id: {
+        $in: objectIdValues,
+      },
+    })
+  }
+
+  if (codeValues.length) {
+    queryOr.push({
+      code: {
+        $in: codeValues,
+      },
+    })
+  }
+
+  const lines = queryOr.length
+    ? await ProductionLine.find({
+        $or: queryOr,
+      })
+        .select('_id code name departmentId departmentIds positionIds isActive')
+        .lean()
+    : []
+
+  const lineById = new Map(lines.map((line) => [id(line._id), line]))
+  const lineByCode = new Map(lines.map((line) => [upper(line.code), line]))
+
+  const sortedLines = ids
+    .map((lineValue) => {
+      return lineById.get(lineValue) || lineByCode.get(upper(lineValue)) || null
+    })
+    .filter(Boolean)
+
+  const foundIds = new Set(sortedLines.map((line) => id(line._id)))
+  const foundCodes = new Set(sortedLines.map((line) => upper(line.code)))
+
+  const missingValues = ids.filter((lineValue) => {
+    return !foundIds.has(lineValue) && !foundCodes.has(upper(lineValue))
+  })
+
+  if (missingValues.length) {
     throw appError({
       statusCode: 404,
       code: 'LINE_NOT_FOUND',
       messageKey: 'org.line.error.notFound',
-      message: 'Line not found',
-      field: 'lineId',
+      message: 'Some selected lines were not found',
+      field: 'lineIds',
+      params: {
+        missingValues,
+      },
     })
   }
 
-  if (line.isActive === false) {
-    throw appError({
-      statusCode: 400,
-      code: 'LINE_INACTIVE',
-      messageKey: 'org.line.error.inactive',
-      message: 'Line is inactive',
-      field: 'lineId',
-    })
+  for (const line of sortedLines) {
+    if (line.isActive === false) {
+      throw appError({
+        statusCode: 400,
+        code: 'LINE_INACTIVE',
+        messageKey: 'org.line.error.inactive',
+        message: 'Line is inactive',
+        field: 'lineIds',
+        params: {
+          lineId: id(line._id),
+          lineCode: line.code || '',
+        },
+      })
+    }
+
+    const allowedDepartmentIds = uniqueIds([
+      ...(Array.isArray(line.departmentIds) ? line.departmentIds : []),
+      line.departmentId,
+    ])
+
+    if (
+      departmentId &&
+      allowedDepartmentIds.length &&
+      !allowedDepartmentIds.includes(id(departmentId))
+    ) {
+      throw appError({
+        statusCode: 400,
+        code: 'LINE_DEPARTMENT_MISMATCH',
+        messageKey: 'org.line.error.departmentMismatch',
+        message: 'Selected line does not support this employee department',
+        field: 'lineIds',
+        params: {
+          lineId: id(line._id),
+          lineCode: line.code || '',
+          departmentId: id(departmentId),
+        },
+      })
+    }
+
+    const allowedPositionIds = uniqueIds(line.positionIds || [])
+
+    if (
+      allowedPositionIds.length &&
+      positionId &&
+      !allowedPositionIds.includes(id(positionId))
+    ) {
+      throw appError({
+        statusCode: 400,
+        code: 'LINE_POSITION_NOT_ALLOWED',
+        messageKey: 'org.line.error.positionNotAllowed',
+        message: 'Selected line does not allow this employee position',
+        field: 'lineIds',
+        params: {
+          lineId: id(line._id),
+          lineCode: line.code || '',
+          positionId: id(positionId),
+        },
+      })
+    }
   }
 
-  if (departmentId && !sameId(line.departmentId, departmentId)) {
-    throw appError({
-      statusCode: 400,
-      code: 'LINE_DEPARTMENT_MISMATCH',
-      messageKey: 'org.line.error.departmentMismatch',
-      message: 'Line does not belong to selected department',
-      field: 'lineId',
-    })
-  }
+  return sortedLines
+}
 
-  const allowedPositionIds = uniqueIds(line.positionIds || [])
+async function ensureLineAllowed(lineId, departmentId, positionId) {
+  const lines = await ensureLinesAllowed(lineId ? [lineId] : [], departmentId, positionId)
 
-  if (
-    allowedPositionIds.length &&
-    positionId &&
-    !allowedPositionIds.includes(id(positionId))
-  ) {
-    throw appError({
-      statusCode: 400,
-      code: 'LINE_POSITION_NOT_ALLOWED',
-      messageKey: 'org.line.error.positionNotAllowed',
-      message: 'Selected line does not allow this position',
-      field: 'lineId',
-    })
-  }
-
-  return line
+  return lines[0] || null
 }
 
 async function ensureShiftExists(shiftId) {
@@ -1263,11 +1449,13 @@ async function findAutoManagerIdsByPositionAndLine({
   employeeId = null,
   departmentId,
   position,
-  lineId,
+  lineId = null,
+  lineIds = [],
 }) {
   if (!position?.reportsToPositionId) return []
 
   const hierarchyScope = getPositionHierarchyScope(position)
+  const cleanLineIds = uniqueIds([...lineIds, lineId])
 
   const filter = {
     positionId: position.reportsToPositionId,
@@ -1275,10 +1463,20 @@ async function findAutoManagerIdsByPositionAndLine({
   }
 
   if (hierarchyScope === 'SAME_LINE') {
-    if (!lineId || !departmentId) return []
+    if (!cleanLineIds.length) return []
 
-    filter.departmentId = departmentId
-    filter.lineId = lineId
+    filter.$or = [
+      {
+        lineId: {
+          $in: cleanLineIds.map(objectId),
+        },
+      },
+      {
+        lineIds: {
+          $in: cleanLineIds.map(objectId),
+        },
+      },
+    ]
   }
 
   if (hierarchyScope === 'GLOBAL') {
@@ -1294,7 +1492,7 @@ async function findAutoManagerIdsByPositionAndLine({
   }
 
   const managers = await Employee.find(filter)
-    .select('_id employeeCode displayName departmentId positionId lineId')
+    .select('_id employeeCode displayName departmentId positionId lineId lineIds')
     .sort({ employeeCode: 1, displayName: 1, _id: 1 })
     .lean()
 
@@ -1305,7 +1503,8 @@ async function resolveFinalManagerIds({
   employeeId = null,
   departmentId,
   position,
-  lineId,
+  lineId = null,
+  lineIds = [],
   manualReportsToEmployeeId = null,
 }) {
   const autoManagerIds = await findAutoManagerIdsByPositionAndLine({
@@ -1313,6 +1512,7 @@ async function resolveFinalManagerIds({
     departmentId,
     position,
     lineId,
+    lineIds,
   })
 
   if (autoManagerIds.length) {
@@ -1411,6 +1611,11 @@ function buildEmployeeLookupItem(doc) {
     lineId: item.lineId,
     lineCode: item.lineCode,
     lineName: item.lineName,
+    lineIds: item.lineIds,
+    lines: item.lines,
+    lineCodes: item.lineCodes,
+    lineNames: item.lineNames,
+    linesLabel: item.linesLabel,
 
     shiftId: item.shiftId,
     shiftCode: item.shiftCode,
@@ -1467,6 +1672,7 @@ async function lookup(query = {}, currentUser = null) {
       .populate('departmentId', 'name code')
       .populate('positionId', POSITION_POPULATE_FIELDS)
       .populate('lineId', 'code name')
+      .populate('lineIds', 'code name')
       .populate('shiftId', SHIFT_POPULATE_FIELDS)
       .populate('reportsToEmployeeId', 'employeeCode displayName')
       .populate('lineManagerIds', 'employeeCode displayName')
@@ -1507,6 +1713,7 @@ async function list(query, currentUser = null) {
       .populate('departmentId', 'name code')
       .populate('positionId', POSITION_POPULATE_FIELDS)
       .populate('lineId', 'code name')
+      .populate('lineIds', 'code name')
       .populate('shiftId', SHIFT_POPULATE_FIELDS)
       .populate('reportsToEmployeeId', 'employeeCode displayName')
       .populate('lineManagerIds', 'employeeCode displayName')
@@ -1543,8 +1750,8 @@ function buildEmployeeExportRows(items = []) {
     Department: item.departmentName || '',
     'Position Code': item.positionCode || '',
     Position: item.positionName || '',
-    'Line Code': item.lineCode || '',
-    'Line Name': item.lineName || '',
+    'Line Codes': item.lineCodes?.join(',') || item.lineCode || '',
+    'Line Names': item.lineNames?.join(', ') || item.lineName || '',
     'Line Managers': item.lineManagerNames || '',
     'Reports To Employee Code': item.reportsToEmployeeCode || '',
     'Reports To Employee Name': item.reportsToEmployeeName || '',
@@ -1573,6 +1780,7 @@ async function exportExcel(query = {}, currentUser = null) {
       .populate('departmentId', 'name code')
       .populate('positionId', POSITION_POPULATE_FIELDS)
       .populate('lineId', 'code name')
+      .populate('lineIds', 'code name')
       .populate('shiftId', SHIFT_POPULATE_FIELDS)
       .populate('reportsToEmployeeId', 'employeeCode displayName')
       .populate('lineManagerIds', 'employeeCode displayName')
@@ -1604,7 +1812,7 @@ async function downloadImportSample() {
       'Display Name': 'Mr A',
       'Department Code': 'SEWING',
       'Position Code': 'SEWER_SUPERVISOR',
-      'Line Code': 'LINE-01',
+      'Line Code': 'LINE-01,LINE-02',
       'Shift Code': 'DAY',
       'Reports To Employee Code': '',
       'OT Workflow Role': 'APPROVER',
@@ -1642,7 +1850,10 @@ async function downloadImportSample() {
     ['Display Name', 'Required.'],
     ['Department Code', 'Required. Must already exist in Department master.'],
     ['Position Code', 'Required. Must already exist and belong to Department Code.'],
-    ['Line Code', 'Optional. Must already exist if provided.'],
+    [
+      'Line Code',
+      'Optional. Use one or many line codes separated by comma. Example: LINE-01,LINE-02. First line becomes the primary line.',
+    ],
     ['Shift Code', 'Required. Must already exist and be active.'],
     [
       'Reports To Employee Code',
@@ -1782,6 +1993,7 @@ function normalizeImportRow(raw = {}, index = 0) {
   ])
 
   const joinDate = parseImportDate(rawJoinDate)
+  const lineCodes = splitImportCodes(rawLineCode)
 
   const isBlankRow = [
     rawEmployeeCode,
@@ -1822,7 +2034,8 @@ function normalizeImportRow(raw = {}, index = 0) {
     displayName: s(rawDisplayName),
     departmentCode: upper(rawDepartmentCode),
     positionCode: upper(rawPositionCode),
-    lineCode: upper(rawLineCode),
+    lineCode: lineCodes[0] || '',
+    lineCodes,
     shiftCode: upper(rawShiftCode),
     reportsToEmployeeCode: upper(rawReportsToEmployeeCode),
     otWorkflowRole: normalizeImportOTWorkflowRole(rawOTWorkflowRole),
@@ -1931,7 +2144,11 @@ function validateBasicEmployeeImportRows(normalizedRows = []) {
       })
     }
 
-    if (row.lineCode.length > 50) {
+    const tooLongLineCodes = (row.lineCodes || []).filter(
+      (lineCode) => lineCode.length > 50,
+    )
+
+    if (tooLongLineCodes.length) {
       hasRowError = true
       addImportError(errors, {
         rowNo: row.rowNo,
@@ -1939,7 +2156,10 @@ function validateBasicEmployeeImportRows(normalizedRows = []) {
         value: row.rawLineCode,
         code: 'EMPLOYEE_IMPORT_LINE_CODE_TOO_LONG',
         messageKey: 'org.employee.import.error.lineCodeTooLong',
-        reason: `Row ${row.rowNo}: Line Code must not be longer than 50 characters.`,
+        reason: `Row ${row.rowNo}: Line Code must not be longer than 50 characters: ${tooLongLineCodes.join(', ')}.`,
+        params: {
+          lineCodes: tooLongLineCodes,
+        },
       })
     }
 
@@ -2160,7 +2380,7 @@ async function validateEmployeeImportRows(normalizedRows = [], progressOptions =
     ...new Set(candidateRows.map((row) => row.positionCode).filter(Boolean)),
   ]
   const lineCodes = [
-    ...new Set(candidateRows.map((row) => row.lineCode).filter(Boolean)),
+    ...new Set(candidateRows.flatMap((row) => row.lineCodes || []).filter(Boolean)),
   ]
   const shiftCodes = [
     ...new Set(candidateRows.map((row) => row.shiftCode).filter(Boolean)),
@@ -2218,7 +2438,7 @@ async function validateEmployeeImportRows(normalizedRows = [], progressOptions =
   const lines = lineCodes.length
     ? await ProductionLine.find(
         { code: { $in: lineCodes } },
-        '_id code name departmentId positionIds isActive',
+        '_id code name departmentId departmentIds positionIds isActive',
       ).lean()
     : []
 
@@ -2254,7 +2474,7 @@ async function validateEmployeeImportRows(normalizedRows = [], progressOptions =
     employeeCodes.length
       ? Employee.find(
           { employeeCode: { $in: employeeCodes } },
-          '_id employeeCode displayName email departmentId positionId lineId shiftId reportsToEmployeeId lineManagerIds otWorkflowRole isActive',
+          '_id employeeCode displayName email departmentId positionId lineId lineIds shiftId reportsToEmployeeId lineManagerIds otWorkflowRole isActive',
         ).lean()
       : [],
 
@@ -2398,9 +2618,51 @@ async function validateEmployeeImportRows(normalizedRows = [], progressOptions =
       })
     }
 
-    const line = row.lineCode ? lineByCode.get(row.lineCode) : null
+    const selectedLines = []
+    const missingLineCodes = []
+    const inactiveLineCodes = []
+    const departmentMismatchLineCodes = []
+    const positionNotAllowedLineCodes = []
 
-    if (row.lineCode && !line) {
+    ;(row.lineCodes || []).forEach((lineCode) => {
+      const line = lineByCode.get(lineCode)
+
+      if (!line) {
+        missingLineCodes.push(lineCode)
+        return
+      }
+
+      selectedLines.push(line)
+
+      if (line.isActive === false) {
+        inactiveLineCodes.push(lineCode)
+      }
+
+      const allowedDepartmentIds = uniqueIds([
+        ...(Array.isArray(line.departmentIds) ? line.departmentIds : []),
+        line.departmentId,
+      ])
+
+      if (
+        department &&
+        allowedDepartmentIds.length &&
+        !allowedDepartmentIds.includes(id(department._id))
+      ) {
+        departmentMismatchLineCodes.push(lineCode)
+      }
+
+      const allowedPositionIds = uniqueIds(line.positionIds || [])
+
+      if (
+        position &&
+        allowedPositionIds.length &&
+        !allowedPositionIds.includes(id(position._id))
+      ) {
+        positionNotAllowedLineCodes.push(lineCode)
+      }
+    })
+
+    if (missingLineCodes.length) {
       hasRowError = true
       addImportError(errors, {
         rowNo: row.rowNo,
@@ -2408,14 +2670,14 @@ async function validateEmployeeImportRows(normalizedRows = [], progressOptions =
         value: row.rawLineCode,
         code: 'EMPLOYEE_IMPORT_LINE_NOT_FOUND',
         messageKey: 'org.employee.import.error.lineNotFound',
-        reason: `Row ${row.rowNo}: Line Code "${row.lineCode}" was not found.`,
+        reason: `Row ${row.rowNo}: Line Code not found: ${missingLineCodes.join(', ')}.`,
         params: {
-          lineCode: row.lineCode,
+          lineCodes: missingLineCodes,
         },
       })
     }
 
-    if (line && line.isActive === false) {
+    if (inactiveLineCodes.length) {
       hasRowError = true
       addImportError(errors, {
         rowNo: row.rowNo,
@@ -2423,14 +2685,14 @@ async function validateEmployeeImportRows(normalizedRows = [], progressOptions =
         value: row.rawLineCode,
         code: 'EMPLOYEE_IMPORT_LINE_INACTIVE',
         messageKey: 'org.employee.import.error.lineInactive',
-        reason: `Row ${row.rowNo}: Line Code "${row.lineCode}" is inactive.`,
+        reason: `Row ${row.rowNo}: Inactive Line Code(s): ${inactiveLineCodes.join(', ')}.`,
         params: {
-          lineCode: row.lineCode,
+          lineCodes: inactiveLineCodes,
         },
       })
     }
 
-    if (department && line && !sameId(line.departmentId, department._id)) {
+    if (departmentMismatchLineCodes.length) {
       hasRowError = true
       addImportError(errors, {
         rowNo: row.rowNo,
@@ -2438,35 +2700,28 @@ async function validateEmployeeImportRows(normalizedRows = [], progressOptions =
         value: row.rawLineCode,
         code: 'EMPLOYEE_IMPORT_LINE_DEPARTMENT_MISMATCH',
         messageKey: 'org.employee.import.error.lineDepartmentMismatch',
-        reason: `Row ${row.rowNo}: Line Code "${row.lineCode}" does not belong to Department Code "${row.departmentCode}".`,
+        reason: `Row ${row.rowNo}: These Line Code(s) do not support Department Code "${row.departmentCode}": ${departmentMismatchLineCodes.join(', ')}.`,
         params: {
           departmentCode: row.departmentCode,
-          lineCode: row.lineCode,
+          lineCodes: departmentMismatchLineCodes,
         },
       })
     }
 
-    if (line && position) {
-      const allowedPositionIds = uniqueIds(line.positionIds || [])
-
-      if (
-        allowedPositionIds.length &&
-        !allowedPositionIds.includes(id(position._id))
-      ) {
-        hasRowError = true
-        addImportError(errors, {
-          rowNo: row.rowNo,
-          field: 'Line Code',
-          value: row.rawLineCode,
-          code: 'EMPLOYEE_IMPORT_LINE_POSITION_NOT_ALLOWED',
-          messageKey: 'org.employee.import.error.linePositionNotAllowed',
-          reason: `Row ${row.rowNo}: Line Code "${row.lineCode}" does not allow Position Code "${row.positionCode}".`,
-          params: {
-            lineCode: row.lineCode,
-            positionCode: row.positionCode,
-          },
-        })
-      }
+    if (positionNotAllowedLineCodes.length) {
+      hasRowError = true
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Line Code',
+        value: row.rawLineCode,
+        code: 'EMPLOYEE_IMPORT_LINE_POSITION_NOT_ALLOWED',
+        messageKey: 'org.employee.import.error.linePositionNotAllowed',
+        reason: `Row ${row.rowNo}: These Line Code(s) do not allow Position Code "${row.positionCode}": ${positionNotAllowedLineCodes.join(', ')}.`,
+        params: {
+          lineCodes: positionNotAllowedLineCodes,
+          positionCode: row.positionCode,
+        },
+      })
     }
 
     const shift = shiftByCode.get(row.shiftCode)
@@ -2592,7 +2847,9 @@ async function validateEmployeeImportRows(normalizedRows = [], progressOptions =
         existing,
         department,
         position,
-        line,
+        line: selectedLines[0] || null,
+        lines: selectedLines,
+        lineIds: uniqueIds(selectedLines.map((line) => line._id)),
         shift,
         shouldCreateAccount,
         accountLoginId,
@@ -2622,6 +2879,7 @@ function resolveImportManagerIds({
   position,
   department,
   line,
+  lines = [],
   allEmployees = [],
   employeeByCode = new Map(),
 }) {
@@ -2635,6 +2893,11 @@ function resolveImportManagerIds({
   const employeeId = id(employeeDoc._id)
   const parentPositionId = id(position?.reportsToPositionId)
   const hierarchyScope = getPositionHierarchyScope(position)
+  const targetLineIds = uniqueIds([
+    ...(Array.isArray(lines) ? lines.map((item) => item?._id || item) : []),
+    line?._id || line,
+    ...(row?.lineIds || []),
+  ])
 
   let autoManagers = []
 
@@ -2645,7 +2908,9 @@ function resolveImportManagerIds({
       if (!sameId(item.positionId, parentPositionId)) return false
 
       if (hierarchyScope === 'SAME_LINE') {
-        return sameId(item.departmentId, department?._id) && sameId(item.lineId, line?._id)
+        if (!targetLineIds.length) return false
+
+        return targetLineIds.some((lineId) => employeeLineIds(item).includes(lineId))
       }
 
       if (hierarchyScope === 'GLOBAL') {
@@ -2826,7 +3091,8 @@ async function importExcel(file, currentUser = null, options = {}) {
               displayName: row.displayName,
               departmentId: row.department._id,
               positionId: row.position._id,
-              lineId: row.line?._id || null,
+              lineId: row.lineIds?.[0] || null,
+              lineIds: row.lineIds || [],
               shiftId: row.shift._id,
               otWorkflowRole: normalizeOTWorkflowRole(row.otWorkflowRole),
               phone: row.phone || '',
@@ -2859,7 +3125,7 @@ async function importExcel(file, currentUser = null, options = {}) {
 
       const allEmployees = await Employee.find(
         {},
-        '_id employeeCode displayName departmentId positionId lineId reportsToEmployeeId lineManagerIds isActive',
+        '_id employeeCode displayName departmentId positionId lineId lineIds reportsToEmployeeId lineManagerIds isActive',
       )
         .session(session)
         .lean()
@@ -2880,6 +3146,7 @@ async function importExcel(file, currentUser = null, options = {}) {
             position: row.position,
             department: row.department,
             line: row.line,
+            lines: row.lines || [],
             allEmployees,
             employeeByCode,
           })
@@ -3069,6 +3336,7 @@ async function getById(employeeId, currentUser = null) {
       .populate('departmentId', 'name code')
       .populate('positionId', POSITION_POPULATE_FIELDS)
       .populate('lineId', 'code name')
+      .populate('lineIds', 'code name')
       .populate('shiftId', SHIFT_POPULATE_FIELDS)
       .populate('reportsToEmployeeId', 'employeeCode displayName')
       .populate('lineManagerIds', 'employeeCode displayName')
@@ -3125,6 +3393,7 @@ async function getOrgChart(employeeId, currentUser = null) {
       .populate('departmentId', 'name code')
       .populate('positionId', POSITION_POPULATE_FIELDS)
       .populate('lineId', 'code name')
+      .populate('lineIds', 'code name')
       .populate('shiftId', SHIFT_POPULATE_FIELDS)
       .populate('reportsToEmployeeId', 'employeeCode displayName')
       .populate('lineManagerIds', 'employeeCode displayName')
@@ -3567,6 +3836,7 @@ async function syncSameLineManagersForAllEmployees() {
         departmentId: 1,
         positionId: 1,
         lineId: 1,
+        lineIds: 1,
         reportsToEmployeeId: 1,
         lineManagerIds: 1,
         isActive: 1,
@@ -3588,41 +3858,37 @@ async function syncSameLineManagersForAllEmployees() {
   ])
 
   const positionById = new Map(positions.map((position) => [id(position._id), position]))
-  const employeesByPositionDepartmentLine = new Map()
+  const employeesByPositionLine = new Map()
   const employeesByPositionDepartment = new Map()
   const employeesByPosition = new Map()
+
+  function pushToMap(map, key, employee) {
+    if (!key) return
+
+    if (!map.has(key)) {
+      map.set(key, [])
+    }
+
+    map.get(key).push(employee)
+  }
 
   for (const employee of employees) {
     const positionId = id(employee.positionId)
     const departmentId = id(employee.departmentId)
-    const lineId = id(employee.lineId)
+    const lineIds = employeeLineIds(employee)
 
     if (positionId) {
-      if (!employeesByPosition.has(positionId)) {
-        employeesByPosition.set(positionId, [])
-      }
-
-      employeesByPosition.get(positionId).push(employee)
+      pushToMap(employeesByPosition, positionId, employee)
     }
 
     if (positionId && departmentId) {
-      const key = `${positionId}:${departmentId}`
-
-      if (!employeesByPositionDepartment.has(key)) {
-        employeesByPositionDepartment.set(key, [])
-      }
-
-      employeesByPositionDepartment.get(key).push(employee)
+      pushToMap(employeesByPositionDepartment, `${positionId}:${departmentId}`, employee)
     }
 
-    if (positionId && departmentId && lineId) {
-      const key = `${positionId}:${departmentId}:${lineId}`
-
-      if (!employeesByPositionDepartmentLine.has(key)) {
-        employeesByPositionDepartmentLine.set(key, [])
-      }
-
-      employeesByPositionDepartmentLine.get(key).push(employee)
+    if (positionId && lineIds.length) {
+      lineIds.forEach((lineId) => {
+        pushToMap(employeesByPositionLine, `${positionId}:${lineId}`, employee)
+      })
     }
   }
 
@@ -3634,7 +3900,7 @@ async function syncSameLineManagersForAllEmployees() {
     )
   }
 
-  for (const group of employeesByPositionDepartmentLine.values()) sortEmployeeGroup(group)
+  for (const group of employeesByPositionLine.values()) sortEmployeeGroup(group)
   for (const group of employeesByPositionDepartment.values()) sortEmployeeGroup(group)
   for (const group of employeesByPosition.values()) sortEmployeeGroup(group)
 
@@ -3652,13 +3918,21 @@ async function syncSameLineManagersForAllEmployees() {
     let managerCandidates = []
 
     if (hierarchyScope === 'SAME_LINE') {
-      const departmentId = id(employee.departmentId)
-      const lineId = id(employee.lineId)
+      const lineIds = employeeLineIds(employee)
+      const byId = new Map()
 
-      if (parentPositionId && departmentId && lineId) {
-        const key = `${parentPositionId}:${departmentId}:${lineId}`
-        managerCandidates = employeesByPositionDepartmentLine.get(key) || []
+      for (const lineId of lineIds) {
+        const key = `${parentPositionId}:${lineId}`
+        const group = employeesByPositionLine.get(key) || []
+
+        group.forEach((manager) => {
+          if (!sameId(manager._id, employeeId)) {
+            byId.set(id(manager._id), manager)
+          }
+        })
       }
+
+      managerCandidates = Array.from(byId.values())
     } else if (hierarchyScope === 'GLOBAL') {
       const departmentId = id(employee.departmentId)
 
@@ -3735,13 +4009,16 @@ async function create(payload, currentUser = null) {
   const position = await ensurePositionExists(payload.positionId, department._id)
 
   await ensureShiftExists(payload.shiftId)
-  await ensureLineAllowed(payload.lineId, department._id, position._id)
+
+  const lineIds = normalizeLineIdsFromPayload(payload)
+  await ensureLinesAllowed(lineIds, department._id, position._id)
 
   const managerResult = await resolveFinalManagerIds({
     employeeId: null,
     departmentId: department._id,
     position,
-    lineId: payload.lineId || null,
+    lineId: lineIds[0] || null,
+    lineIds,
     manualReportsToEmployeeId: payload.reportsToEmployeeId || null,
   })
 
@@ -3753,7 +4030,8 @@ async function create(payload, currentUser = null) {
       displayName: s(payload.displayName),
       departmentId: payload.departmentId,
       positionId: payload.positionId,
-      lineId: payload.lineId || null,
+      lineId: lineIds[0] || null,
+      lineIds,
       shiftId: payload.shiftId,
       reportsToEmployeeId: managerResult.primaryManagerId || null,
       lineManagerIds: managerResult.lineManagerIds || [],
@@ -3809,7 +4087,11 @@ async function update(employeeId, payload, currentUser = null) {
     payload.departmentId !== undefined ? payload.departmentId : doc.departmentId
   const nextPositionId =
     payload.positionId !== undefined ? payload.positionId : doc.positionId
-  const nextLineId = payload.lineId !== undefined ? payload.lineId : doc.lineId
+  const nextLineIds =
+    payload.lineId !== undefined || payload.lineIds !== undefined
+      ? normalizeLineIdsFromPayload(payload)
+      : employeeLineIds(doc)
+  const nextLineId = nextLineIds[0] || null
   const nextShiftId = payload.shiftId !== undefined ? payload.shiftId : doc.shiftId
 
   const accountPayload = await validateCreateAccountOption(
@@ -3837,12 +4119,13 @@ async function update(employeeId, payload, currentUser = null) {
   const position = await ensurePositionExists(nextPositionId, department._id)
 
   await ensureShiftExists(nextShiftId)
-  await ensureLineAllowed(nextLineId, department._id, position._id)
+  await ensureLinesAllowed(nextLineIds, department._id, position._id)
 
   const shouldRefreshManager =
     payload.departmentId !== undefined ||
     payload.positionId !== undefined ||
     payload.lineId !== undefined ||
+    payload.lineIds !== undefined ||
     payload.reportsToEmployeeId !== undefined
 
   doc.employeeCode = nextEmployeeCode
@@ -3850,6 +4133,7 @@ async function update(employeeId, payload, currentUser = null) {
   doc.departmentId = nextDepartmentId
   doc.positionId = nextPositionId
   doc.lineId = nextLineId || null
+  doc.lineIds = nextLineIds
   doc.shiftId = nextShiftId
   doc.otWorkflowRole = nextOTWorkflowRole
   doc.phone = nextPhone
@@ -3868,7 +4152,8 @@ async function update(employeeId, payload, currentUser = null) {
       employeeId: doc._id,
       departmentId: department._id,
       position,
-      lineId: nextLineId || null,
+      lineId: nextLineId,
+      lineIds: nextLineIds,
       manualReportsToEmployeeId:
         payload.reportsToEmployeeId !== undefined
           ? payload.reportsToEmployeeId

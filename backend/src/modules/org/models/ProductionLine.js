@@ -38,6 +38,8 @@ const productionLineSchema = new mongoose.Schema(
       index: true,
     },
 
+    // Primary / legacy department.
+    // Keep this for old data and old frontend compatibility.
     departmentId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Department',
@@ -45,7 +47,17 @@ const productionLineSchema = new mongoose.Schema(
       index: true,
     },
 
-    // Empty = all positions under selected department are allowed.
+    // New: line can support multiple departments.
+    // Example: Sewing Line 2 can include Sewing + Production Management positions.
+    departmentIds: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Department',
+        index: true,
+      },
+    ],
+
+    // Empty = all positions under selected departments are allowed.
     positionIds: [
       {
         type: mongoose.Schema.Types.ObjectId,
@@ -87,7 +99,9 @@ const productionLineSchema = new mongoose.Schema(
 )
 
 productionLineSchema.index({ departmentId: 1, isActive: 1 })
+productionLineSchema.index({ departmentIds: 1, isActive: 1 })
 productionLineSchema.index({ departmentId: 1, code: 1 })
+productionLineSchema.index({ departmentIds: 1, code: 1 })
 productionLineSchema.index({ positionIds: 1 })
 productionLineSchema.index({ name: 'text', code: 'text', description: 'text' })
 
@@ -96,6 +110,31 @@ productionLineSchema.pre('validate', function normalize(next) {
   this.name = s(this.name)
   this.description = s(this.description)
   this.positionIds = uniqueObjectIdStrings(this.positionIds)
+
+  this.departmentIds = uniqueObjectIdStrings(this.departmentIds)
+
+  // Backward compatibility:
+  // old data/client sends departmentId only.
+  if (!this.departmentIds.length && this.departmentId) {
+    this.departmentIds = [this.departmentId]
+  }
+
+  // New client sends departmentIds only.
+  // departmentId remains the primary department for old code compatibility.
+  if (this.departmentIds.length && !this.departmentId) {
+    this.departmentId = this.departmentIds[0]
+  }
+
+  // Always include primary department in departmentIds.
+  if (this.departmentId) {
+    const primaryDepartmentId = s(this.departmentId)
+
+    if (primaryDepartmentId && !this.departmentIds.includes(primaryDepartmentId)) {
+      this.departmentIds = [primaryDepartmentId, ...this.departmentIds]
+    }
+  }
+
+  this.departmentIds = uniqueObjectIdStrings(this.departmentIds)
 
   if (!this.createdBy) {
     this.createdBy = null
