@@ -67,6 +67,314 @@ function appError({
   })
 }
 
+
+const importProgressJobs = new Map()
+const IMPORT_PROGRESS_JOB_TTL_MS = 60 * 60 * 1000
+
+function clampPercent(value) {
+  const number = Number(value || 0)
+
+  if (!Number.isFinite(number)) return 0
+
+  return Math.max(0, Math.min(100, Math.round(number)))
+}
+
+function uniqueStrings(values = []) {
+  return [
+    ...new Set(
+      (Array.isArray(values) ? values : [])
+        .map((value) => s(value))
+        .filter(Boolean),
+    ),
+  ]
+}
+
+function cleanupOldImportProgressJobs() {
+  const now = Date.now()
+
+  for (const [jobId, job] of importProgressJobs.entries()) {
+    const updatedAtMs = new Date(job.updatedAt || job.createdAt || 0).getTime()
+
+    if (!updatedAtMs || now - updatedAtMs > IMPORT_PROGRESS_JOB_TTL_MS) {
+      importProgressJobs.delete(jobId)
+    }
+  }
+}
+
+function defaultImportProgressJob(jobId = '') {
+  const now = new Date().toISOString()
+
+  return {
+    jobId: s(jobId),
+    status: 'WAITING_UPLOAD',
+    phase: 'UPLOAD',
+    percent: 0,
+    messageKey: 'org.employee.importProgress.waitingUpload',
+    message: 'Waiting for file upload...',
+    totalRows: 0,
+    processedRows: 0,
+    summary: null,
+    createdAt: now,
+    updatedAt: now,
+    completedPhases: [],
+  }
+}
+
+function startImportProgress(jobId, payload = {}) {
+  cleanupOldImportProgressJobs()
+
+  const cleanJobId = s(jobId)
+
+  if (!cleanJobId) return defaultImportProgressJob('')
+
+  const now = new Date().toISOString()
+
+  const job = {
+    ...defaultImportProgressJob(cleanJobId),
+    ...payload,
+    jobId: cleanJobId,
+    status: payload.status || 'RUNNING',
+    percent: clampPercent(payload.percent ?? 1),
+    createdAt: now,
+    updatedAt: now,
+    completedPhases: uniqueStrings(payload.completedPhases || []),
+  }
+
+  importProgressJobs.set(cleanJobId, job)
+
+  return job
+}
+
+function updateImportProgress(jobId, payload = {}) {
+  cleanupOldImportProgressJobs()
+
+  const cleanJobId = s(jobId)
+
+  if (!cleanJobId) return defaultImportProgressJob('')
+
+  const previous = importProgressJobs.get(cleanJobId) || defaultImportProgressJob(cleanJobId)
+
+  const nextCompletedPhases = uniqueStrings([
+    ...(previous.completedPhases || []),
+    ...(payload.completedPhases || []),
+  ])
+
+  const next = {
+    ...previous,
+    ...payload,
+    jobId: cleanJobId,
+    status: payload.status || previous.status || 'RUNNING',
+    percent: clampPercent(payload.percent ?? previous.percent),
+    completedPhases: nextCompletedPhases,
+    updatedAt: new Date().toISOString(),
+  }
+
+  importProgressJobs.set(cleanJobId, next)
+
+  return next
+}
+
+function completeImportProgress(jobId, payload = {}) {
+  if (!s(jobId)) return defaultImportProgressJob('')
+
+  return updateImportProgress(jobId, {
+    ...payload,
+    status: 'SUCCESS',
+    phase: 'COMPLETE',
+    percent: 100,
+    messageKey: payload.messageKey || 'org.employee.importProgress.completed',
+    message: payload.message || 'Employee import completed.',
+    completedPhases: [
+      'UPLOAD',
+      'READ_FILE',
+      'PARSE_ROWS',
+      'VALIDATE_BASIC',
+      'MATCH_DEPARTMENT',
+      'MATCH_POSITION',
+      'MATCH_LINE',
+      'MATCH_SHIFT',
+      'MATCH_EMPLOYEE',
+      'MATCH_ACCOUNT',
+      'VALIDATE_RELATION',
+      'IMPORT_EMPLOYEE',
+      'RESOLVE_MANAGER',
+      'CREATE_ACCOUNT',
+      'SYNC_MANAGER',
+      'COMPLETE',
+    ],
+  })
+}
+
+function getImportProgress(jobId) {
+  cleanupOldImportProgressJobs()
+
+  const cleanJobId = s(jobId)
+
+  if (!cleanJobId) return defaultImportProgressJob('')
+
+  return importProgressJobs.get(cleanJobId) || defaultImportProgressJob(cleanJobId)
+}
+
+function failImportProgress(jobId, error = {}) {
+  if (!s(jobId)) return null
+
+  return updateImportProgress(jobId, {
+    status: 'FAILED',
+    phase: 'FAILED',
+    messageKey:
+      error?.messageKey ||
+      error?.code ||
+      'org.employee.importProgress.failed',
+    message:
+      error?.message ||
+      'Employee import failed. Please fix the Excel file and try again.',
+  })
+}
+
+function emitImportProgress(options = {}, payload = {}) {
+  const progressJobId = s(options.progressJobId)
+
+  if (!progressJobId) return null
+
+  return updateImportProgress(progressJobId, payload)
+}
+
+async function bulkWriteInChunks(
+  model,
+  operations = [],
+  {
+    session = null,
+    ordered = true,
+    chunkSize = 500,
+    onProgress = null,
+  } = {},
+) {
+  if (!operations.length) return null
+
+  let result = null
+
+  for (let index = 0; index < operations.length; index += chunkSize) {
+    const chunk = operations.slice(index, index + chunkSize)
+
+    result = await model.bulkWrite(chunk, {
+      ordered,
+      session,
+    })
+
+    if (typeof onProgress === 'function') {
+      await onProgress({
+        processed: Math.min(index + chunk.length, operations.length),
+        total: operations.length,
+      })
+    }
+  }
+
+  return result
+}
+
+async function insertManyInChunks(
+  model,
+  docs = [],
+  {
+    session = null,
+    ordered = true,
+    chunkSize = 500,
+    onProgress = null,
+  } = {},
+) {
+  if (!docs.length) return null
+
+  let result = null
+
+  for (let index = 0; index < docs.length; index += chunkSize) {
+    const chunk = docs.slice(index, index + chunkSize)
+
+    result = await model.insertMany(chunk, {
+      ordered,
+      session,
+    })
+
+    if (typeof onProgress === 'function') {
+      await onProgress({
+        processed: Math.min(index + chunk.length, docs.length),
+        total: docs.length,
+      })
+    }
+  }
+
+  return result
+}
+
+async function buildAccountDocsInBatches({
+  validRows = [],
+  importedEmployeeByCode = new Map(),
+  accountByEmployeeId = new Map(),
+  options = {},
+  batchSize = 16,
+}) {
+  const accountRows = validRows.filter((row) => row.shouldCreateAccount)
+  const accountDocs = []
+  const total = accountRows.length
+
+  if (!total) {
+    emitImportProgress(options, {
+      phase: 'CREATE_ACCOUNT',
+      percent: 97,
+      totalRows: validRows.length,
+      processedRows: validRows.length,
+      messageKey: 'org.employee.importProgress.createAccount',
+      message: 'No login accounts requested. Skipping account creation...',
+      completedPhases: ['RESOLVE_MANAGER'],
+    })
+
+    return accountDocs
+  }
+
+  for (let index = 0; index < accountRows.length; index += batchSize) {
+    const batch = accountRows.slice(index, index + batchSize)
+
+    const docs = await Promise.all(
+      batch.map(async (row) => {
+        const employeeDoc = importedEmployeeByCode.get(row.employeeCode)
+
+        if (!employeeDoc) return null
+        if (accountByEmployeeId.has(id(employeeDoc._id))) return null
+
+        const passwordHash = await Account.hashPassword(row.accountPassword)
+
+        return {
+          loginId: row.accountLoginId,
+          passwordHash,
+          displayName: s(employeeDoc.displayName || row.displayName),
+          employeeId: employeeDoc._id,
+          roleIds: [],
+          directPermissionCodes: [],
+          passwordVersion: 1,
+          mustChangePassword: true,
+          isActive: true,
+        }
+      }),
+    )
+
+    accountDocs.push(...docs.filter(Boolean))
+
+    const processed = Math.min(index + batch.length, total)
+    const percent = 92 + Math.round((processed / Math.max(total, 1)) * 5)
+
+    emitImportProgress(options, {
+      phase: 'CREATE_ACCOUNT',
+      percent,
+      totalRows: validRows.length,
+      processedRows: processed,
+      messageKey: 'org.employee.importProgress.createAccount',
+      message: `Hashing requested accounts ${processed}/${total}...`,
+      completedPhases: ['RESOLVE_MANAGER'],
+    })
+  }
+
+  return accountDocs
+}
+
 function escapeRegex(value) {
   return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
@@ -203,6 +511,19 @@ function normalizeImportStatus(value) {
   if (['inactive', 'false', 'no', 'n', '0'].includes(text)) return false
 
   return 'INVALID_BOOLEAN'
+}
+
+function normalizeImportCreateAccount(value) {
+  const raw = s(value)
+
+  if (!raw) return false
+
+  const text = raw.toLowerCase()
+
+  if (['yes', 'y', 'true', '1', 'create', 'account'].includes(text)) return true
+  if (['no', 'n', 'false', '0', 'skip', 'none'].includes(text)) return false
+
+  return 'INVALID_CREATE_ACCOUNT'
 }
 
 function getImportField(raw = {}, keys = []) {
@@ -1291,6 +1612,7 @@ async function downloadImportSample() {
       Email: 'mra@company.com',
       'Join Date': '30/04/2026',
       Status: 'Active',
+      'Create Account': 'Yes',
     },
     {
       'Employee Code': 'TRX002',
@@ -1301,10 +1623,11 @@ async function downloadImportSample() {
       'Shift Code': 'DAY',
       'Reports To Employee Code': 'TRX001',
       'OT Workflow Role': 'NONE',
-      Phone: '098765432',
-      Email: 'worker001@company.com',
+      Phone: '',
+      Email: '',
       'Join Date': '30/04/2026',
       Status: 'Active',
+      'Create Account': 'No',
     },
   ]
 
@@ -1328,14 +1651,18 @@ async function downloadImportSample() {
     ['OT Workflow Role', 'Use NONE, APPROVER, or ACKNOWLEDGE. Blank = NONE.'],
     [
       'Phone',
-      'Required when import needs to create a login account. Default password = Employee Code + Phone.',
+      'Optional for normal employee import. Required only when Create Account = Yes because default password = Employee Code + Phone.',
     ],
     ['Email', 'Optional. Must be unique if provided.'],
     ['Join Date', 'Optional. Use DD/MM/YYYY format.'],
     ['Status', 'Use Active or Inactive. Blank = Active.'],
     [
-      'Account',
-      'Employee import automatically creates a login account if the employee has no account. Login ID = employee code lowercase. Default password = Employee Code + Phone. Existing accounts are not reset.',
+      'Create Account',
+      'Optional. Use Yes/No. Blank = No. If Yes, backend creates login account only when the employee does not already have one. Existing accounts are not reset.',
+    ],
+    [
+      'Account Strategy',
+      'For large imports, set Create Account = Yes only for employees who need login access. Example: 1,700 employees imported, but only 100 accounts created.',
     ],
   ]
 
@@ -1447,6 +1774,12 @@ function normalizeImportRow(raw = {}, index = 0) {
   const rawEmail = getImportField(raw, ['Email', 'email'])
   const rawJoinDate = getImportField(raw, ['joinDate', 'Join Date', 'JOIN DATE'])
   const rawStatus = getImportField(raw, ['isActive', 'Status', 'STATUS'])
+  const rawCreateAccount = getImportField(raw, [
+    'Create Account',
+    'createAccount',
+    'Account',
+    'CREATE ACCOUNT',
+  ])
 
   const joinDate = parseImportDate(rawJoinDate)
 
@@ -1463,6 +1796,7 @@ function normalizeImportRow(raw = {}, index = 0) {
     rawEmail,
     rawJoinDate,
     rawStatus,
+    rawCreateAccount,
   ].every((value) => !s(value))
 
   if (isBlankRow) return null
@@ -1482,6 +1816,7 @@ function normalizeImportRow(raw = {}, index = 0) {
     rawEmail,
     rawJoinDate,
     rawStatus,
+    rawCreateAccount,
 
     employeeCode: upper(rawEmployeeCode),
     displayName: s(rawDisplayName),
@@ -1495,6 +1830,7 @@ function normalizeImportRow(raw = {}, index = 0) {
     email: s(rawEmail).toLowerCase(),
     joinDate,
     isActive: normalizeImportStatus(rawStatus),
+    createAccount: normalizeImportCreateAccount(rawCreateAccount),
   }
 }
 
@@ -1723,6 +2059,18 @@ function validateBasicEmployeeImportRows(normalizedRows = []) {
       })
     }
 
+    if (row.rawCreateAccount && row.createAccount === 'INVALID_CREATE_ACCOUNT') {
+      hasRowError = true
+      addImportError(errors, {
+        rowNo: row.rowNo,
+        field: 'Create Account',
+        value: row.rawCreateAccount,
+        code: 'EMPLOYEE_IMPORT_INVALID_CREATE_ACCOUNT',
+        messageKey: 'org.employee.import.error.invalidCreateAccount',
+        reason: `Row ${row.rowNo}: Create Account must be Yes or No. Blank = No.`,
+      })
+    }
+
     if (row.employeeCode) {
       const firstRowNo = seenEmployeeCodes.get(row.employeeCode)
 
@@ -1778,8 +2126,18 @@ function validateBasicEmployeeImportRows(normalizedRows = []) {
   }
 }
 
-async function validateEmployeeImportRows(normalizedRows = []) {
+async function validateEmployeeImportRows(normalizedRows = [], progressOptions = {}) {
   const { errors, candidateRows } = validateBasicEmployeeImportRows(normalizedRows)
+
+  emitImportProgress(progressOptions, {
+    phase: 'VALIDATE_BASIC',
+    percent: 16,
+    totalRows: normalizedRows.length,
+    processedRows: candidateRows.length,
+    messageKey: 'org.employee.importProgress.validateBasic',
+    message: 'Checking required fields and duplicate rows...',
+    completedPhases: ['UPLOAD', 'READ_FILE', 'PARSE_ROWS'],
+  })
 
   const employeeCodes = [
     ...new Set(
@@ -1810,47 +2168,89 @@ async function validateEmployeeImportRows(normalizedRows = []) {
   const importLoginIds = [
     ...new Set(
       candidateRows
+        .filter((row) => row.createAccount === true)
         .map((row) => buildImportAccountLoginId(row.employeeCode))
         .filter(Boolean),
     ),
   ]
 
-  const [
-    departments,
-    positions,
-    lines,
-    shifts,
-    existingEmployees,
-    existingEmailOwners,
-  ] = await Promise.all([
-    departmentCodes.length
-      ? Department.find({ code: { $in: departmentCodes } }, '_id code name isActive').lean()
-      : [],
+  emitImportProgress(progressOptions, {
+    phase: 'MATCH_DEPARTMENT',
+    percent: 24,
+    totalRows: candidateRows.length,
+    messageKey: 'org.employee.importProgress.matchDepartment',
+    message: 'Matching department codes...',
+    completedPhases: ['VALIDATE_BASIC'],
+  })
 
-    positionCodes.length
-      ? Position.find(
-          { code: { $in: positionCodes } },
-          '_id code name departmentId reportsToPositionId reportsToPositionCode reportsToPositionName hierarchyScope managerScope isActive',
-        ).lean()
-      : [],
+  const departments = departmentCodes.length
+    ? await Department.find(
+        { code: { $in: departmentCodes } },
+        '_id code name isActive',
+      ).lean()
+    : []
 
-    lineCodes.length
-      ? ProductionLine.find(
-          { code: { $in: lineCodes } },
-          '_id code name departmentId positionIds isActive',
-        ).lean()
-      : [],
+  emitImportProgress(progressOptions, {
+    phase: 'MATCH_POSITION',
+    percent: 34,
+    totalRows: candidateRows.length,
+    messageKey: 'org.employee.importProgress.matchPosition',
+    message: 'Matching position codes...',
+    completedPhases: ['MATCH_DEPARTMENT'],
+  })
 
-    shiftCodes.length
-      ? Shift.find(
-          {
-            code: { $in: shiftCodes },
-            isActive: true,
-          },
-          '_id code name type startTime endTime breakStartTime breakEndTime crossMidnight isActive',
-        ).lean()
-      : [],
+  const positions = positionCodes.length
+    ? await Position.find(
+        { code: { $in: positionCodes } },
+        '_id code name departmentId reportsToPositionId reportsToPositionCode reportsToPositionName hierarchyScope managerScope isActive',
+      ).lean()
+    : []
 
+  emitImportProgress(progressOptions, {
+    phase: 'MATCH_LINE',
+    percent: 44,
+    totalRows: candidateRows.length,
+    messageKey: 'org.employee.importProgress.matchLine',
+    message: 'Matching production line codes...',
+    completedPhases: ['MATCH_POSITION'],
+  })
+
+  const lines = lineCodes.length
+    ? await ProductionLine.find(
+        { code: { $in: lineCodes } },
+        '_id code name departmentId positionIds isActive',
+      ).lean()
+    : []
+
+  emitImportProgress(progressOptions, {
+    phase: 'MATCH_SHIFT',
+    percent: 54,
+    totalRows: candidateRows.length,
+    messageKey: 'org.employee.importProgress.matchShift',
+    message: 'Matching shift codes...',
+    completedPhases: ['MATCH_LINE'],
+  })
+
+  const shifts = shiftCodes.length
+    ? await Shift.find(
+        {
+          code: { $in: shiftCodes },
+          isActive: true,
+        },
+        '_id code name type startTime endTime breakStartTime breakEndTime crossMidnight isActive',
+      ).lean()
+    : []
+
+  emitImportProgress(progressOptions, {
+    phase: 'MATCH_EMPLOYEE',
+    percent: 62,
+    totalRows: candidateRows.length,
+    messageKey: 'org.employee.importProgress.matchEmployee',
+    message: 'Checking existing employees and manager codes...',
+    completedPhases: ['MATCH_SHIFT'],
+  })
+
+  const [existingEmployees, existingEmailOwners] = await Promise.all([
     employeeCodes.length
       ? Employee.find(
           { employeeCode: { $in: employeeCodes } },
@@ -1884,6 +2284,15 @@ async function validateEmployeeImportRows(normalizedRows = []) {
       },
     })
   }
+
+  emitImportProgress(progressOptions, {
+    phase: 'MATCH_ACCOUNT',
+    percent: 66,
+    totalRows: candidateRows.length,
+    messageKey: 'org.employee.importProgress.matchAccount',
+    message: 'Checking employee login accounts...',
+    completedPhases: ['MATCH_EMPLOYEE'],
+  })
 
   const existingAccounts = accountOr.length
     ? await Account.find(
@@ -1919,7 +2328,23 @@ async function validateEmployeeImportRows(normalizedRows = []) {
 
   const validRows = []
 
-  for (const row of candidateRows) {
+  for (let rowIndex = 0; rowIndex < candidateRows.length; rowIndex += 1) {
+    const row = candidateRows[rowIndex]
+
+    if (rowIndex % 100 === 0 || rowIndex === candidateRows.length - 1) {
+      const percent = 68 + Math.round(((rowIndex + 1) / candidateRows.length) * 7)
+
+      emitImportProgress(progressOptions, {
+        phase: 'VALIDATE_RELATION',
+        percent,
+        totalRows: candidateRows.length,
+        processedRows: rowIndex + 1,
+        messageKey: 'org.employee.importProgress.validateRelation',
+        message: 'Validating department, position, line, shift, manager, and account rules...',
+        completedPhases: ['MATCH_ACCOUNT'],
+      })
+    }
+
     let hasRowError = false
     const existing = employeeByCode.get(row.employeeCode) || null
 
@@ -2106,7 +2531,8 @@ async function validateEmployeeImportRows(normalizedRows = []) {
       ? accountByEmployeeId.get(id(existing._id))
       : null
 
-    const shouldCreateAccount = !existingAccount
+    const wantsCreateAccount = row.createAccount === true
+    const shouldCreateAccount = wantsCreateAccount && !existingAccount
     const accountLoginId = buildImportAccountLoginId(row.employeeCode)
     const accountPassword = buildImportAccountPassword(row)
     const cleanPhone = normalizePhoneForPassword(row.phone)
@@ -2120,7 +2546,7 @@ async function validateEmployeeImportRows(normalizedRows = []) {
           value: row.rawPhone,
           code: 'EMPLOYEE_IMPORT_PHONE_REQUIRED_FOR_ACCOUNT',
           messageKey: 'org.employee.import.error.phoneRequiredForAccount',
-          reason: `Row ${row.rowNo}: Phone is required because import will create a login account. Default password = Employee Code + Phone.`,
+          reason: `Row ${row.rowNo}: Phone is required because Create Account = Yes. Default password = Employee Code + Phone.`,
           params: {
             employeeCode: row.employeeCode,
           },
@@ -2262,7 +2688,7 @@ function resolveImportManagerIds({
   }
 }
 
-async function importExcel(file, currentUser = null) {
+async function importExcel(file, currentUser = null, options = {}) {
   if (!file?.buffer) {
     throw appError({
       statusCode: 400,
@@ -2272,9 +2698,27 @@ async function importExcel(file, currentUser = null) {
     })
   }
 
+  if (options.progressJobId) {
+    startImportProgress(options.progressJobId, {
+      status: 'RUNNING',
+      phase: 'READ_FILE',
+      percent: 2,
+      messageKey: 'org.employee.importProgress.readFile',
+      message: 'Reading Excel file...',
+    })
+  }
+
   const workbook = XLSX.read(file.buffer, {
     type: 'buffer',
     cellDates: true,
+  })
+
+  emitImportProgress(options, {
+    phase: 'PARSE_ROWS',
+    percent: 8,
+    messageKey: 'org.employee.importProgress.parseRows',
+    message: 'Reading worksheet rows...',
+    completedPhases: ['READ_FILE'],
   })
 
   const firstSheetName = workbook.SheetNames[0]
@@ -2317,7 +2761,17 @@ async function importExcel(file, currentUser = null) {
     })
   }
 
-  const { validRows } = await validateEmployeeImportRows(normalizedRows)
+  emitImportProgress(options, {
+    phase: 'VALIDATE_BASIC',
+    percent: 12,
+    totalRows: normalizedRows.length,
+    processedRows: 0,
+    messageKey: 'org.employee.importProgress.validateBasic',
+    message: 'Preparing employee rows for validation...',
+    completedPhases: ['PARSE_ROWS'],
+  })
+
+  const { validRows } = await validateEmployeeImportRows(normalizedRows, options)
   const session = await mongoose.startSession()
 
   let summary = {
@@ -2328,6 +2782,16 @@ async function importExcel(file, currentUser = null) {
   }
 
   let createdEmployeeIds = []
+
+  emitImportProgress(options, {
+    phase: 'IMPORT_EMPLOYEE',
+    percent: 76,
+    totalRows: validRows.length,
+    processedRows: 0,
+    messageKey: 'org.employee.importProgress.startImport',
+    message: 'All master data matched. Starting employee import...',
+    completedPhases: ['VALIDATE_RELATION'],
+  })
 
   try {
     await session.withTransaction(async () => {
@@ -2375,9 +2839,22 @@ async function importExcel(file, currentUser = null) {
         },
       }))
 
-      await Employee.bulkWrite(baseOperations, {
+      await bulkWriteInChunks(Employee, baseOperations, {
         ordered: true,
         session,
+        chunkSize: 500,
+        onProgress({ processed, total }) {
+          const percent = 78 + Math.round((processed / Math.max(total, 1)) * 8)
+
+          emitImportProgress(options, {
+            phase: 'IMPORT_EMPLOYEE',
+            percent,
+            totalRows: validRows.length,
+            processedRows: processed,
+            messageKey: 'org.employee.importProgress.importEmployee',
+            message: `Importing employees ${processed}/${total}...`,
+          })
+        },
       })
 
       const allEmployees = await Employee.find(
@@ -2424,9 +2901,33 @@ async function importExcel(file, currentUser = null) {
         .filter(Boolean)
 
       if (managerOperations.length) {
-        await Employee.bulkWrite(managerOperations, {
+        await bulkWriteInChunks(Employee, managerOperations, {
           ordered: true,
           session,
+          chunkSize: 500,
+          onProgress({ processed, total }) {
+            const percent = 86 + Math.round((processed / Math.max(total, 1)) * 5)
+
+            emitImportProgress(options, {
+              phase: 'RESOLVE_MANAGER',
+              percent,
+              totalRows: validRows.length,
+              processedRows: processed,
+              messageKey: 'org.employee.importProgress.resolveManager',
+              message: `Resolving managers ${processed}/${total}...`,
+              completedPhases: ['IMPORT_EMPLOYEE'],
+            })
+          },
+        })
+      } else {
+        emitImportProgress(options, {
+          phase: 'RESOLVE_MANAGER',
+          percent: 91,
+          totalRows: validRows.length,
+          processedRows: validRows.length,
+          messageKey: 'org.employee.importProgress.resolveManager',
+          message: 'No manager changes needed.',
+          completedPhases: ['IMPORT_EMPLOYEE'],
         })
       }
 
@@ -2466,34 +2967,39 @@ async function importExcel(file, currentUser = null) {
           .map((item) => [id(item.employeeId), item]),
       )
 
-      const accountDocs = []
+      emitImportProgress(options, {
+        phase: 'CREATE_ACCOUNT',
+        percent: 92,
+        totalRows: validRows.length,
+        messageKey: 'org.employee.importProgress.createAccount',
+        message: 'Creating employee login accounts...',
+        completedPhases: ['RESOLVE_MANAGER'],
+      })
 
-      for (const row of validRows) {
-        if (!row.shouldCreateAccount) continue
-
-        const employeeDoc = importedEmployeeByCode.get(row.employeeCode)
-
-        if (!employeeDoc) continue
-        if (accountByEmployeeId.has(id(employeeDoc._id))) continue
-
-        const passwordHash = await Account.hashPassword(row.accountPassword)
-
-        accountDocs.push({
-          loginId: row.accountLoginId,
-          passwordHash,
-          displayName: s(employeeDoc.displayName || row.displayName),
-          employeeId: employeeDoc._id,
-          roleIds: [],
-          directPermissionCodes: [],
-          passwordVersion: 1,
-          mustChangePassword: true,
-          isActive: true,
-        })
-      }
+      const accountDocs = await buildAccountDocsInBatches({
+        validRows,
+        importedEmployeeByCode,
+        accountByEmployeeId,
+        options,
+        batchSize: 16,
+      })
 
       if (accountDocs.length) {
-        await Account.create(accountDocs, {
+        await insertManyInChunks(Account, accountDocs, {
           session,
+          ordered: true,
+          chunkSize: 500,
+          onProgress({ processed, total }) {
+            emitImportProgress(options, {
+              phase: 'CREATE_ACCOUNT',
+              percent: 98,
+              totalRows: validRows.length,
+              processedRows: validRows.length,
+              messageKey: 'org.employee.importProgress.createAccount',
+              message: `Saving requested accounts ${processed}/${total}...`,
+              completedPhases: ['RESOLVE_MANAGER'],
+            })
+          },
         })
       }
 
@@ -2527,7 +3033,23 @@ async function importExcel(file, currentUser = null) {
     await session.endSession()
   }
 
+  emitImportProgress(options, {
+    phase: 'SYNC_MANAGER',
+    percent: 98,
+    totalRows: validRows.length,
+    processedRows: validRows.length,
+    messageKey: 'org.employee.importProgress.syncManager',
+    message: 'Finalizing line managers...',
+    completedPhases: ['CREATE_ACCOUNT'],
+  })
+
   await syncSameLineManagersForAllEmployees()
+
+  completeImportProgress(options.progressJobId, {
+    totalRows: summary.totalRows,
+    processedRows: summary.totalRows,
+    summary,
+  })
 
   return {
     fileName: file.fileName || 'employee-import.xlsx',
@@ -3374,6 +3896,8 @@ module.exports = {
   exportExcel,
   downloadImportSample,
   importExcel,
+  getImportProgress,
+  failImportProgress,
   getById,
   getOrgChart,
   getOrgTree,

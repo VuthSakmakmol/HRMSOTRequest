@@ -12,7 +12,7 @@ const router = express.Router()
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 10 * 1024 * 1024,
+    fileSize: 25 * 1024 * 1024,
   },
 })
 
@@ -35,6 +35,12 @@ router.get(
   '/import-sample',
   requirePermission('EMPLOYEE_VIEW'),
   employeeController.downloadImportSample,
+)
+
+router.get(
+  '/import-progress/:jobId',
+  requirePermission('EMPLOYEE_CREATE'),
+  employeeController.getImportProgress,
 )
 
 router.post(

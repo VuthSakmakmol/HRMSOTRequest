@@ -3,12 +3,25 @@
 import api from '@/shared/services/api'
 import { toFileFormData } from '@/shared/utils/formData'
 
-const IMPORT_TIMEOUT_MS = 180000
+const IMPORT_TIMEOUT_MS = 15 * 60 * 1000
 const EXPORT_TIMEOUT_MS = 180000
 const SAMPLE_TIMEOUT_MS = 60000
+const PROGRESS_TIMEOUT_MS = 15000
 
 function cleanId(id) {
   return encodeURIComponent(String(id ?? '').trim())
+}
+
+export function createEmployeeImportJobId() {
+  const random = Math.random().toString(36).slice(2, 10)
+
+  return `employee-import-${Date.now()}-${random}`
+}
+
+export function getEmployeeImportProgress(jobId) {
+  return api.get(`/org/employees/import-progress/${cleanId(jobId)}`, {
+    timeout: PROGRESS_TIMEOUT_MS,
+  })
 }
 
 export function getEmployeeLookupOptions(params = {}) {
@@ -55,9 +68,15 @@ export function downloadEmployeeImportSample() {
 }
 
 export function importEmployeesExcel(input, options = {}) {
-  const { onUploadProgress } = options
+  const { onUploadProgress, jobId = '' } = options
 
-  return api.post('/org/employees/import', toFileFormData(input), {
+  const formData = toFileFormData(input)
+
+  if (jobId) {
+    formData.append('jobId', jobId)
+  }
+
+  return api.post('/org/employees/import', formData, {
     headers: {
       'Content-Type': 'multipart/form-data',
     },

@@ -71,7 +71,21 @@ async function downloadImportSample(req, res, next) {
   }
 }
 
+async function getImportProgress(req, res, next) {
+  try {
+    const item = employeeService.getImportProgress(req.params.jobId)
+
+    return successResponse(res, {
+      item,
+    })
+  } catch (error) {
+    return next(error)
+  }
+}
+
 async function importExcel(req, res, next) {
+  const progressJobId = String(req.body?.jobId || '').trim()
+
   try {
     if (!req.file?.buffer) {
       const error = new Error('org.employee.error.excelFileRequired')
@@ -87,6 +101,9 @@ async function importExcel(req, res, next) {
         buffer: req.file.buffer,
       },
       req.user,
+      {
+        progressJobId,
+      },
     )
 
     return successResponse(
@@ -97,6 +114,7 @@ async function importExcel(req, res, next) {
       201,
     )
   } catch (error) {
+    employeeService.failImportProgress(progressJobId, error)
     return next(error)
   }
 }
@@ -179,6 +197,7 @@ module.exports = {
   list,
   exportExcel,
   downloadImportSample,
+  getImportProgress,
   importExcel,
   getById,
   getOrgChart,
