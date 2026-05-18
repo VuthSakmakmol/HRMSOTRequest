@@ -104,10 +104,36 @@ async function searchOTRequestsForVerification(req, res, next) {
   }
 }
 
+/**
+ * Preview only.
+ * This does NOT save payable minutes into OTRequest.
+ *
+ * Good for screen preview/check before committing payment-ready result.
+ */
 async function verifyOTAttendance(req, res, next) {
   try {
     const params = parse(verifyOTAttendanceParamSchema, req.params || {})
     const result = await attendanceService.verifyOTRequest(params.otRequestId)
+
+    return successResponse(res, result)
+  } catch (error) {
+    return next(error)
+  }
+}
+
+/**
+ * Save verification result.
+ * This WILL save payment-ready payable minutes into OTRequest.approvedEmployees.
+ *
+ * Payment module should read from the saved OTRequest data.
+ */
+async function verifyAndSaveOTAttendance(req, res, next) {
+  try {
+    const params = parse(verifyOTAttendanceParamSchema, req.params || {})
+    const result = await attendanceService.verifyAndSaveOTRequest(
+      params.otRequestId,
+      req.user,
+    )
 
     return successResponse(res, result)
   } catch (error) {
@@ -124,4 +150,5 @@ module.exports = {
   getAttendanceRecordById,
   searchOTRequestsForVerification,
   verifyOTAttendance,
+  verifyAndSaveOTAttendance,
 }

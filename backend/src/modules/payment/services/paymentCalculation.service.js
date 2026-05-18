@@ -4,7 +4,15 @@ const mongoose = require('mongoose')
 
 const PaymentFormula = require('../models/PaymentFormula.model')
 const PaymentExchangeRate = require('../models/PaymentExchangeRate.model')
+
 const OTRequest = require('../../ot/models/OTRequest')
+const OTCalculationPolicy = require('../../ot/models/OTCalculationPolicy')
+const ShiftOTOption = require('../../ot/models/ShiftOTOption')
+const AttendanceRecord = require('../../attendance/models/AttendanceRecord')
+
+const { classifyDayType } = require('../../calendar/services/dayType.service')
+const { verifyAttendanceAgainstOT } = require('../../attendance/utils/attendanceVerification')
+
 const { parseSalaryExcel } = require('./salaryExcelParser.service')
 const {
   formatYmdToDmy,
@@ -42,9 +50,15 @@ function safePositiveNumber(value, fallback = 1) {
   return num > 0 ? num : fallback
 }
 
+function safeNonNegativeInt(value, fallback = 0) {
+  const num = Math.round(safeNumber(value, fallback))
+  return num < 0 ? fallback : num
+}
+
 function roundAmount(value, decimals = 2) {
   const safeDecimals = Math.min(Math.max(Number(decimals || 0), 0), 6)
   const factor = 10 ** safeDecimals
+
   return Math.round((Number(value || 0) + Number.EPSILON) * factor) / factor
 }
 
@@ -54,7 +68,11 @@ function normalizeEmployeeNo(value) {
 
 function normalizeDayType(value) {
   const dayType = upper(value)
-  if (['WORKING_DAY', 'SUNDAY', 'HOLIDAY'].includes(dayType)) return dayType
+
+  if (['WORKING_DAY', 'SUNDAY', 'HOLIDAY'].includes(dayType)) {
+    return dayType
+  }
+
   return 'WORKING_DAY'
 }
 
@@ -76,17 +94,44 @@ function getObjectIdString(value) {
   return value ? String(value) : ''
 }
 
+function isValidObjectId(value) {
+  return Boolean(s(value)) && mongoose.isValidObjectId(s(value))
+}
+
+function normalizeObjectIdArray(values = []) {
+  return Array.from(
+    new Set(
+      (Array.isArray(values) ? values : [])
+        .map((id) => s(id))
+        .filter((id) => mongoose.isValidObjectId(id)),
+    ),
+  )
+}
+
+function normalizeCodeArray(values = []) {
+  return Array.from(
+    new Set(
+      (Array.isArray(values) ? values : [])
+        .map((value) => upper(value))
+        .filter(Boolean),
+    ),
+  )
+}
+
 function getMultiplier(formula, dayType) {
   const normalizedDayType = normalizeDayType(dayType)
+
   return safeNonNegativeNumber(formula?.multipliers?.[normalizedDayType], 0)
 }
 
 function getHourlyRate(monthlySalary, formula) {
   const salary = safeNonNegativeNumber(monthlySalary, 0)
-  const monthlyWorkingDays = safeNonNegativeNumber(formula?.monthlyWorkingDays, 26)
-  const hoursPerDay = safeNonNegativeNumber(formula?.hoursPerDay, 8)
+  const monthlyWorkingDays = safePositiveNumber(formula?.monthlyWorkingDays, 26)
+  const hoursPerDay = safePositiveNumber(formula?.hoursPerDay, 8)
 
-  if (salary <= 0 || monthlyWorkingDays <= 0 || hoursPerDay <= 0) return 0
+  if (salary <= 0 || monthlyWorkingDays <= 0 || hoursPerDay <= 0) {
+    return 0
+  }
 
   return salary / monthlyWorkingDays / hoursPerDay
 }
@@ -114,11 +159,13 @@ function normalizeDenominations(value) {
     ? value
     : [50000, 20000, 10000, 5000, 1000, 500, 100]
 
-  return [...new Set(
-    source
-      .map((item) => Math.round(safePositiveNumber(item, 0)))
-      .filter((item) => item > 0),
-  )].sort((a, b) => b - a)
+  return [
+    ...new Set(
+      source
+        .map((item) => Math.round(safePositiveNumber(item, 0)))
+        .filter((item) => item > 0),
+    ),
+  ].sort((a, b) => b - a)
 }
 
 function mapFormula(doc = {}) {
@@ -129,8 +176,8 @@ function mapFormula(doc = {}) {
     description: s(doc.description),
     salaryBasis: upper(doc.salaryBasis || 'MONTHLY_SALARY'),
 
-    monthlyWorkingDays: safeNonNegativeNumber(doc.monthlyWorkingDays, 26),
-    hoursPerDay: safeNonNegativeNumber(doc.hoursPerDay, 8),
+    monthlyWorkingDays: safePositiveNumber(doc.monthlyWorkingDays, 26),
+    hoursPerDay: safePositiveNumber(doc.hoursPerDay, 8),
 
     multipliers: {
       WORKING_DAY: safeNonNegativeNumber(doc.multipliers?.WORKING_DAY, 1.5),
@@ -263,7 +310,7 @@ async function fetchApprovedOTRequests(fromDate, toDate) {
 }
 
 function resolveRequestPaidMinutes(otRequest = {}) {
-  const totalRequestPaidMinutes = safeNonNegativeNumber(
+  const totalRequestPaidMinutes = safeNonNegativeInt(
     otRequest.totalRequestPaidMinutes ??
       otRequest.totalPaidMinutes ??
       otRequest.requestPaidMinutes,
@@ -272,15 +319,15 @@ function resolveRequestPaidMinutes(otRequest = {}) {
 
   if (totalRequestPaidMinutes > 0) return totalRequestPaidMinutes
 
-  const totalMinutes = safeNonNegativeNumber(otRequest.totalMinutes, 0)
+  const totalMinutes = safeNonNegativeInt(otRequest.totalMinutes, 0)
   if (totalMinutes > 0) return totalMinutes
 
-  const requestedMinutes = safeNonNegativeNumber(
+  const requestedMinutes = safeNonNegativeInt(
     otRequest.requestedMinutes ?? otRequest.requestedOtMinutes,
     0,
   )
 
-  const breakMinutes = safeNonNegativeNumber(otRequest.breakMinutes, 0)
+  const breakMinutes = safeNonNegativeInt(otRequest.breakMinutes, 0)
 
   if (requestedMinutes > 0 && breakMinutes > 0 && breakMinutes < requestedMinutes) {
     return requestedMinutes - breakMinutes
@@ -289,31 +336,529 @@ function resolveRequestPaidMinutes(otRequest = {}) {
   return requestedMinutes
 }
 
-function resolveEmployeePaidMinutes(employee = {}, otRequest = {}) {
-  const employeePaidMinutes = safeNonNegativeNumber(
-    employee.approvedPaidMinutes ??
-      employee.payableMinutes ??
-      employee.paidMinutes ??
-      employee.totalRequestPaidMinutes ??
-      employee.requestPaidMinutes,
-    0,
-  )
+function mapPolicySnapshotForVerification(snapshot = {}, fallbackPolicy = null) {
+  const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj || {}, key)
 
-  if (employeePaidMinutes > 0) return employeePaidMinutes
+  const pickString = (snapshotKey, fallbackKey = snapshotKey) => {
+    const fromSnapshot = s(snapshot?.[snapshotKey])
+    if (fromSnapshot) return fromSnapshot
 
-  return resolveRequestPaidMinutes(otRequest)
+    return s(fallbackPolicy?.[fallbackKey])
+  }
+
+  const pickNumber = (snapshotKey, fallbackKey = snapshotKey, defaultValue = 0) => {
+    if (hasOwn(snapshot, snapshotKey)) {
+      return Number(snapshot?.[snapshotKey] || defaultValue)
+    }
+
+    if (fallbackPolicy && hasOwn(fallbackPolicy, fallbackKey)) {
+      return Number(fallbackPolicy?.[fallbackKey] || defaultValue)
+    }
+
+    return Number(defaultValue || 0)
+  }
+
+  const pickBoolean = (snapshotKey, fallbackKey = snapshotKey, defaultValue = false) => {
+    if (hasOwn(snapshot, snapshotKey)) {
+      return snapshot?.[snapshotKey] === true
+    }
+
+    if (fallbackPolicy && hasOwn(fallbackPolicy, fallbackKey)) {
+      return fallbackPolicy?.[fallbackKey] === true
+    }
+
+    return defaultValue
+  }
+
+  return {
+    calculationPolicyId: snapshot?.calculationPolicyId
+      ? String(snapshot.calculationPolicyId)
+      : fallbackPolicy?._id
+        ? String(fallbackPolicy._id)
+        : null,
+
+    code: upper(pickString('code')),
+    name: s(pickString('name')),
+
+    minEligibleMinutes: pickNumber('minEligibleMinutes', 'minEligibleMinutes', 0),
+    roundUnitMinutes: pickNumber('roundUnitMinutes', 'roundUnitMinutes', 30),
+    roundMethod: upper(pickString('roundMethod') || 'CEIL'),
+    graceAfterShiftEndMinutes: pickNumber(
+      'graceAfterShiftEndMinutes',
+      'graceAfterShiftEndMinutes',
+      0,
+    ),
+
+    allowApprovedOtWithoutExactClockOut: pickBoolean(
+      'allowApprovedOtWithoutExactClockOut',
+      'allowApprovedOtWithoutExactClockOut',
+      false,
+    ),
+
+    allowPreShiftOT: pickBoolean('allowPreShiftOT', 'allowPreShiftOT', false),
+    allowPostShiftOT: pickBoolean('allowPostShiftOT', 'allowPostShiftOT', true),
+    capByRequestedMinutes: pickBoolean('capByRequestedMinutes', 'capByRequestedMinutes', true),
+
+    treatForgetScanInAsPending: pickBoolean(
+      'treatForgetScanInAsPending',
+      'treatForgetScanInAsPending',
+      true,
+    ),
+    treatForgetScanOutAsPending: pickBoolean(
+      'treatForgetScanOutAsPending',
+      'treatForgetScanOutAsPending',
+      true,
+    ),
+  }
 }
 
-function resolveEmployeeSourceList(otRequest = {}) {
+async function resolveCurrentPolicyAndShiftOption(otRequest = {}) {
+  let currentPolicy = null
+  let currentShiftOtOption = null
+
+  if (isValidObjectId(otRequest.shiftOtOptionId)) {
+    currentShiftOtOption = await ShiftOTOption.findById(otRequest.shiftOtOptionId).lean()
+  }
+
+  if (isValidObjectId(otRequest.otCalculationPolicyId)) {
+    currentPolicy = await OTCalculationPolicy.findById(otRequest.otCalculationPolicyId).lean()
+  }
+
+  if (
+    !currentPolicy &&
+    currentShiftOtOption?.calculationPolicyId &&
+    mongoose.isValidObjectId(currentShiftOtOption.calculationPolicyId)
+  ) {
+    currentPolicy = await OTCalculationPolicy.findById(
+      currentShiftOtOption.calculationPolicyId,
+    ).lean()
+  }
+
+  return {
+    currentPolicy,
+    currentShiftOtOption,
+  }
+}
+
+function getEffectiveApprovedEmployeesForVerification(otRequest = {}) {
   if (Array.isArray(otRequest.approvedEmployees) && otRequest.approvedEmployees.length) {
     return otRequest.approvedEmployees
   }
 
-  if (Array.isArray(otRequest.requestedEmployees) && otRequest.requestedEmployees.length) {
-    return otRequest.requestedEmployees
+  return Array.isArray(otRequest.requestedEmployees) ? otRequest.requestedEmployees : []
+}
+
+function buildVerificationOTRequestPayload(otRequest, approvedEmployees = [], options = {}) {
+  const requestedEmployees = Array.isArray(otRequest?.requestedEmployees)
+    ? otRequest.requestedEmployees
+    : []
+
+  const effectiveApprovedEmployees = Array.isArray(approvedEmployees) ? approvedEmployees : []
+
+  const currentPolicy = options.currentPolicy || null
+  const currentShiftOtOption = options.currentShiftOtOption || null
+
+  const storedDayType = upper(otRequest.dayType)
+  const internalCalendarDayType = upper(
+    options.internalCalendarDayType || storedDayType || 'WORKING_DAY',
+  )
+
+  const requestedMinutes = safeNonNegativeInt(
+    otRequest?.requestedMinutes || otRequest?.totalMinutes,
+    0,
+  )
+
+  const breakMinutes = safeNonNegativeInt(otRequest?.breakMinutes, 0)
+
+  const totalRequestPaidMinutes = Number(
+    otRequest?.totalRequestPaidMinutes ||
+      otRequest?.totalPaidMinutes ||
+      otRequest?.totalMinutes ||
+      (requestedMinutes > 0 && breakMinutes > 0 && breakMinutes < requestedMinutes
+        ? requestedMinutes - breakMinutes
+        : requestedMinutes) ||
+      0,
+  )
+
+  const timingMode = upper(
+    otRequest?.shiftOtOptionTimingMode ||
+      otRequest?.timingMode ||
+      currentShiftOtOption?.timingMode ||
+      '',
+  )
+
+  const shiftOtOptionStartAfterShiftEndMinutes = Number(
+    otRequest?.shiftOtOptionStartAfterShiftEndMinutes ??
+      currentShiftOtOption?.startAfterShiftEndMinutes ??
+      0,
+  )
+
+  const requestStartTime = s(otRequest.requestStartTime || otRequest.startTime)
+  const requestEndTime = s(otRequest.requestEndTime || otRequest.endTime)
+
+  const fixedStartTime =
+    timingMode === 'FIXED_TIME'
+      ? s(
+          otRequest?.shiftOtOptionFixedStartTime ||
+            currentShiftOtOption?.fixedStartTime ||
+            requestStartTime,
+        )
+      : s(otRequest?.shiftOtOptionFixedStartTime)
+
+  const fixedEndTime =
+    timingMode === 'FIXED_TIME'
+      ? s(
+          otRequest?.shiftOtOptionFixedEndTime ||
+            currentShiftOtOption?.fixedEndTime ||
+            requestEndTime,
+        )
+      : s(otRequest?.shiftOtOptionFixedEndTime)
+
+  return {
+    _id: otRequest._id,
+    id: otRequest._id ? String(otRequest._id) : null,
+    requestNo: s(otRequest.requestNo),
+
+    requesterEmployeeId: otRequest.requesterEmployeeId
+      ? String(otRequest.requesterEmployeeId)
+      : null,
+    requesterEmployeeNo: s(otRequest.requesterEmployeeNo),
+    requesterName: s(otRequest.requesterName),
+
+    otDate: s(otRequest.otDate),
+    otDateDisplay: formatYmdToDmy(otRequest.otDate),
+
+    // Payment verification uses calendar service day type.
+    dayType: internalCalendarDayType,
+    storedDayType,
+    internalCalendarDayType,
+    dayTypeMismatch:
+      Boolean(storedDayType) &&
+      Boolean(internalCalendarDayType) &&
+      storedDayType !== internalCalendarDayType,
+
+    status: upper(otRequest.status),
+
+    shiftId: otRequest.shiftId ? String(otRequest.shiftId) : null,
+    shiftCode: upper(otRequest.shiftCode),
+    shiftName: s(otRequest.shiftName),
+    shiftType: upper(otRequest.shiftType),
+    shiftStartTime: s(otRequest.shiftStartTime),
+    shiftEndTime: s(otRequest.shiftEndTime),
+    shiftCrossMidnight: otRequest.shiftCrossMidnight === true,
+
+    shiftOtOptionId: otRequest.shiftOtOptionId ? String(otRequest.shiftOtOptionId) : null,
+    shiftOtOptionLabel: s(otRequest.shiftOtOptionLabel || currentShiftOtOption?.label),
+
+    shiftOtOptionTimingMode: timingMode,
+    shiftOtOptionStartAfterShiftEndMinutes,
+    shiftOtOptionFixedStartTime: fixedStartTime,
+    shiftOtOptionFixedEndTime: fixedEndTime,
+
+    requestedMinutes,
+    breakMinutes,
+
+    totalMinutes: totalRequestPaidMinutes,
+    totalRequestPaidMinutes,
+    requestPaidMinutes: totalRequestPaidMinutes,
+    totalHours: Number(
+      otRequest.totalHours || (totalRequestPaidMinutes > 0 ? totalRequestPaidMinutes / 60 : 0),
+    ),
+
+    requestStartTime,
+    requestEndTime,
+    expectedOtStartTime: requestStartTime,
+    expectedOtEndTime: requestEndTime,
+
+    otCalculationPolicyId: otRequest.otCalculationPolicyId
+      ? String(otRequest.otCalculationPolicyId)
+      : currentPolicy?._id
+        ? String(currentPolicy._id)
+        : null,
+
+    otCalculationPolicySnapshot: mapPolicySnapshotForVerification(
+      otRequest.otCalculationPolicySnapshot || {},
+      currentPolicy,
+    ),
+
+    requestedEmployeeCount: Number(otRequest.requestedEmployeeCount || requestedEmployees.length),
+    approvedEmployeeCount: Number(
+      effectiveApprovedEmployees.length || otRequest.approvedEmployeeCount || 0,
+    ),
+
+    requestedEmployees,
+    approvedEmployees: effectiveApprovedEmployees,
+  }
+}
+
+function buildAttendanceRecordFilterForOT(otRequest = {}) {
+  const requestedEmployees = Array.isArray(otRequest.requestedEmployees)
+    ? otRequest.requestedEmployees
+    : []
+
+  const requestedEmployeeIds = normalizeObjectIdArray(
+    requestedEmployees.map((item) => item?.employeeId),
+  )
+
+  const requestedEmployeeCodes = normalizeCodeArray(
+    requestedEmployees.map((item) => item?.employeeCode || item?.employeeNo),
+  )
+
+  const orConditions = []
+
+  if (requestedEmployeeIds.length) {
+    orConditions.push({
+      employeeId: {
+        $in: requestedEmployeeIds,
+      },
+    })
   }
 
-  return []
+  if (requestedEmployeeCodes.length) {
+    orConditions.push({
+      employeeNo: {
+        $in: requestedEmployeeCodes,
+      },
+    })
+  }
+
+  if (!orConditions.length) return null
+
+  return {
+    attendanceDate: s(otRequest.otDate),
+    $or: orConditions,
+  }
+}
+
+async function findAttendanceRecordsForOTRequest(otRequest = {}) {
+  const filter = buildAttendanceRecordFilterForOT(otRequest)
+  if (!filter) return []
+
+  return AttendanceRecord.find(filter)
+    .sort({
+      createdAt: -1,
+      _id: -1,
+    })
+    .lean()
+}
+
+function employeePaymentKey(item = {}) {
+  const employeeId = s(item.employeeId)
+
+  if (employeeId) {
+    return `ID:${employeeId}`
+  }
+
+  const employeeCode = upper(item.employeeCode || item.employeeNo)
+
+  if (employeeCode) {
+    return `CODE:${employeeCode}`
+  }
+
+  return ''
+}
+
+function buildEmployeeOriginalMap(employees = []) {
+  const map = new Map()
+
+  for (const employee of Array.isArray(employees) ? employees : []) {
+    const key = employeePaymentKey(employee)
+    if (key && !map.has(key)) {
+      map.set(key, employee)
+    }
+  }
+
+  return map
+}
+
+function buildVerificationPaymentMap(verification = {}) {
+  const rows = [
+    ...(Array.isArray(verification.otMatchEmployees)
+      ? verification.otMatchEmployees
+      : []),
+    ...(Array.isArray(verification.otMismatchEmployees)
+      ? verification.otMismatchEmployees
+      : []),
+    ...(Array.isArray(verification.otPendingReviewEmployees)
+      ? verification.otPendingReviewEmployees
+      : []),
+  ]
+
+  const map = new Map()
+
+  for (const row of rows) {
+    const key = employeePaymentKey(row)
+
+    if (key && !map.has(key)) {
+      map.set(key, row)
+    }
+  }
+
+  return map
+}
+
+function getVerificationPayableMinutes(verificationRow = {}) {
+  const result = upper(verificationRow.otResult)
+
+  if (result === 'PENDING_REVIEW') return 0
+
+  return safeNonNegativeInt(
+    verificationRow.roundedOtMinutes ??
+      verificationRow.payableMinutes ??
+      verificationRow.approvedPaidMinutes,
+    0,
+  )
+}
+
+function mergeEmployeeWithVerification(originalEmployee = {}, verificationRow = {}) {
+  const payableMinutes = getVerificationPayableMinutes(verificationRow)
+
+  return {
+    ...originalEmployee,
+
+    attendanceRecordId: verificationRow.attendanceRecordId || null,
+    attendanceImportId: verificationRow.importId || null,
+
+    attendanceDate: s(verificationRow.attendanceDate),
+    attendanceStatus: upper(verificationRow.attendanceStatus),
+    attendanceStatusKey: s(verificationRow.attendanceStatusKey),
+    attendanceMessageKey: s(verificationRow.attendanceMessageKey),
+
+    clockIn: s(verificationRow.clockIn),
+    clockOut: s(verificationRow.clockOut),
+
+    actualOtMinutes: safeNonNegativeInt(verificationRow.actualOtMinutes, 0),
+    eligibleOtMinutes: safeNonNegativeInt(verificationRow.eligibleOtMinutes, 0),
+    roundedOtMinutes: safeNonNegativeInt(verificationRow.roundedOtMinutes, 0),
+
+    approvedPaidMinutes: payableMinutes,
+    payableMinutes,
+    paidMinutes: payableMinutes,
+    verifiedPayableMinutes: payableMinutes,
+    finalPayableMinutes: payableMinutes,
+    paymentPayableMinutes: payableMinutes,
+    policyPaidMinutes: payableMinutes,
+    policyPayableMinutes: payableMinutes,
+    calculatedPaidMinutes: payableMinutes,
+    calculatedPayableMinutes: payableMinutes,
+    attendancePaidMinutes: payableMinutes,
+    attendancePayableMinutes: payableMinutes,
+
+    rawOtDecision: upper(verificationRow.rawOtDecision),
+    rawOtDecisionKey: s(verificationRow.rawOtDecisionKey),
+
+    otResult: upper(verificationRow.otResult),
+    otResultLabelKey: s(verificationRow.otResultLabelKey),
+    otResultReason: s(verificationRow.otResultReason),
+    otResultReasonKey: s(verificationRow.otResultReasonKey),
+    paymentMessageKey: s(verificationRow.messageKey),
+
+    paymentEligible: payableMinutes > 0,
+    paymentBlockedReason:
+      payableMinutes > 0
+        ? ''
+        : s(verificationRow.otResultReason || 'No attendance/policy payable minutes found'),
+
+    policyCode: s(verificationRow.policyCode),
+    policyName: s(verificationRow.policyName),
+    policyRoundMethod: s(verificationRow.policyRoundMethod),
+    policyRoundUnitMinutes: safeNonNegativeNumber(verificationRow.policyRoundUnitMinutes, 0),
+    policyMinEligibleMinutes: safeNonNegativeNumber(verificationRow.policyMinEligibleMinutes, 0),
+    policyGraceAfterShiftEndMinutes: safeNonNegativeNumber(
+      verificationRow.policyGraceAfterShiftEndMinutes,
+      0,
+    ),
+  }
+}
+
+async function buildLivePaymentVerification(otRequest = {}) {
+  const { currentPolicy, currentShiftOtOption } =
+    await resolveCurrentPolicyAndShiftOption(otRequest)
+
+  const requestedEmployees = Array.isArray(otRequest.requestedEmployees)
+    ? otRequest.requestedEmployees
+    : []
+
+  const effectiveApprovedEmployees = getEffectiveApprovedEmployeesForVerification(otRequest)
+  const sourceEmployees = effectiveApprovedEmployees.length
+    ? effectiveApprovedEmployees
+    : requestedEmployees
+
+  const attendanceRecords = await findAttendanceRecordsForOTRequest(otRequest)
+
+  const internalDayInfo = await classifyDayType(s(otRequest.otDate))
+  const internalCalendarDayType = upper(internalDayInfo?.dayType || 'WORKING_DAY')
+
+  const verificationOtRequest = buildVerificationOTRequestPayload(
+    otRequest,
+    sourceEmployees,
+    {
+      currentPolicy,
+      currentShiftOtOption,
+      internalCalendarDayType,
+    },
+  )
+
+  const verification = verifyAttendanceAgainstOT({
+    otRequest: verificationOtRequest,
+    requestedEmployees,
+    approvedEmployees: sourceEmployees,
+    attendanceRecords,
+  })
+
+  const originalMap = buildEmployeeOriginalMap(sourceEmployees)
+  const verificationMap = buildVerificationPaymentMap(verification)
+
+  const verifiedEmployees = sourceEmployees
+    .map((employee) => {
+      const key = employeePaymentKey(employee)
+      const original = originalMap.get(key) || employee
+      const verificationRow = verificationMap.get(key)
+
+      if (!verificationRow) {
+        return mergeEmployeeWithVerification(original, {
+          otResult: 'MISMATCH',
+          otResultReason: 'No attendance verification result found',
+          messageKey: 'payment.attendance.no_verification_result',
+          roundedOtMinutes: 0,
+        })
+      }
+
+      return mergeEmployeeWithVerification(original, verificationRow)
+    })
+
+  return {
+    otRequest: verificationOtRequest,
+    verification,
+    verifiedEmployees,
+  }
+}
+
+function firstPositiveNumber(...values) {
+  for (const value of values) {
+    const number = safeNonNegativeNumber(value, 0)
+
+    if (number > 0) return number
+  }
+
+  return 0
+}
+
+function resolveEmployeePaidMinutes(employee = {}) {
+  return firstPositiveNumber(
+    employee.approvedPaidMinutes,
+    employee.payableMinutes,
+    employee.paidMinutes,
+    employee.verifiedPayableMinutes,
+    employee.finalPayableMinutes,
+    employee.paymentPayableMinutes,
+    employee.policyPaidMinutes,
+    employee.policyPayableMinutes,
+    employee.calculatedPaidMinutes,
+    employee.calculatedPayableMinutes,
+    employee.attendancePaidMinutes,
+    employee.attendancePayableMinutes,
+  )
 }
 
 function buildSalaryInfo(salaryMap, employeeNo) {
@@ -360,6 +905,7 @@ function buildDenominationBreakdown(amount, denominations = []) {
 
   for (const denomination of sortedDenominations) {
     const quantity = Math.floor(remaining / denomination)
+
     breakdown[String(denomination)] = quantity
     remaining -= quantity * denomination
   }
@@ -406,10 +952,13 @@ function buildPaymentItem({ otRequest, employee, formula, salaryInfo, exchangeRa
 
   const breakMinutes = safeNonNegativeNumber(otRequest.breakMinutes, 0)
   const requestPaidMinutes = resolveRequestPaidMinutes(otRequest)
-  const payableMinutes = resolveEmployeePaidMinutes(employee, otRequest)
+
+  const payableMinutes = resolveEmployeePaidMinutes(employee)
+  const hasAttendancePolicyPayable = payableMinutes > 0
 
   const payableHours = payableMinutes / 60
   const rawAmount = hourlyRate * multiplier * payableHours
+
   const amount = salaryInfo.hasSalary
     ? roundAmount(rawAmount, formula.roundingDecimals)
     : 0
@@ -417,7 +966,7 @@ function buildPaymentItem({ otRequest, employee, formula, salaryInfo, exchangeRa
   const exchange = calculateExchangeAmount(amount, exchangeRate)
 
   return {
-    otRequestId: getObjectIdString(otRequest._id),
+    otRequestId: getObjectIdString(otRequest._id || otRequest.id),
     requestNo: s(otRequest.requestNo),
 
     otDate: s(otRequest.otDate),
@@ -425,6 +974,10 @@ function buildPaymentItem({ otRequest, employee, formula, salaryInfo, exchangeRa
 
     dayType,
     status: normalizeStatus(otRequest.status),
+
+    storedDayType: upper(otRequest.storedDayType),
+    internalCalendarDayType: upper(otRequest.internalCalendarDayType),
+    dayTypeMismatch: otRequest.dayTypeMismatch === true,
 
     requesterEmployeeId: getObjectIdString(otRequest.requesterEmployeeId),
     requesterEmployeeNo: normalizeEmployeeNo(otRequest.requesterEmployeeNo),
@@ -461,8 +1014,36 @@ function buildPaymentItem({ otRequest, employee, formula, salaryInfo, exchangeRa
     requestedMinutes,
     breakMinutes,
     requestPaidMinutes,
+
+    attendanceRecordId: getObjectIdString(employee.attendanceRecordId),
+    attendanceImportId: getObjectIdString(employee.attendanceImportId),
+    attendanceDate: s(employee.attendanceDate),
+    attendanceStatus: upper(employee.attendanceStatus),
+    clockIn: s(employee.clockIn),
+    clockOut: s(employee.clockOut),
+
+    actualOtMinutes: safeNonNegativeNumber(employee.actualOtMinutes, 0),
+    eligibleOtMinutes: safeNonNegativeNumber(employee.eligibleOtMinutes, 0),
+    roundedOtMinutes: safeNonNegativeNumber(employee.roundedOtMinutes, 0),
+
     payableMinutes,
     payableHours: roundAmount(payableHours, 4),
+
+    otResult: upper(employee.otResult),
+    otResultReason: s(employee.otResultReason),
+    otResultReasonKey: s(employee.otResultReasonKey),
+    paymentMessageKey: s(employee.paymentMessageKey),
+    paymentBlockedReason: s(employee.paymentBlockedReason),
+
+    policyCode: s(employee.policyCode),
+    policyName: s(employee.policyName),
+    policyRoundMethod: s(employee.policyRoundMethod),
+    policyRoundUnitMinutes: safeNonNegativeNumber(employee.policyRoundUnitMinutes, 0),
+    policyMinEligibleMinutes: safeNonNegativeNumber(employee.policyMinEligibleMinutes, 0),
+    policyGraceAfterShiftEndMinutes: safeNonNegativeNumber(
+      employee.policyGraceAfterShiftEndMinutes,
+      0,
+    ),
 
     monthlySalary,
     hourlyRate: roundAmount(hourlyRate, formula.roundingDecimals + 4),
@@ -486,6 +1067,8 @@ function buildPaymentItem({ otRequest, employee, formula, salaryInfo, exchangeRa
     roundingMode: exchangeRate.roundingMode,
 
     hasSalary: salaryInfo.hasSalary,
+    hasAttendancePolicyPayable,
+    paymentEligible: salaryInfo.hasSalary && hasAttendancePolicyPayable,
     salaryEmployeeName: salaryInfo.salaryEmployeeName,
     salaryRowNo: salaryInfo.salaryRowNo,
 
@@ -495,16 +1078,97 @@ function buildPaymentItem({ otRequest, employee, formula, salaryInfo, exchangeRa
   }
 }
 
-function buildPaymentItems({ otRequests, salaryMap, formula, exchangeRate }) {
+function buildMissingPayableIssue(otRequest = {}, employee = {}) {
+  return {
+    requestNo: s(otRequest.requestNo),
+    otDate: s(otRequest.otDate),
+    employeeNo: normalizeEmployeeNo(employee.employeeNo || employee.employeeCode),
+    employeeName: s(employee.employeeName || employee.name),
+    departmentName: s(employee.departmentName),
+    positionName: s(employee.positionName),
+    lineName: s(employee.lineName),
+    otResult: upper(employee.otResult),
+    reason: s(
+      employee.paymentBlockedReason ||
+        employee.otResultReason ||
+        'No attendance/policy payable minutes found',
+    ),
+  }
+}
+
+function buildPayableWarningIssue(otRequest = {}, employee = {}) {
+  return {
+    requestNo: s(otRequest.requestNo),
+    otDate: s(otRequest.otDate),
+    employeeNo: normalizeEmployeeNo(employee.employeeNo || employee.employeeCode),
+    employeeName: s(employee.employeeName || employee.name),
+    departmentName: s(employee.departmentName),
+    positionName: s(employee.positionName),
+    lineName: s(employee.lineName),
+    otResult: upper(employee.otResult),
+    payableMinutes: resolveEmployeePaidMinutes(employee),
+    reason: s(
+      employee.otResultReason ||
+        'Payable minutes were calculated, but verification result is not exact MATCH',
+    ),
+  }
+}
+
+async function buildPaymentItems({ otRequests, salaryMap, formula, exchangeRate }) {
   const items = []
   const missingSalaryEmployeesMap = new Map()
+  const missingPayableEmployeesMap = new Map()
+  const payableWarningEmployeesMap = new Map()
+  const verificationSummaries = []
 
-  for (const otRequest of otRequests) {
-    const employees = resolveEmployeeSourceList(otRequest)
+  for (const rawOTRequest of otRequests) {
+    const live = await buildLivePaymentVerification(rawOTRequest)
+    const otRequest = live.otRequest
+    const employees = live.verifiedEmployees
+
+    verificationSummaries.push({
+      requestNo: s(otRequest.requestNo),
+      otDate: s(otRequest.otDate),
+      dayType: upper(otRequest.dayType),
+      storedDayType: upper(otRequest.storedDayType),
+      internalCalendarDayType: upper(otRequest.internalCalendarDayType),
+      dayTypeMismatch: otRequest.dayTypeMismatch === true,
+      requestedEmployeeCount: Number(live.verification?.requestedEmployeeCount || 0),
+      approvedEmployeeCount: Number(live.verification?.approvedEmployeeCount || 0),
+      otMatchCount: Number(live.verification?.otMatchCount || 0),
+      otMismatchCount: Number(live.verification?.otMismatchCount || 0),
+      otPendingReviewCount: Number(live.verification?.otPendingReviewCount || 0),
+    })
 
     for (const employee of employees) {
       const employeeNo = normalizeEmployeeNo(employee.employeeNo || employee.employeeCode)
       if (!employeeNo) continue
+
+      const payableMinutes = resolveEmployeePaidMinutes(employee)
+
+      if (payableMinutes <= 0) {
+        const key = `${s(otRequest.requestNo)}:${employeeNo}`
+
+        if (!missingPayableEmployeesMap.has(key)) {
+          missingPayableEmployeesMap.set(
+            key,
+            buildMissingPayableIssue(otRequest, employee),
+          )
+        }
+
+        continue
+      }
+
+      if (upper(employee.otResult) !== 'MATCH') {
+        const key = `${s(otRequest.requestNo)}:${employeeNo}`
+
+        if (!payableWarningEmployeesMap.has(key)) {
+          payableWarningEmployeesMap.set(
+            key,
+            buildPayableWarningIssue(otRequest, employee),
+          )
+        }
+      }
 
       const salaryInfo = buildSalaryInfo(salaryMap, employeeNo)
 
@@ -534,6 +1198,9 @@ function buildPaymentItems({ otRequests, salaryMap, formula, exchangeRate }) {
   return {
     items,
     missingSalaryEmployees: Array.from(missingSalaryEmployeesMap.values()),
+    missingPayableEmployees: Array.from(missingPayableEmployeesMap.values()),
+    payableWarningEmployees: Array.from(payableWarningEmployeesMap.values()),
+    verificationSummaries,
   }
 }
 
@@ -699,7 +1366,13 @@ async function buildPaymentPreview({
   const parsedSalary = parseSalaryExcel(salaryFile.buffer)
   const otRequests = await fetchApprovedOTRequests(fromDate, toDate)
 
-  const { items, missingSalaryEmployees } = buildPaymentItems({
+  const {
+    items,
+    missingSalaryEmployees,
+    missingPayableEmployees,
+    payableWarningEmployees,
+    verificationSummaries,
+  } = await buildPaymentItems({
     otRequests,
     salaryMap: parsedSalary.salaryMap,
     formula,
@@ -743,6 +1416,10 @@ async function buildPaymentPreview({
       invalidSalaryRows: parsedSalary.invalidRows,
       duplicateSalaryRows: parsedSalary.duplicateRows,
       missingSalaryEmployees,
+      missingPayableEmployees,
+      payableWarningEmployees,
+      notPreparedRequests: [],
+      verificationSummaries,
     },
   }
 }

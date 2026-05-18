@@ -25,6 +25,11 @@ function upper(value) {
   return s(value).toUpperCase()
 }
 
+function n(value, fallback = 0) {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : fallback
+}
+
 function createHttpError(message, status = 400, messageKey = '') {
   const err = new Error(message)
   err.status = status
@@ -173,6 +178,10 @@ function mapVerificationRequestSearchItem(doc = {}) {
     employeeCount: requestedEmployeeCount,
     requestedEmployeeCount,
     approvedEmployeeCount,
+
+    attendanceVerificationStatus: upper(doc.attendanceVerificationStatus),
+    attendanceVerifiedAt: doc.attendanceVerifiedAt || null,
+    attendanceVerificationSummary: doc.attendanceVerificationSummary || null,
 
     createdAt: doc.createdAt || null,
     createdAtDisplay: formatDateTimeToDmy(doc.createdAt),
@@ -519,7 +528,152 @@ async function findAttendanceRecordsForOTRequest(otRequest = {}) {
     .lean()
 }
 
-async function verifyOTRequest(otRequestId) {
+function employeePaymentKey(item = {}) {
+  const employeeId = s(item.employeeId)
+
+  if (employeeId) {
+    return `ID:${employeeId}`
+  }
+
+  const employeeCode = upper(item.employeeCode || item.employeeNo)
+
+  if (employeeCode) {
+    return `CODE:${employeeCode}`
+  }
+
+  return ''
+}
+
+function buildVerificationPaymentMap(verification = {}) {
+  const rows = [
+    ...(Array.isArray(verification.otMatchEmployees)
+      ? verification.otMatchEmployees
+      : []),
+    ...(Array.isArray(verification.otMismatchEmployees)
+      ? verification.otMismatchEmployees
+      : []),
+    ...(Array.isArray(verification.otPendingReviewEmployees)
+      ? verification.otPendingReviewEmployees
+      : []),
+  ]
+
+  const map = new Map()
+
+  for (const row of rows) {
+    const key = employeePaymentKey(row)
+
+    if (key && !map.has(key)) {
+      map.set(key, row)
+    }
+  }
+
+  return map
+}
+
+function normalizePaymentMinutes(value) {
+  return Math.max(0, Math.round(n(value, 0)))
+}
+
+function mapEmployeeWithPaymentVerification(employee = {}, verificationMap = new Map()) {
+  const key = employeePaymentKey(employee)
+  const verification = verificationMap.get(key) || null
+
+  const otResult = upper(verification?.otResult)
+  const roundedOtMinutes = normalizePaymentMinutes(verification?.roundedOtMinutes)
+  const actualOtMinutes = normalizePaymentMinutes(verification?.actualOtMinutes)
+  const eligibleOtMinutes = normalizePaymentMinutes(verification?.eligibleOtMinutes)
+
+  const paymentEligible = otResult === 'MATCH' && roundedOtMinutes > 0
+  const payableMinutes = paymentEligible ? roundedOtMinutes : 0
+
+  return {
+    ...employee,
+
+    attendanceRecordId: verification?.attendanceRecordId || null,
+    attendanceImportId: verification?.importId || null,
+
+    attendanceStatus: upper(verification?.attendanceStatus),
+    attendanceStatusKey: s(verification?.attendanceStatusKey),
+    attendanceMessageKey: s(verification?.attendanceMessageKey),
+
+    actualOtMinutes,
+    eligibleOtMinutes,
+    roundedOtMinutes,
+
+    // Payment reads these fields.
+    approvedPaidMinutes: payableMinutes,
+    payableMinutes,
+    paidMinutes: payableMinutes,
+    verifiedPayableMinutes: payableMinutes,
+    finalPayableMinutes: payableMinutes,
+    paymentPayableMinutes: payableMinutes,
+    policyPaidMinutes: payableMinutes,
+    policyPayableMinutes: payableMinutes,
+    calculatedPaidMinutes: payableMinutes,
+    calculatedPayableMinutes: payableMinutes,
+    attendancePaidMinutes: payableMinutes,
+    attendancePayableMinutes: payableMinutes,
+
+    rawOtDecision: upper(verification?.rawOtDecision),
+    rawOtDecisionKey: s(verification?.rawOtDecisionKey),
+
+    otResult,
+    otResultLabelKey: s(verification?.otResultLabelKey),
+    otResultReason: s(verification?.otResultReason),
+    otResultReasonKey: s(verification?.otResultReasonKey),
+    paymentMessageKey: s(verification?.messageKey),
+
+    paymentEligible,
+    paymentBlockedReason: paymentEligible
+      ? ''
+      : s(verification?.otResultReason || 'No attendance/policy payable minutes found'),
+
+    policyCode: s(verification?.policyCode),
+    policyName: s(verification?.policyName),
+    policyRoundMethod: s(verification?.policyRoundMethod),
+    policyRoundUnitMinutes: n(verification?.policyRoundUnitMinutes, 0),
+    policyMinEligibleMinutes: n(verification?.policyMinEligibleMinutes, 0),
+    policyGraceAfterShiftEndMinutes: n(verification?.policyGraceAfterShiftEndMinutes, 0),
+  }
+}
+
+function buildAttendanceVerificationStatus(verification = {}) {
+  if (Number(verification.otPendingReviewCount || 0) > 0) {
+    return 'PENDING_REVIEW'
+  }
+
+  if (Number(verification.otMismatchCount || 0) > 0) {
+    return 'MISMATCH'
+  }
+
+  if (Number(verification.otMatchCount || 0) > 0) {
+    return 'MATCH'
+  }
+
+  return 'NO_PAYABLE_ATTENDANCE'
+}
+
+function buildAttendanceVerificationSummary(verification = {}, verifiedAt = new Date()) {
+  return {
+    verifiedAt,
+
+    requestedEmployeeCount: Number(verification.requestedEmployeeCount || 0),
+    approvedEmployeeCount: Number(verification.approvedEmployeeCount || 0),
+
+    actualAttendedCount: Number(verification.actualAttendedCount || 0),
+    absentFromApprovedCount: Number(verification.absentFromApprovedCount || 0),
+    attendedButNotApprovedCount: Number(verification.attendedButNotApprovedCount || 0),
+    shiftMismatchCount: Number(verification.shiftMismatchCount || 0),
+    pendingReviewCount: Number(verification.pendingReviewCount || 0),
+    notEligibleCount: Number(verification.notEligibleCount || 0),
+
+    otMatchCount: Number(verification.otMatchCount || 0),
+    otMismatchCount: Number(verification.otMismatchCount || 0),
+    otPendingReviewCount: Number(verification.otPendingReviewCount || 0),
+  }
+}
+
+async function buildOTVerificationResult(otRequestId) {
   if (!mongoose.isValidObjectId(otRequestId)) {
     throw createHttpError(
       'Invalid OT request id',
@@ -570,8 +724,92 @@ async function verifyOTRequest(otRequestId) {
   })
 
   return {
-    otRequest: verificationOtRequest,
+    rawOTRequest: otRequest,
+    requestedEmployees,
+    effectiveApprovedEmployees,
+    verificationOtRequest,
     verification,
+  }
+}
+
+async function verifyOTRequest(otRequestId) {
+  const result = await buildOTVerificationResult(otRequestId)
+
+  return {
+    otRequest: result.verificationOtRequest,
+    verification: result.verification,
+  }
+}
+
+async function verifyAndSaveOTRequest(otRequestId, actor = {}) {
+  const result = await buildOTVerificationResult(otRequestId)
+
+  const verificationMap = buildVerificationPaymentMap(result.verification)
+
+  const sourceApprovedEmployees = result.effectiveApprovedEmployees.length
+    ? result.effectiveApprovedEmployees
+    : result.requestedEmployees
+
+  const verifiedApprovedEmployees = sourceApprovedEmployees.map((employee) =>
+    mapEmployeeWithPaymentVerification(employee, verificationMap),
+  )
+
+  const attendanceVerificationStatus = buildAttendanceVerificationStatus(result.verification)
+  const attendanceVerifiedAt = new Date()
+  const attendanceVerificationSummary = buildAttendanceVerificationSummary(
+    result.verification,
+    attendanceVerifiedAt,
+  )
+
+  const payableEmployeeCount = verifiedApprovedEmployees.filter(
+    (item) => item.paymentEligible === true,
+  ).length
+
+  const updatedBy =
+    actor?.accountId && mongoose.isValidObjectId(actor.accountId)
+      ? new mongoose.Types.ObjectId(actor.accountId)
+      : actor?._id && mongoose.isValidObjectId(actor._id)
+        ? new mongoose.Types.ObjectId(actor._id)
+        : null
+
+  const updatePayload = {
+    approvedEmployees: verifiedApprovedEmployees,
+    approvedEmployeeCount: verifiedApprovedEmployees.length,
+
+    attendanceVerifiedAt,
+    attendanceVerificationStatus,
+    attendanceVerificationSummary,
+
+    paymentPreparedAt: attendanceVerifiedAt,
+    paymentPreparedBy: updatedBy,
+    updatedAt: new Date(),
+  }
+
+  if (updatedBy) {
+    updatePayload.updatedBy = updatedBy
+  }
+
+  // Use raw collection update so payment-ready fields are preserved even if
+  // OTRequest approvedEmployees sub-schema has not been expanded yet.
+  await OTRequest.collection.updateOne(
+    {
+      _id: new mongoose.Types.ObjectId(otRequestId),
+    },
+    {
+      $set: updatePayload,
+    },
+  )
+
+  return {
+    otRequest: result.verificationOtRequest,
+    verification: result.verification,
+    saved: {
+      attendanceVerificationStatus,
+      attendanceVerifiedAt,
+      approvedEmployeeCount: verifiedApprovedEmployees.length,
+      payableEmployeeCount,
+      blockedEmployeeCount: Math.max(0, verifiedApprovedEmployees.length - payableEmployeeCount),
+    },
   }
 }
 
@@ -586,4 +824,5 @@ module.exports = {
 
   searchOTRequestsForVerification,
   verifyOTRequest,
+  verifyAndSaveOTRequest,
 }

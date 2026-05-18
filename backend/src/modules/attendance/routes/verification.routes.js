@@ -13,10 +13,20 @@ router.get(
   attendanceController.searchOTRequestsForVerification,
 )
 
+// Preview only.
+// Does not save payable minutes into OTRequest.
 router.get(
   '/ot/:otRequestId',
   requirePermission('ATTENDANCE_VERIFY'),
   attendanceController.verifyOTAttendance,
+)
+
+// Save verification result.
+// This updates OTRequest.approvedEmployees with payment-ready payable minutes.
+router.post(
+  '/ot/:otRequestId/verify',
+  requirePermission('ATTENDANCE_VERIFY'),
+  attendanceController.verifyAndSaveOTAttendance,
 )
 
 module.exports = router

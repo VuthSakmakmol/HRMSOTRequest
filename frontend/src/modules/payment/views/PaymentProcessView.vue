@@ -124,6 +124,7 @@ const missingSalaryRows = computed(() => {
 const warningRows = computed(() => {
   const invalidRows = previewResult.value?.issues?.invalidSalaryRows || []
   const duplicateRows = previewResult.value?.issues?.duplicateSalaryRows || []
+  const missingPayableRows = previewResult.value?.issues?.missingPayableEmployees || []
 
   return [
     ...asArray(invalidRows).map((row) => ({
@@ -133,12 +134,21 @@ const warningRows = computed(() => {
       employeeName: row.name || row.employeeName || '',
       reason: row.reason || 'Invalid salary row',
     })),
+
     ...asArray(duplicateRows).map((row) => ({
       type: 'Duplicate Salary Row',
       rowNo: row.rowNo || row.excelRowNo || '',
       employeeNo: row.employeeNo || '',
       employeeName: row.name || row.employeeName || '',
       reason: row.reason || 'Duplicate salary row',
+    })),
+
+    ...asArray(missingPayableRows).map((row) => ({
+      type: 'No Attendance/Policy Payable Minutes',
+      rowNo: '',
+      employeeNo: row.employeeNo || '',
+      employeeName: row.employeeName || '',
+      reason: row.reason || 'No attendance/policy payable minutes found',
     })),
   ]
 })

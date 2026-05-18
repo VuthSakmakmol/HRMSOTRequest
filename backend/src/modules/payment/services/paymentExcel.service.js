@@ -15,11 +15,13 @@ function getDenominations(data) {
   const denominations = data?.exchangeRate?.denominations
 
   if (Array.isArray(denominations) && denominations.length) {
-    return [...new Set(
-      denominations
-        .map((item) => Math.round(n(item, 0)))
-        .filter((item) => item > 0),
-    )].sort((a, b) => b - a)
+    return [
+      ...new Set(
+        denominations
+          .map((item) => Math.round(n(item, 0)))
+          .filter((item) => item > 0),
+      ),
+    ].sort((a, b) => b - a)
   }
 
   return [50000, 20000, 10000, 5000, 1000, 500, 100]
@@ -44,11 +46,7 @@ function buildSalaryTemplateWorkbook() {
 
   const sheet = XLSX.utils.aoa_to_sheet(rows)
 
-  sheet['!cols'] = [
-    { wch: 18 },
-    { wch: 28 },
-    { wch: 18 },
-  ]
+  sheet['!cols'] = [{ wch: 18 }, { wch: 28 }, { wch: 18 }]
 
   XLSX.utils.book_append_sheet(workbook, sheet, 'Salary Template')
 
@@ -60,13 +58,15 @@ function buildSalaryTemplateWorkbook() {
 
 function buildSummaryRows(data) {
   const exchangeRate = data.exchangeRate || {}
+  const summary = data.summary || {}
+  const issues = data.issues || {}
 
   return [
-    ['Period From', data.period.fromDateDisplay],
-    ['Period To', data.period.toDateDisplay],
+    ['Period From', data.period?.fromDateDisplay || data.period?.fromDate || ''],
+    ['Period To', data.period?.toDateDisplay || data.period?.toDate || ''],
 
-    ['Formula', `${data.formula.code} - ${data.formula.name}`],
-    ['Formula Currency', data.formula.currency],
+    ['Formula', `${data.formula?.code || ''} - ${data.formula?.name || ''}`],
+    ['Formula Currency', data.formula?.currency || ''],
 
     ['Exchange Rate', `${exchangeRate.code || ''} - ${exchangeRate.name || ''}`],
     ['Rate', exchangeRate.rate || ''],
@@ -76,113 +76,147 @@ function buildSummaryRows(data) {
     ['Rounding Unit', exchangeRate.roundingUnit || ''],
     ['Denominations', getDenominations(data).join(', ')],
 
-    ['OT Requests', data.otRequestCount],
-    ['Payment Rows', data.summary.totalItemCount],
-    ['Payable Rows', data.summary.payableItemCount],
-    ['Missing Salary Rows', data.summary.missingSalaryItemCount],
+    ['OT Requests', data.otRequestCount || 0],
+    ['Payment Rows', summary.totalItemCount || 0],
+    ['Payable Rows', summary.payableItemCount || 0],
+    ['Missing Salary Rows', summary.missingSalaryItemCount || 0],
 
-    ['Total Payable Minutes', data.summary.totalPayableMinutes],
-    ['Total Payable Hours', data.summary.totalPayableHours],
+    ['Not Prepared Requests', Array.isArray(issues.notPreparedRequests) ? issues.notPreparedRequests.length : 0],
+    ['Missing Payable Employees', Array.isArray(issues.missingPayableEmployees) ? issues.missingPayableEmployees.length : 0],
 
-    ['Total Amount USD', data.summary.totalAmountUsd],
-    ['Total KHR Raw', data.summary.totalAmountKhrRaw],
-    ['Total KHR Rounded', data.summary.totalAmountKhrRounded],
-    ['Total KHR Round Difference', data.summary.totalKhrRoundDifference],
+    ['Total Payable Minutes', summary.totalPayableMinutes || 0],
+    ['Total Payable Hours', summary.totalPayableHours || 0],
 
-    ['Generated At', data.generatedAtDisplayHm],
+    ['Total Amount USD', summary.totalAmountUsd || 0],
+    ['Total KHR Raw', summary.totalAmountKhrRaw || 0],
+    ['Total KHR Rounded', summary.totalAmountKhrRounded || 0],
+    ['Total KHR Round Difference', summary.totalKhrRoundDifference || 0],
+
+    ['Generated At', data.generatedAtDisplayHm || ''],
     ['Exported By', s(data.exportedBy)],
   ]
 }
 
 function buildEmployeeSummaryRows(data) {
-  return data.summary.summaryByEmployee.map((item, index) => ({
+  const rows = Array.isArray(data.summary?.summaryByEmployee)
+    ? data.summary.summaryByEmployee
+    : []
+
+  return rows.map((item, index) => ({
     No: index + 1,
-    'Employee ID': item.employeeNo,
-    'Employee Name': item.employeeName,
-    Department: item.departmentName,
-    Position: item.positionName,
-    Line: item.lineName,
+    'Employee ID': item.employeeNo || '',
+    'Employee Name': item.employeeName || '',
+    Department: item.departmentName || '',
+    Position: item.positionName || '',
+    Line: item.lineName || '',
 
-    'Monthly Salary': item.monthlySalary,
-    Currency: item.currency,
-    'Request Count': item.requestCount,
-    'Payable Minutes': item.payableMinutes,
-    'Payable Hours': item.payableHours,
+    'Monthly Salary': n(item.monthlySalary, 0),
+    Currency: item.currency || '',
+    'Request Count': n(item.requestCount, 0),
+    'Payable Minutes': n(item.payableMinutes, 0),
+    'Payable Hours': n(item.payableHours, 0),
 
-    'Amount USD': item.amountUsd,
+    'Amount USD': n(item.amountUsd, 0),
     Rate: data.exchangeRate?.rate || '',
-    'Raw KHR': item.amountKhrRaw,
-    'Rounded KHR': item.amountKhrRounded,
-    'Round Diff KHR': item.khrRoundDifference,
+    'Raw KHR': n(item.amountKhrRaw, 0),
+    'Rounded KHR': n(item.amountKhrRounded, 0),
+    'Round Diff KHR': n(item.khrRoundDifference, 0),
 
     ...buildBreakdownColumns(data, item.khrBreakdown),
   }))
 }
 
 function buildDayTypeSummaryRows(data) {
-  return data.summary.summaryByDayType.map((item, index) => ({
-    No: index + 1,
-    'Day Type': item.dayType,
-    'Request Count': item.requestCount,
-    'Payable Minutes': item.payableMinutes,
-    'Payable Hours': item.payableHours,
+  const rows = Array.isArray(data.summary?.summaryByDayType)
+    ? data.summary.summaryByDayType
+    : []
 
-    'Amount USD': item.amountUsd,
+  return rows.map((item, index) => ({
+    No: index + 1,
+    'Day Type': item.dayType || '',
+    'Request Count': n(item.requestCount, 0),
+    'Payable Minutes': n(item.payableMinutes, 0),
+    'Payable Hours': n(item.payableHours, 0),
+
+    'Amount USD': n(item.amountUsd, 0),
     Rate: data.exchangeRate?.rate || '',
-    'Raw KHR': item.amountKhrRaw,
-    'Rounded KHR': item.amountKhrRounded,
-    'Round Diff KHR': item.khrRoundDifference,
+    'Raw KHR': n(item.amountKhrRaw, 0),
+    'Rounded KHR': n(item.amountKhrRounded, 0),
+    'Round Diff KHR': n(item.khrRoundDifference, 0),
 
     ...buildBreakdownColumns(data, item.khrBreakdown),
   }))
 }
 
 function buildDetailRows(data) {
-  return data.items.map((item, index) => ({
+  const rows = Array.isArray(data.items) ? data.items : []
+
+  return rows.map((item, index) => ({
     No: index + 1,
 
-    'OT Request No': item.requestNo,
-    'OT Date': item.otDateDisplay,
-    'Day Type': item.dayType,
-    Status: item.status,
+    'OT Request No': item.requestNo || '',
+    'OT Date': item.otDateDisplay || item.otDate || '',
+    'Day Type': item.dayType || '',
+    Status: item.status || '',
 
-    'Employee ID': item.employeeNo,
-    'Employee Name': item.employeeName,
-    Department: item.departmentName,
-    Position: item.positionName,
-    Line: item.lineName,
-    Shift: item.shiftName,
+    'Attendance Verification Status': item.attendanceVerificationStatus || '',
+    'Attendance Verified At': item.attendanceVerifiedAt || '',
 
-    'OT Option': item.shiftOtOptionLabel,
-    'Start Time': item.requestStartTime,
-    'End Time': item.requestEndTime,
+    'Employee ID': item.employeeNo || '',
+    'Employee Name': item.employeeName || '',
+    Department: item.departmentName || '',
+    Position: item.positionName || '',
+    Line: item.lineName || '',
+    Shift: item.shiftName || '',
 
-    'Requested Minutes': item.requestedMinutes,
-    'Break Minutes': item.breakMinutes,
-    'Paid Minutes': item.requestPaidMinutes,
-    'Payable Minutes': item.payableMinutes,
-    'Payable Hours': item.payableHours,
+    'OT Option': item.shiftOtOptionLabel || '',
+    'Start Time': item.requestStartTime || '',
+    'End Time': item.requestEndTime || '',
 
-    'Monthly Salary': item.monthlySalary,
-    'Hourly Rate': item.hourlyRate,
-    Multiplier: item.multiplier,
+    'Requested Minutes': n(item.requestedMinutes, 0),
+    'Break Minutes': n(item.breakMinutes, 0),
+    'Request Paid Minutes': n(item.requestPaidMinutes, 0),
 
-    Currency: item.currency,
-    'Amount USD': item.amountUsd,
-    Rate: item.exchangeRate,
-    'Raw KHR': item.amountKhrRaw,
-    'Rounded KHR': item.amountKhrRounded,
-    'Round Diff KHR': item.khrRoundDifference,
+    'Actual OT Minutes': n(item.actualOtMinutes, 0),
+    'Eligible OT Minutes': n(item.eligibleOtMinutes, 0),
+    'Rounded OT Minutes': n(item.roundedOtMinutes, 0),
+
+    'Payable Minutes': n(item.payableMinutes, 0),
+    'Payable Hours': n(item.payableHours, 0),
+
+    'Attendance Status': item.attendanceStatus || '',
+    'OT Result': item.otResult || '',
+    'OT Result Reason': item.otResultReason || '',
+    'Payment Blocked Reason': item.paymentBlockedReason || '',
+
+    'Policy Code': item.policyCode || '',
+    'Policy Name': item.policyName || '',
+    'Policy Round Method': item.policyRoundMethod || '',
+    'Policy Round Unit Minutes': n(item.policyRoundUnitMinutes, 0),
+    'Policy Min Eligible Minutes': n(item.policyMinEligibleMinutes, 0),
+
+    'Monthly Salary': n(item.monthlySalary, 0),
+    'Hourly Rate': n(item.hourlyRate, 0),
+    Multiplier: n(item.multiplier, 0),
+
+    Currency: item.currency || '',
+    'Amount USD': n(item.amountUsd, 0),
+    Rate: n(item.exchangeRate, 0),
+    'Raw KHR': n(item.amountKhrRaw, 0),
+    'Rounded KHR': n(item.amountKhrRounded, 0),
+    'Round Diff KHR': n(item.khrRoundDifference, 0),
 
     ...buildBreakdownColumns(data, item.khrBreakdown),
 
     'Salary Found': item.hasSalary ? 'Yes' : 'No',
+    'Attendance/Policy Payable Found': item.hasAttendancePolicyPayable ? 'Yes' : 'No',
+    'Payment Eligible': item.paymentEligible ? 'Yes' : 'No',
     'Salary Row No': item.salaryRowNo || '',
   }))
 }
 
 function buildCashSummaryRows(data) {
-  const breakdown = data.summary.totalKhrBreakdown || {}
+  const breakdown = data.summary?.totalKhrBreakdown || {}
 
   return getDenominations(data).map((denomination, index) => ({
     No: index + 1,
@@ -194,34 +228,87 @@ function buildCashSummaryRows(data) {
 
 function buildIssuesRows(data) {
   const rows = []
+  const issues = data.issues || {}
 
-  for (const item of data.issues.invalidSalaryRows || []) {
+  for (const item of issues.notPreparedRequests || []) {
+    rows.push({
+      Type: 'Attendance Verification Not Saved',
+      Row: '',
+      'OT Request No': item.requestNo || '',
+      'OT Date': item.otDate || '',
+      'Employee ID': '',
+      Name: '',
+      Department: '',
+      Position: '',
+      Line: '',
+      'OT Result': '',
+      Reason:
+        item.reason ||
+        'Attendance verification has not been saved for this approved OT request',
+    })
+  }
+
+  for (const item of issues.invalidSalaryRows || []) {
     rows.push({
       Type: 'Invalid Salary Row',
-      Row: item.rowNo || '',
+      Row: item.rowNo || item.excelRowNo || '',
+      'OT Request No': '',
+      'OT Date': '',
       'Employee ID': item.employeeNo || '',
       Name: item.name || item.rawName || '',
+      Department: '',
+      Position: '',
+      Line: '',
+      'OT Result': '',
       Reason: item.reason || '',
     })
   }
 
-  for (const item of data.issues.duplicateSalaryRows || []) {
+  for (const item of issues.duplicateSalaryRows || []) {
     rows.push({
       Type: 'Duplicate Salary Row',
-      Row: item.rowNo || '',
+      Row: item.rowNo || item.excelRowNo || '',
+      'OT Request No': '',
+      'OT Date': '',
       'Employee ID': item.employeeNo || '',
       Name: item.name || '',
+      Department: '',
+      Position: '',
+      Line: '',
+      'OT Result': '',
       Reason: item.reason || '',
     })
   }
 
-  for (const item of data.issues.missingSalaryEmployees || []) {
+  for (const item of issues.missingSalaryEmployees || []) {
     rows.push({
       Type: 'Missing Salary',
       Row: '',
+      'OT Request No': '',
+      'OT Date': '',
       'Employee ID': item.employeeNo || '',
       Name: item.employeeName || '',
-      Reason: item.reason || '',
+      Department: item.departmentName || '',
+      Position: item.positionName || '',
+      Line: item.lineName || '',
+      'OT Result': '',
+      Reason: item.reason || 'Salary not found in uploaded salary Excel',
+    })
+  }
+
+  for (const item of issues.missingPayableEmployees || []) {
+    rows.push({
+      Type: 'No Attendance/Policy Payable Minutes',
+      Row: '',
+      'OT Request No': item.requestNo || '',
+      'OT Date': item.otDate || '',
+      'Employee ID': item.employeeNo || '',
+      Name: item.employeeName || '',
+      Department: item.departmentName || '',
+      Position: item.positionName || '',
+      Line: item.lineName || '',
+      'OT Result': item.otResult || '',
+      Reason: item.reason || 'No attendance/policy payable minutes found',
     })
   }
 
@@ -251,7 +338,7 @@ function denominationWidths(data) {
 function buildPaymentWorkbook(data) {
   const workbook = XLSX.utils.book_new()
 
-  appendAoaSheet(workbook, 'Summary', buildSummaryRows(data), [30, 36])
+  appendAoaSheet(workbook, 'Summary', buildSummaryRows(data), [34, 42])
 
   appendJsonSheet(
     workbook,
@@ -281,14 +368,29 @@ function buildPaymentWorkbook(data) {
     'Details',
     buildDetailRows(data),
     [
-      8, 18, 14, 16, 14,
+      8,
+
+      18, 14, 16, 14,
+      24, 22,
+
       16, 28, 22, 22, 18, 18,
+
       24, 14, 14,
-      18, 16, 14, 18, 18,
+
+      18, 16, 18,
+      18, 18, 18,
+      18, 18,
+
+      18, 14, 36, 36,
+
+      16, 24, 18, 18, 20,
+
       16, 16, 12,
+
       12, 14, 12, 14, 16, 16,
       ...denominationWidths(data),
-      14, 14,
+
+      14, 28, 16, 14,
     ],
   )
 
@@ -303,7 +405,7 @@ function buildPaymentWorkbook(data) {
     workbook,
     'Issues',
     buildIssuesRows(data),
-    [24, 10, 16, 28, 42],
+    [34, 10, 18, 14, 16, 28, 22, 22, 18, 18, 48],
   )
 
   return XLSX.write(workbook, {
