@@ -1,5 +1,7 @@
 <!-- frontend/src/modules/org/views/PositionView.vue -->
 <script setup>
+// frontend/src/modules/org/views/PositionView.vue
+
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
@@ -452,8 +454,34 @@ async function submitPosition() {
   }
 }
 
-function statusSeverity(active) {
-  return active ? 'success' : 'secondary'
+function nameOnlyLabel(value) {
+  const text = String(value || '').trim()
+
+  if (!text) return ''
+
+  if (text.includes(' - ')) {
+    return text.split(' - ').slice(1).join(' - ').trim() || text
+  }
+
+  return text
+}
+
+function departmentDisplay(row = {}) {
+  return (
+    row.departmentName ||
+    row.department?.name ||
+    nameOnlyLabel(row.departmentLabel) ||
+    '-'
+  )
+}
+
+function reportsToPositionDisplay(row = {}) {
+  return (
+    row.reportsToPositionName ||
+    row.reportsToPosition?.name ||
+    nameOnlyLabel(row.reportsToPositionLabel) ||
+    t('common.none')
+  )
 }
 
 function scopeLabel(value) {
@@ -464,12 +492,16 @@ function scopeLabel(value) {
   return value || '-'
 }
 
-function scopeSeverity(value) {
-  if (value === 'SAME_LINE') return 'success'
-  if (value === 'GLOBAL') return 'info'
-  if (value === 'CROSS_DEPARTMENT') return 'warning'
+function activeTagClass(active) {
+  return active ? 'position-active-tag' : 'position-inactive-tag'
+}
 
-  return 'secondary'
+function scopeTagClass(value) {
+  if (value === 'SAME_LINE') return 'position-scope-same-line-tag'
+  if (value === 'GLOBAL') return 'position-scope-global-tag'
+  if (value === 'CROSS_DEPARTMENT') return 'position-scope-cross-department-tag'
+
+  return 'position-scope-default-tag'
 }
 
 function getFilenameFromHeader(res, fallback) {
@@ -558,7 +590,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="ot-page-shell">
+  <div class="ot-page-shell position-page">
     <PositionImportDialog
       v-model:visible="importDialogVisible"
       @success="handleImportSuccess"
@@ -719,8 +751,8 @@ onBeforeUnmount(() => {
           scroll-height="500px"
           :sort-field="filters.sortField"
           :sort-order="filters.sortOrder"
-          table-style="min-width: 74rem"
-          class="ot-data-table ot-data-table-compact"
+          table-style="min-width: 100%"
+          class="ot-data-table ot-data-table-compact position-data-table"
           :virtual-scroller-options="useVirtualScroll ? {
             lazy: true,
             onLazyLoad: onVirtualLazyLoad,
@@ -755,12 +787,12 @@ onBeforeUnmount(() => {
             field="code"
             :header="t('common.code')"
             sortable
-            style="min-width: 9rem"
+            style="width: 8rem; min-width: 8rem"
           >
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="font-bold"
+                class="position-code-text"
               >
                 {{ data.code || '-' }}
               </span>
@@ -771,20 +803,20 @@ onBeforeUnmount(() => {
             field="name"
             :header="t('common.name')"
             sortable
-            style="min-width: 14rem"
+            style="width: 14rem; min-width: 14rem"
           >
             <template #body="{ data }">
               <div
                 v-if="data"
-                class="min-w-0"
+                class="position-name-stack"
               >
-                <div class="font-semibold text-[color:var(--ot-text)]">
+                <div class="position-name-text">
                   {{ data.name || '-' }}
                 </div>
 
                 <div
                   v-if="data.description"
-                  class="ot-truncate-2 mt-1 text-xs text-[color:var(--ot-text-muted)]"
+                  class="position-description-text"
                 >
                   {{ data.description }}
                 </div>
@@ -796,11 +828,14 @@ onBeforeUnmount(() => {
             field="departmentName"
             :header="t('org.position.department')"
             sortable
-            style="min-width: 14rem"
+            style="width: 14rem; min-width: 14rem"
           >
             <template #body="{ data }">
-              <span v-if="data">
-                {{ data.departmentLabel || t('common.none') }}
+              <span
+                v-if="data"
+                class="position-meta-text"
+              >
+                {{ departmentDisplay(data) }}
               </span>
             </template>
           </Column>
@@ -809,11 +844,14 @@ onBeforeUnmount(() => {
             field="reportsToPositionName"
             :header="t('org.position.reportsToPosition')"
             sortable
-            style="min-width: 15rem"
+            style="width: 10rem; min-width: 10rem"
           >
             <template #body="{ data }">
-              <span v-if="data">
-                {{ data.reportsToPositionLabel || t('common.none') }}
+              <span
+                v-if="data"
+                class="position-meta-text"
+              >
+                {{ reportsToPositionDisplay(data) }}
               </span>
             </template>
           </Column>
@@ -822,14 +860,14 @@ onBeforeUnmount(() => {
             field="hierarchyScope"
             :header="t('org.position.hierarchyScope')"
             sortable
-            style="min-width: 11rem"
+            style="width: 8rem; min-width: 8rem"
           >
             <template #body="{ data }">
               <Tag
                 v-if="data"
-                class="ot-scope-tag"
                 :value="scopeLabel(data.hierarchyScope)"
-                :severity="scopeSeverity(data.hierarchyScope)"
+                class="position-rgb-tag"
+                :class="scopeTagClass(data.hierarchyScope)"
               />
             </template>
           </Column>
@@ -838,12 +876,12 @@ onBeforeUnmount(() => {
             field="level"
             :header="t('org.position.level')"
             sortable
-            style="min-width: 7rem"
+            style="width: 5rem; min-width: 5rem"
           >
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="font-semibold"
+                class="position-level-text"
               >
                 {{ data.level ?? 0 }}
               </span>
@@ -854,13 +892,14 @@ onBeforeUnmount(() => {
             field="isActive"
             :header="t('common.status')"
             sortable
-            style="min-width: 7rem"
+            style="width: 4rem; min-width: 5rem"
           >
             <template #body="{ data }">
               <Tag
                 v-if="data"
                 :value="data.isActive ? t('common.active') : t('common.inactive')"
-                :severity="statusSeverity(data.isActive)"
+                class="position-rgb-tag"
+                :class="activeTagClass(data.isActive)"
               />
             </template>
           </Column>
@@ -874,6 +913,7 @@ onBeforeUnmount(() => {
             <template #body="{ data }">
               <Button
                 v-if="data && canUpdate"
+                :label="t('common.edit')"
                 icon="pi pi-pencil"
                 size="small"
                 outlined
@@ -1001,13 +1041,13 @@ onBeforeUnmount(() => {
           />
         </div>
 
-        <div class="flex items-center justify-between rounded-xl border border-[color:var(--ot-border)] px-4 py-3">
+        <div class="position-active-box">
           <div>
-            <div class="text-sm font-semibold text-[color:var(--ot-text)]">
+            <div class="position-active-title">
               {{ t('common.active') }}
             </div>
 
-            <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
+            <div class="position-active-help">
               {{ t('org.position.activeHelp') }}
             </div>
           </div>
@@ -1039,6 +1079,20 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.position-page {
+  --position-code-rgb: 37, 99, 235;
+  --position-name-rgb: 15, 23, 42;
+  --position-meta-rgb: 71, 85, 105;
+
+  --position-active-rgb: 22, 163, 74;
+  --position-inactive-rgb: 100, 116, 139;
+
+  --position-same-line-rgb: 22, 163, 74;
+  --position-global-rgb: 14, 165, 233;
+  --position-cross-rgb: 245, 158, 11;
+  --position-default-rgb: 100, 116, 139;
+}
+
 .position-filter-bar {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
@@ -1057,6 +1111,273 @@ onBeforeUnmount(() => {
 .position-filter-actions > * {
   flex: 0 0 auto;
 }
+
+.position-active-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border: 1px solid var(--ot-border);
+  border-radius: 0.85rem;
+  padding: 0.75rem 0.9rem;
+}
+
+.position-active-title {
+  color: var(--ot-text);
+  font-size: 0.86rem;
+  font-weight: 650;
+}
+
+.position-active-help {
+  margin-top: 0.2rem;
+  color: var(--ot-text-muted);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+/* =========================
+   Table text
+   ========================= */
+
+.position-code-text {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgb(var(--position-code-rgb));
+  font-size: 0.82rem;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.position-name-stack {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.position-name-text {
+  max-width: 100%;
+  overflow: hidden;
+  color: rgb(var(--position-name-rgb));
+  font-size: 0.82rem;
+  font-weight: 650;
+  line-height: 1.25;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.position-description-text {
+  display: -webkit-box;
+  max-width: 100%;
+  margin-top: 0.18rem;
+  overflow: hidden;
+  color: rgb(var(--position-meta-rgb));
+  font-size: 0.72rem;
+  line-height: 1.3;
+  text-align: center;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.position-meta-text,
+.position-level-text {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  color: rgb(var(--position-meta-rgb));
+  font-size: 0.8rem;
+  font-weight: 500;
+  text-align: center;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.position-level-text {
+  color: rgb(var(--position-name-rgb));
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* =========================
+   RGB Tags
+   ========================= */
+
+.position-rgb-tag {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 0.2rem 0.58rem;
+  font-size: 0.7rem;
+  font-weight: 750;
+  line-height: 1;
+  text-align: center;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.position-active-tag {
+  border-color: rgba(var(--position-active-rgb), 0.24);
+  background: rgba(var(--position-active-rgb), 0.12);
+  color: rgb(var(--position-active-rgb));
+}
+
+.position-inactive-tag {
+  border-color: rgba(var(--position-inactive-rgb), 0.24);
+  background: rgba(var(--position-inactive-rgb), 0.12);
+  color: rgb(var(--position-inactive-rgb));
+}
+
+.position-scope-same-line-tag {
+  border-color: rgba(var(--position-same-line-rgb), 0.24);
+  background: rgba(var(--position-same-line-rgb), 0.12);
+  color: rgb(var(--position-same-line-rgb));
+}
+
+.position-scope-global-tag {
+  border-color: rgba(var(--position-global-rgb), 0.24);
+  background: rgba(var(--position-global-rgb), 0.12);
+  color: rgb(var(--position-global-rgb));
+}
+
+.position-scope-cross-department-tag {
+  border-color: rgba(var(--position-cross-rgb), 0.26);
+  background: rgba(var(--position-cross-rgb), 0.13);
+  color: rgb(var(--position-cross-rgb));
+}
+
+.position-scope-default-tag {
+  border-color: rgba(var(--position-default-rgb), 0.24);
+  background: rgba(var(--position-default-rgb), 0.12);
+  color: rgb(var(--position-default-rgb));
+}
+
+/* =========================
+   PrimeVue table center
+   ========================= */
+
+.position-page :deep(.position-data-table.p-datatable .p-datatable-table) {
+  table-layout: auto !important;
+}
+
+.position-page :deep(.position-data-table.p-datatable .p-datatable-thead > tr > th),
+.position-page :deep(.position-data-table.p-datatable .p-datatable-tbody > tr > td) {
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+.position-page :deep(.position-data-table.p-datatable .p-datatable-column-header-content),
+.position-page :deep(.position-data-table.p-datatable .p-column-header-content) {
+  display: flex !important;
+  width: 100% !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 0.25rem !important;
+  text-align: center !important;
+}
+
+.position-page :deep(.position-data-table.p-datatable .p-datatable-column-title),
+.position-page :deep(.position-data-table.p-datatable .p-column-title) {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+}
+
+.position-page :deep(.position-data-table.p-datatable .p-sortable-column-icon),
+.position-page :deep(.position-data-table.p-datatable .p-datatable-sort-icon) {
+  margin-inline-start: 0.25rem !important;
+  margin-inline-end: 0 !important;
+}
+
+.position-page :deep(.position-data-table.p-datatable .p-datatable-tbody > tr > td > *) {
+  margin-inline: auto !important;
+}
+
+.position-page :deep(.position-data-table.p-datatable .p-tag),
+.position-rgb-tag {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin-inline: auto !important;
+  text-align: center !important;
+}
+
+.position-page :deep(.position-data-table.p-datatable .p-tag-value) {
+  max-width: 100%;
+  overflow: hidden;
+  text-align: center !important;
+  text-overflow: ellipsis;
+}
+
+.position-page :deep(.position-data-table.p-datatable .p-frozen-column),
+.position-page :deep(.position-data-table.p-datatable .p-datatable-frozen-column) {
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+.position-page :deep(.position-data-table.p-datatable .p-frozen-column .p-button),
+.position-page :deep(.position-data-table.p-datatable .p-datatable-frozen-column .p-button) {
+  display: inline-flex !important;
+  margin-inline: auto !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+/* =========================
+   Dark mode
+   ========================= */
+
+:global(.dark) .position-page {
+  --position-name-rgb: 226, 232, 240;
+  --position-meta-rgb: 203, 213, 225;
+}
+
+:global(.dark) .position-active-tag {
+  border-color: rgba(var(--position-active-rgb), 0.36);
+  background: rgba(var(--position-active-rgb), 0.18);
+}
+
+:global(.dark) .position-inactive-tag {
+  border-color: rgba(var(--position-inactive-rgb), 0.36);
+  background: rgba(var(--position-inactive-rgb), 0.18);
+}
+
+:global(.dark) .position-scope-same-line-tag {
+  border-color: rgba(var(--position-same-line-rgb), 0.36);
+  background: rgba(var(--position-same-line-rgb), 0.18);
+}
+
+:global(.dark) .position-scope-global-tag {
+  border-color: rgba(var(--position-global-rgb), 0.36);
+  background: rgba(var(--position-global-rgb), 0.18);
+}
+
+:global(.dark) .position-scope-cross-department-tag {
+  border-color: rgba(var(--position-cross-rgb), 0.38);
+  background: rgba(var(--position-cross-rgb), 0.2);
+}
+
+:global(.dark) .position-scope-default-tag {
+  border-color: rgba(var(--position-default-rgb), 0.36);
+  background: rgba(var(--position-default-rgb), 0.18);
+}
+
+/* =========================
+   Responsive
+   ========================= */
 
 @media (max-width: 768px) {
   .position-filter-actions {
@@ -1086,11 +1407,5 @@ onBeforeUnmount(() => {
   .position-filter-actions {
     grid-column: 1 / -1;
   }
-}
-
-.ot-scope-tag {
-  font-size: 0.76rem;
-  font-weight: 700;
-  letter-spacing: 0.01em;
 }
 </style>

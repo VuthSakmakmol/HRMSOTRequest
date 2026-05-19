@@ -6,12 +6,11 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
 
+import AutoComplete from 'primevue/autocomplete'
 import Button from 'primevue/button'
 import Checkbox from 'primevue/checkbox'
-import IconField from 'primevue/iconfield'
-import InputIcon from 'primevue/inputicon'
+import DatePicker from 'primevue/datepicker'
 import InputNumber from 'primevue/inputnumber'
-import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
 import ProgressSpinner from 'primevue/progressspinner'
 import Select from 'primevue/select'
@@ -68,7 +67,7 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['update:modelValue'])
+const emit = defineEmits(['update:modelValue', 'loading-change'])
 
 const toast = useToast()
 const { t } = useI18n()
@@ -88,9 +87,13 @@ const backgroundFetchingAll = ref(false)
 const selectingManaged = ref(false)
 
 const search = ref('')
+const employeeSearchValue = ref('')
 const selectedLineId = ref('')
 const employeeScope = ref('MANAGED')
 const canSelectOtherEmployees = ref(false)
+
+const employeeSuggestions = ref([])
+const loadingSuggestions = ref(false)
 
 const employees = ref([])
 const total = ref(0)
@@ -167,23 +170,28 @@ const defaultTimeKey = computed(() => {
   ].join('|')
 })
 
-const employeeScopeOptions = computed(() => {
-  const options = [
-    {
-      label: t('ot.requests.create.employeePicker.myEmployees'),
-      value: 'MANAGED',
-    },
-  ]
-
-  if (canSelectOtherEmployees.value) {
-    options.push({
-      label: t('ot.requests.create.employeePicker.allEmployees'),
-      value: 'ALL',
-    })
-  }
-
-  return options
+const pickerBusy = computed(() => {
+  return (
+    loadingAccess.value ||
+    loadingLines.value ||
+    loading.value ||
+    loadingMore.value ||
+    backgroundFetchingAll.value ||
+    selectingManaged.value ||
+    props.blockedLoading
+  )
 })
+
+const employeeScopeOptions = computed(() => [
+  {
+    label: t('ot.requests.create.employeePicker.myEmployees'),
+    value: 'MANAGED',
+  },
+  {
+    label: t('ot.requests.create.employeePicker.allEmployees'),
+    value: 'ALL',
+  },
+])
 
 const lineOptions = computed(() => [
   {
@@ -250,6 +258,28 @@ function normalizeBoolean(...values) {
   }
 
   return false
+}
+
+function pad2(value) {
+  return String(value).padStart(2, '0')
+}
+
+function hhmmToDate(value) {
+  const raw = toTrimmedString(value)
+  if (!isHHmm(raw)) return null
+
+  const [hours, minutes] = raw.split(':').map(Number)
+  const date = new Date()
+
+  date.setHours(hours, minutes, 0, 0)
+
+  return date
+}
+
+function dateToHHmm(value) {
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) return ''
+
+  return `${pad2(value.getHours())}:${pad2(value.getMinutes())}`
 }
 
 function isHHmm(value) {
@@ -319,34 +349,127 @@ function extractAuthRoot(res) {
   )
 }
 
+function extractPermissionCodesFromAny(value, result = []) {
+  if (!value) return result
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      extractPermissionCodesFromAny(item, result)
+    }
+
+    return result
+  }
+
+  if (typeof value === 'string') {
+    const code = toUpperCode(value)
+    if (code) result.push(code)
+    return result
+  }
+
+  if (typeof value === 'object') {
+    const directCode = toUpperCode(
+      value.code ||
+        value.permissionCode ||
+        value.name ||
+        value.value ||
+        '',
+    )
+
+    if (directCode) result.push(directCode)
+
+    extractPermissionCodesFromAny(value.permissions, result)
+    extractPermissionCodesFromAny(value.permissionCodes, result)
+    extractPermissionCodesFromAny(value.effectivePermissions, result)
+    extractPermissionCodesFromAny(value.effectivePermissionCodes, result)
+    extractPermissionCodesFromAny(value.directPermissions, result)
+    extractPermissionCodesFromAny(value.directPermissionCodes, result)
+
+    return result
+  }
+
+  return result
+}
+
+function extractRoleCodesFromAny(value, result = []) {
+  if (!value) return result
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      extractRoleCodesFromAny(item, result)
+    }
+
+    return result
+  }
+
+  if (typeof value === 'string') {
+    const code = toUpperCode(value)
+    if (code) result.push(code)
+    return result
+  }
+
+  if (typeof value === 'object') {
+    const directCode = toUpperCode(
+      value.code ||
+        value.roleCode ||
+        value.name ||
+        value.value ||
+        '',
+    )
+
+    if (directCode) result.push(directCode)
+
+    extractRoleCodesFromAny(value.roles, result)
+    extractRoleCodesFromAny(value.roleCodes, result)
+    extractRoleCodesFromAny(value.systemRoles, result)
+
+    return result
+  }
+
+  return result
+}
+
 function extractAuthAccess(res) {
   const root = extractAuthRoot(res)
 
   const permissionCodes = [
-    ...(Array.isArray(root?.effectivePermissionCodes) ? root.effectivePermissionCodes : []),
-    ...(Array.isArray(root?.permissionCodes) ? root.permissionCodes : []),
-    ...(Array.isArray(root?.directPermissionCodes) ? root.directPermissionCodes : []),
+    ...extractPermissionCodesFromAny(root?.effectivePermissionCodes),
+    ...extractPermissionCodesFromAny(root?.permissionCodes),
+    ...extractPermissionCodesFromAny(root?.directPermissionCodes),
+    ...extractPermissionCodesFromAny(root?.effectivePermissions),
+    ...extractPermissionCodesFromAny(root?.permissions),
+    ...extractPermissionCodesFromAny(root?.directPermissions),
+    ...extractPermissionCodesFromAny(root?.rolePermissions),
+    ...extractPermissionCodesFromAny(root?.access?.effectivePermissionCodes),
+    ...extractPermissionCodesFromAny(root?.access?.permissions),
   ]
     .map(toUpperCode)
     .filter(Boolean)
 
-  const roleCodes = Array.isArray(root?.roleCodes)
-    ? root.roleCodes.map(toUpperCode).filter(Boolean)
-    : []
+  const roleCodes = [
+    ...extractRoleCodesFromAny(root?.roleCodes),
+    ...extractRoleCodesFromAny(root?.roles),
+    ...extractRoleCodesFromAny(root?.systemRoles),
+    ...extractRoleCodesFromAny(root?.access?.roleCodes),
+  ]
+    .map(toUpperCode)
+    .filter(Boolean)
 
   const permissionSet = new Set(permissionCodes)
   const roleSet = new Set(roleCodes)
 
-  const isRootAdmin = root?.isRootAdmin === true || roleSet.has('ROOT_ADMIN')
+  const isRootAdmin =
+    root?.isRootAdmin === true ||
+    root?.access?.isRootAdmin === true ||
+    roleSet.has('ROOT_ADMIN')
 
   const canLookupAll =
     isRootAdmin ||
+    permissionSet.has('OT_ADD_OTHER_LINE_EMPLOYEE') ||
+    permissionSet.has('OT_SELECT_OTHER_EMPLOYEE') ||
     permissionSet.has('EMPLOYEE_LOOKUP_ALL') ||
     permissionSet.has('EMPLOYEE_VIEW_ALL') ||
     permissionSet.has('ORG_EMPLOYEE_VIEW_ALL') ||
-    permissionSet.has('ORG.EMPLOYEE_VIEW_ALL') ||
-    permissionSet.has('OT_ADD_OTHER_LINE_EMPLOYEE') ||
-    permissionSet.has('OT_SELECT_OTHER_EMPLOYEE')
+    permissionSet.has('ORG.EMPLOYEE_VIEW_ALL')
 
   return {
     isRootAdmin,
@@ -474,6 +597,10 @@ function normalizeEmployeeRecord(source = {}, options = {}) {
     id,
     employeeNo,
     displayName,
+    employeeLabel:
+      [employeeNo, displayName].filter(Boolean).join(' - ') ||
+      displayName ||
+      employeeNo,
     positionName,
     ...line,
     ...shift,
@@ -610,7 +737,7 @@ function buildLineLabel(employee = {}) {
 
 function buildShiftLabel(employee = {}) {
   return (
-    [employee?.shiftCode, employee?.shiftName].filter(Boolean).join(' · ') ||
+    toTrimmedString(employee?.shiftCode) ||
     t('ot.requests.create.employeePicker.noShift')
   )
 }
@@ -964,12 +1091,16 @@ function toggleLineExpanded(group) {
 }
 
 function syncLineState() {
+  const shouldOpenForSearch = Boolean(toTrimmedString(search.value))
+
   const nextExpanded = {
     ...expandedLineRows.value,
   }
 
   for (const group of lineGroups.value) {
-    if (nextExpanded[group.id] === undefined) {
+    if (shouldOpenForSearch) {
+      nextExpanded[group.id] = true
+    } else if (nextExpanded[group.id] === undefined) {
       nextExpanded[group.id] = false
     }
 
@@ -1034,6 +1165,8 @@ function buildEmployeeParams(targetPage, targetScope = employeeScope.value) {
     shiftId: toTrimmedString(props.selectedShiftId),
     isActive: true,
     scope: targetScope,
+    all: targetScope === 'ALL',
+    includeAll: targetScope === 'ALL',
   }
 }
 
@@ -1180,6 +1313,31 @@ function mergeLoadedEmployees(existingRows = [], newRows = []) {
   })
 }
 
+function upsertEmployeesToTable(rows = []) {
+  employees.value = mergeLoadedEmployees(employees.value, rows)
+  total.value = Math.max(Number(total.value || 0), employees.value.length)
+  syncLineState()
+}
+
+function openEmployeeGroup(employee) {
+  const groupId = getLineGroupKey(employee)
+
+  expandedLineRows.value = {
+    ...expandedLineRows.value,
+    [groupId]: true,
+  }
+
+  lineVisibleCountMap[groupId] = Math.max(
+    Number(lineVisibleCountMap[groupId] || GROUP_VISIBLE_STEP),
+    GROUP_VISIBLE_STEP,
+  )
+}
+
+function clearEmployeeSuggestionSearch() {
+  employeeSearchValue.value = ''
+  employeeSuggestions.value = []
+}
+
 async function fetchEmployeePage(targetPage = 1, { replace = false, silent = false } = {}) {
   if (!props.otDate) {
     resetEmployeeListState()
@@ -1213,7 +1371,7 @@ async function fetchEmployeePage(targetPage = 1, { replace = false, silent = fal
     total.value = payload.total
 
     if (replace) {
-      employees.value = payload.rows
+      employees.value = mergeLoadedEmployees(selectedRows.value, payload.rows)
       loadedPages.value = new Set([targetPage])
       expandedLineRows.value = {}
     } else {
@@ -1342,7 +1500,8 @@ async function autoSelectManagedEmployees() {
       return hasLine(row) && !getEmployeeBlockInfo(row).blocked
     })
 
-    emitSelected(selectableRows)
+    emitSelected(mergeUniqueRows([...selectedRows.value, ...selectableRows]))
+    upsertEmployeesToTable(selectableRows)
   } catch (error) {
     toast.add({
       severity: 'error',
@@ -1368,6 +1527,86 @@ function removeInvalidSelectedRows() {
   }
 }
 
+async function searchEmployeeSuggestions(event = {}) {
+  const keyword = toTrimmedString(event.query)
+  employeeSearchValue.value = keyword
+
+  if (!props.otDate || !keyword) {
+    employeeSuggestions.value = []
+    return
+  }
+
+  const suggestionScope = canSelectOtherEmployees.value ? 'ALL' : employeeScope.value
+
+  loadingSuggestions.value = true
+
+  try {
+    if (suggestionScope === 'ALL' && !managedIdsLoaded.value) {
+      await loadManagedIds()
+    }
+
+    const res = await getEmployeeLookupOptions({
+      page: 1,
+      limit: 20,
+      search: keyword,
+      q: keyword,
+      lineId: '',
+      shiftId: toTrimmedString(props.selectedShiftId),
+      isActive: true,
+      scope: suggestionScope,
+      all: suggestionScope === 'ALL',
+      includeAll: suggestionScope === 'ALL',
+    })
+
+    const payload = normalizeEmployeeLookupResponse(res, {
+      markOutsideManaged: suggestionScope === 'ALL',
+    })
+
+    employeeSuggestions.value = payload.rows
+  } catch {
+    employeeSuggestions.value = []
+  } finally {
+    loadingSuggestions.value = false
+  }
+}
+
+function onEmployeeAutocompleteSelect(event = {}) {
+  const employee = normalizeEmployeeRecord(event.value, {
+    isOutsideManaged: event.value?.isOutsideManaged === true,
+  })
+
+  if (!employee) {
+    clearEmployeeSuggestionSearch()
+    return
+  }
+
+  const info = getEmployeeBlockInfo(employee)
+
+  if (info.blocked) {
+    toast.add({
+      severity: 'warn',
+      summary: t('ot.requests.create.employeePicker.cannotSelectEmployeeTitle'),
+      detail: info.reason,
+      life: 3000,
+    })
+
+    clearEmployeeSuggestionSearch()
+    return
+  }
+
+  const selectedLine = toTrimmedString(selectedLineId.value)
+  const employeeLine = toTrimmedString(employee.lineId)
+
+  if (selectedLine && selectedLine !== employeeLine) {
+    selectedLineId.value = ''
+  }
+
+  upsertEmployeesToTable([employee])
+  openEmployeeGroup(employee)
+  selectRows([employee])
+  clearEmployeeSuggestionSearch()
+}
+
 function onSearchInput() {
   window.clearTimeout(searchTimer)
 
@@ -1384,6 +1623,14 @@ watch(employeeScope, async () => {
   await resetAndLoadEmployees()
 })
 
+watch(
+  pickerBusy,
+  (value) => {
+    emit('loading-change', value)
+  },
+  { immediate: true },
+)
+
 watch(lineGroups, () => {
   syncLineState()
 })
@@ -1396,6 +1643,8 @@ watch(
   () => [props.otDate, props.selectedShiftId].join('|'),
   async () => {
     search.value = ''
+    employeeSearchValue.value = ''
+    employeeSuggestions.value = []
     selectedLineId.value = ''
     resetEmployeeListState()
     autoSelectKey = ''
@@ -1442,17 +1691,36 @@ onBeforeUnmount(() => {
         </h2>
       </div>
 
-      <IconField class="ot-search-field">
-        <InputIcon class="pi pi-search" />
+      <AutoComplete
+        v-model="employeeSearchValue"
+        :suggestions="employeeSuggestions"
+        option-label="employeeLabel"
+        class="ot-search-field"
+        input-class="w-full"
+        panel-class="ot-employee-suggest-panel"
+        :placeholder="t('ot.requests.create.employeePicker.searchPlaceholder')"
+        :loading="loadingSuggestions"
+        :min-length="1"
+        :delay="180"
+        @complete="searchEmployeeSuggestions"
+        @item-select="onEmployeeAutocompleteSelect"
+      >
+        <template #option="{ option }">
+          <div class="ot-suggest-option">
+            <span class="ot-suggest-id">
+              {{ option.employeeNo || t('ot.requests.create.employeePicker.noEmployeeId') }}
+            </span>
 
-        <InputText
-          v-model.trim="search"
-          class="w-full"
-          size="small"
-          :placeholder="t('ot.requests.create.employeePicker.searchPlaceholder')"
-          @input="onSearchInput"
-        />
-      </IconField>
+            <span class="ot-suggest-name">
+              {{ option.displayName || '-' }}
+            </span>
+
+            <small>
+              {{ option.lineName || option.positionName || '-' }}
+            </small>
+          </div>
+        </template>
+      </AutoComplete>
 
       <Select
         v-model="employeeScope"
@@ -1462,7 +1730,7 @@ onBeforeUnmount(() => {
         class="ot-scope-filter"
         size="small"
         :placeholder="t('ot.requests.create.employeePicker.scopePlaceholder')"
-        :disabled="loadingAccess || !canSelectOtherEmployees"
+        :disabled="loadingAccess"
       />
 
       <Select
@@ -1614,10 +1882,8 @@ onBeforeUnmount(() => {
                     <th>{{ t('ot.requests.create.employeePicker.columnStart') }}</th>
                     <th>{{ t('ot.requests.create.employeePicker.columnEnd') }}</th>
                     <th>{{ t('ot.requests.break') }}</th>
-                    <th>{{ t('ot.requests.total') }}</th>
-                    <th>{{ t('ot.requests.mode') }}</th>
+                    <th>{{ t('ot.requests.create.otTime') }}</th>
                     <th>{{ t('nav.shift') }}</th>
-                    <th>{{ t('common.status') }}</th>
                   </tr>
                 </thead>
 
@@ -1656,22 +1922,36 @@ onBeforeUnmount(() => {
                     </td>
 
                     <td>
-                      <InputText
-                        :model-value="getEmployeeStartTime(employee)"
-                        type="time"
+                      <DatePicker
+                        :model-value="hhmmToDate(getEmployeeStartTime(employee))"
+                        time-only
+                        hour-format="24"
+                        show-icon
+                        :step-minute="5"
+                        :manual-input="false"
                         class="ot-time-input"
+                        input-class="ot-time-input-field"
                         :disabled="isEmployeeDisabled(employee) && !isSelected(employee)"
-                        @update:model-value="(value) => updateSelectedEmployeeTime(employee, { requestStartTime: value })"
+                        @update:model-value="(value) => updateSelectedEmployeeTime(employee, {
+                          requestStartTime: dateToHHmm(value),
+                        })"
                       />
                     </td>
 
                     <td>
-                      <InputText
-                        :model-value="getEmployeeEndTime(employee)"
-                        type="time"
+                      <DatePicker
+                        :model-value="hhmmToDate(getEmployeeEndTime(employee))"
+                        time-only
+                        hour-format="24"
+                        show-icon
+                        :step-minute="5"
+                        :manual-input="false"
                         class="ot-time-input"
+                        input-class="ot-time-input-field"
                         :disabled="isEmployeeDisabled(employee) && !isSelected(employee)"
-                        @update:model-value="(value) => updateSelectedEmployeeTime(employee, { requestEndTime: value })"
+                        @update:model-value="(value) => updateSelectedEmployeeTime(employee, {
+                          requestEndTime: dateToHHmm(value),
+                        })"
                       />
                     </td>
 
@@ -1689,20 +1969,10 @@ onBeforeUnmount(() => {
                     </td>
 
                     <td>
-                      <span class="cell-mono">
-                        {{ formatMinutesLabel(getEmployeeRequestedMinutes(employee)) }}
-                      </span>
-                    </td>
-
-                    <td>
-                      <div class="mode-cell">
-                        <Tag
-                          :value="getEmployeeTimeMode(employee) === 'CUSTOM'
-                            ? t('ot.requests.timeMode.custom')
-                            : t('ot.requests.timeMode.default')"
-                          :severity="getEmployeeTimeMode(employee) === 'CUSTOM' ? 'warn' : 'success'"
-                          class="ot-status-tag"
-                        />
+                      <div class="ot-time-total-cell">
+                        <span class="cell-mono">
+                          {{ formatMinutesLabel(getEmployeeRequestedMinutes(employee)) }}
+                        </span>
 
                         <Button
                           v-if="isSelected(employee) && getEmployeeTimeMode(employee) === 'CUSTOM'"
@@ -1719,36 +1989,6 @@ onBeforeUnmount(() => {
 
                     <td>
                       {{ buildShiftLabel(employee) }}
-                    </td>
-
-                    <td>
-                      <Tag
-                        v-if="isEmployeeDisabled(employee) && !isSelected(employee)"
-                        :value="getEmployeeBlockInfo(employee).reason"
-                        severity="danger"
-                        class="ot-status-tag"
-                      />
-
-                      <Tag
-                        v-else-if="isSelected(employee)"
-                        :value="t('ot.requests.create.employeePicker.selected')"
-                        severity="success"
-                        class="ot-status-tag"
-                      />
-
-                      <Tag
-                        v-else-if="group.isNoLine"
-                        :value="t('ot.requests.create.employeePicker.manualSelect')"
-                        severity="warning"
-                        class="ot-status-tag"
-                      />
-
-                      <Tag
-                        v-else
-                        :value="t('ot.requests.create.employeePicker.available')"
-                        severity="secondary"
-                        class="ot-status-tag"
-                      />
                     </td>
                   </tr>
                 </tbody>
@@ -1995,15 +2235,14 @@ onBeforeUnmount(() => {
   color: var(--ot-text);
 }
 
-.mode-cell {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  white-space: nowrap;
+.ot-time-input {
+  width: 7.4rem;
 }
 
-.ot-time-input {
-  width: 6.8rem;
+:deep(.ot-time-input-field) {
+  width: 7.4rem !important;
+  text-align: center;
+  font-size: 0.78rem !important;
 }
 
 .ot-break-input {
@@ -2013,6 +2252,44 @@ onBeforeUnmount(() => {
 :deep(.ot-break-input-field) {
   width: 5rem !important;
   text-align: center;
+}
+
+.ot-suggest-option {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  gap: 0.2rem 0.65rem;
+  align-items: center;
+}
+
+.ot-suggest-id {
+  color: var(--ot-text);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.ot-suggest-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ot-text);
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ot-suggest-option small {
+  grid-column: 1 / -1;
+  color: var(--ot-text-muted);
+  font-size: 0.7rem;
+}
+
+.ot-time-total-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  min-width: 5.5rem;
 }
 
 .ot-line-scroll-hint,
@@ -2103,7 +2380,7 @@ onBeforeUnmount(() => {
   }
 
   .ot-employee-table {
-    min-width: 980px;
+    min-width: 860px;
   }
 }
 </style>

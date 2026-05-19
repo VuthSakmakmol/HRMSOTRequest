@@ -235,12 +235,14 @@ function clearFilters() {
   filters.isActive = ''
   filters.sortField = 'createdAt'
   filters.sortOrder = -1
+
   reloadFirstPage({ keepVisible: true })
 }
 
 function onSort(event) {
   filters.sortField = event.sortField || 'createdAt'
   filters.sortOrder = typeof event.sortOrder === 'number' ? event.sortOrder : -1
+
   reloadFirstPage({ keepVisible: true })
 }
 
@@ -312,6 +314,10 @@ async function submitDepartment() {
   } finally {
     saving.value = false
   }
+}
+
+function activeTagClass(active) {
+  return active ? 'department-active-tag' : 'department-inactive-tag'
 }
 
 function getFilenameFromHeader(res, fallback) {
@@ -515,7 +521,7 @@ onBeforeUnmount(() => {
           scroll-height="500px"
           :sort-field="filters.sortField"
           :sort-order="filters.sortOrder"
-          table-style="min-width: 50rem"
+          table-style="min-width: 100%"
           class="ot-data-table ot-data-table-compact department-data-table"
           :virtual-scroller-options="useVirtualScroll ? {
             lazy: true,
@@ -551,7 +557,7 @@ onBeforeUnmount(() => {
             field="code"
             :header="t('common.code')"
             sortable
-            style="min-width: 9rem"
+            style="width: 9rem; min-width: 9rem"
           >
             <template #body="{ data }">
               <span
@@ -567,7 +573,7 @@ onBeforeUnmount(() => {
             field="name"
             :header="t('common.name')"
             sortable
-            style="min-width: 16rem"
+            style="width: 16rem; min-width: 16rem"
           >
             <template #body="{ data }">
               <span
@@ -583,14 +589,14 @@ onBeforeUnmount(() => {
             field="isActive"
             :header="t('common.status')"
             sortable
-            style="min-width: 8rem"
+            style="width: 8rem; min-width: 8rem"
           >
             <template #body="{ data }">
               <Tag
                 v-if="data"
                 :value="data.isActive ? t('common.active') : t('common.inactive')"
                 class="department-rgb-tag"
-                :class="data.isActive ? 'department-active-tag' : 'department-inactive-tag'"
+                :class="activeTagClass(data.isActive)"
               />
             </template>
           </Column>
@@ -599,10 +605,15 @@ onBeforeUnmount(() => {
             field="createdAt"
             :header="t('common.createdAt')"
             sortable
-            style="min-width: 13rem"
+            style="width: 13rem; min-width: 13rem"
           >
             <template #body="{ data }">
-              <span v-if="data">{{ formatDateTime(data.createdAt) }}</span>
+              <span
+                v-if="data"
+                class="department-meta-text"
+              >
+                {{ formatDateTime(data.createdAt) }}
+              </span>
             </template>
           </Column>
 
@@ -696,6 +707,7 @@ onBeforeUnmount(() => {
 .department-page {
   --department-code-rgb: 37, 99, 235;
   --department-name-rgb: 15, 23, 42;
+  --department-meta-rgb: 71, 85, 105;
   --department-active-rgb: 22, 163, 74;
   --department-inactive-rgb: 100, 116, 139;
 }
@@ -719,39 +731,6 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
 }
 
-.department-code-text {
-  color: rgb(var(--department-code-rgb));
-  font-size: 0.82rem;
-  font-weight: 700;
-}
-
-.department-name-text {
-  color: rgb(var(--department-name-rgb));
-  font-size: 0.82rem;
-  font-weight: 600;
-}
-
-.department-rgb-tag {
-  border-radius: 999px;
-  border: 1px solid transparent;
-  padding: 0.2rem 0.58rem;
-  font-size: 0.7rem;
-  font-weight: 700;
-  line-height: 1;
-}
-
-.department-active-tag {
-  border-color: rgba(var(--department-active-rgb), 0.24);
-  background: rgba(var(--department-active-rgb), 0.12);
-  color: rgb(var(--department-active-rgb));
-}
-
-.department-inactive-tag {
-  border-color: rgba(var(--department-inactive-rgb), 0.24);
-  background: rgba(var(--department-inactive-rgb), 0.12);
-  color: rgb(var(--department-inactive-rgb));
-}
-
 .department-active-box {
   display: flex;
   align-items: center;
@@ -768,14 +747,158 @@ onBeforeUnmount(() => {
   font-weight: 650;
 }
 
-.department-page :deep(.p-tag-value) {
+/* =========================
+   Table text
+   ========================= */
+
+.department-code-text {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgb(var(--department-code-rgb));
+  font-size: 0.82rem;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.department-name-text,
+.department-meta-text {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.department-name-text {
+  color: rgb(var(--department-name-rgb));
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.department-meta-text {
+  color: rgb(var(--department-meta-rgb));
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+/* =========================
+   RGB Tags
+   ========================= */
+
+.department-rgb-tag {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 0.2rem 0.58rem;
+  font-size: 0.7rem;
+  font-weight: 750;
+  line-height: 1;
+  text-align: center;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.department-active-tag {
+  border-color: rgba(var(--department-active-rgb), 0.24);
+  background: rgba(var(--department-active-rgb), 0.12);
+  color: rgb(var(--department-active-rgb));
+}
+
+.department-inactive-tag {
+  border-color: rgba(var(--department-inactive-rgb), 0.24);
+  background: rgba(var(--department-inactive-rgb), 0.12);
+  color: rgb(var(--department-inactive-rgb));
+}
+
+/* =========================
+   PrimeVue table center
+   ========================= */
+
+.department-page :deep(.department-data-table.p-datatable .p-datatable-table) {
+  table-layout: auto !important;
+}
+
+.department-page :deep(.department-data-table.p-datatable .p-datatable-thead > tr > th),
+.department-page :deep(.department-data-table.p-datatable .p-datatable-tbody > tr > td) {
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+.department-page :deep(.department-data-table.p-datatable .p-datatable-column-header-content),
+.department-page :deep(.department-data-table.p-datatable .p-column-header-content) {
+  display: flex !important;
+  width: 100% !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 0.25rem !important;
+  text-align: center !important;
+}
+
+.department-page :deep(.department-data-table.p-datatable .p-datatable-column-title),
+.department-page :deep(.department-data-table.p-datatable .p-column-title) {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+}
+
+.department-page :deep(.department-data-table.p-datatable .p-sortable-column-icon),
+.department-page :deep(.department-data-table.p-datatable .p-datatable-sort-icon) {
+  margin-inline-start: 0.25rem !important;
+  margin-inline-end: 0 !important;
+}
+
+.department-page :deep(.department-data-table.p-datatable .p-datatable-tbody > tr > td > *) {
+  margin-inline: auto !important;
+}
+
+.department-page :deep(.department-data-table.p-datatable .p-tag),
+.department-rgb-tag {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin-inline: auto !important;
+  text-align: center !important;
+}
+
+.department-page :deep(.department-data-table.p-datatable .p-tag-value) {
   max-width: 100%;
   overflow: hidden;
+  text-align: center !important;
   text-overflow: ellipsis;
 }
 
+.department-page :deep(.department-data-table.p-datatable .p-frozen-column),
+.department-page :deep(.department-data-table.p-datatable .p-datatable-frozen-column) {
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+.department-page :deep(.department-data-table.p-datatable .p-frozen-column .p-button),
+.department-page :deep(.department-data-table.p-datatable .p-datatable-frozen-column .p-button) {
+  display: inline-flex !important;
+  margin-inline: auto !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+/* =========================
+   Dark mode
+   ========================= */
+
 :global(.dark) .department-page {
   --department-name-rgb: 226, 232, 240;
+  --department-meta-rgb: 203, 213, 225;
 }
 
 :global(.dark) .department-active-tag {
@@ -787,6 +910,10 @@ onBeforeUnmount(() => {
   border-color: rgba(var(--department-inactive-rgb), 0.36);
   background: rgba(var(--department-inactive-rgb), 0.18);
 }
+
+/* =========================
+   Responsive
+   ========================= */
 
 @media (max-width: 768px) {
   .department-filter-actions {

@@ -1975,7 +1975,7 @@ export default {
       paidMinutes: 'Paid Minutes',
       breakMinutes: 'Break Minutes',
       break: 'Break',
-      total: 'Total',
+      total: 'OT time',
       mode: 'Mode',
 
       exportExcel: 'Export Excel',

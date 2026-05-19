@@ -9,7 +9,7 @@ import { useToast } from 'primevue/usetoast'
 import Button from 'primevue/button'
 import Card from 'primevue/card'
 import InputNumber from 'primevue/inputnumber'
-import InputText from 'primevue/inputtext'
+import DatePicker from 'primevue/datepicker'
 import Message from 'primevue/message'
 import Select from 'primevue/select'
 import Tag from 'primevue/tag'
@@ -293,6 +293,32 @@ function buildCalendarCell(date, inCurrentMonth) {
     isHoliday: isHolidayDate(date),
     isSunday: date.getDay() === 0,
   }
+}
+
+function hhmmToDate(value) {
+  const raw = String(value || '').trim()
+  if (!isHHmm(raw)) return null
+
+  const [hours, minutes] = raw.split(':').map(Number)
+  const date = new Date()
+
+  date.setHours(hours, minutes, 0, 0)
+
+  return date
+}
+
+function dateToHHmm(value) {
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) return ''
+
+  return `${pad2(value.getHours())}:${pad2(value.getMinutes())}`
+}
+
+function updateCustomStartTime(value) {
+  props.form.customStartTime = dateToHHmm(value)
+}
+
+function updateCustomEndTime(value) {
+  props.form.customEndTime = dateToHHmm(value)
 }
 
 function isHHmm(value) {
@@ -649,11 +675,17 @@ onMounted(() => {
                   <span class="ot-required-star">*</span>
                 </label>
 
-                <InputText
-                  v-model.trim="props.form.customStartTime"
-                  type="time"
+                <DatePicker
+                  :model-value="hhmmToDate(props.form.customStartTime)"
+                  time-only
+                  hour-format="24"
+                  show-icon
+                  :step-minute="5"
+                  :manual-input="false"
+                  class="w-full ot-time-picker"
+                  input-class="w-full"
                   placeholder="18:00"
-                  class="w-full"
+                  @update:model-value="updateCustomStartTime"
                 />
               </div>
 
@@ -663,11 +695,17 @@ onMounted(() => {
                   <span class="ot-required-star">*</span>
                 </label>
 
-                <InputText
-                  v-model.trim="props.form.customEndTime"
-                  type="time"
+                <DatePicker
+                  :model-value="hhmmToDate(props.form.customEndTime)"
+                  time-only
+                  hour-format="24"
+                  show-icon
+                  :step-minute="5"
+                  :manual-input="false"
+                  class="w-full ot-time-picker"
+                  input-class="w-full"
                   placeholder="20:00"
-                  class="w-full"
+                  @update:model-value="updateCustomEndTime"
                 />
               </div>
 
@@ -717,7 +755,7 @@ onMounted(() => {
             </div>
 
             <div class="ot-preview-box">
-              <span>{{ t('ot.requests.create.total') }}</span>
+              <span>{{ t('ot.requests.create.otTime') }}</span>
               <strong>{{ formatMinutesLabel(localRequestPreview.requestedMinutes) }}</strong>
             </div>
           </div>
@@ -1060,4 +1098,9 @@ onMounted(() => {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
+:deep(.ot-time-picker .p-inputtext) {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 </style>

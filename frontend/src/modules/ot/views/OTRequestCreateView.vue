@@ -32,6 +32,7 @@ const shiftOptions = ref([])
 const unavailableEmployees = ref([])
 const selectedOptionDayType = ref('')
 const lastLoadedShiftKey = ref('')
+const employeePickerLoading = ref(false)
 
 let unavailableRequestSeq = 0
 
@@ -75,6 +76,17 @@ const unavailableEmployeeMap = computed(() => {
 
 const canAutoSelectEmployees = computed(() => {
   return Boolean(selectedDateYMD.value) && !loadingUnavailableEmployees.value
+})
+
+const submitDisabled = computed(() => {
+  return (
+    loadingRequester.value ||
+    loadingShiftOptions.value ||
+    loadingUnavailableEmployees.value ||
+    employeePickerLoading.value ||
+    submitting.value ||
+    !selectedEmployeeIds.value.length
+  )
 })
 
 const requestPreview = computed(() => {
@@ -186,9 +198,7 @@ const sharedShiftIdForPicker = computed(() => {
 const sharedShiftLabelForPicker = computed(() => {
   if (selectedShiftState.value.mode !== 'ready') return ''
 
-  return [sharedShift.value?.code, sharedShift.value?.name]
-    .filter(Boolean)
-    .join(' · ')
+  return String(sharedShift.value?.code || '').trim()
 })
 
 function showToast(severity, summary, detail, life = 3000) {
@@ -1150,6 +1160,7 @@ onMounted(async () => {
       :blocked-employee-map="unavailableEmployeeMap"
       :blocked-loading="loadingUnavailableEmployees"
       :request-preview="pickerRequestPreview"
+      @loading-change="employeePickerLoading = $event"
     />
 
     <div class="ot-create-bottom-grid">
@@ -1157,7 +1168,7 @@ onMounted(async () => {
 
       <OTSubmitBar
         :submitting="submitting"
-        :disabled="loadingRequester || loadingShiftOptions || loadingUnavailableEmployees"
+        :disabled="submitDisabled"
         @submit="submit"
         @back="goBack"
       />

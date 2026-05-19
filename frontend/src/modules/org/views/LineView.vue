@@ -60,6 +60,9 @@ const editingLineId = ref('')
 const departmentOptions = ref([])
 const positionOptions = ref([])
 
+const expandedDepartmentRows = ref({})
+const expandedPositionRows = ref({})
+
 const filters = reactive({
   search: '',
   departmentId: '',
@@ -577,6 +580,7 @@ function activeTagClass(active) {
 
 function departmentSummary(row) {
   const departments = Array.isArray(row?.departments) ? row.departments : []
+  const expanded = isDepartmentExpanded(row)
 
   if (!departments.length && row?.departmentId) {
     return {
@@ -589,6 +593,8 @@ function departmentSummary(row) {
         },
       ],
       hidden: 0,
+      total: 1,
+      expanded: false,
       emptyText: '-',
     }
   }
@@ -597,41 +603,104 @@ function departmentSummary(row) {
     return {
       visible: [],
       hidden: 0,
+      total: 0,
+      expanded: false,
       emptyText: '-',
     }
   }
 
   return {
-    visible: departments.slice(0, 3),
-    hidden: Math.max(0, departments.length - 3),
+    visible: expanded ? departments : departments.slice(0, 3),
+    hidden: expanded ? 0 : Math.max(0, departments.length - 3),
+    total: departments.length,
+    expanded,
     emptyText: '',
+  }
+}
+
+function rowExpandKey(row) {
+  return normalizeId(row) || String(row?.code || row?.name || '').trim()
+}
+
+function isDepartmentExpanded(row) {
+  const key = rowExpandKey(row)
+  return key ? expandedDepartmentRows.value[key] === true : false
+}
+
+function isPositionExpanded(row) {
+  const key = rowExpandKey(row)
+  return key ? expandedPositionRows.value[key] === true : false
+}
+
+function toggleDepartmentExpanded(row) {
+  const key = rowExpandKey(row)
+  if (!key) return
+
+  expandedDepartmentRows.value = {
+    ...expandedDepartmentRows.value,
+    [key]: !isDepartmentExpanded(row),
+  }
+}
+
+function togglePositionExpanded(row) {
+  const key = rowExpandKey(row)
+  if (!key) return
+
+  expandedPositionRows.value = {
+    ...expandedPositionRows.value,
+    [key]: !isPositionExpanded(row),
   }
 }
 
 function positionSummary(row) {
   const positions = Array.isArray(row?.positions) ? row.positions : []
+  const expanded = isPositionExpanded(row)
 
   if (!positions.length) {
     return {
       visible: [],
       hidden: 0,
+      total: 0,
+      expanded: false,
       emptyText: t('org.line.allPositionsInDepartments'),
     }
   }
 
   return {
-    visible: positions.slice(0, 3),
-    hidden: Math.max(0, positions.length - 3),
+    visible: expanded ? positions : positions.slice(0, 3),
+    hidden: expanded ? 0 : Math.max(0, positions.length - 3),
+    total: positions.length,
+    expanded,
     emptyText: '',
   }
 }
 
+function nameOnlyLabel(item = {}) {
+  const name = String(
+    item?.name ||
+      item?.departmentName ||
+      item?.positionName ||
+      item?.lineName ||
+      '',
+  ).trim()
+
+  if (name) return name
+
+  const label = String(item?.label || '').trim()
+
+  if (label.includes(' - ')) {
+    return label.split(' - ').slice(1).join(' - ').trim() || label
+  }
+
+  return label || String(item?.code || '').trim() || '-'
+}
+
 function departmentTagLabel(department) {
-  return department?.code || department?.name || department?.label || '-'
+  return nameOnlyLabel(department)
 }
 
 function positionTagLabel(position) {
-  return position?.code || position?.name || position?.label || '-'
+  return nameOnlyLabel(position)
 }
 
 onMounted(async () => {
@@ -788,7 +857,7 @@ onBeforeUnmount(() => {
           scroll-height="500px"
           :sort-field="filters.sortField"
           :sort-order="filters.sortOrder"
-          table-style="min-width: 86rem"
+          table-style="min-width: 100%"
           class="ot-data-table ot-data-table-compact line-data-table"
           :virtual-scroller-options="useVirtualScroll ? {
             lazy: true,
@@ -824,7 +893,7 @@ onBeforeUnmount(() => {
             field="code"
             :header="t('common.code')"
             sortable
-            style="min-width: 9rem"
+            style="min-width: 5rem"
           >
             <template #body="{ data }">
               <span
@@ -840,7 +909,7 @@ onBeforeUnmount(() => {
             field="name"
             :header="t('org.line.lineName')"
             sortable
-            style="min-width: 14rem"
+            style="min-width: 7rem"
           >
             <template #body="{ data }">
               <div
@@ -878,11 +947,18 @@ onBeforeUnmount(() => {
                     class="line-rgb-tag line-department-tag"
                   />
 
-                  <Tag
-                    v-if="departmentSummary(data).hidden"
-                    :value="`+${departmentSummary(data).hidden}`"
-                    class="line-rgb-tag line-more-tag"
-                  />
+                  <button
+                    v-if="departmentSummary(data).hidden || departmentSummary(data).expanded"
+                    type="button"
+                    class="line-rgb-tag line-more-tag line-more-button"
+                    @click.stop="toggleDepartmentExpanded(data)"
+                  >
+                    {{
+                      departmentSummary(data).expanded
+                        ? '−'
+                        : `+${departmentSummary(data).hidden}`
+                    }}
+                  </button>
                 </div>
 
                 <span
@@ -897,7 +973,7 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('org.line.allowedPositions')"
-            style="min-width: 21rem"
+            style="min-width: 20rem"
           >
             <template #body="{ data }">
               <div v-if="data">
@@ -912,11 +988,18 @@ onBeforeUnmount(() => {
                     class="line-rgb-tag line-position-tag"
                   />
 
-                  <Tag
-                    v-if="positionSummary(data).hidden"
-                    :value="`+${positionSummary(data).hidden}`"
-                    class="line-rgb-tag line-more-tag"
-                  />
+                  <button
+                    v-if="positionSummary(data).hidden || positionSummary(data).expanded"
+                    type="button"
+                    class="line-rgb-tag line-more-tag line-more-button"
+                    @click.stop="togglePositionExpanded(data)"
+                  >
+                    {{
+                      positionSummary(data).expanded
+                        ? '−'
+                        : `+${positionSummary(data).hidden}`
+                    }}
+                  </button>
                 </div>
 
                 <span
@@ -933,7 +1016,7 @@ onBeforeUnmount(() => {
             field="isActive"
             :header="t('common.status')"
             sortable
-            style="min-width: 7rem"
+            style="min-width: 5rem"
           >
             <template #body="{ data }">
               <Tag
@@ -949,7 +1032,7 @@ onBeforeUnmount(() => {
             field="updatedAt"
             :header="t('common.updatedAt')"
             sortable
-            style="min-width: 13rem"
+            style="min-width: 7rem"
           >
             <template #body="{ data }">
               <span
@@ -1304,5 +1387,131 @@ onBeforeUnmount(() => {
   .line-filter-actions {
     grid-column: 1 / -1;
   }
+}
+
+/* =========================
+   Force Line table center alignment
+   ========================= */
+
+.line-page :deep(.line-data-table.p-datatable .p-datatable-table) {
+  table-layout: auto !important;
+}
+
+.line-page :deep(.line-data-table.p-datatable .p-datatable-thead > tr > th),
+.line-page :deep(.line-data-table.p-datatable .p-datatable-tbody > tr > td) {
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+.line-page :deep(.line-data-table.p-datatable .p-datatable-column-header-content),
+.line-page :deep(.line-data-table.p-datatable .p-column-header-content) {
+  display: flex !important;
+  width: 100% !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 0.25rem !important;
+  text-align: center !important;
+}
+
+.line-page :deep(.line-data-table.p-datatable .p-datatable-column-title),
+.line-page :deep(.line-data-table.p-datatable .p-column-title) {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+}
+
+.line-page :deep(.line-data-table.p-datatable .p-sortable-column-icon),
+.line-page :deep(.line-data-table.p-datatable .p-datatable-sort-icon) {
+  margin-inline-start: 0.25rem !important;
+  margin-inline-end: 0 !important;
+}
+
+.line-page :deep(.line-data-table.p-datatable .p-datatable-tbody > tr > td > *) {
+  margin-inline: auto !important;
+}
+
+.line-code-text,
+.line-name-text,
+.line-description-text,
+.line-meta-text,
+.line-empty-text {
+  display: inline-flex !important;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+.line-name-text,
+.line-meta-text,
+.line-empty-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.line-description-text {
+  margin-inline: auto;
+  text-align: center !important;
+}
+
+.line-tag-list {
+  display: flex !important;
+  width: 100%;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 0.3rem;
+  text-align: center !important;
+}
+
+.line-page :deep(.line-data-table.p-datatable .p-tag),
+.line-rgb-tag {
+  display: inline-flex !important;
+  max-width: 100%;
+  align-items: center !important;
+  justify-content: center !important;
+  margin-inline: auto !important;
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+.line-page :deep(.line-data-table.p-datatable .p-tag-value) {
+  max-width: 100%;
+  overflow: hidden;
+  text-align: center !important;
+  text-overflow: ellipsis;
+}
+
+.line-page :deep(.line-data-table.p-datatable .p-frozen-column),
+.line-page :deep(.line-data-table.p-datatable .p-datatable-frozen-column) {
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+.line-page :deep(.line-data-table.p-datatable .p-frozen-column .p-button),
+.line-page :deep(.line-data-table.p-datatable .p-datatable-frozen-column .p-button) {
+  display: inline-flex !important;
+  margin-inline: auto !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.line-more-button {
+  cursor: pointer;
+  transition:
+    transform 0.14s ease,
+    background-color 0.14s ease,
+    border-color 0.14s ease;
+}
+
+.line-more-button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(var(--line-more-rgb), 0.42);
+  background: rgba(var(--line-more-rgb), 0.16);
 }
 </style>

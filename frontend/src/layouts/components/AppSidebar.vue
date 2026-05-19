@@ -224,13 +224,7 @@ const navGroups = computed(() => {
           label: t('nav.otRequests'),
           icon: 'pi pi-file-edit',
           to: '/ot/requests',
-          permissions: [
-            'OT_REQUEST_VIEW',
-            'OT_REQUEST_CREATE',
-            'OT_REQUEST_UPDATE',
-            'OT_REQUEST_APPROVE',
-            'OT_REQUEST_ACKNOWLEDGE',
-          ],
+          permissions: ['OT_REQUEST_VIEW'],
         },
         {
           key: 'ot-approvals',

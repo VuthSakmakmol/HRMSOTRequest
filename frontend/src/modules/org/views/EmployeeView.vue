@@ -1032,11 +1032,11 @@ function otWorkflowRoleTagClass(value) {
 }
 
 function departmentLabel(row) {
-  return buildLabel(row?.departmentCode, row?.departmentName) || '-'
+  return row?.departmentName || row?.department?.name || row?.departmentCode || '-'
 }
 
 function positionLabel(row) {
-  return buildLabel(row?.positionCode, row?.positionName) || '-'
+  return row?.positionName || row?.position?.name || row?.positionCode || '-'
 }
 
 function lineLabel(row) {
@@ -1045,26 +1045,17 @@ function lineLabel(row) {
   if (lines.length) {
     return (
       lines
-        .map((line) => buildLabel(line.code, line.name) || line.label)
+        .map((line) => line.name || line.lineName || line.label || line.code)
         .filter(Boolean)
         .join(', ') || '-'
     )
   }
 
-  if (row?.linesLabel) return row.linesLabel
-
-  return buildLabel(row?.lineCode, row?.lineName) || '-'
+  return row?.lineName || row?.linesLabel || row?.lineCode || '-'
 }
 
 function shiftLabel(row) {
-  const base = buildLabel(row?.shiftCode, row?.shiftName)
-  const type = row?.shiftType || ''
-  const time =
-    row?.shiftStartTime && row?.shiftEndTime
-      ? `${row.shiftStartTime}-${row.shiftEndTime}`
-      : ''
-
-  return [base, type, time].filter(Boolean).join(' · ') || '-'
+  return row?.shiftName || row?.shift?.name || row?.shiftCode || '-'
 }
 
 function managerLabel(row) {
@@ -1293,7 +1284,7 @@ onBeforeUnmount(() => {
           scroll-height="500px"
           :sort-field="filters.sortBy"
           :sort-order="filters.sortOrder"
-          table-style="min-width: 128rem"
+          table-style="min-width: 100%"
           class="ot-data-table ot-data-table-compact employee-data-table"
           :virtual-scroller-options="useVirtualScroll ? {
             lazy: true,
@@ -1360,7 +1351,7 @@ onBeforeUnmount(() => {
           <Column
             field="departmentId"
             :header="t('nav.departments')"
-            style="min-width: 16rem"
+            style="min-width: 10rem"
           >
             <template #body="{ data }">
               <span
@@ -1375,7 +1366,7 @@ onBeforeUnmount(() => {
           <Column
             field="positionId"
             :header="t('nav.positions')"
-            style="min-width: 15rem"
+            style="min-width: 10rem"
           >
             <template #body="{ data }">
               <span
@@ -1390,7 +1381,7 @@ onBeforeUnmount(() => {
           <Column
             field="lineId"
             :header="t('nav.lines')"
-            style="min-width: 18rem"
+            style="min-width: 6rem"
           >
             <template #body="{ data }">
               <span
@@ -1405,7 +1396,7 @@ onBeforeUnmount(() => {
           <Column
             field="shiftId"
             :header="t('nav.shift')"
-            style="min-width: 16rem"
+            style="min-width: 7rem"
           >
             <template #body="{ data }">
               <span
@@ -1420,7 +1411,7 @@ onBeforeUnmount(() => {
           <Column
             field="reportsToEmployeeId"
             :header="t('org.employee.manager')"
-            style="min-width: 18rem"
+            style="min-width: 15rem"
           >
             <template #body="{ data }">
               <span
@@ -1435,7 +1426,7 @@ onBeforeUnmount(() => {
           <Column
             field="otWorkflowRole"
             :header="t('org.employee.otWorkflowRole.title')"
-            style="min-width: 11rem"
+            style="min-width: 9rem"
           >
             <template #body="{ data }">
               <Tag
@@ -1450,7 +1441,7 @@ onBeforeUnmount(() => {
           <Column
             field="phone"
             :header="t('org.employee.phone')"
-            style="min-width: 10rem"
+            style="min-width: 8rem"
           >
             <template #body="{ data }">
               <span
@@ -1464,7 +1455,7 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('nav.accounts')"
-            style="min-width: 12rem"
+            style="min-width: 7rem"
           >
             <template #body="{ data }">
               <div
@@ -1491,7 +1482,7 @@ onBeforeUnmount(() => {
             field="joinDate"
             :header="t('org.employee.joinDate')"
             sortable
-            style="min-width: 10rem"
+            style="min-width: 7rem"
           >
             <template #body="{ data }">
               <span
@@ -1507,7 +1498,7 @@ onBeforeUnmount(() => {
             field="isActive"
             :header="t('common.status')"
             sortable
-            style="min-width: 8rem"
+            style="min-width: 6rem"
           >
             <template #body="{ data }">
               <Tag
@@ -1523,7 +1514,7 @@ onBeforeUnmount(() => {
             field="createdAt"
             :header="t('common.createdAt')"
             sortable
-            style="min-width: 13rem"
+            style="min-width: 8rem"
           >
             <template #body="{ data }">
               <span
@@ -1539,7 +1530,7 @@ onBeforeUnmount(() => {
             field="updatedAt"
             :header="t('common.updatedAt')"
             sortable
-            style="min-width: 13rem"
+            style="min-width: 8rem"
           >
             <template #body="{ data }">
               <span
@@ -1936,10 +1927,27 @@ onBeforeUnmount(() => {
   line-height: 1.35;
 }
 
+/* =========================
+   Table text center helpers
+   ========================= */
+
+.employee-code-text,
+.employee-name-text,
+.employee-meta-text {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  vertical-align: middle;
+}
+
 .employee-code-text {
   color: rgb(37, 99, 235);
   font-size: 0.78rem;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 .employee-name-text {
@@ -1958,33 +1966,51 @@ onBeforeUnmount(() => {
   display: inline-block;
   max-width: 17rem;
   overflow: hidden;
+  text-align: center;
   text-overflow: ellipsis;
+  vertical-align: middle;
   white-space: nowrap;
 }
 
 .employee-account-stack {
   display: inline-flex;
+  max-width: 100%;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 0.2rem;
+  text-align: center;
 }
 
 .employee-account-login {
+  display: inline-block;
   max-width: 10rem;
   overflow: hidden;
   color: var(--ot-muted);
   font-size: 0.7rem;
   font-weight: 650;
+  text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* =========================
+   Tags
+   ========================= */
+
 .employee-rgb-tag {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  justify-content: center;
   border: 1px solid transparent;
   border-radius: 999px;
   font-size: 0.68rem;
   font-weight: 750;
   line-height: 1;
+  text-align: center;
+  vertical-align: middle;
+  white-space: nowrap;
 }
 
 .employee-active-tag {
@@ -2029,18 +2055,41 @@ onBeforeUnmount(() => {
   color: rgb(var(--employee-ot-none-rgb));
 }
 
+/* =========================
+   PrimeVue DataTable center
+   ========================= */
+
+.employee-page :deep(.employee-data-table .p-datatable-table) {
+  table-layout: auto;
+}
+
 .employee-page :deep(.employee-data-table .p-datatable-thead > tr > th),
 .employee-page :deep(.employee-data-table .p-datatable-tbody > tr > td) {
-  text-align: center;
-  vertical-align: middle;
+  text-align: center !important;
+  vertical-align: middle !important;
+  white-space: nowrap;
 }
 
 .employee-page :deep(.employee-data-table .p-column-header-content) {
-  justify-content: center;
+  width: 100%;
+  justify-content: center !important;
   gap: 0.25rem;
+  text-align: center;
+}
+
+.employee-page :deep(.employee-data-table .p-column-title) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.employee-page :deep(.employee-data-table .p-sortable-column-icon) {
+  margin-inline-start: 0.2rem;
 }
 
 .employee-page :deep(.employee-data-table .p-datatable-tbody > tr > td) {
+  height: 42px;
   padding-block: 0.42rem;
   font-size: 0.78rem;
 }
@@ -2051,9 +2100,33 @@ onBeforeUnmount(() => {
   font-weight: 750;
 }
 
+.employee-page :deep(.employee-data-table .p-datatable-tbody > tr > td > *) {
+  margin-inline: auto;
+}
+
+.employee-page :deep(.employee-data-table .p-frozen-column) {
+  text-align: center !important;
+}
+
+.employee-page :deep(.employee-data-table .p-frozen-column .p-button) {
+  margin-inline: auto;
+}
+
+.employee-page :deep(.employee-data-table .p-button) {
+  justify-content: center;
+}
+
+.employee-page :deep(.p-tag) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
 .employee-page :deep(.p-tag-value) {
   max-width: 100%;
   overflow: hidden;
+  text-align: center;
   text-overflow: ellipsis;
 }
 
@@ -2066,6 +2139,10 @@ onBeforeUnmount(() => {
   border-radius: 999px;
   font-size: 0.72rem;
 }
+
+/* =========================
+   Dark mode
+   ========================= */
 
 :global(.dark) .employee-page {
   --employee-name-rgb: 226, 232, 240;
@@ -2107,6 +2184,10 @@ onBeforeUnmount(() => {
   background: rgba(var(--employee-ot-none-rgb), 0.18);
 }
 
+/* =========================
+   Responsive
+   ========================= */
+
 @media (max-width: 768px) {
   .employee-filter-actions {
     justify-content: stretch;
@@ -2142,5 +2223,132 @@ onBeforeUnmount(() => {
   .employee-dialog-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+}
+/* =========================
+   Force Employee table center alignment
+   Put this at the bottom of <style scoped>
+   ========================= */
+
+.employee-page :deep(.employee-data-table.p-datatable .p-datatable-table) {
+  table-layout: auto !important;
+}
+
+.employee-page :deep(.employee-data-table.p-datatable .p-datatable-thead > tr > th),
+.employee-page :deep(.employee-data-table.p-datatable .p-datatable-tbody > tr > td) {
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+.employee-page :deep(.employee-data-table.p-datatable .p-datatable-thead > tr > th) {
+  justify-content: center !important;
+}
+
+.employee-page :deep(.employee-data-table.p-datatable .p-datatable-column-header-content),
+.employee-page :deep(.employee-data-table.p-datatable .p-column-header-content) {
+  display: flex !important;
+  width: 100% !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 0.25rem !important;
+  text-align: center !important;
+}
+
+.employee-page :deep(.employee-data-table.p-datatable .p-datatable-column-title),
+.employee-page :deep(.employee-data-table.p-datatable .p-column-title) {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+}
+
+.employee-page :deep(.employee-data-table.p-datatable .p-sortable-column-icon),
+.employee-page :deep(.employee-data-table.p-datatable .p-datatable-sort-icon) {
+  margin-inline-start: 0.25rem !important;
+  margin-inline-end: 0 !important;
+}
+
+/* Center all direct content inside body cells */
+.employee-page :deep(.employee-data-table.p-datatable .p-datatable-tbody > tr > td > *) {
+  margin-inline: auto !important;
+}
+
+/* Center text helper spans */
+.employee-code-text,
+.employee-name-text,
+.employee-meta-text,
+.employee-line-text {
+  display: inline-flex !important;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+/* Keep long line/manager text clean but centered */
+.employee-line-text,
+.employee-meta-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Center account column */
+.employee-account-stack {
+  display: inline-flex !important;
+  max-width: 100%;
+  flex-direction: column;
+  align-items: center !important;
+  justify-content: center !important;
+  margin-inline: auto !important;
+  text-align: center !important;
+}
+
+.employee-account-login {
+  display: inline-block;
+  max-width: 10rem;
+  overflow: hidden;
+  text-align: center !important;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Center tags */
+.employee-page :deep(.employee-data-table.p-datatable .p-tag),
+.employee-rgb-tag {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin-inline: auto !important;
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+.employee-page :deep(.employee-data-table.p-datatable .p-tag-value) {
+  max-width: 100%;
+  overflow: hidden;
+  text-align: center !important;
+  text-overflow: ellipsis;
+}
+
+/* Center action column */
+.employee-page :deep(.employee-data-table.p-datatable .p-frozen-column),
+.employee-page :deep(.employee-data-table.p-datatable .p-datatable-frozen-column) {
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+.employee-page :deep(.employee-data-table.p-datatable .p-frozen-column .p-button),
+.employee-page :deep(.employee-data-table.p-datatable .p-datatable-frozen-column .p-button) {
+  display: inline-flex !important;
+  margin-inline: auto !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+/* Center normal buttons in table */
+.employee-page :deep(.employee-data-table.p-datatable .p-button) {
+  justify-content: center !important;
 }
 </style>
