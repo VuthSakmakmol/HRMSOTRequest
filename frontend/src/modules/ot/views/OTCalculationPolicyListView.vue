@@ -84,48 +84,48 @@ const statusOptions = computed(() => [
 ])
 
 const roundMethodOptions = computed(() => [
-  { label: label('ot.policy.allMethods', 'All Methods'), value: '' },
-  { label: label('ot.policy.roundMethod.floor', 'Floor'), value: 'FLOOR' },
-  { label: label('ot.policy.roundMethod.ceil', 'Ceil'), value: 'CEIL' },
-  { label: label('ot.policy.roundMethod.nearest', 'Nearest'), value: 'NEAREST' },
+  { label: tr('ot.policy.allMethods'), value: '' },
+  { label: tr('ot.policy.roundMethod.floor'), value: 'FLOOR' },
+  { label: tr('ot.policy.roundMethod.ceil'), value: 'CEIL' },
+  { label: tr('ot.policy.roundMethod.nearest'), value: 'NEAREST' },
 ])
 
 const formRoundMethodOptions = computed(() => [
-  { label: label('ot.policy.roundMethod.floor', 'Floor'), value: 'FLOOR' },
-  { label: label('ot.policy.roundMethod.ceil', 'Ceil'), value: 'CEIL' },
-  { label: label('ot.policy.roundMethod.nearest', 'Nearest'), value: 'NEAREST' },
+  { label: tr('ot.policy.roundMethod.floor'), value: 'FLOOR' },
+  { label: tr('ot.policy.roundMethod.ceil'), value: 'CEIL' },
+  { label: tr('ot.policy.roundMethod.nearest'), value: 'NEAREST' },
 ])
 
 const behaviorFlags = computed(() => [
   {
     key: 'allowPreShiftOT',
-    label: label('ot.policy.flag.allowPreShiftOT', 'Allow Pre-shift OT'),
-    description: label('ot.policy.flagHelp.allowPreShiftOT', 'Allow OT before shift start.'),
+    label: tr('ot.policy.flag.allowPreShiftOT'),
+    description: tr('ot.policy.flagHelp.allowPreShiftOT'),
   },
   {
     key: 'allowPostShiftOT',
-    label: label('ot.policy.flag.allowPostShiftOT', 'Allow Post-shift OT'),
-    description: label('ot.policy.flagHelp.allowPostShiftOT', 'Allow OT after shift end.'),
+    label: tr('ot.policy.flag.allowPostShiftOT'),
+    description: tr('ot.policy.flagHelp.allowPostShiftOT'),
   },
   {
     key: 'capByRequestedMinutes',
-    label: label('ot.policy.flag.capByRequestedMinutes', 'Cap by Requested Minutes'),
-    description: label('ot.policy.flagHelp.capByRequestedMinutes', 'Do not pay more than requested OT.'),
+    label: tr('ot.policy.flag.capByRequestedMinutes'),
+    description: tr('ot.policy.flagHelp.capByRequestedMinutes'),
   },
   {
     key: 'treatForgetScanInAsPending',
-    label: label('ot.policy.flag.treatForgetScanInAsPending', 'Forget Scan In Pending'),
-    description: label('ot.policy.flagHelp.treatForgetScanInAsPending', 'Mark missing scan-in for review.'),
+    label: tr('ot.policy.flag.treatForgetScanInAsPending'),
+    description: tr('ot.policy.flagHelp.treatForgetScanInAsPending'),
   },
   {
     key: 'treatForgetScanOutAsPending',
-    label: label('ot.policy.flag.treatForgetScanOutAsPending', 'Forget Scan Out Pending'),
-    description: label('ot.policy.flagHelp.treatForgetScanOutAsPending', 'Mark missing scan-out for review.'),
+    label: tr('ot.policy.flag.treatForgetScanOutAsPending'),
+    description: tr('ot.policy.flagHelp.treatForgetScanOutAsPending'),
   },
   {
     key: 'allowApprovedOtWithoutExactClockOut',
-    label: label('ot.policy.flag.allowApprovedOtWithoutExactClockOut', 'Allow Without Exact Clock Out'),
-    description: label('ot.policy.flagHelp.allowApprovedOtWithoutExactClockOut', 'Allow approved OT even if clock-out is not exact.'),
+    label: tr('ot.policy.flag.allowApprovedOtWithoutExactClockOut'),
+    description: tr('ot.policy.flagHelp.allowApprovedOtWithoutExactClockOut'),
   },
 ])
 
@@ -145,8 +145,8 @@ const loadedLabel = computed(() =>
 
 const dialogTitle = computed(() =>
   isEditMode.value
-    ? label('ot.policy.editTitle', 'Edit OT Calculation Policy')
-    : label('ot.policy.createTitle', 'Create OT Calculation Policy'),
+    ? tr('ot.policy.editTitle')
+    : tr('ot.policy.createTitle'),
 )
 
 const saveLabel = computed(() =>
@@ -171,8 +171,8 @@ const isSaveDisabled = computed(() => {
 let searchTimer = null
 let currentRequestId = 0
 
-function label(key, fallback = '') {
-  return key && te(key) ? t(key) : fallback
+function tr(key, params = {}) {
+  return key && te(key) ? t(key, params) : key
 }
 
 function hasPermission(code) {
@@ -245,9 +245,9 @@ function activeTagClass(row) {
 function roundMethodLabel(value) {
   const method = upper(value)
 
-  if (method === 'FLOOR') return label('ot.policy.roundMethod.floor', 'Floor')
-  if (method === 'CEIL') return label('ot.policy.roundMethod.ceil', 'Ceil')
-  if (method === 'NEAREST') return label('ot.policy.roundMethod.nearest', 'Nearest')
+  if (method === 'FLOOR') return tr('ot.policy.roundMethod.floor')
+  if (method === 'CEIL') return tr('ot.policy.roundMethod.ceil')
+  if (method === 'NEAREST') return tr('ot.policy.roundMethod.nearest')
 
   return method || '-'
 }
@@ -289,15 +289,21 @@ function formatMinutes(value) {
   const minutes = Number(value)
 
   if (!Number.isFinite(minutes)) return '-'
-  if (minutes <= 0) return '0 min'
+  if (minutes <= 0) return t('ot.common.minuteValue', { value: 0 })
 
   const hours = Math.floor(minutes / 60)
   const mins = minutes % 60
 
-  if (hours && mins) return `${hours}h ${mins}m`
-  if (hours) return `${hours}h`
+  if (hours && mins) {
+    return t('ot.common.hourMinuteValue', {
+      hours,
+      minutes: mins,
+    })
+  }
 
-  return `${mins} min`
+  if (hours) return t('ot.common.hourValue', { value: hours })
+
+  return t('ot.common.minuteValue', { value: mins })
 }
 
 function getRoundUnitMinutes(row) {
@@ -330,32 +336,32 @@ function flagItems(row) {
   return [
     {
       key: 'pre',
-      label: label('ot.policy.short.allowPreShiftOT', 'Pre'),
+      label: tr('ot.policy.short.allowPreShiftOT'),
       value: row?.allowPreShiftOT === true,
     },
     {
       key: 'post',
-      label: label('ot.policy.short.allowPostShiftOT', 'Post'),
+      label: tr('ot.policy.short.allowPostShiftOT'),
       value: row?.allowPostShiftOT !== false,
     },
     {
       key: 'cap',
-      label: label('ot.policy.short.capByRequestedMinutes', 'Cap'),
+      label: tr('ot.policy.short.capByRequestedMinutes'),
       value: row?.capByRequestedMinutes !== false,
     },
     {
       key: 'in',
-      label: label('ot.policy.short.treatForgetScanInAsPending', 'Scan In'),
+      label: tr('ot.policy.short.treatForgetScanInAsPending'),
       value: row?.treatForgetScanInAsPending !== false,
     },
     {
       key: 'out',
-      label: label('ot.policy.short.treatForgetScanOutAsPending', 'Scan Out'),
+      label: tr('ot.policy.short.treatForgetScanOutAsPending'),
       value: row?.treatForgetScanOutAsPending !== false,
     },
     {
       key: 'clockOut',
-      label: label('ot.policy.short.allowApprovedOtWithoutExactClockOut', 'No Exact Out'),
+      label: tr('ot.policy.short.allowApprovedOtWithoutExactClockOut'),
       value: row?.allowApprovedOtWithoutExactClockOut === true,
     },
   ]
@@ -418,7 +424,7 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
     showToast(
       'error',
       t('common.loadFailed'),
-      getApiErrorMessage(error, label('ot.policy.loadFailed', 'Failed to load OT policies.')),
+      getApiErrorMessage(error, t('ot.policy.loadFailed')),
     )
   } finally {
     backgroundLoading.value = false
@@ -566,7 +572,7 @@ async function submitPolicy() {
       showToast(
         'success',
         t('common.updated'),
-        label('ot.policy.updatedSuccess', 'OT policy updated successfully.'),
+        t('ot.policy.updatedSuccess'),
         2500,
       )
     } else {
@@ -575,7 +581,7 @@ async function submitPolicy() {
       showToast(
         'success',
         t('common.created'),
-        label('ot.policy.createdSuccess', 'OT policy created successfully.'),
+        t('ot.policy.createdSuccess'),
         2500,
       )
     }
@@ -588,7 +594,7 @@ async function submitPolicy() {
     showToast(
       'error',
       isEditMode.value ? t('common.updateFailed') : t('common.createFailed'),
-      getApiErrorMessage(error, label('ot.policy.saveFailed', 'Failed to save OT policy.')),
+      getApiErrorMessage(error, t('ot.policy.saveFailed')),
       3500,
     )
   } finally {
@@ -618,7 +624,7 @@ onBeforeUnmount(() => {
 
           <InputText
             v-model="filters.search"
-            :placeholder="label('ot.policy.searchPlaceholder', 'Search code or name')"
+            :placeholder="t('ot.policy.searchPlaceholder')"
             class="w-full"
             size="small"
             @input="onSearchInput"
@@ -628,7 +634,7 @@ onBeforeUnmount(() => {
 
       <div class="ot-field">
         <label class="ot-field-label">
-          {{ label('ot.policy.roundMethod', 'Round Method') }}
+          {{ t('ot.policy.roundMethodLabel') }}
         </label>
 
         <Select
@@ -675,7 +681,7 @@ onBeforeUnmount(() => {
 
         <Button
           v-if="canCreate"
-          :label="label('ot.policy.newPolicy', 'New Policy')"
+          :label="t('ot.policy.newPolicy')"
           icon="pi pi-plus"
           size="small"
           class="ot-policy-action-button"
@@ -688,7 +694,7 @@ onBeforeUnmount(() => {
       <div class="ot-table-toolbar">
         <div>
           <h2 class="ot-table-title">
-            {{ label('ot.policy.tableTitle', 'OT Calculation Policies') }}
+            {{ t('ot.policy.tableTitle') }}
           </h2>
         </div>
 
@@ -716,7 +722,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="ot-empty-text">
-          {{ label('ot.policy.noViewPermission', 'You do not have permission to view OT policies.') }}
+          {{ t('ot.policy.noViewPermission') }}
         </div>
       </div>
 
@@ -769,7 +775,7 @@ onBeforeUnmount(() => {
               </div>
 
               <div class="ot-empty-text">
-                {{ label('ot.policy.noData', 'No OT calculation policies found.') }}
+                {{ t('ot.policy.noData') }}
               </div>
             </div>
           </template>
@@ -808,7 +814,7 @@ onBeforeUnmount(() => {
 
           <Column
             field="roundMethod"
-            :header="label('ot.policy.roundMethod', 'Round Method')"
+            :header="t('ot.policy.roundMethodLabel')"
             sortable
             style="min-width: 10rem"
           >
@@ -823,7 +829,7 @@ onBeforeUnmount(() => {
 
           <Column
             field="roundUnitMinutes"
-            :header="label('ot.policy.roundUnit', 'Round Unit')"
+            :header="t('ot.policy.roundUnit')"
             sortable
             style="min-width: 9rem"
           >
@@ -834,7 +840,7 @@ onBeforeUnmount(() => {
 
           <Column
             field="minEligibleMinutes"
-            :header="label('ot.policy.minEligible', 'Min Eligible')"
+            :header="t('ot.policy.minEligible')"
             sortable
             style="min-width: 9rem"
           >
@@ -845,7 +851,7 @@ onBeforeUnmount(() => {
 
           <Column
             field="graceAfterShiftEndMinutes"
-            :header="label('ot.policy.graceAfterShift', 'Grace After Shift')"
+            :header="t('ot.policy.graceAfterShiftEnd')"
             sortable
             style="min-width: 11rem"
           >
@@ -855,7 +861,7 @@ onBeforeUnmount(() => {
           </Column>
 
           <Column
-            :header="label('ot.policy.behaviorFlags', 'Rules')"
+            :header="t('ot.policy.behaviorFlags')"
             style="min-width: 24rem"
           >
             <template #body="{ data }">
@@ -866,7 +872,7 @@ onBeforeUnmount(() => {
                 <Tag
                   v-for="item in flagItems(data)"
                   :key="item.key"
-                  :value="`${item.label}: ${yesNoLabel(item.value)}`"
+                  :value="t('ot.policy.flagValue', { label: item.label, value: yesNoLabel(item.value) })"
                   :class="booleanTagClass(item.value)"
                 />
               </div>
@@ -943,7 +949,7 @@ onBeforeUnmount(() => {
             <InputText
               v-model="form.code"
               class="w-full"
-              :placeholder="label('ot.policy.codePlaceholder', 'Example: OT_STD')"
+              :placeholder="t('ot.policy.codePlaceholder')"
               maxlength="30"
             />
           </div>
@@ -956,14 +962,14 @@ onBeforeUnmount(() => {
             <InputText
               v-model="form.name"
               class="w-full"
-              :placeholder="label('ot.policy.namePlaceholder', 'Standard OT Policy')"
+              :placeholder="t('ot.policy.namePlaceholder')"
               maxlength="120"
             />
           </div>
 
           <div class="ot-field">
             <label class="ot-field-label">
-              {{ label('ot.policy.roundMethod', 'Round Method') }}
+              {{ t('ot.policy.roundMethodLabel') }}
             </label>
 
             <Select
@@ -988,7 +994,7 @@ onBeforeUnmount(() => {
 
           <div class="ot-field">
             <label class="ot-field-label">
-              {{ label('ot.policy.minEligibleMinutes', 'Minimum Eligible Minutes') }}
+              {{ t('ot.policy.minEligibleMinutes') }}
             </label>
 
             <InputNumber
@@ -1002,7 +1008,7 @@ onBeforeUnmount(() => {
 
           <div class="ot-field">
             <label class="ot-field-label">
-              {{ label('ot.policy.roundUnitMinutes', 'Round Unit Minutes') }}
+              {{ t('ot.policy.roundUnitMinutes') }}
             </label>
 
             <InputNumber
@@ -1016,7 +1022,7 @@ onBeforeUnmount(() => {
 
           <div class="ot-field">
             <label class="ot-field-label">
-              {{ label('ot.policy.graceAfterShiftEndMinutes', 'Grace After Shift End') }}
+              {{ t('ot.policy.graceAfterShiftEndMinutes') }}
             </label>
 
             <InputNumber
@@ -1038,7 +1044,7 @@ onBeforeUnmount(() => {
             v-model="form.description"
             class="w-full"
             rows="3"
-            :placeholder="label('ot.policy.descriptionPlaceholder', 'Policy description')"
+            :placeholder="t('ot.policy.descriptionPlaceholder')"
           />
         </div>
 

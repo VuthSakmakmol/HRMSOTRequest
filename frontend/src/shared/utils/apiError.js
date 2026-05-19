@@ -1,5 +1,7 @@
 // frontend/src/shared/utils/apiError.js
 
+import { i18n } from '@/shared/i18n'
+
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
@@ -16,12 +18,65 @@ function s(value) {
   return ''
 }
 
-function objectToUsefulMessage(value) {
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    const text = s(value)
+
+    if (text) return text
+  }
+
+  return ''
+}
+
+function normalizeParams(value) {
+  return isPlainObject(value) ? value : {}
+}
+
+function globalT(key, params = {}) {
+  const cleanKey = s(key)
+
+  if (!cleanKey) return ''
+
+  try {
+    const composer = i18n?.global
+
+    if (composer?.te?.(cleanKey)) {
+      return composer.t(cleanKey, normalizeParams(params))
+    }
+
+    const translated = composer?.t?.(cleanKey, normalizeParams(params))
+
+    if (translated && translated !== cleanKey) {
+      return translated
+    }
+  } catch (_) {
+    return ''
+  }
+
+  return ''
+}
+
+function payloadError(data) {
+  return isPlainObject(data?.error) ? data.error : {}
+}
+
+function firstIssue(data) {
+  if (Array.isArray(data?.issues) && data.issues.length) return data.issues[0]
+  if (Array.isArray(data?.errors) && data.errors.length) return data.errors[0]
+
+  const nested = payloadError(data)
+
+  if (Array.isArray(nested?.issues) && nested.issues.length) return nested.issues[0]
+  if (Array.isArray(nested?.errors) && nested.errors.length) return nested.errors[0]
+
+  return null
+}
+
+function objectMessage(value) {
   if (!isPlainObject(value)) return ''
 
   return firstNonEmpty(
     value.message,
-    value.error,
     value.detail,
     value.reason,
     value.title,
@@ -30,36 +85,20 @@ function objectToUsefulMessage(value) {
   )
 }
 
-function arrayToUsefulMessage(value) {
-  if (!Array.isArray(value) || !value.length) return ''
+function translatedFromObject(value) {
+  if (!isPlainObject(value)) return ''
 
-  const first = value[0]
+  const key = firstNonEmpty(
+    value.messageKey,
+    value.errorKey,
+    value.meta?.messageKey,
+  )
 
-  if (typeof first === 'string') return s(first)
+  const translated = globalT(key, value.params || value.meta?.params || {})
 
-  if (isPlainObject(first)) {
-    return objectToUsefulMessage(first)
-  }
+  if (translated) return translated
 
-  return ''
-}
-
-function firstNonEmpty(...values) {
-  for (const value of values) {
-    let text = ''
-
-    if (Array.isArray(value)) {
-      text = arrayToUsefulMessage(value)
-    } else if (isPlainObject(value)) {
-      text = objectToUsefulMessage(value)
-    } else {
-      text = s(value)
-    }
-
-    if (text) return text
-  }
-
-  return ''
+  return objectMessage(value)
 }
 
 export function getApiErrorPayload(error) {
@@ -72,38 +111,76 @@ export function getApiErrorStatus(error) {
 
 export function getApiMessageKey(error) {
   const data = getApiErrorPayload(error)
+  const nested = payloadError(data)
+  const issue = firstIssue(data)
 
   return firstNonEmpty(
+    issue?.messageKey,
+    issue?.errorKey,
     data.messageKey,
     data.errorKey,
-    data.code,
+    nested.messageKey,
+    nested.errorKey,
     data.meta?.messageKey,
+    nested.meta?.messageKey,
+    data.code,
+    nested.code,
   )
 }
 
 export function getRequiredPermission(error) {
   const data = getApiErrorPayload(error)
+  const nested = payloadError(data)
 
   return firstNonEmpty(
     data.requiredPermission,
     data.requiredPermissionCode,
     data.permissionCode,
+    nested.requiredPermission,
+    nested.requiredPermissionCode,
+    nested.permissionCode,
+    data.params?.requiredPermission,
+    data.params?.requiredPermissionCode,
+    nested.params?.requiredPermission,
+    nested.params?.requiredPermissionCode,
     data.meta?.requiredPermission,
     data.meta?.requiredPermissionCode,
+    nested.meta?.requiredPermission,
+    nested.meta?.requiredPermissionCode,
   ).toUpperCase()
 }
 
 export function getApiErrorMessage(error, fallback = 'Something went wrong') {
   const data = getApiErrorPayload(error)
+  const nested = payloadError(data)
+  const issue = firstIssue(data)
+
+  const issueMessage = translatedFromObject(issue)
+
+  if (issueMessage) return issueMessage
+
+  const messageKey = firstNonEmpty(
+    data.messageKey,
+    data.errorKey,
+    nested.messageKey,
+    nested.errorKey,
+    data.meta?.messageKey,
+    nested.meta?.messageKey,
+  )
+
+  const translated = globalT(messageKey, data.params || nested.params || {})
+
+  if (translated) return translated
 
   return firstNonEmpty(
     data.message,
-    data.error,
+    nested.message,
     data.detail,
+    nested.detail,
     data.details?.message,
-    data.errors,
-    data.issues,
-    data.meta?.message,
+    nested.details?.message,
+    objectMessage(data.meta),
+    objectMessage(nested.meta),
     error?.message,
     fallback,
   )
@@ -112,14 +189,19 @@ export function getApiErrorMessage(error, fallback = 'Something went wrong') {
 export function buildPermissionAwareMessage(subject, error, fallback) {
   const status = getApiErrorStatus(error)
   const permission = getRequiredPermission(error)
-  const cleanSubject = s(subject) || 'This data'
+  const cleanSubject = s(subject) || globalT('common.thisData') || 'This data'
 
   if (status === 403 && permission) {
-    return `${cleanSubject} cannot be loaded because your account is missing permission: ${permission}.`
+    return globalT('common.error.missingPermissionWithSubject', {
+      subject: cleanSubject,
+      permission,
+    }) || `${cleanSubject} cannot be loaded because your account is missing permission: ${permission}.`
   }
 
   if (status === 403) {
-    return `${cleanSubject} cannot be loaded because your account does not have the required permission.`
+    return globalT('common.error.missingPermissionForSubject', {
+      subject: cleanSubject,
+    }) || `${cleanSubject} cannot be loaded because your account does not have the required permission.`
   }
 
   return getApiErrorMessage(error, fallback)
@@ -129,21 +211,28 @@ export function buildSaveErrorMessage(error, fallback = 'Save failed') {
   const status = getApiErrorStatus(error)
 
   if (status === 400) {
-    return getApiErrorMessage(error, 'Please check the required fields.')
+    return getApiErrorMessage(
+      error,
+      globalT('common.error.checkRequiredFields') || 'Please check the required fields.',
+    )
   }
 
   if (status === 403) {
     const permission = getRequiredPermission(error)
 
-    return permission
-      ? `You cannot save this record because your account is missing permission: ${permission}.`
-      : 'You do not have permission to save this record.'
+    if (permission) {
+      return globalT('common.error.saveMissingPermission', {
+        permission,
+      }) || `You cannot save this record because your account is missing permission: ${permission}.`
+    }
+
+    return globalT('common.error.saveNoPermission') || 'You do not have permission to save this record.'
   }
 
   if (status === 409) {
     return getApiErrorMessage(
       error,
-      'This record already exists or conflicts with another record.',
+      globalT('common.error.duplicateOrConflict') || 'This record already exists or conflicts with another record.',
     )
   }
 

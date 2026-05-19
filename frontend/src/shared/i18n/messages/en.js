@@ -27,16 +27,19 @@ export default {
     action: 'Action',
     actions: 'Actions',
     edit: 'Edit',
+    back: 'Back',
 
     no: 'No.',
-    status: 'Status',
-    allStatus: 'All Status',
-    active: 'Active',
-    inactive: 'Inactive',
     yes: 'Yes',
     none: 'None',
     unknown: 'Unknown',
     warning: 'Warning',
+    thisData: 'This data',
+
+    status: 'Status',
+    allStatus: 'All Status',
+    active: 'Active',
+    inactive: 'Inactive',
 
     fromDate: 'From Date',
     toDate: 'To Date',
@@ -61,6 +64,7 @@ export default {
     loadingData: 'Loading data',
     fetchingRecords: 'Fetching records from the server.',
 
+    noPermission: 'No permission',
     openNavigation: 'Open navigation',
     toggleDesktopSidebar: 'Toggle desktop sidebar',
     toggleTheme: 'Toggle theme',
@@ -68,6 +72,71 @@ export default {
     switchToDarkMode: 'Switch to Dark Mode',
     notifications: 'Notifications',
     language: 'Language',
+
+    statusValue: {
+      active: 'Active',
+      inactive: 'Inactive',
+      unknown: 'Unknown',
+    },
+
+    error: {
+      internalServerError: 'Internal server error.',
+      validationError: 'Validation error.',
+      invalidId: 'Invalid ID.',
+      notFound: 'Not found.',
+      routeNotFound: 'Route not found.',
+      duplicateRecord: 'Duplicate record.',
+      checkRequiredFields: 'Please check the required fields.',
+      duplicateOrConflict:
+        'This record already exists or conflicts with another record.',
+      missingPermissionWithSubject:
+        '{subject} cannot be loaded because your account is missing permission: {permission}.',
+      missingPermissionForSubject:
+        '{subject} cannot be loaded because your account does not have the required permission.',
+      saveMissingPermission:
+        'You cannot save this record because your account is missing permission: {permission}.',
+      saveNoPermission: 'You do not have permission to save this record.',
+    },
+
+    validation: {
+      invalidId: 'Invalid ID.',
+      idRequired: 'ID is required.',
+      tooLong: 'Value is too long.',
+      dateInvalid: 'Date is invalid.',
+      timeRequired: 'Time is required.',
+      timeInvalid: 'Time must use HH:mm format.',
+      pageInvalid: 'Page is invalid.',
+      limitInvalid: 'Limit is invalid.',
+      searchTooLong: 'Search text is too long.',
+      sortFieldInvalid: 'Sort field is invalid.',
+    },
+  },
+
+  validation: {
+    field: {
+      invalid: 'Invalid value.',
+    },
+    id: {
+      invalid: 'Invalid ID.',
+    },
+    page: {
+      invalid: 'Invalid page.',
+    },
+    limit: {
+      invalid: 'Invalid limit.',
+    },
+    search: {
+      invalid: 'Invalid search value.',
+    },
+    isActive: {
+      invalid: 'Invalid status.',
+    },
+    sortField: {
+      invalid: 'Invalid sort field.',
+    },
+    sortOrder: {
+      invalid: 'Invalid sort order.',
+    },
   },
 
   auth: {
@@ -77,45 +146,60 @@ export default {
     loginId: 'Login ID',
     password: 'Password',
     profile: 'Profile',
+
     accessDenied: 'Access denied',
     noPermission: 'You do not have permission to access this page.',
+
     loginSubtitle: 'Sign in with your company account to continue.',
     loginIdPlaceholder: 'Enter login ID',
     passwordPlaceholder: 'Enter password',
     signingIn: 'Signing in...',
 
+    validation: {
+      loginIdRequired: 'Login ID is required.',
+      passwordRequired: 'Password is required.',
+    },
+
     error: {
       loginFailed: 'Login failed. Please try again.',
+      invalidCredentials: 'Invalid login credentials.',
+      unauthorized: 'Unauthorized. Please login again.',
+      sessionExpired: 'Session expired. Please login again.',
+      invalidToken: 'Invalid or expired token.',
+      employeeLinkRequired:
+        'Your login account is not linked to an employee profile.',
     },
 
     account: {
       tableTitle: 'Account List',
       tableSubtitle: 'Server-side account list with lazy loading.',
+
       newAccount: 'New Account',
-      searchPlaceholder: 'Search login ID, display name, employee, role, or permission',
+      createTitle: 'Create Account',
+      editTitle: 'Edit Account',
+
+      searchPlaceholder:
+        'Search login ID, display name, employee, role, or permission',
+
       noData: 'No accounts matched your filters.',
       loadFailed: 'Failed to load accounts.',
 
       displayName: 'Display Name',
       directPermissions: 'Direct Permissions',
       mustChangePassword: 'Must Change Password',
-      reset: 'Reset',
-
-      createTitle: 'Create Account',
-      editTitle: 'Edit Account',
-      resetPassword: 'Reset Password',
-      newPassword: 'New Password',
-      forcePasswordChange: 'Force password change after reset',
-      resettingFor: 'Resetting password for',
 
       selectEmployee: 'Select employee',
       selectRoles: 'Select roles',
+
       directPermissionHelp: 'Separate permission codes with commas.',
+      directPermissionPlaceholder: 'ACCOUNT_VIEW, ACCOUNT_CREATE',
+
       loginIdExample: 'Example: john.smith',
       displayNameExample: 'Example: John Smith',
 
       unnamedEmployee: 'Unnamed Employee',
       unnamedRole: 'Unnamed Role',
+
       employeeOptionsLoadFailed: 'Employee options could not be loaded.',
       roleOptionsLoadFailed: 'Role options could not be loaded.',
 
@@ -123,9 +207,32 @@ export default {
       updatedSuccess: 'Account updated successfully.',
       createFailed: 'Failed to create account.',
       updateFailed: 'Failed to update account.',
+
+      reset: 'Reset',
+      resetPassword: 'Reset Password',
+      newPassword: 'New Password',
+      forcePasswordChange: 'Force password change after reset',
+      resettingFor: 'Resetting password for',
       passwordReset: 'Password reset',
       passwordResetSuccess: 'Password reset successfully.',
       resetFailed: 'Password reset failed.',
+
+      validation: {
+        loginIdRequired: 'Login ID is required.',
+        loginIdTooLong: 'Login ID must not be longer than 100 characters.',
+        displayNameRequired: 'Display Name is required.',
+        passwordMinLength: 'Password must be at least 6 characters.',
+        passwordMaxLength: 'Password must not be longer than 100 characters.',
+      },
+
+      error: {
+        notFound: 'Account not found.',
+        loginIdExists: 'Login ID already exists.',
+      },
+
+      success: {
+        passwordReset: 'Password reset successfully.',
+      },
     },
   },
 
@@ -169,22 +276,31 @@ export default {
     paymentExchangeRates: 'Exchange Rates',
   },
 
-
   access: {
+    error: {
+      missingPermission: 'You do not have the required permission.',
+      permissionMiddlewareConfigError:
+        'Permission middleware is missing the required permission code.',
+    },
+
     permission: {
       tableTitle: 'Permission List',
-      searchPlaceholder: 'Search',
+      searchPlaceholder: 'Search permission code, name, module, or description',
       module: 'Module',
       allModules: 'All Modules',
 
       loading: 'Loading permissions...',
       noData: 'No permissions matched your filters.',
       loadFailed: 'Failed to load permissions.',
+
+      error: {
+        notFound: 'Permission not found.',
+      },
     },
 
     role: {
       tableTitle: 'Role List',
-      searchPlaceholder: 'Search',
+      searchPlaceholder: 'Search role code or display name',
 
       newRole: 'New Role',
       expandAll: 'Expand All',
@@ -208,23 +324,35 @@ export default {
       saveFailed: 'Failed to save role.',
       createdSuccess: 'Role created successfully.',
       updatedSuccess: 'Role updated successfully.',
+
+      validation: {
+        codeRequired: 'Role code is required.',
+        codeTooLong: 'Role code is too long.',
+        displayNameRequired: 'Display name is required.',
+        displayNameTooLong: 'Display name is too long.',
+        updatePayloadRequired: 'Please update at least one field.',
+      },
+
+      error: {
+        notFound: 'System role not found.',
+        codeExists: 'Role code already exists.',
+        invalidPermissionIds: 'Some permission IDs are invalid.',
+        permissionInactiveOrNotFound:
+          'Some permissions are invalid or inactive.',
+      },
     },
   },
 
   org: {
+    error: {
+      chartCycle: 'Organization chart contains a cycle.',
+      approverNotFound: 'Organization chart is broken: approver not found.',
+      chartTooDeep: 'Organization chart is too deep or cyclic.',
+    },
+
     department: {
-      importValidationFailed: 'Import validation failed',
-      importErrorCount: '{count} error(s) found',
-      importErrorListTitle: 'Fix these Excel rows before importing',
-      importAllOrNothingNote:
-        'All rows must be 100% valid. If any row has an error, nothing will be saved.',
-      importRow: 'Row',
-      importField: 'Field',
-      importValue: 'Value',
-      importReason: 'Reason',
-      importUnknownError: 'Unknown import error',
       tableTitle: 'Department List',
-      searchPlaceholder: 'Search code, name, or description',
+      searchPlaceholder: 'Search code or name',
 
       newDepartment: 'New Department',
       importExcel: 'Import Excel',
@@ -236,65 +364,102 @@ export default {
       departmentName: 'Department Name',
       codeExample: 'Example: HR',
       nameExample: 'Example: Human Resources',
-      descriptionPlaceholder: 'Optional department description',
 
       exported: 'Exported',
       exportedSuccess: 'Department Excel exported successfully.',
       exportFailed: 'Export failed',
 
       imported: 'Imported',
-      importedSuccess: 'Import completed. Created: {created}, Updated: {updated}.',
+      importedSuccess:
+        'Import completed. Created: {created}, Updated: {updated}.',
+
       importTitle: 'Import Department Excel',
       importGuideTitle: 'Import guide',
       importGuideStep1: 'Download the sample file.',
       importGuideStep2: 'Fill your department data in the same format.',
       importGuideStep3: 'Choose the completed Excel file from your computer.',
       importGuideStep4: 'Click Import to upload and process it.',
+      importAllOrNothingNote:
+        'All rows must be 100% valid. If any row has an error, nothing will be saved.',
+
       downloadSample: 'Download Sample',
       downloadSampleFailed: 'Download sample failed',
       sampleDownloaded: 'Sample file downloaded successfully.',
+
       excelFile: 'Excel file',
       chooseFile: 'Choose File',
       noFileSelected: 'No file selected',
+
       importInvalidFileTitle: 'Invalid file type',
-      importInvalidFileMessage: 'Please choose an Excel file only: .xlsx, .xls, or .csv.',
+      importInvalidFileMessage:
+        'Please choose an Excel file only: .xlsx, .xls, or .csv.',
       importFailed: 'Import failed',
+
+      importValidationFailed: 'Import validation failed',
+      importErrorCount: '{count} error(s) found',
+      importErrorListTitle: 'Fix these Excel rows before importing',
+      importRow: 'Row',
+      importField: 'Field',
+      importValue: 'Value',
+      importReason: 'Reason',
+      importUnknownError: 'Unknown import error',
 
       noData: 'No departments matched your filters.',
       loadFailed: 'Failed to load departments.',
       saveFailed: 'Failed to save department.',
       createdSuccess: 'Department created successfully.',
       updatedSuccess: 'Department updated successfully.',
+
+      validation: {
+        codeMinLength: 'Department code must be at least 2 characters.',
+        codeTooLong: 'Department code must not be longer than 30 characters.',
+        nameMinLength: 'Department name must be at least 2 characters.',
+        nameTooLong: 'Department name must not be longer than 120 characters.',
+        updatePayloadRequired: 'Please update at least one field.',
+      },
+
+      error: {
+        notFound: 'Department not found.',
+        codeExists: 'Department code already exists.',
+        invalidId: 'Invalid department ID.',
+        excelFileRequired: 'Excel file is required.',
+        excelNoRows: 'Excel file has no rows.',
+      },
+
+      import: {
+        success: {
+          completed: 'Department import completed successfully.',
+        },
+
+        error: {
+          validationFailed:
+            'Import failed. Please fix all row errors and try again.',
+          noValidRows: 'Excel file has no valid department rows.',
+          duplicateDatabaseCode:
+            'Import failed because one or more department codes conflict with existing data.',
+
+          codeRequired: 'Code is required.',
+          codeMinLength: 'Code must be at least {min} characters.',
+          codeTooLong: 'Code must not be longer than {max} characters.',
+
+          nameRequired: 'Name is required.',
+          nameMinLength: 'Name must be at least {min} characters.',
+          nameTooLong: 'Name must not be longer than {max} characters.',
+
+          invalidStatus: 'Status must be Active or Inactive.',
+          duplicateCode:
+            'Duplicate code "{code}" in Excel file. First found at row {firstRowNo}.',
+        },
+      },
     },
+
     position: {
       tableTitle: 'Position List',
-      searchPlaceholder: 'Search code, name, or description',
+      searchPlaceholder:
+        'Search code, name, department, reports-to position, or description',
 
-      importedSuccess: 'Import completed. Created: {created}, Updated: {updated}.',
-      importValidationFailed: 'Import validation failed',
-      importErrorCount: '{count} error(s) found',
-      importErrorListTitle: 'Fix these Excel rows before importing',
-      importAllOrNothingNote:
-        'All rows must be 100% valid. If any row has an error, nothing will be saved.',
-      importRow: 'Row',
-      importField: 'Field',
-      importValue: 'Value',
-      importReason: 'Reason',
-      importUnknownError: 'Unknown import error',
       department: 'Department',
       allDepartments: 'All Departments',
-      importValidationFailed: 'Import validation failed',
-      importErrorCount: '{count} error(s) found',
-      importErrorListTitle: 'Fix these Excel rows before importing',
-      importAllOrNothingNote:
-        'All rows must be 100% valid. If any row has an error, nothing will be saved.',
-      importRow: 'Row',
-      importField: 'Field',
-      importValue: 'Value',
-      importReason: 'Reason',
-      importUnknownError: 'Unknown import error',
-      importUploading: 'Uploading file... {percent}%',
-      importProcessing: 'File uploaded. Validating Excel rows and saving data...',
 
       hierarchyScope: 'Hierarchy Scope',
       allScopes: 'All Scopes',
@@ -311,14 +476,14 @@ export default {
       editTitle: 'Edit Position',
       positionCode: 'Position Code',
       positionName: 'Position Name',
-      codeExample: 'Example: SW',
+      codeExample: 'Example: SEWER',
       nameExample: 'Example: Sewer',
       selectDepartment: 'Select department',
 
       reportsToPosition: 'Reports To Position',
       selectReportsToPosition: 'Optional: select parent/supervisor position',
       reportsToHelp:
-        'Example: Sewer reports to Sewer Supervisor. Cross-department reporting is allowed.',
+        'Example: Sewer reports to Sewing Supervisor. Cross-department reporting is allowed.',
 
       managerScope: 'Manager Scope',
       sameLine: 'Same Line',
@@ -327,7 +492,8 @@ export default {
         'Same Line = find manager in the same production line. Global = find manager by parent position across departments.',
 
       level: 'Level',
-      activeHelp: 'Inactive positions will be hidden from normal employee assignment selectors.',
+      activeHelp:
+        'Inactive positions will be hidden from normal employee assignment selectors.',
       descriptionPlaceholder: 'Optional position description',
 
       exported: 'Exported',
@@ -336,28 +502,45 @@ export default {
 
       imported: 'Imported',
       importedSuccess:
-        'Import completed. Created: {created}, Updated: {updated}, Failed: {failed}.',
+        'Import completed. Created: {created}, Updated: {updated}.',
+
       importTitle: 'Import Position Excel',
       importGuideTitle: 'Import guide',
       importGuideStep1: 'Download the sample file.',
       importGuideStep2: 'Fill your position data using readable codes only.',
-      importGuideStep3: 'Department Code must already exist in Department master data.',
+      importGuideStep3:
+        'Department Code must already exist in Department master data.',
       importGuideStep4:
         'Reports To Position Code must already exist or be included in the same import file.',
       importGuideStep5: 'Click Import to upload and process it.',
       importNote:
         'Users never need Mongo IDs in Excel. Use readable codes such as Department Code and Position Code.',
+      importAllOrNothingNote:
+        'All rows must be 100% valid. If any row has an error, nothing will be saved.',
+      importUploading: 'Uploading file... {percent}%',
+      importProcessing: 'File uploaded. Validating Excel rows and saving data...',
 
       downloadSample: 'Download Sample',
       downloadSampleFailed: 'Download sample failed',
       sampleDownloaded: 'Sample file downloaded successfully.',
+
       excelFile: 'Excel file',
       chooseFile: 'Choose File',
       noFileSelected: 'No file selected',
+
       importInvalidFileTitle: 'Invalid file type',
       importInvalidFileMessage:
         'Please choose an Excel file only: .xlsx, .xls, or .csv.',
       importFailed: 'Import failed',
+
+      importValidationFailed: 'Import validation failed',
+      importErrorCount: '{count} error(s) found',
+      importErrorListTitle: 'Fix these Excel rows before importing',
+      importRow: 'Row',
+      importField: 'Field',
+      importValue: 'Value',
+      importReason: 'Reason',
+      importUnknownError: 'Unknown import error',
 
       noData: 'No positions matched your filters.',
       loadFailed: 'Failed to load positions.',
@@ -368,10 +551,74 @@ export default {
       saveFailed: 'Failed to save position.',
       createdSuccess: 'Position created successfully.',
       updatedSuccess: 'Position updated successfully.',
+
+      validation: {
+        codeMinLength: 'Position code must be at least 2 characters.',
+        codeTooLong: 'Position code must not be longer than 50 characters.',
+        nameMinLength: 'Position name must be at least 2 characters.',
+        nameTooLong: 'Position name must not be longer than 150 characters.',
+        descriptionTooLong:
+          'Description must not be longer than 1000 characters.',
+        updatePayloadRequired: 'Please update at least one field.',
+      },
+
+      error: {
+        invalidId: 'Invalid position ID.',
+        notFound: 'Position not found.',
+        codeExists: 'Position code already exists.',
+        departmentNotFound: 'Department not found.',
+        reportsToNotFound: 'Reports-to position not found.',
+        cannotReportToSelf: 'Position cannot report to itself.',
+        excelFileRequired: 'Excel file is required.',
+        excelNoRows: 'Excel file has no rows.',
+        excelNoValidRows: 'Excel file has no valid rows.',
+      },
+
+      import: {
+        success: {
+          completed: 'Position import completed successfully.',
+        },
+
+        error: {
+          validationFailed:
+            'Import failed. Please fix all row errors and try again.',
+          duplicateDatabaseCode:
+            'Import failed because one or more position codes conflict with existing data.',
+
+          codeRequired: 'Code is required.',
+          codeMinLength: 'Code must be at least {min} characters.',
+          codeTooLong: 'Code must not be longer than {max} characters.',
+
+          nameRequired: 'Name is required.',
+          nameMinLength: 'Name must be at least {min} characters.',
+          nameTooLong: 'Name must not be longer than {max} characters.',
+
+          departmentCodeTooLong:
+            'Department Code must not be longer than {max} characters.',
+          departmentNotFound:
+            'Department Code "{departmentCode}" was not found.',
+
+          reportsToCodeTooLong:
+            'Reports To Position Code must not be longer than {max} characters.',
+          reportsToNotFound:
+            'Reports To Position Code "{reportsToPositionCode}" was not found.',
+
+          cannotReportToSelf: 'Position cannot report to itself.',
+          invalidScope:
+            'Hierarchy Scope must be SAME_LINE, GLOBAL, or CROSS_DEPARTMENT.',
+          invalidLevel: 'Level must be a number greater than or equal to 0.',
+          descriptionTooLong:
+            'Description must not be longer than {max} characters.',
+          invalidStatus: 'Status must be Active or Inactive.',
+          duplicateCode:
+            'Duplicate code "{code}" in Excel file. First found at row {firstRowNo}.',
+        },
+      },
     },
+
     employee: {
       tableTitle: 'Employee List',
-      searchPlaceholder: 'Search employee code, name, phone, email, or role',
+      searchPlaceholder: 'Search employee code, name, phone, email, or OT role',
 
       allDepartments: 'All Departments',
       allPositions: 'All Positions',
@@ -401,6 +648,7 @@ export default {
 
       otRole: 'OT Role',
       otWorkflowRole: {
+        title: 'OT Workflow Role',
         none: 'None',
         approver: 'Approver',
         acknowledge: 'Acknowledge',
@@ -416,6 +664,10 @@ export default {
       accountAlreadyExists: 'This employee already has a login account.',
       createLoginAccount: 'Create Login Account',
 
+      accountLoginId: 'Account Login ID',
+      accountPassword: 'Account Password',
+      mustChangePassword: 'Must Change Password',
+
       accountDefaultNoAccount: 'Default: no login account will be created.',
       accountPreview: 'Login ID: {loginId} · Default Password: {password}',
 
@@ -428,25 +680,31 @@ export default {
 
       accountActive: 'Account Active',
 
-      createdWithAccountSuccess: 'Employee and login account created successfully.',
-      updatedWithAccountSuccess: 'Employee updated and login account created successfully.',
+      createdWithAccountSuccess:
+        'Employee and login account created successfully.',
+      updatedWithAccountSuccess:
+        'Employee updated and login account created successfully.',
 
       exported: 'Exported',
       exportedSuccess: 'Employee Excel exported successfully.',
       exportFailed: 'Export failed',
 
       imported: 'Imported',
-      importedSuccess: 'Import completed. Created: {created}, Updated: {updated}.',
+      importedSuccess:
+        'Import completed. Created: {created}, Updated: {updated}, Accounts created: {accountsCreated}.',
 
       importTitle: 'Import Employee Excel',
       importGuideTitle: 'Import guide',
       importGuideStep1: 'Download the sample file.',
       importGuideStep2: 'Fill your employee data using readable codes only.',
-      importGuideStep3: 'Join Date format must be DD/MM/YYYY, for example 30/04/2026.',
+      importGuideStep3:
+        'Join Date format must be DD/MM/YYYY, for example 30/04/2026.',
       importGuideStep4:
         'Department Code, Position Code, Line Code, and Shift Code must already exist in master data.',
       importGuideStep5:
         'Use Reports To Employee Code for manager/supervisor, then click Import.',
+      importAllOrNothingNote:
+        'All rows must be 100% valid. If any row has an error, nothing will be saved.',
 
       downloadSample: 'Download Sample',
       downloadSampleFailed: 'Download sample failed',
@@ -460,6 +718,16 @@ export default {
       importInvalidFileMessage:
         'Please choose an Excel file only: .xlsx, .xls, or .csv.',
       importFailed: 'Import failed',
+
+      importValidationFailed: 'Import validation failed',
+      importErrorCount: '{count} error(s) found',
+      importErrorListTitle: 'Fix these Excel rows before importing',
+      importRow: 'Row',
+      importField: 'Field',
+      importValue: 'Value',
+      importReason: 'Reason',
+      importUnknownError: 'Unknown import error',
+      importUploading: 'Uploading file... {percent}%',
 
       invalidExcelData: 'Invalid Excel data',
       importApiNotFound: 'Import API not found',
@@ -479,7 +747,10 @@ export default {
       checkManagerEmployeeCode:
         'Please import the manager first or use an existing manager Employee Code.',
       uniqueEmailHelp: 'Email must be unique or left blank.',
+
       selectLines: 'Select lines',
+      lineHelp:
+        'Select one or many lines. The first selected line becomes the primary line for old reports and compatibility.',
       multiLineHelp:
         'Select one or many lines. The first selected line becomes the primary line for old reports and compatibility.',
 
@@ -493,45 +764,220 @@ export default {
       saveFailed: 'Failed to save employee.',
       createdSuccess: 'Employee created successfully.',
       updatedSuccess: 'Employee updated successfully.',
-      importedSuccess: 'Import completed. Created: {created}, Updated: {updated}, Accounts created: {accountsCreated}.',
-      importAllOrNothingNote:
-  'All rows must be 100% valid. If any row has an error, nothing will be saved.',
+
+      field: {
+        departmentId: {
+          required: 'Department is required.',
+          invalid: 'Department is invalid.',
+        },
+        positionId: {
+          required: 'Position is required.',
+          invalid: 'Position is invalid.',
+        },
+        lineId: {
+          required: 'Line is required.',
+          invalid: 'Line is invalid.',
+        },
+        lineIds: {
+          required: 'Line is required.',
+          invalid: 'One or more selected lines are invalid.',
+        },
+        shiftId: {
+          required: 'Shift is required.',
+          invalid: 'Shift is invalid.',
+        },
+        reportsToEmployeeId: {
+          required: 'Manager is required.',
+          invalid: 'Manager is invalid.',
+        },
+      },
+
+      validation: {
+        employeeCodeRequired: 'Employee Code is required.',
+        employeeCodeTooLong:
+          'Employee Code must not be longer than 50 characters.',
+        displayNameRequired: 'Display Name is required.',
+        displayNameTooLong:
+          'Display Name must not be longer than 150 characters.',
+        departmentCodeRequired: 'Department Code is required.',
+        departmentCodeTooLong:
+          'Department Code must not be longer than 50 characters.',
+        positionCodeRequired: 'Position Code is required.',
+        positionCodeTooLong:
+          'Position Code must not be longer than 50 characters.',
+        shiftCodeRequired: 'Shift Code is required.',
+        shiftCodeTooLong: 'Shift Code must not be longer than 50 characters.',
+        phoneTooLong: 'Phone must not be longer than 30 characters.',
+        phoneRequiredForAccount:
+          'Phone number is required when creating a login account for an employee.',
+        joinDateInvalid: 'Join Date is invalid.',
+        otWorkflowRoleInvalid:
+          'OT Workflow Role must be NONE, APPROVER, or ACKNOWLEDGE.',
+        isActiveInvalid: 'Status is invalid.',
+        updatePayloadRequired: 'Please update at least one field.',
+      },
+
+      error: {
+        notFound: 'Employee not found.',
+        inactive: 'Employee is inactive.',
+        notInScope: 'Employee is outside your scope.',
+        outsideManagedScope:
+          'Some selected employees are outside your managed scope.',
+        employeeCodeExists: 'Employee Code already exists.',
+        emailExists: 'Email already exists.',
+        accountExists: 'This employee already has an account.',
+        reportToSelf: 'Employee cannot report to self.',
+        reportsToEmployeeNotFound: 'Reports-to employee not found.',
+        excelFileRequired: 'Excel file is required.',
+        excelWorksheetRequired: 'Excel file has no worksheet.',
+        excelNoRows: 'Excel file has no data rows.',
+        excelNoValidRows: 'Excel file has no valid rows.',
+      },
+
+      import: {
+        success: {
+          completed: 'Employee import completed successfully.',
+        },
+
+        error: {
+          validationFailed:
+            'Import failed. Please fix all row errors and try again.',
+          duplicateDatabaseValue:
+            'Import failed because one or more values already conflict with existing employee data.',
+
+          employeeCodeRequired: 'Employee Code is required.',
+          employeeCodeTooLong:
+            'Employee Code must not be longer than 50 characters.',
+          duplicateEmployeeCode:
+            'Duplicate Employee Code "{employeeCode}" in Excel file. First found at row {firstRowNo}.',
+
+          displayNameRequired: 'Display Name is required.',
+          displayNameTooLong:
+            'Display Name must not be longer than 150 characters.',
+
+          departmentCodeRequired: 'Department Code is required.',
+          departmentCodeTooLong:
+            'Department Code must not be longer than 50 characters.',
+          departmentNotFound:
+            'Department Code "{departmentCode}" was not found.',
+
+          positionCodeRequired: 'Position Code is required.',
+          positionCodeTooLong:
+            'Position Code must not be longer than 50 characters.',
+          positionNotFound: 'Position Code "{positionCode}" was not found.',
+          positionDepartmentMismatch:
+            'Position Code "{positionCode}" does not belong to Department Code "{departmentCode}".',
+
+          lineCodeTooLong: 'Line Code must not be longer than 50 characters.',
+          lineNotFound: 'Line Code not found: {lineCodes}.',
+          lineInactive: 'Inactive Line Code(s): {lineCodes}.',
+          lineDepartmentMismatch:
+            'These Line Code(s) do not support Department Code "{departmentCode}": {lineCodes}.',
+          linePositionNotAllowed:
+            'These Line Code(s) do not allow Position Code "{positionCode}": {lineCodes}.',
+
+          shiftCodeRequired: 'Shift Code is required.',
+          shiftCodeTooLong: 'Shift Code must not be longer than 50 characters.',
+          shiftNotFound:
+            'Shift Code "{shiftCode}" was not found or is inactive.',
+
+          managerCodeTooLong:
+            'Reports To Employee Code must not be longer than 50 characters.',
+          managerNotFound:
+            'Reports To Employee Code "{reportsToEmployeeCode}" was not found in Employee master or this import file.',
+          reportToSelf: 'Employee cannot report to self.',
+
+          invalidOTWorkflowRole:
+            'OT Workflow Role must be NONE, APPROVER, or ACKNOWLEDGE.',
+          phoneTooLong: 'Phone must not be longer than 30 characters.',
+          emailTooLong: 'Email must not be longer than 150 characters.',
+          emailInvalid: 'Email format is invalid.',
+          duplicateEmail:
+            'Duplicate Email "{email}" in Excel file. First found at row {firstRowNo}.',
+          emailExists:
+            'Email "{email}" already belongs to Employee Code "{ownerEmployeeCode}".',
+
+          invalidJoinDate:
+            'Join Date must use DD/MM/YYYY or YYYY-MM-DD format.',
+          invalidStatus: 'Status must be Active or Inactive.',
+          invalidCreateAccount: 'Create Account must be Yes or No. Blank = No.',
+
+          phoneRequiredForAccount:
+            'Phone is required because Create Account = Yes. Default password = Employee Code + Phone.',
+          defaultPasswordInvalid:
+            'Default password must be 6 to 100 characters. It is generated from Employee Code + Phone.',
+          accountLoginIdExists: 'Account Login ID "{loginId}" already exists.',
+        },
+      },
+
+      importProgress: {
+        waitingUpload: 'Waiting for file upload...',
+        readFile: 'Reading Excel file...',
+        parseRows: 'Reading worksheet rows...',
+        validateBasic: 'Checking required fields and duplicate rows...',
+        matchDepartment: 'Matching department codes...',
+        matchPosition: 'Matching position codes...',
+        matchLine: 'Matching production line codes...',
+        matchShift: 'Matching shift codes...',
+        matchEmployee: 'Checking existing employees and manager codes...',
+        matchAccount: 'Checking employee login accounts...',
+        validateRelation:
+          'Validating department, position, line, shift, manager, and account rules...',
+        startImport: 'All master data matched. Starting employee import...',
+        importEmployee: 'Importing employees...',
+        resolveManager: 'Resolving managers...',
+        createAccount: 'Creating employee login accounts...',
+        syncManager: 'Finalizing line managers...',
+        completed: 'Employee import completed.',
+        failed:
+          'Employee import failed. Please fix the Excel file and try again.',
+
+        guideSubtitle:
+          'Upload the employee Excel file and follow each import step in real time.',
+        runningTitle: 'Employee import progress',
+        percentDone: '{percent}% completed',
+        rowProgress: '{processed} of {total} rows processed',
+        fileUpload: 'File upload: {percent}%',
+
+        statusWaiting: 'Waiting',
+        statusRunning: 'Running',
+        statusSuccess: 'Success',
+        statusFailed: 'Failed',
+
+        phase: {
+          UPLOAD: 'Upload file',
+          READ_FILE: 'Read file',
+          PARSE_ROWS: 'Read rows',
+          VALIDATE_BASIC: 'Validate basic fields',
+          MATCH_DEPARTMENT: 'Match departments',
+          MATCH_POSITION: 'Match positions',
+          MATCH_LINE: 'Match lines',
+          MATCH_SHIFT: 'Match shifts',
+          MATCH_EMPLOYEE: 'Check employees',
+          MATCH_ACCOUNT: 'Check accounts',
+          VALIDATE_RELATION: 'Validate relationships',
+          IMPORT_EMPLOYEE: 'Import employees',
+          RESOLVE_MANAGER: 'Resolve managers',
+          CREATE_ACCOUNT: 'Create accounts',
+          SYNC_MANAGER: 'Sync managers',
+          COMPLETE: 'Complete',
+        },
+      },
     },
+
     line: {
       tableTitle: 'Production Line List',
       searchPlaceholder: 'Search code, name, or description',
-      importValidationFailed: 'Import validation failed',
-      importErrorCount: '{count} error(s) found',
-      importErrorListTitle: 'Fix these Excel rows before importing',
-      importAllOrNothingNote:
-        'All rows must be 100% valid. If any row has an error, nothing will be saved.',
-      importRow: 'Row',
-      importValidationFailed: 'Import validation failed',
-      importErrorCount: '{count} error(s) found',
-      importErrorListTitle: 'Fix these Excel rows before importing',
-      importAllOrNothingNote:
-        'All rows must be 100% valid. If any row has an error, nothing will be saved.',
-      importRow: 'Row',
-      importField: 'Field',
-      importValue: 'Value',
-      importReason: 'Reason',
-      importUnknownError: 'Unknown import error',
-      importUploading: 'Uploading file... {percent}%',
-      importProcessing: 'File uploaded. Validating Excel rows and saving employee data...',
-      importField: 'Field',
-      importValue: 'Value',
-      importReason: 'Reason',
-      importUnknownError: 'Unknown import error',
-      importUploading: 'Uploading file... {percent}%',
-      importProcessing: 'File uploaded. Validating Excel rows and saving data...',
 
       department: 'Department',
+      departments: 'Departments',
       allDepartments: 'All Departments',
 
       lineCode: 'Line Code',
       lineName: 'Line Name',
       allowedPositions: 'Allowed Positions',
       allPositionsInDepartment: 'All positions in department',
+      allPositionsInDepartments: 'All positions in selected departments',
 
       newLine: 'New Line',
       importExcel: 'Import Excel',
@@ -539,25 +985,39 @@ export default {
 
       createTitle: 'Create Production Line',
       editTitle: 'Edit Production Line',
+
       selectDepartment: 'Select department',
+      selectDepartments: 'Select departments',
       selectAllowedPositions: 'Optional: select allowed positions',
+
       codeExample: 'Example: LINE-01',
       nameExample: 'Example: Sewing Line 01',
       descriptionPlaceholder: 'Optional production line description',
+
+      allowedPositionsMultiDepartmentHelp:
+        'Leave blank to allow all positions in the selected departments. Select positions only when this line should be limited to specific positions.',
 
       exported: 'Exported',
       exportedSuccess: 'Production lines exported successfully.',
       exportFailed: 'Failed to export production lines.',
 
       imported: 'Imported',
-      importedSuccess: 'Import completed. Created: {created}, Updated: {updated}.',
+      importedSuccess:
+        'Import completed. Created: {created}, Updated: {updated}.',
 
       importTitle: 'Import Production Lines',
       importGuideTitle: 'Import guide',
       importGuideStep1: 'Download the sample file.',
-      importGuideStep2: 'Fill your production line data using readable codes only.',
-      importGuideStep3: 'Department Code must already exist in Department master data.',
-      importGuideStep4: 'Use Position Codes only when the line allows specific positions.',
+      importGuideStep2:
+        'Fill your production line data using readable codes only.',
+      importGuideStep3:
+        'Department Code must already exist in Department master data.',
+      importGuideStep4:
+        'Use Position Codes only when the line allows specific positions.',
+      importAllOrNothingNote:
+        'All rows must be 100% valid. If any row has an error, nothing will be saved.',
+      importUploading: 'Uploading file... {percent}%',
+      importProcessing: 'File uploaded. Validating Excel rows and saving data...',
 
       downloadSample: 'Download Sample',
       downloadSampleFailed: 'Download sample failed',
@@ -572,6 +1032,15 @@ export default {
         'Please choose an Excel file only: .xlsx, .xls, or .csv.',
       importFailed: 'Import failed',
 
+      importValidationFailed: 'Import validation failed',
+      importErrorCount: '{count} error(s) found',
+      importErrorListTitle: 'Fix these Excel rows before importing',
+      importRow: 'Row',
+      importField: 'Field',
+      importValue: 'Value',
+      importReason: 'Reason',
+      importUnknownError: 'Unknown import error',
+
       noData: 'No production lines matched your filters.',
       loadFailed: 'Failed to load production lines.',
       departmentLoadFailed: 'Failed to load departments.',
@@ -579,6 +1048,87 @@ export default {
       saveFailed: 'Failed to save production line.',
       createdSuccess: 'Production line created successfully.',
       updatedSuccess: 'Production line updated successfully.',
+
+      field: {
+        departmentId: {
+          required: 'Department is required.',
+          invalid: 'Department is invalid.',
+        },
+        departmentIds: {
+          required: 'At least one department is required.',
+          invalid: 'One or more selected departments are invalid.',
+        },
+        positionIds: {
+          required: 'Position is required.',
+          invalid: 'One or more selected positions are invalid.',
+        },
+      },
+
+      validation: {
+        codeRequired: 'Line code is required.',
+        codeTooLong: 'Line code must not be longer than 50 characters.',
+        nameRequired: 'Line name is required.',
+        nameTooLong: 'Line name must not be longer than 120 characters.',
+        departmentRequired: 'At least one department is required.',
+        descriptionTooLong: 'Description must not be longer than 500 characters.',
+        updatePayloadRequired: 'Please update at least one field.',
+      },
+
+      error: {
+        notFound: 'Production line not found.',
+        codeExists: 'Line code already exists.',
+        inactive: 'Line is inactive.',
+        departmentMismatch:
+          'Selected line does not support this employee department.',
+        positionNotAllowed:
+          'Selected line does not allow this employee position.',
+        positionDepartmentMismatch:
+          'Selected position does not belong to selected line departments.',
+        excelFileRequired: 'Excel file is required.',
+        excelNoRows: 'Excel file has no rows.',
+        excelNoValidRows: 'Excel file has no valid rows.',
+      },
+
+      import: {
+        success: {
+          completed: 'Production line import completed successfully.',
+        },
+
+        error: {
+          validationFailed:
+            'Import failed. Please fix all row errors and try again.',
+          duplicateDatabaseCode:
+            'Import failed because one or more line codes already conflict with existing data.',
+
+          codeRequired: 'Code is required.',
+          codeTooLong: 'Code must not be longer than {max} characters.',
+          duplicateCode:
+            'Duplicate Line Code "{code}" in Excel file. First found at row {firstRowNo}.',
+
+          nameRequired: 'Name is required.',
+          nameTooLong: 'Name must not be longer than {max} characters.',
+
+          departmentRequired: 'Department Codes is required.',
+          departmentCodeTooLong:
+            'Department Code must not be longer than {max} characters: {departmentCodes}.',
+          duplicateDepartmentCodeInRow:
+            'Duplicate Department Code in the same row: {departmentCodes}.',
+          departmentNotFound: 'Department Code not found: {departmentCodes}.',
+
+          positionCodeTooLong:
+            'Position Code must not be longer than {max} characters: {positionCodes}.',
+          duplicatePositionCodeInRow:
+            'Duplicate Position Code in the same row: {positionCodes}.',
+          positionNotFound:
+            'Position Code not found: {positionCodes}. Position Codes must use codes from Position master, not Department codes.',
+          positionDepartmentMismatch:
+            'These Position Code(s) do not belong to selected Department Codes "{departmentCodes}": {positionCodes}.',
+
+          descriptionTooLong:
+            'Description must not be longer than {max} characters.',
+          invalidStatus: 'Status must be Active or Inactive.',
+        },
+      },
     },
 
     orgChart: {
@@ -602,6 +1152,13 @@ export default {
 
       expandNode: 'Expand node',
       collapseNode: 'Collapse node',
+    },
+  },
+
+  employee: {
+    error: {
+      notFound: 'Employee not found.',
+      inactive: 'Employee is inactive.',
     },
   },
 
@@ -656,7 +1213,8 @@ export default {
 
       paidHoliday: 'Paid Holiday',
       paidHolidayHelp: 'Use this when the holiday is paid.',
-      activeHelp: 'Inactive holidays will not be used for day-type classification.',
+      activeHelp:
+        'Inactive holidays will not be used for day-type classification.',
       paid: 'Paid',
       unpaid: 'Unpaid',
       noCode: 'No Code',
@@ -669,34 +1227,71 @@ export default {
       exportedSuccess: 'Holiday Excel exported successfully.',
       exportFailed: 'Failed to export holidays.',
 
-      importTitle: 'Import Holidays',
-      importInvalidFileTitle: 'Invalid file',
-      importInvalidFileMessage: 'Please select an Excel or CSV file.',
-      importFailed: 'Failed to import holidays.',
       imported: 'Imported',
-      importedSuccess: 'Import completed. Created: {created}, Updated: {updated}.',
+      importedSuccess:
+        'Import completed. Created: {created}, Updated: {updated}.',
+
+      importTitle: 'Import Holidays',
+      importInvalidFileTitle: 'Invalid file type',
+      importInvalidFileMessage:
+        'Please choose an Excel file only: .xlsx, .xls, or .csv.',
+      importFailed: 'Failed to import holidays.',
 
       importGuideTitle: 'Import guide',
       importGuideStep1: 'Download the sample file.',
-      importGuideStep2: 'Fill in holiday date, code, name, paid holiday, and active status.',
+      importGuideStep2:
+        'Fill in holiday date, code, name, paid holiday, and active status.',
       importGuideStep3: 'Use DD/MM/YYYY format for dates.',
       importGuideStep4: 'Upload the completed file.',
       importNote:
-        'Existing holidays with the same date or code may be updated depending on backend import rules.',
+        'Existing holidays with the same date will be updated. Users do not need Mongo IDs in Excel.',
 
       downloadSample: 'Download Sample',
-      sampleDownloaded: 'Sample downloaded.',
-      downloadSampleFailed: 'Failed to download sample.',
+      sampleDownloaded: 'Sample file downloaded successfully.',
+      downloadSampleFailed: 'Failed to download sample file.',
 
-      excelFile: 'Excel File',
-      noFileSelected: 'No file selected',
+      excelFile: 'Excel file',
       chooseFile: 'Choose File',
+      noFileSelected: 'No file selected',
+
+      validation: {
+        dateInvalid: 'Holiday date is invalid.',
+        codeTooLong: 'Holiday code must not be longer than 50 characters.',
+        nameRequired: 'Holiday name is required.',
+        nameTooLong: 'Holiday name must not be longer than 150 characters.',
+        descriptionTooLong:
+          'Description must not be longer than 1000 characters.',
+        updatePayloadRequired: 'Please update at least one field.',
+      },
+
+      error: {
+        invalidDate: 'Invalid holiday date.',
+        dateExists: 'A holiday already exists for this date.',
+        notFound: 'Holiday not found.',
+        excelFileRequired: 'Excel file is required.',
+        excelNoRows: 'Excel file has no rows.',
+      },
+
+      import: {
+        success: {
+          completed: 'Holiday import completed successfully.',
+        },
+
+        error: {
+          dateRequired: 'Date is required. Use DD/MM/YYYY format.',
+          nameRequired: 'Holiday name is required.',
+          invalidPaidHoliday:
+            'Paid Holiday must be Yes or No. Blank will be treated as Yes.',
+          invalidStatus:
+            'Status must be Active or Inactive. Blank will be treated as Active.',
+          duplicateDate:
+            'Duplicate holiday date "{date}" in the import file at row {rowNo}.',
+        },
+      },
     },
   },
 
   shift: {
-    pageTitle: 'Shift Master',
-    pageSubtitle: 'Manage working shifts, break time, cross-midnight rules, and Excel import/export.',
     tableTitle: 'Shift List',
 
     type: {
@@ -704,30 +1299,17 @@ export default {
       night: 'Night',
     },
 
+    filter: {
+      searchPlaceholder: 'Search code or name',
+      type: 'Type',
+      allTypes: 'All Types',
+    },
+
     action: {
-      importExcel: 'Import Excel',
-      exportExcel: 'Export Excel',
       newShift: 'New Shift',
       createShift: 'Create Shift',
-    },
-
-    permission: {
-      noView: 'You do not have permission to view shifts.',
-    },
-
-    filter: {
-      searchPlaceholder: 'Search shift code or name',
-      type: 'Type',
-      status: 'Status',
-      allTypes: 'All Types',
-      allStatuses: 'All Status',
-    },
-
-    table: {
-      loading: 'Loading shifts...',
-      updating: 'Updating shifts...',
-      empty: 'No shifts matched your filters.',
-      loadedSummary: 'Loaded {loaded} of {total}',
+      importExcel: 'Import Excel',
+      exportExcel: 'Export Excel',
     },
 
     column: {
@@ -738,17 +1320,12 @@ export default {
       breakStart: 'Break Start',
       breakEnd: 'Break End',
       end: 'End',
-      crossMidnight: 'Cross Night',
+      crossMidnight: 'Cross Midnight',
       working: 'Working',
-      status: 'Status',
-      createdAt: 'Created At',
-      actions: 'Actions',
     },
 
-    duration: {
-      hours: '{hours}h',
-      minutes: '{minutes}m',
-      hoursMinutes: '{hours}h {minutes}m',
+    table: {
+      empty: 'No shifts matched your filters.',
     },
 
     dialog: {
@@ -760,123 +1337,134 @@ export default {
       code: 'Shift Code',
       name: 'Shift Name',
       type: 'Shift Type',
-      activeStatus: 'Active Status',
       startTime: 'Start Time',
-      breakStartTime: 'Break Start',
-      breakEndTime: 'Break End',
+      breakStartTime: 'Break Start Time',
+      breakEndTime: 'Break End Time',
       endTime: 'End Time',
+      activeStatus: 'Active Status',
+
       codePlaceholder: 'Example: DAY-0700',
       namePlaceholder: 'Example: Day Shift 07:00 - 16:00',
-      typePlaceholder: 'Select type',
+      typePlaceholder: 'Select shift type',
+
       timeHint:
-        'Use HH:mm format. DAY shift cannot cross midnight. NIGHT shift must cross midnight. Break time must be inside the shift time.',
+        'Use HH:mm format. Example: 07:00, 12:00, 13:00, 16:00. DAY shift cannot cross midnight. NIGHT shift must cross midnight.',
     },
 
-    import: {
-      title: 'Import Shifts',
-      guideTitle: 'Import guide',
-      guideStep1: 'Download the sample file.',
-      guideStep2: 'Fill your shift data using readable shift codes only.',
-      guideStep3: 'Use HH:mm format for all time fields.',
-      guideStep4: 'Use DAY for same-day shifts and NIGHT for cross-midnight shifts.',
-      guideStep5: 'Choose the completed Excel file and click Import.',
+    duration: {
+      hours: '{hours}h',
+      minutes: '{minutes} min',
+      hoursMinutes: '{hours}h {minutes}m',
+    },
 
-      formatTitle: 'Excel import format',
-      description:
-        'Download the sample file, fill in shift records, then upload the completed Excel file.',
-      ruleType: 'Type must be DAY or NIGHT.',
-      ruleTime: 'Time fields must use HH:mm format.',
-      ruleDay: 'DAY shift cannot cross midnight.',
-      ruleNight: 'NIGHT shift must cross midnight.',
-
-      fileLabel: 'Excel file',
-      chooseFile: 'Choose File',
-      noFileSelected: 'No file selected',
-      selectedFile: 'Selected',
-      downloadSample: 'Download Sample',
-      sampleDownloaded: 'Sample file downloaded successfully.',
-      import: 'Import',
-
-      invalidExcelData: 'Invalid Excel data',
-      importApiNotFound: 'Import API not found',
-      duplicateData: 'Duplicate data',
-      serverError: 'Server error',
-
-      helpCodeRequired:
-        'Shift Code is required because the system uses it as the human-readable shift key.',
-      helpType: 'Type must be DAY or NIGHT.',
-      helpStartTime: 'Start Time must use HH:mm format, for example 07:00.',
-      helpBreakStartTime: 'Break Start must use HH:mm format, for example 12:00.',
-      helpBreakEndTime: 'Break End must use HH:mm format, for example 13:00.',
-      helpEndTime: 'End Time must use HH:mm format, for example 16:00.',
-      helpCrossMidnight:
-        'DAY shift must end after start time on the same day. NIGHT shift must cross midnight.',
-      helpBreakInside: 'Break time must be inside the shift start and end time.',
-      helpDuplicateCode: 'Use a unique Shift Code or update the existing shift record.',
-
-      toast: {
-        invalidFileTitle: 'Invalid file type',
-        invalidFileDetail: 'Please choose an Excel file only: .xlsx, .xls, or .csv.',
-        downloadFailedTitle: 'Download sample failed',
-        downloadFailedDetail: 'Failed to download shift sample file.',
-        importFailedTitle: 'Import failed',
-        importFailedDetail: 'Failed to import shift Excel file.',
-        importedTitle: 'Imported',
-        importedDetail:
-          'Import completed. Total: {total}, Created: {created}, Updated: {updated}.',
-      },
+    permission: {
+      noView: 'You do not have permission to view shifts.',
     },
 
     toast: {
-      loadFailedTitle: 'Load failed',
       loadFailedDetail: 'Failed to load shifts.',
-      createdTitle: 'Created',
       createdDetail: 'Shift created successfully.',
-      updatedTitle: 'Updated',
       updatedDetail: 'Shift updated successfully.',
-      createFailedTitle: 'Create failed',
-      saveFailedTitle: 'Save failed',
       saveFailedDetail: 'Failed to save shift.',
+
       exportedTitle: 'Exported',
       exportedDetail: 'Shift Excel exported successfully.',
       exportFailedTitle: 'Export failed',
       exportFailedDetail: 'Failed to export shifts.',
     },
 
+    import: {
+      title: 'Import Shifts',
+      guideTitle: 'Import guide',
+      guideStep1: 'Download the sample file.',
+      guideStep2: 'Fill your shift data using the same format.',
+      guideStep3: 'Use DAY or NIGHT for shift type.',
+      guideStep4:
+        'Use HH:mm format for Start Time, Break Start Time, Break End Time, and End Time.',
+      guideStep5: 'Choose the completed Excel file and click Import.',
+
+      downloadSample: 'Download Sample',
+      sampleDownloaded: 'Sample file downloaded successfully.',
+
+      fileLabel: 'Excel file',
+      chooseFile: 'Choose File',
+      noFileSelected: 'No file selected',
+
+      invalidExcelData: 'Invalid Excel data',
+      importApiNotFound: 'Import API not found',
+      duplicateData: 'Duplicate data',
+      serverError: 'Server error',
+
+      helpCodeRequired: 'Please enter a shift code.',
+      helpType: 'Shift Type must be DAY or NIGHT.',
+      helpStartTime: 'Start Time must use HH:mm format, for example 07:00.',
+      helpBreakStartTime:
+        'Break Start Time must use HH:mm format, for example 12:00.',
+      helpBreakEndTime:
+        'Break End Time must use HH:mm format, for example 13:00.',
+      helpEndTime: 'End Time must use HH:mm format, for example 16:00.',
+      helpCrossMidnight:
+        'DAY shift cannot cross midnight. NIGHT shift must cross midnight.',
+      helpBreakInside: 'Break time must stay inside the shift working time.',
+      helpDuplicateCode:
+        'Shift code must be unique. Please change the duplicate code.',
+
+      toast: {
+        invalidFileTitle: 'Invalid file type',
+        invalidFileDetail:
+          'Please choose an Excel file only: .xlsx, .xls, or .csv.',
+
+        importFailedTitle: 'Import failed',
+        importFailedDetail: 'Failed to import shifts.',
+
+        importedTitle: 'Imported',
+        importedDetail:
+          'Import completed. Total: {total}, Created: {created}, Updated: {updated}.',
+      },
+
+      success: {
+        completed: 'Shift import completed successfully.',
+      },
+
+      error: {
+        invalidStatus: 'Status must be Active or Inactive.',
+        rowInvalid: 'Invalid shift data.',
+        duplicateShiftId: 'Duplicate Shift ID in the import file.',
+        duplicateCode: 'Duplicate Shift Code in the import file.',
+        shiftIdNotFound: 'Shift ID was not found.',
+      },
+    },
+
     validation: {
+      shiftIdInvalid: 'Shift ID is invalid.',
       codeRequired: 'Shift code is required.',
-      codeTooLong: 'Shift code is too long.',
+      codeTooLong: 'Shift code must not be longer than 30 characters.',
       nameRequired: 'Shift name is required.',
-      nameTooLong: 'Shift name is too long.',
+      nameTooLong: 'Shift name must not be longer than 120 characters.',
       typeInvalid: 'Shift type must be DAY or NIGHT.',
       startTimeInvalid: 'Start time must use HH:mm format.',
       breakStartTimeInvalid: 'Break start time must use HH:mm format.',
       breakEndTimeInvalid: 'Break end time must use HH:mm format.',
       endTimeInvalid: 'End time must use HH:mm format.',
+      endTimeRequired: 'Shift end time is required.',
       isActiveInvalid: 'Status is invalid.',
-      shiftIdInvalid: 'Shift ID is invalid.',
       updatePayloadRequired: 'Please update at least one field.',
     },
 
     error: {
+      notFound: 'Shift not found.',
+      inactive: 'Shift is inactive.',
+      codeExists: 'Shift code already exists.',
       startEndSame: 'Shift start time and end time cannot be the same.',
-      breakStartEndSame: 'Break start time and break end time cannot be the same.',
+      breakStartEndSame:
+        'Break start time and break end time cannot be the same.',
       dayCannotCrossMidnight: 'DAY shift cannot cross midnight.',
       nightMustCrossMidnight: 'NIGHT shift must cross midnight.',
-      breakEndBeforeStart: 'Break end time must be later than break start time.',
+      breakEndBeforeStart:
+        'Break end time must be later than break start time.',
       breakOutsideShift: 'Break time must be inside shift working time.',
-      codeExists: 'Shift code already exists.',
-      notFound: 'Shift not found.',
       excelFileRequired: 'Excel file is required.',
       excelNoRows: 'Excel file has no rows.',
-    },
-
-    importError: {
-      invalidStatus: 'Invalid status in import file.',
-      rowInvalid: 'Invalid row data.',
-      duplicateShiftId: 'Duplicate Shift ID in import file.',
-      duplicateCode: 'Duplicate shift code in import file.',
-      shiftIdNotFound: 'Shift ID not found.',
     },
   },
 
@@ -893,7 +1481,8 @@ export default {
       guideStep2: 'Download the sample file.',
       guideStep3: 'Fill Employee ID, Clock In, and Clock Out.',
       guideStep4: 'Choose the completed Excel file and click Import.',
-      note: 'Attendance date is required. The backend will classify the day type from the holiday calendar.',
+      note:
+        'Attendance date is required. The backend will classify the day type from the holiday calendar.',
 
       downloadSample: 'Download Sample',
       sampleDownloaded: 'Sample file downloaded successfully.',
@@ -901,7 +1490,8 @@ export default {
 
       importCompleted: 'Import completed',
       importCompletedSuccess: 'Attendance imported successfully.',
-      importCompletedPartial: 'Attendance imported with some skipped or invalid rows.',
+      importCompletedPartial:
+        'Attendance imported with some skipped or invalid rows.',
       importFailed: 'Import failed',
 
       validation: 'Validation',
@@ -912,7 +1502,8 @@ export default {
       serverError: 'Server error',
 
       chooseExcelFile: 'Please choose an Excel file.',
-      invalidExcelFile: 'Please upload Excel file only: .xlsx, .xls, or .csv.',
+      invalidExcelFile:
+        'Please upload Excel file only: .xlsx, .xls, or .csv.',
       fileTooLarge: 'File size must not exceed 10 MB.',
       selectAttendanceDate: 'Please select attendance date.',
       failedDownloadSample: 'Failed to download sample file.',
@@ -931,7 +1522,8 @@ export default {
     import: {
       importAttendance: 'Import Attendance',
       latestImportResult: 'Latest Import Result',
-      latestImportDescription: 'Latest uploaded file has been processed by the backend import engine.',
+      latestImportDescription:
+        'Latest uploaded file has been processed by the backend import engine.',
       failedRowPreview: 'Failed Row Preview',
       importHistory: 'Import History',
       importDetail: 'Attendance Import Detail',
@@ -992,8 +1584,8 @@ export default {
       earlyOut: 'Early Out',
       issues: 'Issues',
 
-      searchImportPlaceholder: 'Search import no, file name, remark',
-      searchRecordsPlaceholder: 'Search employee, imported name, reason',
+      searchImportPlaceholder: 'Search import no, file name, or remark',
+      searchRecordsPlaceholder: 'Search employee, imported name, or reason',
     },
 
     option: {
@@ -1042,11 +1634,29 @@ export default {
       loadFailed: 'Load failed',
       detailLoadFailed: 'Detail load failed',
       missingImportId: 'Missing import ID',
-      missingImportIdDetail: 'Cannot open this import detail because ID is missing.',
+      missingImportIdDetail:
+        'Cannot open this import detail because ID is missing.',
       noDataFound: 'No data found',
       updating: 'Updating',
-      failedRowsWarning: 'Some rows failed or were skipped. Review the failed row list below.',
-      partialImportWarning: 'Attendance was imported with some skipped, duplicated, or invalid rows.',
+      failedRowsWarning:
+        'Some rows failed or were skipped. Review the failed row list below.',
+      partialImportWarning:
+        'Attendance was imported with some skipped, duplicated, or invalid rows.',
+    },
+
+    result: {
+      employee_not_matched: 'Employee is not matched to Employee master.',
+      leave: 'Imported status is Leave and there are no punches.',
+      off: 'Imported status is Off and there are no punches.',
+      absent: 'No clock in and no clock out.',
+      forget_scan_in: 'Clock out exists but clock in is missing.',
+      forget_scan_out: 'Clock in exists but clock out is missing.',
+      shift_mismatch: 'Punches do not align with the assigned shift.',
+      late: 'Clock in is later than the assigned shift start.',
+      present: 'Clock in/out align with the assigned shift.',
+      unknown: 'Unable to derive attendance result.',
+      invalid_clock_format: 'Clock in/out format is invalid.',
+      invalid_shift_time: 'Assigned shift time is missing or invalid.',
     },
 
     verification: {
@@ -1086,8 +1696,9 @@ export default {
       verificationResult: 'Verification Result',
       loadingVerification: 'Loading OT attendance verification...',
       rowCount: '{count} rows',
-      searchPlaceholder: 'Search employee/result/reason',
-      result: 'Result',
+      searchPlaceholder: 'Search employee, result, or reason',
+
+      resultLabel: 'Result',
       meaning: 'Meaning',
       employee: 'Employee',
       otType: 'OT Type',
@@ -1103,12 +1714,14 @@ export default {
       otOption: 'OT Option',
 
       noVerificationRows: 'No verification rows found.',
-      emptyInstruction: 'Select an OT date, choose an OT request, then verify attendance result.',
+      emptyInstruction:
+        'Select an OT date, choose an OT request, then verify attendance result.',
 
       otDateRequired: 'OT date required',
       otDateRequiredDetail: 'Please select OT date first.',
       noOtRequests: 'No OT requests',
-      noOtRequestsDetail: 'No OT request found for the selected date and status.',
+      noOtRequestsDetail:
+        'No OT request found for the selected date and status.',
       loadFailed: 'Load failed',
       loadVerificationFailed: 'Failed to load OT attendance verification.',
       loadRequestsFailed: 'Failed to load OT requests.',
@@ -1116,6 +1729,53 @@ export default {
       noRequestNo: 'No Request No',
       statusPrefix: 'Status',
       staff: 'staff',
+
+      result: {
+        match: 'Matched',
+        mismatch: 'Needs check',
+        pending_review: 'Pending review',
+      },
+
+      no_paid_ot_minutes: 'No paid OT minutes found on approved OT request.',
+      approved_without_exact_clock_out:
+        'Approved OT credited by policy. Employee attended normal shift. Exact OT end scan is not required.',
+      approved_without_exact_clock_out_late:
+        'Approved OT credited by policy. Employee was late but attended normal shift. Exact OT end scan is not required.',
+      fixed_ot_approved_without_exact_clock_out:
+        'Fixed OT credited by policy. Employee attended normal shift. Exact OT end scan is not required.',
+      fixed_ot_approved_without_exact_clock_out_late:
+        'Fixed OT credited by policy. Employee was late but attended normal shift. Exact OT end scan is not required.',
+
+      forget_scan_in_pending: 'Forget scan in is pending review by OT policy.',
+      forget_scan_out_pending:
+        'Forget scan out is pending review by OT policy.',
+      attendance_not_present:
+        'Approved OT is not credited because attendance is not present.',
+      status_requires_manual_review:
+        'Attendance status requires manual review before OT can be credited.',
+
+      no_request_window: 'OT request time window is missing or invalid.',
+      no_attendance_window: 'Clock in/out window is missing or invalid.',
+
+      sunday_holiday_no_overlap:
+        'No attended time overlaps with the Sunday or holiday OT request.',
+      sunday_holiday_below_min:
+        'Sunday or holiday OT is below the minimum eligible minutes.',
+      sunday_holiday_match:
+        'Sunday or holiday OT matched the approved request.',
+      sunday_holiday_short:
+        'Sunday or holiday OT is shorter than the approved request.',
+      sunday_holiday_exceed:
+        'Sunday or holiday OT is more than the approved request.',
+
+      policy_not_eligible: 'OT is not eligible under the selected policy.',
+      policy_below_min:
+        'OT is below the minimum eligible minutes in the policy.',
+      policy_match: 'OT matched the approved request by policy.',
+      policy_short:
+        'Credited OT is less than the approved request by policy.',
+      policy_exceed:
+        'Credited OT is more than the approved request by policy.',
 
       meaningLabel: {
         forgetScanIn: 'Forget Scan In',
@@ -1134,6 +1794,36 @@ export default {
         adjustedByRule: 'Adjusted by rule',
         checkOtRule: 'Check OT rule',
       },
+    },
+
+    validation: {
+      invalidId: 'Invalid ID.',
+      dateYmd: 'Date must be in YYYY-MM-DD format.',
+      attendanceDateRequired: 'Attendance date is required.',
+      attendanceDateToAfterFrom:
+        'Attendance date to must be greater than or equal to attendance date from.',
+      periodToAfterFrom:
+        'Period to must be greater than or equal to period from.',
+      otDateToAfterFrom:
+        'OT date to must be greater than or equal to OT date from.',
+    },
+
+    error: {
+      importFileRequired: 'Attendance Excel file is required.',
+      importFileInvalid: 'Attendance file is empty or invalid.',
+      unableToReadFile: 'Unable to read attendance file.',
+      worksheetMissing: 'Attendance file does not contain any worksheet.',
+      worksheetEmpty: 'Attendance worksheet is empty.',
+      headerMissing: 'Attendance worksheet header row was not found.',
+      employeeIdColumnRequired:
+        'Attendance file must contain an Employee ID column.',
+      clockInColumnRequired:
+        'Attendance file must contain a Clock In column.',
+      clockOutColumnRequired:
+        'Attendance file must contain a Clock Out column.',
+      importNotFound: 'Attendance import not found.',
+      recordNotFound: 'Attendance record not found.',
+      otRequestNotFound: 'OT request not found.',
     },
   },
 
@@ -1160,6 +1850,35 @@ export default {
       rejected: 'Rejected',
       requesterDisagreed: 'Requester Disagreed',
       cancelled: 'Cancelled',
+    },
+
+    approvalDisplay: {
+      approved: 'Approved',
+      rejected: 'Rejected',
+      waitingRequesterConfirmation: 'Waiting for requester confirmation',
+      requesterDisagreed: 'Requester disagreed',
+      cancelled: 'Cancelled',
+      waitingApproval: 'Waiting for approval',
+    },
+
+    acknowledgement: {
+      status: {
+        acknowledged: 'Acknowledged',
+        waiting: 'Waiting',
+        pending: 'Pending',
+        fyi: 'FYI',
+      },
+    },
+
+    acknowledge: {
+      inbox: 'OT Acknowledge Inbox',
+      loading: 'Loading acknowledgement inbox',
+      fetchingRecords: 'Fetching acknowledgement OT requests...',
+      noData: 'No acknowledgement requests found.',
+      loadFailed: 'Failed to load acknowledgement inbox.',
+      acknowledgement: 'Acknowledgement',
+      requestStatus: 'Request Status',
+      fyi: 'FYI',
     },
 
     approval: {
@@ -1241,6 +1960,8 @@ export default {
 
       requestNo: 'Request No.',
       otDate: 'OT Date',
+      otDateFrom: 'OT Date From',
+      otDateTo: 'OT Date To',
       otTime: 'OT Time',
       time: 'Time',
       dayType: 'Day Type',
@@ -1253,12 +1974,14 @@ export default {
       requestedMinutes: 'Requested Minutes',
       paidMinutes: 'Paid Minutes',
       breakMinutes: 'Break Minutes',
+      break: 'Break',
+      total: 'Total',
+      mode: 'Mode',
+
       exportExcel: 'Export Excel',
       newRequest: 'New OT Request',
 
       allDayTypes: 'All Day Types',
-      otDateFrom: 'OT Date From',
-      otDateTo: 'OT Date To',
 
       loading: 'Loading OT requests',
       fetchingRecords: 'Fetching OT request records...',
@@ -1280,14 +2003,17 @@ export default {
 
       defaultRequestTime: 'Default request time',
       employeeId: 'ID',
-      break: 'Break',
-      total: 'Total',
-      mode: 'Mode',
       noEmployeeData: 'No employee data found for this request.',
+
+      timeMode: {
+        default: 'Default',
+        custom: 'Custom',
+      },
 
       edit: {
         title: 'Edit OT Request',
-        subtitle: 'Requester can edit only before any approval step becomes approved.',
+        subtitle:
+          'Requester can edit only before any approval step becomes approved.',
         saveChanges: 'Save Changes',
 
         loadingDetail: 'Loading OT request...',
@@ -1349,7 +2075,7 @@ export default {
         updatedSuccess: 'OT request updated successfully.',
         updateFailedDetail: 'Failed to update OT request.',
       },
-      
+
       create: {
         selectedCount: '{count} selected',
 
@@ -1362,7 +2088,8 @@ export default {
         selectOtOption: 'Select OT option',
 
         customDefaultTime: 'Custom default OT time',
-        customDefaultTimeHelp: 'All selected employees use this time unless adjusted later.',
+        customDefaultTimeHelp:
+          'All selected employees use this time unless adjusted later.',
         flexible: 'Flexible',
 
         startTime: 'Start Time',
@@ -1377,30 +2104,36 @@ export default {
 
         reason: '5. Reason',
         optional: 'Optional',
-        reasonPlaceholder: 'Example: urgent production order, shipment deadline...',
+        reasonPlaceholder:
+          'Example: urgent production order, shipment deadline...',
 
         validationTitle: 'Check form',
         waitAvailability: 'Please wait until OT availability check finishes.',
         selectDateFirst: 'Please select OT date first.',
         selectAtLeastOneEmployee: 'Please select at least 1 employee.',
-        missingShift: 'Some selected employees do not have assigned shift information.',
-        mixedShift: 'Please select employees from one shift only before creating OT request.',
+        missingShift:
+          'Some selected employees do not have assigned shift information.',
+        mixedShift:
+          'Please select employees from one shift only before creating OT request.',
         selectOtOptionForDayType: 'Please select OT option for {dayType}.',
         selectOtOptionRequired: 'Please select OT option.',
         enterCustomStartTime: 'Please enter custom start time.',
         enterCustomEndTime: 'Please enter custom end time.',
-        customStartInvalid: 'Custom start time must be HH:mm, for example 18:00.',
-        customEndInvalid: 'Custom end time must be HH:mm, for example 20:00.',
+        customStartInvalid:
+          'Custom start time must be HH:mm, for example 18:00.',
+        customEndInvalid:
+          'Custom end time must be HH:mm, for example 20:00.',
         customTimeInvalid: 'Custom start and end time must be HH:mm.',
         customTimeSame: 'Custom start time and end time cannot be the same.',
-        breakTooLong: 'Break minutes cannot be greater than or equal to OT duration.',
+        breakTooLong:
+          'Break minutes cannot be greater than or equal to OT duration.',
         selectValidTiming: 'Please select valid OT timing before submitting.',
-
         missingEmployeeStart: 'Missing OT start time for {employee}.',
         missingEmployeeEnd: 'Missing OT end time for {employee}.',
         employeeStartInvalid: 'Invalid OT start time for {employee}.',
         employeeEndInvalid: 'Invalid OT end time for {employee}.',
-        employeeTimeSame: 'OT start time and end time cannot be the same for {employee}.',
+        employeeTimeSame:
+          'OT start time and end time cannot be the same for {employee}.',
         employeeBreakTooLong:
           'Break minutes cannot be greater than or equal to OT duration for {employee}.',
 
@@ -1408,17 +2141,21 @@ export default {
         profileLoadFailedDetail: 'Unable to load your employee profile.',
 
         availabilityFailed: 'OT availability check failed',
-        availabilityFailedDetail: 'Unable to check existing OT employees for this date.',
+        availabilityFailedDetail:
+          'Unable to check existing OT employees for this date.',
 
         optionsFailed: 'OT options failed',
-        optionsFailedDetail: 'Unable to load OT options for the selected shift and date.',
+        optionsFailedDetail:
+          'Unable to load OT options for the selected shift and date.',
 
         noOptionTitle: 'No OT option',
-        noOptionForDayType: 'No active OT option found for {dayType}. Please ask admin to create one.',
+        noOptionForDayType:
+          'No active OT option found for {dayType}. Please ask admin to create one.',
         noOptionGeneric: 'No active OT option found for this shift/date.',
 
         calendarUnavailableTitle: 'Holiday calendar unavailable',
-        calendarUnavailableDetail: 'Unable to load internal holiday calendar.',
+        calendarUnavailableDetail:
+          'Unable to load internal holiday calendar.',
 
         employeesRemoved: 'Employees removed',
         employeesRemovedDetail:
@@ -1436,7 +2173,8 @@ export default {
           'These employees already have OT request on this date and were removed from selection: {preview}, and {more} more.',
 
         missingClockInTitle: 'Attendance time-in required',
-        todayAttendanceRequired: 'Today OT requires attendance time-in before creating the request.',
+        todayAttendanceRequired:
+          'Today OT requires attendance time-in before creating the request.',
         missingClockInDetail:
           'Today OT requires attendance time-in. Removed from selection: {preview}.',
         missingClockInDetailMore:
@@ -1446,7 +2184,8 @@ export default {
           'Your login account is not linked to an employee profile. Please check Account and Employee setup.',
         approverNotFound:
           'No OT approver found in the organization chart. Please set manager chain and OT Role = Approver.',
-        duplicateEmployeeDate: 'Some employees already have OT request on this date.',
+        duplicateEmployeeDate:
+          'Some employees already have OT request on this date.',
 
         timingMode: {
           customFixed: 'Custom Fixed Time',
@@ -1469,7 +2208,8 @@ export default {
           noEmployeeId: 'No ID',
 
           chooseDateFirst: 'Choose OT date first.',
-          checkingBlocked: 'Checking employees already used in OT on this date...',
+          checkingBlocked:
+            'Checking employees already used in OT on this date...',
           loadingEmployees: 'Loading employees...',
           autoSelecting: 'Auto-selecting employees with line...',
 
@@ -1488,7 +2228,8 @@ export default {
           columnEnd: 'End',
 
           resetDefaultTime: 'Reset to default time',
-          scrollMoreLocal: 'Scroll inside this line to show more employees...',
+          scrollMoreLocal:
+            'Scroll inside this line to show more employees...',
           loadingMore: 'Loading more employees...',
           allMatchedLoaded: 'All matched employees loaded.',
 
@@ -1516,18 +2257,8 @@ export default {
           shiftMismatch: 'Employee shift does not match selected shift.',
         },
       },
-      acknowledge: {
-        inbox: 'OT Acknowledge Inbox',
-        loading: 'Loading acknowledgement inbox',
-        fetchingRecords: 'Fetching acknowledgement OT requests...',
-        noData: 'No acknowledgement requests found.',
-        loadFailed: 'Failed to load acknowledgement inbox.',
-
-        acknowledgement: 'Acknowledgement',
-        requestStatus: 'Request Status',
-        fyi: 'FYI',
-      },
     },
+
     policy: {
       tableTitle: 'OT Calculation Policies',
       subtitle:
@@ -1586,9 +2317,19 @@ export default {
         allowPostShiftOT: 'Allow OT after shift end.',
         capByRequestedMinutes: 'Do not pay more than requested OT.',
         treatForgetScanInAsPending: 'Require review when clock-in is missing.',
-        treatForgetScanOutAsPending: 'Require review when clock-out is missing.',
+        treatForgetScanOutAsPending:
+          'Require review when clock-out is missing.',
         allowApprovedOtWithoutExactClockOut:
           'Allow approved OT without exact clock-out when policy permits.',
+      },
+
+      short: {
+        allowPreShiftOT: 'Pre',
+        allowPostShiftOT: 'Post',
+        capByRequestedMinutes: 'Cap',
+        treatForgetScanInAsPending: 'FS In',
+        treatForgetScanOutAsPending: 'FS Out',
+        allowApprovedOtWithoutExactClockOut: 'No Exact Out',
       },
 
       flagShort: {
@@ -1601,12 +2342,30 @@ export default {
       },
 
       validation: {
-        codeRequired: 'Code is required.',
-        nameRequired: 'Name is required.',
+        codeRequired: 'Policy code is required.',
+        codeTooLong: 'Policy code must not be longer than 50 characters.',
+        nameRequired: 'Policy name is required.',
+        nameTooLong: 'Policy name must not be longer than 150 characters.',
+        descriptionTooLong:
+          'Description must not be longer than 1000 characters.',
         roundMethodRequired: 'Round method is required.',
+        roundMethodInvalid: 'Round method must be Floor, Ceil, or Nearest.',
         roundUnitInvalid: 'Round unit must be at least 1 minute.',
+        roundUnitMinutesInvalid: 'Round unit must be at least 1 minute.',
         minEligibleInvalid: 'Minimum eligible minutes cannot be negative.',
+        minEligibleMinutesInvalid:
+          'Minimum eligible minutes cannot be negative.',
         graceInvalid: 'Grace minutes cannot be negative.',
+        graceAfterShiftEndMinutesInvalid:
+          'Grace after shift end minutes cannot be negative.',
+        updatePayloadRequired: 'Please update at least one field.',
+      },
+
+      error: {
+        codeExists: 'OT policy code already exists.',
+        notFound: 'OT policy not found.',
+        notFoundOrInactive: 'OT policy was not found or is inactive.',
+        inactive: 'OT policy is inactive.',
       },
     },
 
@@ -1654,6 +2413,11 @@ export default {
         fixedTime: 'Fixed Time',
       },
 
+      timingModeLabel: {
+        afterShiftEnd: 'After Shift End',
+        fixedTime: 'Fixed Time',
+      },
+
       afterShiftOffset: 'Offset {offset} after shift end',
       roundEvery: 'Round every {unit}',
       minEligibleValue: 'Min {value}',
@@ -1667,17 +2431,114 @@ export default {
       policyLookupFailed: 'Failed to load policy options.',
 
       validation: {
+        required: 'Please select OT option.',
         shiftRequired: 'Shift is required.',
         labelRequired: 'Option label is required.',
+        labelTooLong: 'Option label must not be longer than 100 characters.',
         timingModeRequired: 'Timing mode is required.',
+        timingModeInvalid: 'Timing mode is invalid.',
+        dayTypeInvalid: 'Day type is invalid.',
+        applicableDayTypesRequired:
+          'Please select at least one applicable day type.',
+        applicableDayTypesTooMany:
+          'You can select up to 3 applicable day types only.',
         dayTypesRequired: 'Please select at least one applicable day type.',
         policyRequired: 'Calculation policy is required.',
         requestedMinutesInvalid: 'Requested minutes must be at least 1.',
         sequenceInvalid: 'Sequence must be at least 1.',
-        startAfterShiftEndInvalid: 'Start-after-shift-end minutes cannot be negative.',
+        startAfterShiftEndInvalid:
+          'Start-after-shift-end minutes cannot be negative.',
+        startAfterShiftEndMinutesInvalid:
+          'Start-after-shift-end minutes cannot be negative.',
         fixedStartTimeInvalid: 'Fixed start time must use HH:mm format.',
         fixedEndTimeInvalid: 'Fixed end time must use HH:mm format.',
         fixedTimeSame: 'Fixed start time and end time cannot be the same.',
+        fixedTimeRequired:
+          'Selected fixed-time OT option must have fixed start and end time.',
+        breakMinutesInvalid: 'Break minutes must be a non-negative integer.',
+        breakMinutesTooLarge:
+          'Break minutes cannot be greater than or equal to OT duration.',
+        updatePayloadRequired: 'Please update at least one field.',
+      },
+
+      error: {
+        notFound: 'Shift OT option not found.',
+        duplicate: 'Duplicate active OT option for this shift.',
+        labelExists: 'Active OT option label already exists for this shift.',
+        sequenceExists:
+          'Active OT option sequence already exists for this shift and day type.',
+        dayTypeMismatch:
+          'Selected OT option is not allowed for this OT date.',
+        shiftMismatch:
+          'Selected OT option does not belong to the employee assigned shift.',
+      },
+    },
+
+    request: {
+      validation: {
+        otDateRequired: 'OT date is required.',
+        employeeRequired: 'Please select at least 1 employee.',
+        employeeIdsInvalid: 'Employee list is invalid.',
+        employeeMaxExceeded: 'You can select up to 200 employees only.',
+        employeeOverrideMaxExceeded:
+          'You can set custom time for up to 200 employees only.',
+
+        timingSourceInvalid: 'OT timing source is invalid.',
+        shiftOtOptionRequired: 'Please select OT option.',
+
+        customFixedTimeRequired:
+          'Custom fixed OT start time and end time are required.',
+        customStartTimeRequired: 'Custom start time is required.',
+        customEndTimeRequired: 'Custom end time is required.',
+        customTimeSame: 'Custom start time and end time cannot be the same.',
+
+        breakMinutesInvalid: 'Break minutes must be a non-negative integer.',
+        breakMinutesTooLarge:
+          'Break minutes cannot be greater than or equal to OT duration.',
+
+        reasonTooLong: 'Reason must not be longer than 2000 characters.',
+        remarkTooLong: 'Remark must not be longer than 1000 characters.',
+
+        overrideTimeSame:
+          'Employee custom start time and end time cannot be the same.',
+        overrideEmployeeNotSelected:
+          'Custom time can only be set for selected employees.',
+        overrideEmployeeDuplicate:
+          'Duplicate employee in custom time override list.',
+
+        statusInvalid: 'OT status is invalid.',
+        dayTypeInvalid: 'OT day type is invalid.',
+        approvalActionInvalid: 'Approval action is invalid.',
+        rejectionReasonRequired: 'Please enter rejection reason.',
+        requesterConfirmationActionInvalid:
+          'Requester confirmation action is invalid.',
+      },
+
+      error: {
+        notFound: 'OT request not found.',
+        requesterEmployeeRequired: 'Requester employee profile is required.',
+        approverNotFound: 'No OT approver found in the organization chart.',
+        approverInactive: 'Approver is inactive.',
+        employeeDuplicateDate:
+          'Some employees already have OT request on this date.',
+        todayAttendanceTimeInRequired:
+          'Cannot create OT request for today because some employees do not have attendance time-in.',
+        editNotAllowed: 'This OT request cannot be edited.',
+        confirmNotAllowed:
+          'Requester confirmation is not available for this OT request.',
+        onlyPendingCanDecide: 'Only pending OT requests can be decided.',
+        currentApprovalStepNotFound: 'Current approval step not found.',
+        currentStepNotApprover:
+          'Current workflow step is not an approver step.',
+        notWaitingForYourApproval:
+          'This OT request is not waiting for your approval.',
+        noEmployeesToApprove: 'This OT request has no employee to approve.',
+        noAdjustedEmployeeList:
+          'There is no adjusted employee list to confirm.',
+        employeeShiftRequired:
+          'All selected employees must have an assigned shift.',
+        employeeShiftMismatch:
+          'All selected employees must belong to the same shift.',
       },
     },
   },
@@ -1696,9 +2557,34 @@ export default {
       holiday: 'Holiday',
     },
 
+    salary_file_required: 'Salary Excel file is required.',
+    salary_file_invalid: 'Salary Excel file is empty or invalid.',
+
+    attendance: {
+      no_verification_result:
+        'No attendance verification result found for this employee.',
+    },
+
+    formula: {
+      invalid_id: 'Invalid payment formula ID.',
+      not_found: 'Payment formula not found.',
+      inactive: 'Payment formula is inactive.',
+      code_required: 'Payment formula code is required.',
+      code_already_exists: 'Payment formula code already exists.',
+    },
+
+    exchange_rate: {
+      invalid_id: 'Invalid payment exchange rate ID.',
+      not_found: 'Payment exchange rate not found.',
+      inactive: 'Payment exchange rate is inactive.',
+      currency_mismatch:
+        'Payment formula currency does not match exchange rate source currency.',
+      target_must_be_khr: 'Payment exchange rate target currency must be KHR.',
+    },
+
     formulas: {
       tableTitle: 'Payment Formula List',
-      searchPlaceholder: 'Search code, name, or description',
+      searchPlaceholder: 'Search code, name, currency, or description',
 
       newFormula: 'New Formula',
       createTitle: 'Create Payment Formula',
@@ -1721,13 +2607,13 @@ export default {
 
       codePlaceholder: 'Example: STD_OT_2026',
       namePlaceholder: 'Example: Standard OT Formula 2026',
-      descriptionPlaceholder: 'Optional description...',
+      descriptionPlaceholder: 'Optional formula description',
 
       dialogNote:
         'Formula setup is saved. Salary Excel and generated payment result are not saved.',
-
+      previewTitle: 'Formula Preview',
       hourlyRatePreview:
-        'Hourly Rate',
+        'Hourly Rate = Monthly Salary ÷ Working Days ÷ Hours Per Day',
       otAmountPreview:
         'OT Amount = Payable OT Hours × Hourly Rate × Day Type Multiplier',
 
@@ -1739,13 +2625,101 @@ export default {
 
       validation: {
         codeRequired: 'Code is required.',
+        codeTooLong: 'Code is too long.',
         nameRequired: 'Name is required.',
-        workingDaysRequired: 'Monthly working days must be greater than 0.',
-        hoursPerDayRequired: 'Hours per day must be greater than 0.',
-        workingDayMultiplierInvalid: 'Working day multiplier cannot be negative.',
+        nameTooLong: 'Name is too long.',
+        descriptionTooLong: 'Description is too long.',
+        monthlyWorkingDaysRequired: 'Monthly working days is required.',
+        monthlyWorkingDaysInvalid:
+          'Monthly working days must be greater than 0.',
+        hoursPerDayRequired: 'Hours per day is required.',
+        hoursPerDayInvalid: 'Hours per day must be greater than 0.',
+        workingDayMultiplierInvalid:
+          'Working day multiplier cannot be negative.',
         sundayMultiplierInvalid: 'Sunday multiplier cannot be negative.',
         holidayMultiplierInvalid: 'Holiday multiplier cannot be negative.',
         roundingInvalid: 'Round decimals must be between 0 and 6.',
+        updatePayloadRequired: 'At least one field is required.',
+      },
+
+      error: {
+        invalidId: 'Invalid payment formula ID.',
+        notFound: 'Payment formula not found.',
+        inactive: 'Payment formula is inactive.',
+        codeRequired: 'Payment formula code is required.',
+        codeAlreadyExists: 'Payment formula code already exists.',
+      },
+    },
+
+    exchangeRates: {
+      tableTitle: 'Payment Exchange Rates',
+      newExchangeRate: 'New Rate',
+      createTitle: 'Create Exchange Rate',
+      editTitle: 'Edit Exchange Rate',
+
+      searchPlaceholder: 'Search code, name, currency, or description',
+
+      noData: 'No exchange rates found.',
+      loadFailed: 'Unable to load payment exchange rates.',
+      saveFailed: 'Unable to save payment exchange rate.',
+      createdSuccess: 'Payment exchange rate created successfully.',
+      updatedSuccess: 'Payment exchange rate updated successfully.',
+
+      rateName: 'Rate Name',
+      currencyPair: 'Currency Pair',
+      rate: 'Rate',
+      rounding: 'Rounding',
+      mode: 'Mode',
+      unit: 'Unit',
+      fromCurrency: 'From Currency',
+      toCurrency: 'To Currency',
+      roundingUnit: 'Rounding Unit',
+      roundingMode: 'Rounding Mode',
+      denominations: 'Denominations',
+
+      codePlaceholder: 'Example: KHR_4020',
+      namePlaceholder: 'Example: USD to KHR 4020',
+      descriptionPlaceholder: 'Optional note for this exchange rate',
+
+      dialogNote:
+        'Exchange rates are managed separately from payment formulas. Create any rate you need, then choose it during payment processing.',
+
+      roundingPreviewTitle: 'Rounding behavior',
+      roundRulePreview:
+        'ROUND by 100 means 101–149 becomes 100 and 150–199 becomes 200.',
+      cashBreakdownPreview:
+        'Denominations are used to calculate cash paper breakdown from large to small.',
+
+      roundingModes: {
+        round: 'Round nearest',
+        ceil: 'Round up',
+        floor: 'Round down',
+        none: 'No rounding',
+      },
+
+      validation: {
+        codeRequired: 'Code is required.',
+        codeTooLong: 'Code must not be longer than 50 characters.',
+        nameRequired: 'Name is required.',
+        nameTooLong: 'Name must not be longer than 150 characters.',
+        descriptionTooLong:
+          'Description must not be longer than 1000 characters.',
+        fromCurrencyRequired: 'From currency is required.',
+        toCurrencyRequired: 'To currency is required.',
+        rateRequired: 'Rate is required.',
+        ratePositive: 'Rate must be greater than 0.',
+        roundingUnitPositive: 'Rounding unit must be greater than 0.',
+        roundingModeInvalid: 'Rounding mode is invalid.',
+        denominationsRequired: 'At least one denomination is required.',
+        updatePayloadRequired: 'No update data provided.',
+      },
+
+      error: {
+        invalidId: 'Invalid payment exchange rate ID.',
+        notFound: 'Payment exchange rate not found.',
+        inactive: 'Payment exchange rate is inactive.',
+        codeRequired: 'Code is required.',
+        codeExists: 'Exchange rate code already exists.',
       },
     },
 
@@ -1771,6 +2745,7 @@ export default {
         template: 'Template',
         preview: 'Preview',
         generate: 'Generate',
+        loadMore: 'Load More',
       },
 
       card: {
@@ -1813,36 +2788,44 @@ export default {
       },
 
       table: {
-        setup: 'Payment setup',
+        setup: 'Payment Setup',
         detail: 'Payment Detail',
         missingSalary: 'Missing Salary',
         warnings: 'Warnings',
       },
 
       column: {
+        type: 'Type',
+        row: 'Row',
+
         requestNo: 'Request No',
         otOption: 'OT Option',
         otTime: 'OT Time',
         paymentDayType: 'Day Type',
+
         employeeId: 'Employee ID',
         employeeName: 'Employee Name',
+
         requested: 'Requested',
         break: 'Break',
         payable: 'Payable',
+        otHours: 'OT Hours',
+
         salary: 'Salary',
         hourlyRate: 'Hourly Rate',
         multiplier: 'Multiplier',
         amount: 'Amount',
         amountUsd: 'Amount USD',
+
         exchangeRate: 'Rate',
         rawKhr: 'Raw KHR',
         roundedKhr: 'Rounded KHR',
         roundDiffKhr: 'Round Diff',
+
         salaryFound: 'Salary Found',
         currency: 'Currency',
         decision: 'Decision',
         reason: 'Reason',
-        otHours: 'OT Hours',
       },
 
       label: {
@@ -1869,11 +2852,17 @@ export default {
         exchangeRateRequired: 'Exchange rate is required.',
         salaryRequired: 'Salary Excel file is required.',
         invalidDateRange: 'From date cannot be after To date.',
+        dateYmd: 'Date must be in YYYY-MM-DD format.',
+        invalidFormulaId: 'Invalid payment formula ID.',
+        invalidExchangeRateId: 'Invalid payment exchange rate ID.',
+        toDateAfterFrom:
+          'To date must be greater than or equal to from date.',
       },
 
       message: {
         loadFormulasFailed: 'Failed to load payment formulas.',
         loadExchangeRatesFailed: 'Failed to load payment exchange rates.',
+
         calendarFailedTitle: 'Calendar failed',
         calendarFailed: 'Failed to load internal holiday calendar.',
 
@@ -1893,54 +2882,37 @@ export default {
         previewFailed: 'Failed to calculate payment preview.',
 
         previewRequiredTitle: 'Preview required',
-        previewRequired: 'Please preview the payment before generating Excel.',
+        previewRequired:
+          'Please preview the payment before generating Excel.',
 
         generatedTitle: 'Generated',
         generated: 'Payment Excel generated successfully.',
         generateFailedTitle: 'Generate failed',
         generateFailed: 'Failed to generate payment Excel.',
       },
-    },
-    exchangeRates: {
-      tableTitle: 'Payment exchange rates',
-      newExchangeRate: 'New rate',
-      createTitle: 'Create exchange rate',
-      editTitle: 'Edit exchange rate',
-      searchPlaceholder: 'Search code, name, currency, or description...',
-      noData: 'No exchange rates found.',
-      loadFailed: 'Unable to load payment exchange rates.',
-      saveFailed: 'Unable to save payment exchange rate.',
-      createdSuccess: 'Payment exchange rate created successfully.',
-      updatedSuccess: 'Payment exchange rate updated successfully.',
 
-      rateName: 'Rate name',
-      currencyPair: 'Currency pair',
-      rate: 'Rate',
-      rounding: 'Rounding',
-      mode: 'Mode',
-      unit: 'Unit',
-      fromCurrency: 'From currency',
-      toCurrency: 'To currency',
-      roundingUnit: 'Rounding unit',
-      roundingMode: 'Rounding mode',
-      denominations: 'Denominations',
+      salary: {
+        fileRequired: 'Salary Excel file is required.',
+        fileInvalid: 'Salary Excel file is empty or invalid.',
+        unableToRead: 'Unable to read salary Excel file.',
+        noSheet: 'Salary Excel has no sheet.',
+        missingEmployeeId: 'Missing Employee ID.',
+        invalidSalary: 'Invalid salary.',
+        duplicateEmployeeId: 'Duplicate employee ID in salary Excel.',
+        salaryNotFound: 'Salary not found in uploaded salary Excel.',
+      },
 
-      codePlaceholder: 'Example: KHR_4020',
-      namePlaceholder: 'Example: USD to KHR 4020',
-      descriptionPlaceholder: 'Optional note for this exchange rate',
-      dialogNote: 'Exchange rates are managed separately from payment formulas. Create any rate you need, then choose it during payment processing.',
-
-      roundingPreviewTitle: 'Rounding behavior',
-      roundRulePreview: 'ROUND by 100 means 101–149 becomes 100 and 150–199 becomes 200.',
-      cashBreakdownPreview: 'Denominations are used to calculate cash paper breakdown from large to small.',
-
-      roundingModes: {
-        round: 'Round nearest',
-        ceil: 'Round up',
-        floor: 'Round down',
-        none: 'No rounding',
+      issue: {
+        invalidSalaryRow: 'Invalid Salary Row',
+        duplicateSalaryRow: 'Duplicate Salary Row',
+        missingSalary: 'Missing Salary',
+        noPayableMinutes: 'No Attendance/Policy Payable Minutes',
+        attendanceVerificationNotSaved: 'Attendance Verification Not Saved',
+        noAttendancePolicyPayable:
+          'No attendance/policy payable minutes found.',
+        payableWarning:
+          'Payable minutes were calculated, but verification result is not exact MATCH.',
       },
     },
   },
-  
 }

@@ -822,7 +822,6 @@ onBeforeUnmount(() => {
                 class="ot-row-actions"
               >
                 <Button
-                  :label="t('common.edit')"
                   icon="pi pi-pencil"
                   size="small"
                   outlined
@@ -830,7 +829,6 @@ onBeforeUnmount(() => {
                 />
 
                 <Button
-                  :label="t('auth.account.reset')"
                   icon="pi pi-key"
                   size="small"
                   severity="danger"
