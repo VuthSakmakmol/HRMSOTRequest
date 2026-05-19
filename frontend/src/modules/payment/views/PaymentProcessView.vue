@@ -128,27 +128,27 @@ const warningRows = computed(() => {
 
   return [
     ...asArray(invalidRows).map((row) => ({
-      type: 'Invalid Salary Row',
+      type: t('payment.process.warning.invalidSalaryRow'),
       rowNo: row.rowNo || row.excelRowNo || '',
       employeeNo: row.employeeNo || '',
       employeeName: row.name || row.employeeName || '',
-      reason: row.reason || 'Invalid salary row',
+      reason: row.reason || t('payment.process.warning.invalidSalaryRow'),
     })),
 
     ...asArray(duplicateRows).map((row) => ({
-      type: 'Duplicate Salary Row',
+      type: t('payment.process.warning.duplicateSalaryRow'),
       rowNo: row.rowNo || row.excelRowNo || '',
       employeeNo: row.employeeNo || '',
       employeeName: row.name || row.employeeName || '',
-      reason: row.reason || 'Duplicate salary row',
+      reason: row.reason || t('payment.process.warning.duplicateSalaryRow'),
     })),
 
     ...asArray(missingPayableRows).map((row) => ({
-      type: 'No Attendance/Policy Payable Minutes',
+      type: t('payment.process.warning.noPayableMinutes'),
       rowNo: '',
       employeeNo: row.employeeNo || '',
       employeeName: row.employeeName || '',
-      reason: row.reason || 'No attendance/policy payable minutes found',
+      reason: row.reason || t('payment.process.warning.noPayableMinutes'),
     })),
   ]
 })
@@ -524,16 +524,6 @@ function getDisplayDayType(ymd) {
   return date.getDay() === 0 ? 'SUNDAY' : 'WORKING_DAY'
 }
 
-function dayTypeSeverity(value) {
-  const normalized = upper(value)
-
-  if (normalized === 'HOLIDAY') return 'danger'
-  if (normalized === 'SUNDAY') return 'warning'
-  if (normalized === 'WORKING_DAY') return 'success'
-
-  return 'secondary'
-}
-
 function dayTypeLabel(value) {
   const normalized = upper(value)
 
@@ -546,12 +536,22 @@ function dayTypeLabel(value) {
   return labels[normalized] || normalized || '—'
 }
 
-function salaryStatusSeverity(value) {
-  return value ? 'success' : 'danger'
+function dayTypeTagClass(value) {
+  const normalized = upper(value)
+
+  if (normalized === 'HOLIDAY') return 'payment-day-holiday'
+  if (normalized === 'SUNDAY') return 'payment-day-sunday'
+  if (normalized === 'WORKING_DAY') return 'payment-day-working'
+
+  return 'payment-tag-muted'
 }
 
 function salaryStatusLabel(value) {
-  return value ? t('common.yes') : 'No'
+  return value ? t('common.yes') : t('common.no')
+}
+
+function salaryStatusTagClass(value) {
+  return value ? 'payment-status-active' : 'payment-status-inactive'
 }
 
 function loadMorePaymentRows() {
@@ -888,7 +888,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="ot-page-shell">
+  <div class="ot-page-shell payment-process-page">
     <section class="ot-filter-bar payment-process-filter-bar">
       <div class="ot-field">
         <HolidayDatePicker
@@ -964,7 +964,7 @@ onBeforeUnmount(() => {
           severity="secondary"
           outlined
           size="small"
-          class="w-full justify-center"
+          class="w-full justify-center payment-action-button"
           @click="chooseFile"
         />
       </div>
@@ -976,6 +976,7 @@ onBeforeUnmount(() => {
           severity="secondary"
           outlined
           size="small"
+          class="payment-action-button"
           :loading="downloadingTemplate"
           @click="handleDownloadTemplate"
         />
@@ -986,6 +987,7 @@ onBeforeUnmount(() => {
           severity="secondary"
           outlined
           size="small"
+          class="payment-action-button"
           :disabled="previewing || generating"
           @click="clearForm"
         />
@@ -995,6 +997,7 @@ onBeforeUnmount(() => {
           icon="pi pi-eye"
           severity="info"
           size="small"
+          class="payment-action-button"
           :loading="previewing"
           :disabled="!canPreview || generating"
           @click="handlePreview"
@@ -1004,6 +1007,7 @@ onBeforeUnmount(() => {
           :label="t('payment.process.action.generate')"
           icon="pi pi-file-excel"
           size="small"
+          class="payment-action-button"
           :loading="generating"
           :disabled="!canGenerate || previewing"
           @click="handleGenerate"
@@ -1022,24 +1026,24 @@ onBeforeUnmount(() => {
         <div class="ot-table-actions">
           <Tag
             :value="loadingCalendar ? t('payment.process.calendar.loading') : t('payment.process.calendar.holidayCount', { count: periodHolidayRows.length })"
-            :severity="loadingCalendar ? 'info' : 'secondary'"
-            class="payment-tag"
+            class="payment-rgb-tag"
+            :class="loadingCalendar ? 'payment-tag-info' : 'payment-tag-muted'"
           />
         </div>
       </div>
 
-      <div class="grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-5">
+      <div class="payment-summary-grid payment-calendar-grid">
         <div class="payment-summary-card card-blue">
           <div class="summary-icon">
             <i class="pi pi-calendar" />
           </div>
 
-          <div class="min-w-0">
+          <div class="summary-content">
             <div class="summary-label">
               {{ t('common.fromDate') }}
             </div>
 
-            <div class="summary-value truncate">
+            <div class="summary-value">
               {{ periodStartYMD || '—' }}
             </div>
           </div>
@@ -1050,12 +1054,12 @@ onBeforeUnmount(() => {
             <i class="pi pi-calendar" />
           </div>
 
-          <div class="min-w-0">
+          <div class="summary-content">
             <div class="summary-label">
               {{ t('common.toDate') }}
             </div>
 
-            <div class="summary-value truncate">
+            <div class="summary-value">
               {{ periodEndYMD || '—' }}
             </div>
           </div>
@@ -1066,7 +1070,7 @@ onBeforeUnmount(() => {
             <i class="pi pi-briefcase" />
           </div>
 
-          <div class="min-w-0">
+          <div class="summary-content">
             <div class="summary-label">
               {{ t('payment.process.calendar.workingDays') }}
             </div>
@@ -1082,7 +1086,7 @@ onBeforeUnmount(() => {
             <i class="pi pi-sun" />
           </div>
 
-          <div class="min-w-0">
+          <div class="summary-content">
             <div class="summary-label">
               {{ t('payment.dayTypes.sunday') }}
             </div>
@@ -1098,7 +1102,7 @@ onBeforeUnmount(() => {
             <i class="pi pi-flag" />
           </div>
 
-          <div class="min-w-0">
+          <div class="summary-content">
             <div class="summary-label">
               {{ t('payment.dayTypes.holiday') }}
             </div>
@@ -1120,19 +1124,19 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <div class="grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-3">
+      <div class="payment-summary-grid payment-setup-grid">
         <div class="payment-summary-card card-purple">
           <div class="summary-icon">
             <i class="pi pi-calculator" />
           </div>
 
-          <div class="min-w-0 flex-1">
+          <div class="summary-content">
             <div class="summary-label">
               {{ t('payment.process.field.paymentFormula') }}
             </div>
 
             <div
-              class="summary-value truncate"
+              class="summary-value"
               :title="selectedFormula?.label || t('payment.process.empty.noFormula')"
             >
               {{ selectedFormula?.label || t('payment.process.empty.noFormula') }}
@@ -1145,13 +1149,13 @@ onBeforeUnmount(() => {
             <i class="pi pi-money-bill" />
           </div>
 
-          <div class="min-w-0 flex-1">
+          <div class="summary-content">
             <div class="summary-label">
               {{ t('payment.process.field.exchangeRate') }}
             </div>
 
             <div
-              class="summary-value truncate"
+              class="summary-value"
               :title="selectedExchangeRate?.label || t('payment.process.field.noExchangeRate')"
             >
               {{ selectedExchangeRate?.label || t('payment.process.field.noExchangeRate') }}
@@ -1164,13 +1168,13 @@ onBeforeUnmount(() => {
             <i class="pi pi-file-excel" />
           </div>
 
-          <div class="min-w-0 flex-1">
+          <div class="summary-content">
             <div class="summary-label">
               {{ t('payment.process.field.salaryExcel') }}
             </div>
 
             <div
-              class="summary-value truncate"
+              class="summary-value"
               :title="fileName || t('payment.process.field.noFile')"
             >
               {{ fileName || t('payment.process.field.noFile') }}
@@ -1184,7 +1188,7 @@ onBeforeUnmount(() => {
       v-if="previewResult"
       class="space-y-4"
     >
-      <section class="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+      <section class="payment-summary-grid payment-preview-summary-grid">
         <div
           v-for="card in summaryCards"
           :key="card.label"
@@ -1195,12 +1199,12 @@ onBeforeUnmount(() => {
             <i :class="card.icon" />
           </div>
 
-          <div class="min-w-0">
+          <div class="summary-content">
             <div class="summary-label">
               {{ card.label }}
             </div>
 
-            <div class="summary-value truncate">
+            <div class="summary-value">
               {{ card.value }}
             </div>
           </div>
@@ -1248,48 +1252,62 @@ onBeforeUnmount(() => {
 
             <Column
               :header="t('common.date')"
-              style="min-width: 8rem"
+              style="width: 8rem; min-width: 8rem"
             >
               <template #body="{ data }">
-                {{ data.otDateDisplay || formatDateDMY(data.otDate) }}
+                <span class="payment-meta-text">
+                  {{ data.otDateDisplay || formatDateDMY(data.otDate) }}
+                </span>
               </template>
             </Column>
 
             <Column
               field="requestNo"
               :header="t('payment.process.column.requestNo')"
-              style="min-width: 11rem"
-            />
+              style="width: 11rem; min-width: 11rem"
+            >
+              <template #body="{ data }">
+                <span class="payment-code-text">
+                  {{ data.requestNo || '—' }}
+                </span>
+              </template>
+            </Column>
 
             <Column
               field="shiftOtOptionLabel"
               :header="t('payment.process.column.otOption')"
-              style="min-width: 15rem"
-            />
+              style="width: 15rem; min-width: 15rem"
+            >
+              <template #body="{ data }">
+                <span
+                  class="payment-line-text"
+                  :title="data.shiftOtOptionLabel || '—'"
+                >
+                  {{ data.shiftOtOptionLabel || '—' }}
+                </span>
+              </template>
+            </Column>
 
             <Column
               :header="t('payment.process.column.otTime')"
-              style="min-width: 10rem"
+              style="width: 10rem; min-width: 10rem"
             >
               <template #body="{ data }">
-                {{ formatRequestTime(data) }}
+                <span class="payment-meta-text">
+                  {{ formatRequestTime(data) }}
+                </span>
               </template>
             </Column>
 
             <Column
               :header="t('payment.process.column.paymentDayType')"
-              style="min-width: 11rem"
+              style="width: 11rem; min-width: 11rem"
             >
               <template #body="{ data }">
                 <Tag
                   :value="dayTypeLabel(data.dayType)"
-                  :severity="dayTypeSeverity(data.dayType)"
-                  class="payment-tag"
-                  :class="{
-                    'payment-day-working': data.dayType === 'WORKING_DAY',
-                    'payment-day-sunday': data.dayType === 'SUNDAY',
-                    'payment-day-holiday': data.dayType === 'HOLIDAY',
-                  }"
+                  class="payment-rgb-tag"
+                  :class="dayTypeTagClass(data.dayType)"
                 />
               </template>
             </Column>
@@ -1297,138 +1315,208 @@ onBeforeUnmount(() => {
             <Column
               field="employeeNo"
               :header="t('payment.process.column.employeeId')"
-              style="min-width: 8rem"
-            />
+              style="width: 8rem; min-width: 8rem"
+            >
+              <template #body="{ data }">
+                <span class="payment-code-text">
+                  {{ data.employeeNo || '—' }}
+                </span>
+              </template>
+            </Column>
 
             <Column
               field="employeeName"
               :header="t('payment.process.column.employeeName')"
-              style="min-width: 14rem"
-            />
+              style="width: 14rem; min-width: 14rem"
+            >
+              <template #body="{ data }">
+                <span
+                  class="payment-name-text"
+                  :title="data.employeeName || '—'"
+                >
+                  {{ data.employeeName || '—' }}
+                </span>
+              </template>
+            </Column>
 
             <Column
               field="departmentName"
               :header="t('nav.departments')"
-              style="min-width: 12rem"
-            />
+              style="width: 12rem; min-width: 12rem"
+            >
+              <template #body="{ data }">
+                <span
+                  class="payment-line-text"
+                  :title="data.departmentName || '—'"
+                >
+                  {{ data.departmentName || '—' }}
+                </span>
+              </template>
+            </Column>
 
             <Column
               field="positionName"
               :header="t('nav.positions')"
-              style="min-width: 12rem"
-            />
+              style="width: 12rem; min-width: 12rem"
+            >
+              <template #body="{ data }">
+                <span
+                  class="payment-line-text"
+                  :title="data.positionName || '—'"
+                >
+                  {{ data.positionName || '—' }}
+                </span>
+              </template>
+            </Column>
 
             <Column
               field="lineName"
               :header="t('nav.lines')"
-              style="min-width: 10rem"
-            />
+              style="width: 10rem; min-width: 10rem"
+            >
+              <template #body="{ data }">
+                <span
+                  class="payment-line-text"
+                  :title="data.lineName || '—'"
+                >
+                  {{ data.lineName || '—' }}
+                </span>
+              </template>
+            </Column>
 
             <Column
               :header="t('payment.process.column.requested')"
-              style="min-width: 9rem"
+              style="width: 9rem; min-width: 9rem"
             >
               <template #body="{ data }">
-                {{ formatMinutesLabel(data.requestedMinutes) }}
+                <Tag
+                  :value="formatMinutesLabel(data.requestedMinutes)"
+                  class="payment-rgb-tag payment-tag-info"
+                />
               </template>
             </Column>
 
             <Column
               :header="t('payment.process.column.break')"
-              style="min-width: 8rem"
+              style="width: 8rem; min-width: 8rem"
             >
               <template #body="{ data }">
-                {{ formatMinutesLabel(data.breakMinutes) }}
+                <span class="payment-meta-text">
+                  {{ formatMinutesLabel(data.breakMinutes) }}
+                </span>
               </template>
             </Column>
 
             <Column
               :header="t('payment.process.column.payable')"
-              style="min-width: 9rem"
+              style="width: 9rem; min-width: 9rem"
             >
               <template #body="{ data }">
-                {{ formatMinutesLabel(data.payableMinutes) }}
+                <Tag
+                  :value="formatMinutesLabel(data.payableMinutes)"
+                  class="payment-rgb-tag payment-status-active"
+                />
               </template>
             </Column>
 
             <Column
               :header="t('payment.process.column.otHours')"
-              style="min-width: 9rem"
+              style="width: 9rem; min-width: 9rem"
             >
               <template #body="{ data }">
-                {{ formatNumber(data.payableHours || actualOtTimeMinutes(data) / 60, 4) }}
+                <span class="payment-money-text">
+                  {{ formatNumber(data.payableHours || actualOtTimeMinutes(data) / 60, 4) }}
+                </span>
               </template>
             </Column>
 
             <Column
               :header="t('payment.process.column.salary')"
-              style="min-width: 10rem"
+              style="width: 10rem; min-width: 10rem"
             >
               <template #body="{ data }">
-                {{ formatMoney(data.monthlySalary, data.currency || 'USD') }}
+                <span class="payment-money-text">
+                  {{ formatMoney(data.monthlySalary, data.currency || 'USD') }}
+                </span>
               </template>
             </Column>
 
             <Column
               :header="t('payment.process.column.hourlyRate')"
-              style="min-width: 10rem"
+              style="width: 10rem; min-width: 10rem"
             >
               <template #body="{ data }">
-                {{ formatMoney(data.hourlyRate, data.currency || 'USD') }}
+                <span class="payment-money-text">
+                  {{ formatMoney(data.hourlyRate, data.currency || 'USD') }}
+                </span>
               </template>
             </Column>
 
             <Column
               :header="t('payment.process.column.multiplier')"
-              style="min-width: 8rem"
+              style="width: 8rem; min-width: 8rem"
             >
               <template #body="{ data }">
-                {{ formatNumber(data.multiplier, 4) }}x
+                <Tag
+                  :value="`${formatNumber(data.multiplier, 4)}x`"
+                  class="payment-rgb-tag payment-tag-purple"
+                />
               </template>
             </Column>
 
             <Column
               :header="t('payment.process.column.amountUsd')"
-              style="min-width: 10rem"
+              style="width: 10rem; min-width: 10rem"
             >
               <template #body="{ data }">
-                {{ formatMoney(data.amountUsd ?? data.amount, data.currency || 'USD') }}
+                <span class="payment-money-text">
+                  {{ formatMoney(data.amountUsd ?? data.amount, data.currency || 'USD') }}
+                </span>
               </template>
             </Column>
 
             <Column
               :header="t('payment.process.column.exchangeRate')"
-              style="min-width: 8rem"
+              style="width: 8rem; min-width: 8rem"
             >
               <template #body="{ data }">
-                {{ formatNumber(data.exchangeRate, 6) }}
+                <span class="payment-money-text">
+                  {{ formatNumber(data.exchangeRate, 6) }}
+                </span>
               </template>
             </Column>
 
             <Column
               :header="t('payment.process.column.rawKhr')"
-              style="min-width: 10rem"
+              style="width: 10rem; min-width: 10rem"
             >
               <template #body="{ data }">
-                {{ formatNumber(data.amountKhrRaw, 0) }}
+                <span class="payment-khr-text">
+                  {{ formatNumber(data.amountKhrRaw, 0) }}
+                </span>
               </template>
             </Column>
 
             <Column
               :header="t('payment.process.column.roundedKhr')"
-              style="min-width: 11rem"
+              style="width: 11rem; min-width: 11rem"
             >
               <template #body="{ data }">
-                {{ formatNumber(data.amountKhrRounded, 0) }}
+                <Tag
+                  :value="formatNumber(data.amountKhrRounded, 0)"
+                  class="payment-rgb-tag payment-status-active"
+                />
               </template>
             </Column>
 
             <Column
               :header="t('payment.process.column.roundDiffKhr')"
-              style="min-width: 10rem"
+              style="width: 10rem; min-width: 10rem"
             >
               <template #body="{ data }">
-                {{ formatNumber(data.khrRoundDifference, 0) }}
+                <span class="payment-khr-text">
+                  {{ formatNumber(data.khrRoundDifference, 0) }}
+                </span>
               </template>
             </Column>
 
@@ -1436,22 +1524,24 @@ onBeforeUnmount(() => {
               v-for="denomination in denominationColumns"
               :key="denomination"
               :header="formatNumber(denomination, 0)"
-              style="min-width: 7rem"
+              style="width: 7rem; min-width: 7rem"
             >
               <template #body="{ data }">
-                {{ khrPaper(data, denomination) }}
+                <span class="payment-paper-text">
+                  {{ khrPaper(data, denomination) }}
+                </span>
               </template>
             </Column>
 
             <Column
               :header="t('payment.process.column.salaryFound')"
-              style="min-width: 9rem"
+              style="width: 9rem; min-width: 9rem"
             >
               <template #body="{ data }">
                 <Tag
                   :value="salaryStatusLabel(data.hasSalary)"
-                  :severity="salaryStatusSeverity(data.hasSalary)"
-                  class="payment-tag"
+                  class="payment-rgb-tag"
+                  :class="salaryStatusTagClass(data.hasSalary)"
                 />
               </template>
             </Column>
@@ -1472,6 +1562,7 @@ onBeforeUnmount(() => {
             severity="secondary"
             outlined
             size="small"
+            class="payment-action-button"
             @click="loadMorePaymentRows"
           />
         </div>
@@ -1510,38 +1601,77 @@ onBeforeUnmount(() => {
               <Column
                 field="employeeNo"
                 :header="t('payment.process.column.employeeId')"
-                style="min-width: 8rem"
-              />
+                style="width: 8rem; min-width: 8rem"
+              >
+                <template #body="{ data }">
+                  <span class="payment-code-text">
+                    {{ data.employeeNo || '—' }}
+                  </span>
+                </template>
+              </Column>
 
               <Column
                 field="employeeName"
                 :header="t('payment.process.column.employeeName')"
-                style="min-width: 14rem"
-              />
+                style="width: 14rem; min-width: 14rem"
+              >
+                <template #body="{ data }">
+                  <span class="payment-name-text">
+                    {{ data.employeeName || '—' }}
+                  </span>
+                </template>
+              </Column>
 
               <Column
                 field="departmentName"
                 :header="t('nav.departments')"
-                style="min-width: 12rem"
-              />
+                style="width: 12rem; min-width: 12rem"
+              >
+                <template #body="{ data }">
+                  <span class="payment-line-text">
+                    {{ data.departmentName || '—' }}
+                  </span>
+                </template>
+              </Column>
 
               <Column
                 field="positionName"
                 :header="t('nav.positions')"
-                style="min-width: 12rem"
-              />
+                style="width: 12rem; min-width: 12rem"
+              >
+                <template #body="{ data }">
+                  <span class="payment-line-text">
+                    {{ data.positionName || '—' }}
+                  </span>
+                </template>
+              </Column>
 
               <Column
                 field="lineName"
                 :header="t('nav.lines')"
-                style="min-width: 10rem"
-              />
+                style="width: 10rem; min-width: 10rem"
+              >
+                <template #body="{ data }">
+                  <span class="payment-line-text">
+                    {{ data.lineName || '—' }}
+                  </span>
+                </template>
+              </Column>
 
               <Column
                 field="reason"
                 :header="t('payment.process.column.reason')"
-                style="min-width: 18rem"
-              />
+                style="width: 18rem; min-width: 18rem"
+              >
+                <template #body="{ data }">
+                  <span
+                    class="payment-reason-text"
+                    :title="data.reason || '—'"
+                  >
+                    {{ data.reason || '—' }}
+                  </span>
+                </template>
+              </Column>
             </DataTable>
           </div>
         </div>
@@ -1577,33 +1707,67 @@ onBeforeUnmount(() => {
 
               <Column
                 field="type"
-                header="Type"
-                style="min-width: 14rem"
-              />
+                :header="t('payment.process.column.type')"
+                style="width: 14rem; min-width: 14rem"
+              >
+                <template #body="{ data }">
+                  <Tag
+                    :value="data.type || '—'"
+                    class="payment-rgb-tag payment-tag-warning"
+                  />
+                </template>
+              </Column>
 
               <Column
                 field="rowNo"
-                header="Row"
-                style="min-width: 7rem"
-              />
+                :header="t('payment.process.column.row')"
+                style="width: 7rem; min-width: 7rem"
+              >
+                <template #body="{ data }">
+                  <span class="payment-meta-text">
+                    {{ data.rowNo || '—' }}
+                  </span>
+                </template>
+              </Column>
 
               <Column
                 field="employeeNo"
                 :header="t('payment.process.column.employeeId')"
-                style="min-width: 8rem"
-              />
+                style="width: 8rem; min-width: 8rem"
+              >
+                <template #body="{ data }">
+                  <span class="payment-code-text">
+                    {{ data.employeeNo || '—' }}
+                  </span>
+                </template>
+              </Column>
 
               <Column
                 field="employeeName"
                 :header="t('payment.process.column.employeeName')"
-                style="min-width: 14rem"
-              />
+                style="width: 14rem; min-width: 14rem"
+              >
+                <template #body="{ data }">
+                  <span class="payment-name-text">
+                    {{ data.employeeName || '—' }}
+                  </span>
+                </template>
+              </Column>
 
               <Column
                 field="reason"
                 :header="t('payment.process.column.reason')"
-                style="min-width: 18rem"
-              />
+                style="width: 18rem; min-width: 18rem"
+              >
+                <template #body="{ data }">
+                  <span
+                    class="payment-reason-text"
+                    :title="data.reason || '—'"
+                  >
+                    {{ data.reason || '—' }}
+                  </span>
+                </template>
+              </Column>
             </DataTable>
           </div>
         </div>
@@ -1632,6 +1796,22 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.payment-process-page {
+  --payment-code-rgb: 37 99 235;
+  --payment-name-rgb: 15 23 42;
+  --payment-meta-rgb: 71 85 105;
+  --payment-active-rgb: 34 197 94;
+  --payment-inactive-rgb: 239 68 68;
+  --payment-info-rgb: 59 130 246;
+  --payment-warning-rgb: 245 158 11;
+  --payment-muted-rgb: 100 116 139;
+  --payment-purple-rgb: 168 85 247;
+}
+
+/* =========================
+   Filter bar
+   ========================= */
+
 .payment-process-filter-bar {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
@@ -1651,6 +1831,357 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
 }
 
+/* =========================
+   Summary cards
+   ========================= */
+
+.payment-summary-grid {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.75rem;
+}
+
+.payment-calendar-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+}
+
+.payment-setup-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+}
+
+.payment-preview-summary-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+}
+
+.payment-summary-card {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.65rem;
+  border: 1px solid var(--ot-border);
+  border-radius: 0.95rem;
+  background: var(--ot-surface);
+  padding: 0.78rem;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
+}
+
+.summary-icon {
+  display: flex;
+  height: 2rem;
+  width: 2rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.75rem;
+  font-size: 0.85rem;
+}
+
+.summary-content {
+  min-width: 0;
+  flex: 1;
+}
+
+.summary-label {
+  overflow: hidden;
+  color: var(--ot-text-muted);
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.summary-value {
+  margin-top: 0.15rem;
+  overflow: hidden;
+  color: var(--ot-text);
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-blue .summary-icon {
+  background: rgb(var(--payment-info-rgb) / 0.13);
+  color: rgb(var(--payment-info-rgb));
+}
+
+.card-green .summary-icon {
+  background: rgb(var(--payment-active-rgb) / 0.13);
+  color: rgb(var(--payment-active-rgb));
+}
+
+.card-purple .summary-icon {
+  background: rgb(var(--payment-purple-rgb) / 0.13);
+  color: rgb(var(--payment-purple-rgb));
+}
+
+.card-orange .summary-icon {
+  background: rgb(var(--payment-warning-rgb) / 0.13);
+  color: rgb(var(--payment-warning-rgb));
+}
+
+.card-red .summary-icon {
+  background: rgb(var(--payment-inactive-rgb) / 0.13);
+  color: rgb(var(--payment-inactive-rgb));
+}
+
+/* =========================
+   Text helpers
+   ========================= */
+
+.payment-code-text,
+.payment-name-text,
+.payment-meta-text,
+.payment-line-text,
+.payment-money-text,
+.payment-khr-text,
+.payment-paper-text,
+.payment-reason-text {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.payment-code-text {
+  color: rgb(var(--payment-code-rgb));
+  font-size: 0.78rem;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+
+.payment-name-text {
+  color: rgb(var(--payment-name-rgb));
+  font-size: 0.8rem;
+  font-weight: 650;
+}
+
+.payment-meta-text,
+.payment-line-text,
+.payment-reason-text {
+  color: rgb(var(--payment-meta-rgb));
+  font-size: 0.76rem;
+  font-weight: 500;
+}
+
+.payment-line-text,
+.payment-reason-text {
+  max-width: 17rem;
+}
+
+.payment-money-text,
+.payment-khr-text,
+.payment-paper-text {
+  color: rgb(var(--payment-name-rgb));
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.payment-khr-text {
+  color: rgb(var(--payment-purple-rgb));
+}
+
+.payment-paper-text {
+  min-width: 1.8rem;
+  color: rgb(var(--payment-info-rgb));
+}
+
+/* =========================
+   RGB tags
+   ========================= */
+
+.payment-rgb-tag {
+  --payment-tag-rgb: var(--payment-muted-rgb);
+  display: inline-flex !important;
+  min-height: 1.42rem;
+  max-width: 100%;
+  align-items: center !important;
+  justify-content: center !important;
+  border: 1px solid rgb(var(--payment-tag-rgb) / 0.28);
+  border-radius: 999px;
+  background: rgb(var(--payment-tag-rgb) / 0.11);
+  color: rgb(var(--payment-tag-rgb) / 1);
+  padding: 0.12rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 750;
+  line-height: 1;
+  text-align: center !important;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.payment-status-active,
+.payment-day-working {
+  --payment-tag-rgb: var(--payment-active-rgb);
+}
+
+.payment-status-inactive,
+.payment-day-holiday {
+  --payment-tag-rgb: var(--payment-inactive-rgb);
+}
+
+.payment-day-sunday,
+.payment-tag-warning {
+  --payment-tag-rgb: var(--payment-warning-rgb);
+}
+
+.payment-tag-info {
+  --payment-tag-rgb: var(--payment-info-rgb);
+}
+
+.payment-tag-purple {
+  --payment-tag-rgb: var(--payment-purple-rgb);
+}
+
+.payment-tag-muted {
+  --payment-tag-rgb: var(--payment-muted-rgb);
+}
+
+/* =========================
+   Tables
+   ========================= */
+
+.payment-lazy-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border-top: 1px solid var(--ot-border);
+  padding: 0.65rem 0.75rem;
+}
+
+:deep(.payment-preview-table.p-datatable .p-datatable-table) {
+  width: max-content !important;
+  min-width: 100% !important;
+  table-layout: auto !important;
+}
+
+:deep(.payment-preview-table.p-datatable .p-datatable-thead > tr > th),
+:deep(.payment-preview-table.p-datatable .p-datatable-tbody > tr > td) {
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+:deep(.payment-preview-table.p-datatable .p-datatable-thead > tr > th) {
+  width: auto !important;
+  min-width: auto !important;
+  max-width: none !important;
+  padding: 0.58rem 0.68rem !important;
+  white-space: nowrap !important;
+  font-size: 0.78rem !important;
+  font-weight: 650 !important;
+}
+
+:deep(.payment-preview-table.p-datatable .p-datatable-tbody > tr > td) {
+  width: auto !important;
+  min-width: auto !important;
+  max-width: none !important;
+  height: 58px !important;
+  padding: 0.42rem 0.62rem !important;
+  white-space: nowrap !important;
+  font-size: 0.8rem !important;
+}
+
+:deep(.payment-preview-table.p-datatable .p-datatable-column-header-content),
+:deep(.payment-preview-table.p-datatable .p-column-header-content) {
+  display: flex !important;
+  width: 100% !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 0.25rem !important;
+  text-align: center !important;
+}
+
+:deep(.payment-preview-table.p-datatable .p-datatable-column-title),
+:deep(.payment-preview-table.p-datatable .p-column-title) {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+}
+
+:deep(.payment-preview-table.p-datatable .p-datatable-tbody > tr > td > *) {
+  margin-inline: auto !important;
+}
+
+:deep(.payment-preview-table.p-datatable .p-tag),
+:deep(.payment-preview-table.p-datatable .p-button) {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin-inline: auto !important;
+  text-align: center !important;
+}
+
+:deep(.payment-preview-table.p-datatable .p-tag-value) {
+  max-width: 100%;
+  overflow: hidden;
+  text-align: center !important;
+  text-overflow: ellipsis;
+}
+
+:deep(.payment-action-button .p-button-label) {
+  font-weight: 500 !important;
+}
+
+:deep(.payment-action-button .p-button-icon) {
+  font-size: 0.76rem;
+}
+
+/* =========================
+   Dark mode
+   ========================= */
+
+:global(.dark) .payment-process-page {
+  --payment-name-rgb: 226 232 240;
+  --payment-meta-rgb: 203 213 225;
+}
+
+:global(.dark) .payment-summary-card {
+  box-shadow: none;
+}
+
+:global(.dark) .card-blue .summary-icon {
+  background: rgb(var(--payment-info-rgb) / 0.18);
+  color: #93c5fd;
+}
+
+:global(.dark) .card-green .summary-icon {
+  background: rgb(var(--payment-active-rgb) / 0.18);
+  color: #86efac;
+}
+
+:global(.dark) .card-purple .summary-icon {
+  background: rgb(var(--payment-purple-rgb) / 0.18);
+  color: #d8b4fe;
+}
+
+:global(.dark) .card-orange .summary-icon {
+  background: rgb(var(--payment-warning-rgb) / 0.18);
+  color: #fdba74;
+}
+
+:global(.dark) .card-red .summary-icon {
+  background: rgb(var(--payment-inactive-rgb) / 0.18);
+  color: #fca5a5;
+}
+
+:global(.dark) .payment-rgb-tag {
+  border-color: rgb(var(--payment-tag-rgb) / 0.42);
+  background: rgb(var(--payment-tag-rgb) / 0.18);
+}
+
+/* =========================
+   Responsive
+   ========================= */
+
 @media (max-width: 768px) {
   .payment-process-filter-actions {
     justify-content: stretch;
@@ -1658,6 +2189,11 @@ onBeforeUnmount(() => {
 
   .payment-process-filter-actions > * {
     flex: 1 1 100%;
+  }
+
+  .payment-lazy-footer {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 
@@ -1686,159 +2222,5 @@ onBeforeUnmount(() => {
   .payment-process-filter-actions {
     grid-column: 1 / -1;
   }
-}
-
-.payment-summary-card {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 0.65rem;
-  border: 1px solid var(--ot-border);
-  border-radius: 0.95rem;
-  background: var(--ot-surface);
-  padding: 0.75rem;
-}
-
-.summary-icon {
-  display: flex;
-  height: 2rem;
-  width: 2rem;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0.75rem;
-  font-size: 0.85rem;
-}
-
-.summary-label {
-  font-size: 0.68rem;
-  color: var(--ot-text-muted);
-}
-
-.summary-value {
-  margin-top: 0.15rem;
-  font-size: 0.9rem;
-  color: var(--ot-text);
-}
-
-.card-blue .summary-icon {
-  background: rgba(59, 130, 246, 0.13);
-  color: #2563eb;
-}
-
-.card-green .summary-icon {
-  background: rgba(34, 197, 94, 0.13);
-  color: #16a34a;
-}
-
-.card-purple .summary-icon {
-  background: rgba(168, 85, 247, 0.13);
-  color: #9333ea;
-}
-
-.card-orange .summary-icon {
-  background: rgba(249, 115, 22, 0.13);
-  color: #ea580c;
-}
-
-.card-red .summary-icon {
-  background: rgba(239, 68, 68, 0.13);
-  color: #dc2626;
-}
-
-.payment-lazy-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  border-top: 1px solid var(--ot-border);
-  padding: 0.65rem 0.75rem;
-}
-
-:deep(.payment-preview-table .p-datatable-table) {
-  width: max-content !important;
-  min-width: 100% !important;
-  table-layout: auto !important;
-}
-
-:deep(.payment-preview-table .p-datatable-thead > tr > th) {
-  white-space: nowrap !important;
-}
-
-:deep(.payment-preview-table .p-datatable-tbody > tr > td) {
-  vertical-align: middle !important;
-  white-space: nowrap !important;
-}
-
-:deep(.p-tag.payment-tag) {
-  min-height: 1.35rem !important;
-  padding: 0.12rem 0.48rem !important;
-  font-size: 0.7rem !important;
-  font-weight: 500 !important;
-  line-height: 1 !important;
-  border-radius: 999px !important;
-  border: 1px solid transparent !important;
-  white-space: nowrap !important;
-}
-
-:deep(.p-tag.payment-day-working) {
-  background: #dcfce7 !important;
-  color: #166534 !important;
-  border-color: #22c55e !important;
-}
-
-:deep(.p-tag.payment-day-sunday) {
-  background: #ffedd5 !important;
-  color: #9a3412 !important;
-  border-color: #f97316 !important;
-}
-
-:deep(.p-tag.payment-day-holiday) {
-  background: #fee2e2 !important;
-  color: #991b1b !important;
-  border-color: #ef4444 !important;
-}
-
-:global(.dark) .card-blue .summary-icon {
-  background: rgba(59, 130, 246, 0.18);
-  color: #93c5fd;
-}
-
-:global(.dark) .card-green .summary-icon {
-  background: rgba(34, 197, 94, 0.18);
-  color: #86efac;
-}
-
-:global(.dark) .card-purple .summary-icon {
-  background: rgba(168, 85, 247, 0.18);
-  color: #d8b4fe;
-}
-
-:global(.dark) .card-orange .summary-icon {
-  background: rgba(249, 115, 22, 0.18);
-  color: #fdba74;
-}
-
-:global(.dark) .card-red .summary-icon {
-  background: rgba(239, 68, 68, 0.18);
-  color: #fca5a5;
-}
-
-:global(.dark) :deep(.p-tag.payment-day-working) {
-  background: rgba(34, 197, 94, 0.18) !important;
-  color: #86efac !important;
-  border-color: rgba(34, 197, 94, 0.45) !important;
-}
-
-:global(.dark) :deep(.p-tag.payment-day-sunday) {
-  background: rgba(249, 115, 22, 0.18) !important;
-  color: #fdba74 !important;
-  border-color: rgba(249, 115, 22, 0.45) !important;
-}
-
-:global(.dark) :deep(.p-tag.payment-day-holiday) {
-  background: rgba(239, 68, 68, 0.18) !important;
-  color: #fca5a5 !important;
-  border-color: rgba(239, 68, 68, 0.45) !important;
 }
 </style>

@@ -1658,6 +1658,7 @@ export default {
       searchOtRequest: 'ស្វែងរកសំណើ OT',
       selectOtRequest: 'ជ្រើសសំណើ OT',
       requestStatus: 'ស្ថានភាពសំណើ',
+      results: 'លិទ្ធផល',
 
       allResults: 'លទ្ធផលទាំងអស់',
       matched: 'ផ្គូផ្គង',
@@ -2262,6 +2263,8 @@ export default {
       eligibility: 'លក្ខខណ្ឌអនុញ្ញាត',
       behavior: 'ឥរិយាបថ',
       forgetScan: 'ភ្លេច Scan',
+      behaviorFlags: 'ជម្រើសឥរិយាបថ',
+      flagValue: '{label}: {value}',
 
       allMethods: 'វិធីទាំងអស់',
       roundMethodLabel: 'វិធីបង្គត់',

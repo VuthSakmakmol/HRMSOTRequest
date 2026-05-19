@@ -146,7 +146,7 @@ const requestPolicyLabel = computed(() => {
       '',
   ).trim()
 
-  if (code && name) return ` ${name}`
+  if (code && name) return name
 
   return code || name || '-'
 })
@@ -239,36 +239,43 @@ const summaryCards = computed(() => [
         0,
     ),
     tone: 'info',
+    icon: 'pi pi-users',
   },
   {
     label: t('attendance.verification.matched'),
     value: verificationRows.value.filter((row) => row.result === 'MATCH').length,
     tone: 'match',
+    icon: 'pi pi-check-circle',
   },
   {
     label: t('attendance.verification.needsCheck'),
     value: needsCheckVerificationRows.value.length,
     tone: 'danger',
+    icon: 'pi pi-exclamation-triangle',
   },
   {
     label: t('attendance.verification.forgetIn'),
     value: forgetScanInRows.value.length,
     tone: 'purple',
+    icon: 'pi pi-sign-in',
   },
   {
     label: t('attendance.verification.forgetOut'),
     value: forgetScanOutRows.value.length,
     tone: 'purple',
+    icon: 'pi pi-sign-out',
   },
   {
     label: t('attendance.verification.absent'),
     value: Number(verification.value?.absentFromApprovedCount || 0),
     tone: 'danger',
+    icon: 'pi pi-times-circle',
   },
   {
     label: t('attendance.verification.notInOt'),
     value: Number(verification.value?.attendedButNotApprovedCount || 0),
     tone: 'warning',
+    icon: 'pi pi-info-circle',
   },
 ])
 
@@ -483,7 +490,7 @@ function statusTagClass(value) {
     OFF: 'verify-tag-muted',
   }
 
-  return ['verify-tag', map[normalized] || 'verify-tag-muted']
+  return ['verify-rgb-tag', map[normalized] || 'verify-tag-muted']
 }
 
 function requestStatusTagClass(value) {
@@ -496,7 +503,7 @@ function requestStatusTagClass(value) {
     CANCELLED: 'verify-tag-muted',
   }
 
-  return ['verify-tag', map[normalized] || 'verify-tag-muted']
+  return ['verify-rgb-tag', map[normalized] || 'verify-tag-muted']
 }
 
 function timingModeLabel(value) {
@@ -509,7 +516,10 @@ function timingModeLabel(value) {
 }
 
 function timingModeTagClass(value) {
-  return ['verify-tag', upper(value) === 'FIXED_TIME' ? 'verify-tag-warning' : 'verify-tag-info']
+  return [
+    'verify-rgb-tag',
+    upper(value) === 'FIXED_TIME' ? 'verify-tag-warning' : 'verify-tag-info',
+  ]
 }
 
 function attendanceStatusLabel(value) {
@@ -953,6 +963,7 @@ onBeforeUnmount(() => {
           severity="secondary"
           outlined
           size="small"
+          class="verify-action-button"
           @click="clearAll"
         />
       </div>
@@ -987,12 +998,18 @@ onBeforeUnmount(() => {
           class="verification-summary-card"
           :class="`is-${card.tone}`"
         >
-          <div class="verification-summary-value">
-            {{ card.value }}
+          <div class="summary-icon">
+            <i :class="card.icon" />
           </div>
 
-          <div class="verification-summary-label">
-            {{ card.label }}
+          <div class="summary-content">
+            <div class="summary-label">
+              {{ card.label }}
+            </div>
+
+            <div class="summary-value">
+              {{ card.value }}
+            </div>
           </div>
         </div>
       </section>
@@ -1014,69 +1031,108 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="verification-info-grid">
-          <div class="verification-info-card">
-            <div class="ot-field-label">
-              {{ t('attendance.verification.requester') }}
+          <div class="verification-info-card card-blue">
+            <div class="verification-info-icon">
+              <i class="pi pi-user" />
             </div>
 
-            <div class="verification-info-value truncate">
-              {{ otRequest.requesterName || '-' }}
-            </div>
-          </div>
+            <div class="verification-info-content">
+              <div class="verification-info-label">
+                {{ t('attendance.verification.requester') }}
+              </div>
 
-          <div class="verification-info-card">
-            <div class="ot-field-label">
-              {{ t('attendance.verification.shift') }}
-            </div>
-
-            <div class="verification-info-value">
-              {{ requestShiftTime }}
-            </div>
-          </div>
-
-          <div class="verification-info-card">
-            <div class="ot-field-label">
-              {{ t('attendance.verification.expectedOt') }}
-            </div>
-
-            <div class="verification-info-value">
-              {{ requestExpectedOtTime }}
+              <div
+                class="verification-info-value"
+                :title="otRequest.requesterName || '-'"
+              >
+                {{ otRequest.requesterName || '-' }}
+              </div>
             </div>
           </div>
 
-          <div class="verification-info-card">
-            <div class="ot-field-label">
-              {{ t('attendance.verification.requested') }}
+          <div class="verification-info-card card-green">
+            <div class="verification-info-icon">
+              <i class="pi pi-clock" />
             </div>
 
-            <div class="verification-info-value">
-              {{ requestRequestedOtLabel }}
-            </div>
-          </div>
+            <div class="verification-info-content">
+              <div class="verification-info-label">
+                {{ t('attendance.verification.shift') }}
+              </div>
 
-          <div class="verification-info-card">
-            <div class="ot-field-label">
-              {{ t('attendance.verification.policy') }}
-            </div>
-
-            <div
-              class="verification-info-value truncate"
-              :title="requestPolicyLabel"
-            >
-              {{ requestPolicyLabel }}
+              <div class="verification-info-value">
+                {{ requestShiftTime }}
+              </div>
             </div>
           </div>
 
-          <div class="verification-info-card">
-            <div class="ot-field-label">
-              {{ t('attendance.verification.otType') }}
+          <div class="verification-info-card card-purple">
+            <div class="verification-info-icon">
+              <i class="pi pi-calendar-clock" />
             </div>
 
-            <div class="mt-1">
-              <Tag
-                :value="timingModeLabel(requestTimingMode)"
-                :class="timingModeTagClass(requestTimingMode)"
-              />
+            <div class="verification-info-content">
+              <div class="verification-info-label">
+                {{ t('attendance.verification.expectedOt') }}
+              </div>
+
+              <div class="verification-info-value">
+                {{ requestExpectedOtTime }}
+              </div>
+            </div>
+          </div>
+
+          <div class="verification-info-card card-orange">
+            <div class="verification-info-icon">
+              <i class="pi pi-stopwatch" />
+            </div>
+
+            <div class="verification-info-content">
+              <div class="verification-info-label">
+                {{ t('attendance.verification.requested') }}
+              </div>
+
+              <div class="verification-info-value">
+                {{ requestRequestedOtLabel }}
+              </div>
+            </div>
+          </div>
+
+          <div class="verification-info-card card-blue">
+            <div class="verification-info-icon">
+              <i class="pi pi-shield" />
+            </div>
+
+            <div class="verification-info-content">
+              <div class="verification-info-label">
+                {{ t('attendance.verification.policy') }}
+              </div>
+
+              <div
+                class="verification-info-value"
+                :title="requestPolicyLabel"
+              >
+                {{ requestPolicyLabel }}
+              </div>
+            </div>
+          </div>
+
+          <div class="verification-info-card card-green">
+            <div class="verification-info-icon">
+              <i class="pi pi-cog" />
+            </div>
+
+            <div class="verification-info-content">
+              <div class="verification-info-label">
+                {{ t('attendance.verification.otType') }}
+              </div>
+
+              <div class="verification-info-tag">
+                <Tag
+                  :value="timingModeLabel(requestTimingMode)"
+                  :class="timingModeTagClass(requestTimingMode)"
+                />
+              </div>
             </div>
           </div>
         </div>
@@ -1117,7 +1173,7 @@ onBeforeUnmount(() => {
 
           <div class="ot-field">
             <label class="ot-field-label">
-              {{ t('attendance.verification.result') }}
+              {{ t('attendance.verification.results') }}
             </label>
 
             <Select
@@ -1127,7 +1183,7 @@ onBeforeUnmount(() => {
               option-value="value"
               size="small"
               class="w-full"
-              :placeholder="t('attendance.verification.result')"
+              :placeholder="t('attendance.verification.results')"
             />
           </div>
         </section>
@@ -1138,7 +1194,7 @@ onBeforeUnmount(() => {
             data-key="rowKey"
             scrollable
             scroll-height="520px"
-            table-style="min-width: 104rem"
+            table-style="width: max-content; min-width: 100%; table-layout: auto;"
             class="ot-data-table ot-data-table-compact verification-table"
           >
             <template #empty>
@@ -1159,7 +1215,7 @@ onBeforeUnmount(() => {
 
             <Column
               :header="t('attendance.verification.meaning')"
-              style="min-width: 18rem"
+              style="width: 18rem; min-width: 18rem"
             >
               <template #body="{ data }">
                 <div
@@ -1174,22 +1230,24 @@ onBeforeUnmount(() => {
 
             <Column
               :header="t('attendance.verification.employee')"
-              style="min-width: 15rem"
+              style="width: 15rem; min-width: 15rem"
             >
               <template #body="{ data }">
-                <div class="font-semibold text-[color:var(--ot-text)]">
-                  {{ data.employeeNo || '-' }}
-                </div>
+                <div class="verification-employee-cell">
+                  <div class="verification-employee-code">
+                    {{ data.employeeNo || '-' }}
+                  </div>
 
-                <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
-                  {{ data.employeeName || '-' }}
+                  <div class="verification-employee-name">
+                    {{ data.employeeName || '-' }}
+                  </div>
                 </div>
               </template>
             </Column>
 
             <Column
               :header="t('attendance.verification.otType')"
-              style="min-width: 11rem"
+              style="width: 11rem; min-width: 11rem"
             >
               <template #body="{ data }">
                 <Tag
@@ -1201,7 +1259,7 @@ onBeforeUnmount(() => {
 
             <Column
               :header="t('attendance.verification.scanIn')"
-              style="min-width: 8rem"
+              style="width: 8rem; min-width: 8rem"
             >
               <template #body="{ data }">
                 <span
@@ -1215,7 +1273,7 @@ onBeforeUnmount(() => {
 
             <Column
               :header="t('attendance.verification.scanOut')"
-              style="min-width: 8rem"
+              style="width: 8rem; min-width: 8rem"
             >
               <template #body="{ data }">
                 <span
@@ -1229,7 +1287,7 @@ onBeforeUnmount(() => {
 
             <Column
               :header="t('attendance.verification.status')"
-              style="min-width: 11rem"
+              style="width: 11rem; min-width: 11rem"
             >
               <template #body="{ data }">
                 <Tag
@@ -1241,59 +1299,65 @@ onBeforeUnmount(() => {
 
             <Column
               :header="t('attendance.verification.expectedOt')"
-              style="min-width: 13rem"
+              style="width: 13rem; min-width: 13rem"
             >
               <template #body="{ data }">
-                <div class="font-semibold text-[color:var(--ot-text)]">
-                  {{ data.expectedOtTime }}
-                </div>
+                <div class="verification-time-cell">
+                  <div class="verification-main-text">
+                    {{ data.expectedOtTime }}
+                  </div>
 
-                <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
-                  {{ t('attendance.verification.requested') }}:
-                  {{ formatMinutesLabel(data.requestedMinutes) }}
+                  <div class="verification-sub-text">
+                    {{ t('attendance.verification.requested') }}:
+                    {{ formatMinutesLabel(data.requestedMinutes) }}
+                  </div>
                 </div>
               </template>
             </Column>
 
             <Column
               :header="t('attendance.verification.creditedOt')"
-              style="min-width: 11rem"
+              style="width: 11rem; min-width: 11rem"
             >
               <template #body="{ data }">
-                <div class="font-semibold text-[color:var(--ot-text)]">
-                  {{ formatMinutesLabel(data.roundedOtMinutes) }}
-                </div>
+                <div class="verification-time-cell">
+                  <div class="verification-main-text">
+                    {{ formatMinutesLabel(data.roundedOtMinutes) }}
+                  </div>
 
-                <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
-                  {{ t('attendance.verification.actual') }}:
-                  {{ formatMinutesLabel(data.actualOtMinutes) }}
+                  <div class="verification-sub-text">
+                    {{ t('attendance.verification.actual') }}:
+                    {{ formatMinutesLabel(data.actualOtMinutes) }}
+                  </div>
                 </div>
               </template>
             </Column>
 
             <Column
               :header="t('attendance.verification.shift')"
-              style="min-width: 13rem"
+              style="width: 13rem; min-width: 13rem"
             >
               <template #body="{ data }">
-                <div class="font-semibold text-[color:var(--ot-text)]">
-                  {{ data.shiftName || '-' }}
-                </div>
+                <div class="verification-shift-cell">
+                  <div class="verification-main-text">
+                    {{ data.shiftName || '-' }}
+                  </div>
 
-                <div class="mt-1 text-xs text-[color:var(--ot-text-muted)]">
-                  {{ data.shiftTime }}
+                  <div class="verification-sub-text">
+                    {{ data.shiftTime }}
+                  </div>
                 </div>
               </template>
             </Column>
 
             <Column
               :header="t('attendance.verification.reason')"
-              style="min-width: 18rem"
+              style="width: 18rem; min-width: 18rem"
             >
               <template #body="{ data }">
                 <div
-                  class="ot-truncate-2 text-sm text-[color:var(--ot-text-muted)]"
-                  :title="data.reason"
+                  class="verification-reason-text"
+                  :title="data.reason || data.rawDecision || '-'"
                 >
                   {{ data.reason || data.rawDecision || '-' }}
                 </div>
@@ -1306,18 +1370,20 @@ onBeforeUnmount(() => {
 
     <div
       v-else
-      class="ot-empty-state rounded-2xl border border-dashed border-[color:var(--ot-border)] bg-[color:var(--ot-surface)]"
+      class="verification-empty-card"
     >
-      <div class="ot-empty-icon">
-        <i class="pi pi-check-circle" />
-      </div>
+      <div class="ot-empty-state">
+        <div class="ot-empty-icon">
+          <i class="pi pi-check-circle" />
+        </div>
 
-      <div class="ot-empty-title">
-        {{ t('attendance.verification.verificationResult') }}
-      </div>
+        <div class="ot-empty-title">
+          {{ t('attendance.verification.verificationResult') }}
+        </div>
 
-      <div class="ot-empty-text">
-        {{ t('attendance.verification.emptyInstruction') }}
+        <div class="ot-empty-text">
+          {{ t('attendance.verification.emptyInstruction') }}
+        </div>
       </div>
     </div>
   </div>
@@ -1325,6 +1391,10 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .ot-verification-page {
+  --verify-code-rgb: 37 99 235;
+  --verify-name-rgb: 15 23 42;
+  --verify-meta-rgb: 71 85 105;
+
   --verify-match-rgb: 34 197 94;
   --verify-warning-rgb: 245 158 11;
   --verify-danger-rgb: 239 68 68;
@@ -1332,6 +1402,10 @@ onBeforeUnmount(() => {
   --verify-purple-rgb: 139 92 246;
   --verify-muted-rgb: 100 116 139;
 }
+
+/* =========================
+   Filter bar
+   ========================= */
 
 .ot-verification-filter-bar {
   display: grid;
@@ -1349,31 +1423,32 @@ onBeforeUnmount(() => {
 
 .ot-verification-result-filter-bar {
   border-radius: 0;
-  border-left: 0;
   border-right: 0;
+  border-left: 0;
   box-shadow: none;
 }
 
+/* =========================
+   Summary cards
+   ========================= */
+
 .verification-summary-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.65rem;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
 }
 
 .verification-summary-card {
   --summary-rgb: var(--verify-muted-rgb);
   display: flex;
-  min-height: 4.2rem;
-  flex-direction: column;
+  min-width: 0;
   align-items: center;
-  justify-content: center;
-  border: 1px solid rgb(var(--summary-rgb) / 0.24);
-  border-radius: var(--ot-radius-md);
-  background:
-    linear-gradient(180deg, rgb(var(--summary-rgb) / 0.12), rgb(var(--summary-rgb) / 0.05)),
-    var(--ot-surface);
-  padding: 0.55rem 0.65rem;
-  text-align: center;
+  gap: 0.65rem;
+  border: 1px solid var(--ot-border);
+  border-radius: 0.95rem;
+  background: var(--ot-surface);
+  padding: 0.78rem;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
 }
 
 .verification-summary-card.is-match {
@@ -1396,74 +1471,236 @@ onBeforeUnmount(() => {
   --summary-rgb: var(--verify-purple-rgb);
 }
 
-.verification-summary-value {
-  color: rgb(var(--summary-rgb) / 1);
-  font-size: 1.35rem;
-  font-weight: 800;
-  line-height: 1.05;
-  text-align: center;
+.summary-icon {
+  display: flex;
+  height: 2rem;
+  width: 2rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.75rem;
+  background: rgb(var(--summary-rgb) / 0.13);
+  color: rgb(var(--summary-rgb));
+  font-size: 0.85rem;
 }
 
-.verification-summary-label {
-  margin-top: 0.25rem;
-  color: var(--ot-text-muted);
-  font-size: 0.72rem;
-  font-weight: 700;
-  line-height: 1.15;
-  text-align: center;
+.summary-content {
+  min-width: 0;
+  flex: 1;
 }
+
+.summary-label {
+  overflow: hidden;
+  color: var(--ot-text-muted);
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.summary-value {
+  margin-top: 0.15rem;
+  overflow: hidden;
+  color: var(--ot-text);
+  font-size: 0.95rem;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* =========================
+   Info cards
+   ========================= */
 
 .verification-info-grid {
   display: grid;
-  grid-template-columns: repeat(1, minmax(0, 1fr));
-  gap: 0.6rem;
+  gap: 0.75rem;
   padding: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
 }
 
 .verification-info-card {
+  --info-rgb: var(--verify-muted-rgb);
+  display: flex;
   min-width: 0;
+  align-items: center;
+  gap: 0.65rem;
   border: 1px solid var(--ot-border);
-  border-radius: var(--ot-radius-md);
-  background: var(--ot-bg);
-  padding: 0.6rem 0.7rem;
+  border-radius: 0.95rem;
+  background: var(--ot-surface);
+  padding: 0.78rem;
+}
+
+.verification-info-card.card-blue {
+  --info-rgb: var(--verify-info-rgb);
+}
+
+.verification-info-card.card-green {
+  --info-rgb: var(--verify-match-rgb);
+}
+
+.verification-info-card.card-purple {
+  --info-rgb: var(--verify-purple-rgb);
+}
+
+.verification-info-card.card-orange {
+  --info-rgb: var(--verify-warning-rgb);
+}
+
+.verification-info-icon {
+  display: flex;
+  height: 2rem;
+  width: 2rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.75rem;
+  background: rgb(var(--info-rgb) / 0.13);
+  color: rgb(var(--info-rgb));
+  font-size: 0.85rem;
+}
+
+.verification-info-content {
+  min-width: 0;
+  flex: 1;
+}
+
+.verification-info-label {
+  overflow: hidden;
+  color: var(--ot-text-muted);
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .verification-info-value {
-  margin-top: 0.2rem;
+  margin-top: 0.15rem;
+  overflow: hidden;
   color: var(--ot-text);
   font-size: 0.82rem;
   font-weight: 700;
-  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-:deep(.verify-tag) {
+.verification-info-tag {
+  margin-top: 0.2rem;
+}
+
+/* =========================
+   Text helpers
+   ========================= */
+
+.verification-employee-cell,
+.verification-time-cell,
+.verification-shift-cell {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.verification-employee-code {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  color: rgb(var(--verify-code-rgb));
+  font-size: 0.78rem;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.verification-employee-name,
+.verification-sub-text,
+.verification-reason-text {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  color: rgb(var(--verify-meta-rgb));
+  font-size: 0.7rem;
+  font-weight: 500;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.verification-employee-name,
+.verification-sub-text {
+  margin-top: 0.12rem;
+}
+
+.verification-main-text {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  color: rgb(var(--verify-name-rgb));
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.verification-reason-text {
+  max-width: 17rem;
+  font-size: 0.74rem;
+}
+
+/* =========================
+   Tags / chips
+   ========================= */
+
+.verify-rgb-tag {
   --verify-tag-rgb: var(--verify-muted-rgb);
-  min-height: 1.45rem;
+  display: inline-flex !important;
+  min-height: 1.42rem;
+  max-width: 100%;
+  align-items: center !important;
+  justify-content: center !important;
   border: 1px solid rgb(var(--verify-tag-rgb) / 0.28);
+  border-radius: 999px;
   background: rgb(var(--verify-tag-rgb) / 0.11);
   color: rgb(var(--verify-tag-rgb) / 1);
-  padding: 0.14rem 0.48rem;
-  font-size: 0.72rem;
-  font-weight: 700;
+  padding: 0.12rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 750;
+  line-height: 1;
+  text-align: center !important;
+  vertical-align: middle;
+  white-space: nowrap;
 }
 
-:deep(.verify-tag-match) {
+.verify-tag-match {
   --verify-tag-rgb: var(--verify-match-rgb);
 }
 
-:deep(.verify-tag-warning) {
+.verify-tag-warning {
   --verify-tag-rgb: var(--verify-warning-rgb);
 }
 
-:deep(.verify-tag-danger) {
+.verify-tag-danger {
   --verify-tag-rgb: var(--verify-danger-rgb);
 }
 
-:deep(.verify-tag-info) {
+.verify-tag-info {
   --verify-tag-rgb: var(--verify-info-rgb);
 }
 
-:deep(.verify-tag-muted) {
+.verify-tag-muted {
   --verify-tag-rgb: var(--verify-muted-rgb);
 }
 
@@ -1479,8 +1716,9 @@ onBeforeUnmount(() => {
   color: rgb(var(--scan-rgb) / 1);
   padding: 0.22rem 0.58rem;
   font-size: 0.74rem;
-  font-weight: 700;
+  font-weight: 750;
   line-height: 1;
+  text-align: center;
   white-space: nowrap;
 }
 
@@ -1494,8 +1732,10 @@ onBeforeUnmount(() => {
 
 .result-meaning-label {
   --meaning-rgb: var(--verify-muted-rgb);
-  width: fit-content;
+  display: inline-flex;
   max-width: 17rem;
+  align-items: center;
+  justify-content: center;
   overflow: hidden;
   border: 1px solid rgb(var(--meaning-rgb) / 0.28);
   border-radius: 999px;
@@ -1503,8 +1743,9 @@ onBeforeUnmount(() => {
   color: rgb(var(--meaning-rgb) / 1);
   padding: 0.22rem 0.58rem;
   font-size: 0.7rem;
-  font-weight: 700;
+  font-weight: 750;
   line-height: 1.1;
+  text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1525,21 +1766,124 @@ onBeforeUnmount(() => {
   --meaning-rgb: var(--verify-purple-rgb);
 }
 
-@media (min-width: 640px) {
-  .verification-summary-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .verification-info-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+.verification-empty-card {
+  border: 1px dashed var(--ot-border);
+  border-radius: 1rem;
+  background: var(--ot-surface);
 }
 
-@media (min-width: 1024px) {
-  .verification-summary-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
+/* =========================
+   PrimeVue table center
+   ========================= */
 
+:deep(.verification-table.p-datatable .p-datatable-table) {
+  width: max-content !important;
+  min-width: 100% !important;
+  table-layout: auto !important;
+}
+
+:deep(.verification-table.p-datatable .p-datatable-thead > tr > th),
+:deep(.verification-table.p-datatable .p-datatable-tbody > tr > td) {
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+:deep(.verification-table.p-datatable .p-datatable-thead > tr > th) {
+  width: auto !important;
+  min-width: auto !important;
+  max-width: none !important;
+  padding: 0.58rem 0.68rem !important;
+  white-space: nowrap !important;
+  font-size: 0.78rem !important;
+  font-weight: 650 !important;
+}
+
+:deep(.verification-table.p-datatable .p-datatable-tbody > tr > td) {
+  width: auto !important;
+  min-width: auto !important;
+  max-width: none !important;
+  height: 58px !important;
+  padding: 0.42rem 0.62rem !important;
+  white-space: nowrap !important;
+  font-size: 0.8rem !important;
+}
+
+:deep(.verification-table.p-datatable .p-datatable-column-header-content),
+:deep(.verification-table.p-datatable .p-column-header-content) {
+  display: flex !important;
+  width: 100% !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 0.25rem !important;
+  text-align: center !important;
+}
+
+:deep(.verification-table.p-datatable .p-datatable-column-title),
+:deep(.verification-table.p-datatable .p-column-title) {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+}
+
+:deep(.verification-table.p-datatable .p-datatable-tbody > tr > td > *) {
+  margin-inline: auto !important;
+}
+
+:deep(.verification-table.p-datatable .p-tag),
+:deep(.verification-table.p-datatable .p-button) {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin-inline: auto !important;
+  text-align: center !important;
+}
+
+:deep(.verification-table.p-datatable .p-tag-value) {
+  max-width: 100%;
+  overflow: hidden;
+  text-align: center !important;
+  text-overflow: ellipsis;
+}
+
+:deep(.verify-action-button .p-button-label) {
+  font-weight: 500 !important;
+}
+
+:deep(.verify-action-button .p-button-icon) {
+  font-size: 0.76rem;
+}
+
+/* =========================
+   Dark mode
+   ========================= */
+
+:global(.dark) .ot-verification-page {
+  --verify-name-rgb: 226 232 240;
+  --verify-meta-rgb: 203 213 225;
+}
+
+:global(.dark) .verification-summary-card {
+  box-shadow: none;
+}
+
+:global(.dark) .summary-icon,
+:global(.dark) .verification-info-icon {
+  background: rgb(var(--summary-rgb, var(--info-rgb)) / 0.18);
+}
+
+:global(.dark) .verify-rgb-tag,
+:global(.dark) .scan-time-chip,
+:global(.dark) .result-meaning-label {
+  border-color: rgb(var(--verify-tag-rgb, var(--scan-rgb, var(--meaning-rgb))) / 0.42);
+  background: rgb(var(--verify-tag-rgb, var(--scan-rgb, var(--meaning-rgb))) / 0.18);
+}
+
+/* =========================
+   Responsive
+   ========================= */
+
+@media (min-width: 1024px) {
   .ot-verification-filter-bar {
     grid-template-columns:
       minmax(180px, 220px)
@@ -1558,7 +1902,7 @@ onBeforeUnmount(() => {
   }
 
   .verification-info-grid {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .ot-verification-result-filter-bar {

@@ -1665,6 +1665,8 @@ export default {
       searchOtRequest: 'Search OT Request',
       selectOtRequest: 'Select OT request',
       requestStatus: 'Request Status',
+      results: 'Result',
+      
 
       allResults: 'All Results',
       matched: 'Matched',
@@ -2274,6 +2276,9 @@ export default {
       eligibility: 'Eligibility',
       behavior: 'Behavior',
       forgetScan: 'Forget Scan',
+
+      behaviorFlags: 'Behavior Flags',
+      flagValue: '{label}: {value}',
 
       allMethods: 'All Methods',
       roundMethodLabel: 'Round Method',

@@ -1487,25 +1487,6 @@ onBeforeUnmount(() => {
               v-if="getTargetEmployees(data).length"
               class="ot-expanded-content"
             >
-              <div class="ot-expanded-header">
-                <div>
-                  <div class="ot-expanded-title">
-                    {{ t('ot.requests.employeeOtTimeDetail') }}
-                  </div>
-
-                  <div class="ot-expanded-subtitle">
-                    {{ t('ot.requests.time') }}: {{ formatTimeRange(data) }}
-                    · {{ t('ot.requests.otOption') }}: {{ formatOtOptionLabel(data) }}
-                    · {{ t('ot.requests.break') }}: {{ formatMinutesLabel(data.breakMinutes) }}
-                    · {{ t('ot.approval.paid') }}: {{ formatMinutesLabel(data.totalMinutes) }}
-                  </div>
-                </div>
-
-                <Tag
-                  :value="timingSourceLabel(data)"
-                  :class="timingSourceTagClass(data)"
-                />
-              </div>
 
               <div class="ot-expanded-responsive-table">
                 <div class="ot-expanded-grid-row is-head">

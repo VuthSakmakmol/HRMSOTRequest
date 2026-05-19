@@ -1,5 +1,7 @@
 <!-- frontend/src/modules/payment/views/PaymentFormulaView.vue -->
 <script setup>
+// frontend/src/modules/payment/views/PaymentFormulaView.vue
+
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
@@ -112,11 +114,17 @@ function normalizePayload(res) {
 
 function normalizeItems(payload) {
   if (Array.isArray(payload)) return payload
+
   return Array.isArray(payload?.items) ? payload.items : []
 }
 
 function normalizeTotal(payload) {
-  return Number(payload?.pagination?.total || payload?.pagination?.totalRecords || payload?.total || 0)
+  return Number(
+    payload?.pagination?.total ||
+      payload?.pagination?.totalRecords ||
+      payload?.total ||
+      0,
+  )
 }
 
 function normalizeRow(row) {
@@ -141,8 +149,18 @@ function formatFormulaStatusLabel(value) {
   return value ? t('common.active') : t('common.inactive')
 }
 
-function getFormulaStatusSeverity(value) {
-  return value ? 'success' : 'danger'
+function formulaStatusTagClass(value) {
+  return value ? 'payment-status-active' : 'payment-status-inactive'
+}
+
+function dayMultiplierTagClass(type) {
+  const value = upper(type)
+
+  if (value === 'WORKING_DAY') return 'payment-day-working'
+  if (value === 'SUNDAY') return 'payment-day-sunday'
+  if (value === 'HOLIDAY') return 'payment-day-holiday'
+
+  return 'payment-day-default'
 }
 
 function buildQuery(page) {
@@ -399,7 +417,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="ot-page-shell">
+  <div class="ot-page-shell payment-formula-page">
     <section class="ot-filter-bar payment-formula-filter-bar">
       <div class="ot-field">
         <label class="ot-field-label">
@@ -444,7 +462,7 @@ onBeforeUnmount(() => {
           :label="t('payment.formulas.newFormula')"
           icon="pi pi-plus"
           size="small"
-          class="whitespace-nowrap"
+          class="payment-action-button whitespace-nowrap"
           @click="openCreateDialog"
         />
 
@@ -454,6 +472,7 @@ onBeforeUnmount(() => {
           severity="secondary"
           outlined
           size="small"
+          class="payment-action-button"
           :loading="backgroundLoading"
           @click="refresh"
         />
@@ -464,6 +483,7 @@ onBeforeUnmount(() => {
           severity="secondary"
           outlined
           size="small"
+          class="payment-action-button"
           @click="clearFilters"
         />
       </div>
@@ -544,12 +564,12 @@ onBeforeUnmount(() => {
             field="code"
             :header="t('common.code')"
             sortable
-            style="min-width: 11rem"
+            style="width: 9rem; min-width: 9rem"
           >
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="font-semibold text-[color:var(--ot-text)]"
+                class="payment-code-text"
               >
                 {{ data.code || '—' }}
               </span>
@@ -560,20 +580,20 @@ onBeforeUnmount(() => {
             field="name"
             :header="t('payment.formulas.formulaName')"
             sortable
-            style="min-width: 18rem"
+            style="width: 16rem; min-width: 16rem"
           >
             <template #body="{ data }">
               <div
                 v-if="data"
-                class="min-w-0"
+                class="payment-name-stack"
               >
-                <div class="font-medium text-[color:var(--ot-text)]">
+                <div class="payment-name-text">
                   {{ data.name || '—' }}
                 </div>
 
                 <div
                   v-if="data.description"
-                  class="mt-0.5 max-w-[360px] truncate text-xs text-[color:var(--ot-text-muted)]"
+                  class="payment-description-text"
                   :title="data.description"
                 >
                   {{ data.description }}
@@ -584,19 +604,19 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('payment.formulas.baseRule')"
-            style="min-width: 12rem"
+            style="width: 12rem; min-width: 12rem"
           >
             <template #body="{ data }">
               <div
                 v-if="data"
-                class="text-xs leading-5 text-[color:var(--ot-text-muted)]"
+                class="payment-rule-stack"
               >
-                <div>
+                <div class="payment-rule-line">
                   {{ Number(data.monthlyWorkingDays || 0) }}
                   {{ t('payment.formulas.daysPerMonth') }}
                 </div>
 
-                <div>
+                <div class="payment-rule-line">
                   {{ Number(data.hoursPerDay || 0) }}
                   {{ t('payment.formulas.hoursPerDay') }}
                 </div>
@@ -606,29 +626,29 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('payment.formulas.multipliers')"
-            style="min-width: 22rem"
+            style="width: 20rem; min-width: 20rem"
           >
             <template #body="{ data }">
               <div
                 v-if="data"
-                class="flex flex-wrap items-center gap-1.5"
+                class="payment-multiplier-list"
               >
                 <Tag
                   :value="`${t('payment.dayTypes.workingDay')} ${formatMultiplier(data.multipliers?.WORKING_DAY)}x`"
-                  severity="success"
-                  class="payment-status-tag payment-day-working"
+                  class="payment-rgb-tag"
+                  :class="dayMultiplierTagClass('WORKING_DAY')"
                 />
 
                 <Tag
                   :value="`${t('payment.dayTypes.sunday')} ${formatMultiplier(data.multipliers?.SUNDAY)}x`"
-                  severity="warning"
-                  class="payment-status-tag payment-day-sunday"
+                  class="payment-rgb-tag"
+                  :class="dayMultiplierTagClass('SUNDAY')"
                 />
 
                 <Tag
                   :value="`${t('payment.dayTypes.holiday')} ${formatMultiplier(data.multipliers?.HOLIDAY)}x`"
-                  severity="danger"
-                  class="payment-status-tag payment-day-holiday"
+                  class="payment-rgb-tag"
+                  :class="dayMultiplierTagClass('HOLIDAY')"
                 />
               </div>
             </template>
@@ -636,12 +656,12 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('payment.formulas.round')"
-            style="min-width: 8rem"
+            style="width: 8rem; min-width: 8rem"
           >
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="whitespace-nowrap text-sm text-[color:var(--ot-text)]"
+                class="payment-meta-text"
               >
                 {{ data.roundingDecimals ?? 2 }}
                 {{ t('payment.formulas.decimals') }}
@@ -651,15 +671,14 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('payment.formulas.currency')"
-            style="min-width: 7rem"
+            style="width: 8rem; min-width: 8rem"
           >
             <template #body="{ data }">
-              <span
+              <Tag
                 v-if="data"
-                class="whitespace-nowrap text-sm text-[color:var(--ot-text)]"
-              >
-                {{ data.currency || 'USD' }}
-              </span>
+                :value="data.currency || 'USD'"
+                class="payment-rgb-tag payment-currency-tag"
+              />
             </template>
           </Column>
 
@@ -667,15 +686,14 @@ onBeforeUnmount(() => {
             field="isActive"
             :header="t('common.status')"
             sortable
-            style="min-width: 8rem"
+            style="width: 8rem; min-width: 8rem"
           >
             <template #body="{ data }">
               <Tag
                 v-if="data"
                 :value="formatFormulaStatusLabel(data.isActive)"
-                :severity="getFormulaStatusSeverity(data.isActive)"
-                class="payment-status-tag"
-                :class="data.isActive ? 'payment-status-active' : 'payment-status-inactive'"
+                class="payment-rgb-tag"
+                :class="formulaStatusTagClass(data.isActive)"
               />
             </template>
           </Column>
@@ -684,12 +702,12 @@ onBeforeUnmount(() => {
             field="updatedAt"
             :header="t('common.updatedAt')"
             sortable
-            style="min-width: 13rem"
+            style="width: 13rem; min-width: 13rem"
           >
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="whitespace-nowrap text-xs text-[color:var(--ot-text-muted)]"
+                class="payment-meta-text"
               >
                 {{ formatDateTime(data.updatedAt || data.createdAt) || '—' }}
               </span>
@@ -700,19 +718,18 @@ onBeforeUnmount(() => {
             :header="t('common.actions')"
             frozen
             align-frozen="right"
-            header-class="ot-action-header"
-            body-class="ot-action-cell"
-            style="width: 5.5rem; min-width: 5.5rem"
+            header-class="payment-action-header"
+            body-class="payment-action-cell"
+            style="width: 7rem; min-width: 7rem"
           >
             <template #body="{ data }">
               <Button
                 v-if="data"
+                :label="t('common.edit')"
                 icon="pi pi-pencil"
-                severity="secondary"
-                text
-                rounded
                 size="small"
-                :aria-label="t('common.edit')"
+                outlined
+                class="payment-table-edit-button"
                 @click="openEditDialog(data)"
               />
             </template>
@@ -913,20 +930,23 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div class="flex items-center gap-2">
+        <div class="payment-active-box">
+          <div>
+            <div class="payment-active-title">
+              {{ t('common.active') }}
+            </div>
+
+            <div class="payment-active-help">
+              {{ t('payment.formulas.dialogNote') }}
+            </div>
+          </div>
+
           <Checkbox
             v-model="form.isActive"
             input-id="payment-formula-active"
             binary
             :disabled="saving"
           />
-
-          <label
-            for="payment-formula-active"
-            class="text-sm text-[color:var(--ot-text)]"
-          >
-            {{ t('common.active') }}
-          </label>
         </div>
       </div>
 
@@ -953,79 +973,220 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-@media (min-width: 1280px) {
-  .payment-formula-filter-bar {
-    grid-template-columns:
-      minmax(260px, 1fr)
-      minmax(180px, 220px)
-      auto;
-    align-items: end;
-  }
-
-  .payment-formula-filter-actions {
-    flex-wrap: nowrap;
-    justify-content: flex-end;
-    min-width: max-content;
-  }
+.payment-formula-page {
+  --payment-code-rgb: 37 99 235;
+  --payment-name-rgb: 15 23 42;
+  --payment-meta-rgb: 71 85 105;
+  --payment-active-rgb: 34 197 94;
+  --payment-inactive-rgb: 239 68 68;
+  --payment-info-rgb: 59 130 246;
+  --payment-warning-rgb: 245 158 11;
+  --payment-muted-rgb: 100 116 139;
+  --payment-purple-rgb: 168 85 247;
 }
 
-:deep(.payment-formula-table .p-datatable-table) {
-  width: max-content !important;
-  min-width: 100% !important;
-  table-layout: auto !important;
+.payment-formula-filter-bar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  align-items: end;
 }
 
-:deep(.payment-formula-table .p-datatable-thead > tr > th) {
-  white-space: nowrap !important;
+.payment-formula-filter-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  min-width: 0;
 }
 
-:deep(.payment-formula-table .p-datatable-tbody > tr > td) {
-  vertical-align: middle !important;
-  white-space: nowrap !important;
+.payment-formula-filter-actions > * {
+  flex: 0 0 auto;
 }
 
-:deep(.payment-formula-table .p-tag.payment-status-tag) {
-  min-height: 1.35rem !important;
-  padding: 0.12rem 0.48rem !important;
-  font-size: 0.7rem !important;
-  font-weight: 500 !important;
-  line-height: 1 !important;
-  border-radius: 999px !important;
-  border: 1px solid transparent !important;
-  white-space: nowrap !important;
+/* =========================
+   Table text
+   ========================= */
+
+.payment-code-text {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgb(var(--payment-code-rgb));
+  font-size: 0.82rem;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
 }
 
-:deep(.p-tag.payment-day-working),
-:deep(.p-tag.payment-status-active) {
-  background: #dcfce7 !important;
-  color: #166534 !important;
-  border-color: #22c55e !important;
+.payment-name-stack,
+.payment-rule-stack {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
 }
 
-:deep(.p-tag.payment-day-sunday) {
-  background: #ffedd5 !important;
-  color: #9a3412 !important;
-  border-color: #f97316 !important;
+.payment-name-text {
+  max-width: 100%;
+  overflow: hidden;
+  color: rgb(var(--payment-name-rgb));
+  font-size: 0.82rem;
+  font-weight: 650;
+  line-height: 1.25;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-:deep(.p-tag.payment-day-holiday),
-:deep(.p-tag.payment-status-inactive) {
-  background: #fee2e2 !important;
-  color: #991b1b !important;
-  border-color: #ef4444 !important;
+.payment-description-text {
+  max-width: 15rem;
+  margin-top: 0.16rem;
+  overflow: hidden;
+  color: rgb(var(--payment-meta-rgb));
+  font-size: 0.72rem;
+  font-weight: 500;
+  line-height: 1.25;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+
+.payment-rule-line,
+.payment-meta-text {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  color: rgb(var(--payment-meta-rgb));
+  font-size: 0.78rem;
+  font-weight: 500;
+  text-align: center;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.payment-meta-text {
+  font-variant-numeric: tabular-nums;
+}
+
+.payment-multiplier-list {
+  display: inline-flex;
+  max-width: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  text-align: center;
+}
+
+.payment-active-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border: 1px solid var(--ot-border);
+  border-radius: 0.85rem;
+  background: var(--ot-surface);
+  padding: 0.75rem 0.9rem;
+}
+
+.payment-active-title {
+  color: var(--ot-text);
+  font-size: 0.86rem;
+  font-weight: 650;
+}
+
+.payment-active-help {
+  display: -webkit-box;
+  max-width: 44rem;
+  margin-top: 0.18rem;
+  overflow: hidden;
+  color: var(--ot-text-muted);
+  font-size: 0.74rem;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/* =========================
+   RGB tags
+   ========================= */
+
+.payment-rgb-tag {
+  --payment-tag-rgb: var(--payment-muted-rgb);
+  display: inline-flex !important;
+  min-height: 1.42rem;
+  max-width: 100%;
+  align-items: center !important;
+  justify-content: center !important;
+  border: 1px solid rgb(var(--payment-tag-rgb) / 0.28);
+  border-radius: 999px;
+  background: rgb(var(--payment-tag-rgb) / 0.11);
+  color: rgb(var(--payment-tag-rgb) / 1);
+  padding: 0.12rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 750;
+  line-height: 1;
+  text-align: center !important;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.payment-currency-tag {
+  --payment-tag-rgb: var(--payment-info-rgb);
+}
+
+.payment-status-active {
+  --payment-tag-rgb: var(--payment-active-rgb);
+}
+
+.payment-status-inactive {
+  --payment-tag-rgb: var(--payment-inactive-rgb);
+}
+
+.payment-day-working {
+  --payment-tag-rgb: var(--payment-active-rgb);
+}
+
+.payment-day-sunday {
+  --payment-tag-rgb: var(--payment-warning-rgb);
+}
+
+.payment-day-holiday {
+  --payment-tag-rgb: var(--payment-inactive-rgb);
+}
+
+.payment-day-default {
+  --payment-tag-rgb: var(--payment-muted-rgb);
+}
+
+/* =========================
+   Dialog notes
+   ========================= */
 
 .payment-formula-note {
   display: flex;
   gap: 0.5rem;
   align-items: flex-start;
-  border: 1px solid rgba(245, 158, 11, 0.35);
+  border: 1px solid rgb(var(--payment-warning-rgb) / 0.35);
   border-radius: 0.85rem;
-  background: rgba(245, 158, 11, 0.08);
+  background: rgb(var(--payment-warning-rgb) / 0.08);
   color: var(--ot-text);
   padding: 0.65rem 0.75rem;
   font-size: 0.78rem;
   line-height: 1.5;
+}
+
+.payment-formula-note i {
+  color: rgb(var(--payment-warning-rgb));
+  margin-top: 0.15rem;
 }
 
 .payment-formula-preview {
@@ -1035,28 +1196,165 @@ onBeforeUnmount(() => {
   border-radius: 0.85rem;
   background: var(--ot-surface);
   padding: 0.68rem 0.75rem;
+  color: var(--ot-text);
   font-size: 0.78rem;
   line-height: 1.5;
-  color: var(--ot-text);
 }
 
-:global(.dark) :deep(.p-tag.payment-day-working),
-:global(.dark) :deep(.p-tag.payment-status-active) {
-  background: rgba(34, 197, 94, 0.18) !important;
-  color: #86efac !important;
-  border-color: rgba(34, 197, 94, 0.45) !important;
+/* =========================
+   PrimeVue table center
+   ========================= */
+
+:deep(.payment-formula-table.p-datatable .p-datatable-table) {
+  width: max-content !important;
+  min-width: 100% !important;
+  table-layout: auto !important;
 }
 
-:global(.dark) :deep(.p-tag.payment-day-sunday) {
-  background: rgba(249, 115, 22, 0.18) !important;
-  color: #fdba74 !important;
-  border-color: rgba(249, 115, 22, 0.45) !important;
+:deep(.payment-formula-table.p-datatable .p-datatable-thead > tr > th),
+:deep(.payment-formula-table.p-datatable .p-datatable-tbody > tr > td) {
+  text-align: center !important;
+  vertical-align: middle !important;
 }
 
-:global(.dark) :deep(.p-tag.payment-day-holiday),
-:global(.dark) :deep(.p-tag.payment-status-inactive) {
-  background: rgba(239, 68, 68, 0.18) !important;
-  color: #fca5a5 !important;
-  border-color: rgba(239, 68, 68, 0.45) !important;
+:deep(.payment-formula-table.p-datatable .p-datatable-thead > tr > th) {
+  width: auto !important;
+  min-width: auto !important;
+  max-width: none !important;
+  padding: 0.58rem 0.68rem !important;
+  white-space: nowrap !important;
+  font-size: 0.78rem !important;
+  font-weight: 650 !important;
+}
+
+:deep(.payment-formula-table.p-datatable .p-datatable-tbody > tr > td) {
+  width: auto !important;
+  min-width: auto !important;
+  max-width: none !important;
+  height: 68px !important;
+  padding: 0.46rem 0.68rem !important;
+  white-space: nowrap !important;
+  font-size: 0.8rem !important;
+}
+
+:deep(.payment-formula-table.p-datatable .p-datatable-column-header-content),
+:deep(.payment-formula-table.p-datatable .p-column-header-content) {
+  display: flex !important;
+  width: 100% !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 0.25rem !important;
+  text-align: center !important;
+}
+
+:deep(.payment-formula-table.p-datatable .p-datatable-column-title),
+:deep(.payment-formula-table.p-datatable .p-column-title) {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+}
+
+:deep(.payment-formula-table.p-datatable .p-sortable-column-icon),
+:deep(.payment-formula-table.p-datatable .p-datatable-sort-icon) {
+  margin-inline-start: 0.25rem !important;
+  margin-inline-end: 0 !important;
+}
+
+:deep(.payment-formula-table.p-datatable .p-datatable-tbody > tr > td > *) {
+  margin-inline: auto !important;
+}
+
+:deep(.payment-formula-table.p-datatable .p-tag),
+:deep(.payment-formula-table.p-datatable .p-button) {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin-inline: auto !important;
+  text-align: center !important;
+}
+
+:deep(.payment-formula-table.p-datatable .p-tag-value) {
+  max-width: 100%;
+  overflow: hidden;
+  text-align: center !important;
+  text-overflow: ellipsis;
+}
+
+:deep(.payment-formula-table.p-datatable .payment-action-header),
+:deep(.payment-formula-table.p-datatable .payment-action-cell) {
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+:deep(.payment-table-edit-button .p-button-label),
+:deep(.payment-action-button .p-button-label) {
+  font-weight: 500 !important;
+}
+
+:deep(.payment-action-button .p-button-icon),
+:deep(.payment-table-edit-button .p-button-icon) {
+  font-size: 0.76rem;
+}
+
+/* =========================
+   Dark mode
+   ========================= */
+
+:global(.dark) .payment-formula-page {
+  --payment-name-rgb: 226 232 240;
+  --payment-meta-rgb: 203 213 225;
+}
+
+:global(.dark) .payment-rgb-tag {
+  border-color: rgb(var(--payment-tag-rgb) / 0.42);
+  background: rgb(var(--payment-tag-rgb) / 0.18);
+}
+
+:global(.dark) .payment-formula-note {
+  border-color: rgb(var(--payment-warning-rgb) / 0.42);
+  background: rgb(var(--payment-warning-rgb) / 0.14);
+}
+
+/* =========================
+   Responsive
+   ========================= */
+
+@media (max-width: 768px) {
+  .payment-formula-filter-actions {
+    justify-content: stretch;
+  }
+
+  .payment-formula-filter-actions > * {
+    flex: 1 1 100%;
+  }
+}
+
+@media (min-width: 1024px) {
+  .payment-formula-filter-bar {
+    grid-template-columns:
+      minmax(260px, 1.4fr)
+      minmax(180px, 0.8fr);
+  }
+
+  .payment-formula-filter-actions {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (min-width: 1280px) {
+  .payment-formula-filter-bar {
+    grid-template-columns:
+      minmax(300px, 1.2fr)
+      minmax(190px, 0.75fr)
+      auto;
+  }
+
+  .payment-formula-filter-actions {
+    grid-column: auto;
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    min-width: max-content;
+  }
 }
 </style>

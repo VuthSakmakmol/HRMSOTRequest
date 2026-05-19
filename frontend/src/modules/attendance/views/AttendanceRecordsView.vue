@@ -1,5 +1,7 @@
 <!-- frontend/src/modules/attendance/views/AttendanceRecordsView.vue -->
 <script setup>
+// frontend/src/modules/attendance/views/AttendanceRecordsView.vue
+
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
@@ -321,7 +323,7 @@ function statusTagClass(value) {
     UNKNOWN: 'attendance-tag-unknown',
   }
 
-  return ['attendance-status-tag', map[normalized] || 'attendance-tag-default']
+  return ['attendance-rgb-tag', map[normalized] || 'attendance-tag-default']
 }
 
 function shiftMatchTagClass(value) {
@@ -333,7 +335,7 @@ function shiftMatchTagClass(value) {
     UNKNOWN: 'attendance-tag-unknown',
   }
 
-  return ['attendance-status-tag', map[normalized] || 'attendance-tag-default']
+  return ['attendance-rgb-tag', map[normalized] || 'attendance-tag-default']
 }
 
 function dayTypeTagClass(value) {
@@ -345,7 +347,7 @@ function dayTypeTagClass(value) {
     HOLIDAY: 'attendance-tag-holiday',
   }
 
-  return ['attendance-status-tag', map[normalized] || 'attendance-tag-default']
+  return ['attendance-rgb-tag', map[normalized] || 'attendance-tag-default']
 }
 
 function statusLabel(value) {
@@ -390,9 +392,15 @@ function dayTypeLabel(value) {
   return labels[normalized] || normalized || '-'
 }
 
+function employeeParts(row) {
+  return {
+    employeeNo: s(row?.employeeNo),
+    employeeName: s(row?.employeeName),
+  }
+}
+
 function formatEmployee(row) {
-  const employeeNo = s(row?.employeeNo)
-  const employeeName = s(row?.employeeName)
+  const { employeeNo, employeeName } = employeeParts(row)
 
   if (employeeNo && employeeName) return `${employeeNo} · ${employeeName}`
   if (employeeNo) return employeeNo
@@ -420,25 +428,11 @@ function shouldShowImportedEmployee(row) {
 }
 
 function formatShift(row) {
-  const shiftCode = s(row?.shiftCode)
-  const shiftName = s(row?.shiftName)
-
-  if (shiftCode && shiftName) return `${shiftCode} · ${shiftName}`
-  if (shiftCode) return shiftCode
-  if (shiftName) return shiftName
-
-  return '-'
+  return s(row?.shiftName) || s(row?.shiftCode) || '-'
 }
 
 function formatLine(row) {
-  const lineCode = s(row?.lineCode)
-  const lineName = s(row?.lineName)
-
-  if (lineCode && lineName) return `${lineCode} · ${lineName}`
-  if (lineCode) return lineCode
-  if (lineName) return lineName
-
-  return '-'
+  return s(row?.lineName) || s(row?.lineCode) || '-'
 }
 
 function formatShiftTime(row) {
@@ -638,6 +632,7 @@ onBeforeUnmount(() => {
           severity="secondary"
           outlined
           size="small"
+          class="attendance-action-button"
           :loading="backgroundLoading"
           @click="refresh"
         />
@@ -648,6 +643,7 @@ onBeforeUnmount(() => {
           severity="secondary"
           outlined
           size="small"
+          class="attendance-action-button"
           @click="clearFilters"
         />
       </div>
@@ -688,7 +684,7 @@ onBeforeUnmount(() => {
           lazy
           scrollable
           scroll-height="500px"
-          table-style="min-width: 145rem"
+          table-style="width: max-content; min-width: 100%; table-layout: auto;"
           class="ot-data-table ot-data-table-compact attendance-records-table"
           :virtual-scroller-options="useVirtualScroll ? {
             lazy: true,
@@ -722,12 +718,12 @@ onBeforeUnmount(() => {
           <Column
             field="attendanceDate"
             :header="t('common.date')"
-            style="min-width: 8rem"
+            style="width: 8rem; min-width: 8rem"
           >
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="font-bold text-[color:var(--ot-text)]"
+                class="attendance-date-text"
               >
                 {{ formatDateDMY(data.attendanceDate) }}
               </span>
@@ -736,20 +732,20 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('attendance.field.employee')"
-            style="min-width: 18rem"
+            style="width: 17rem; min-width: 17rem"
           >
             <template #body="{ data }">
               <div
                 v-if="data"
-                class="flex flex-col"
+                class="attendance-employee-cell"
               >
-                <span class="font-bold text-[color:var(--ot-text)]">
+                <span class="attendance-employee-main">
                   {{ formatEmployee(data) }}
                 </span>
 
                 <span
                   v-if="shouldShowImportedEmployee(data)"
-                  class="text-xs text-[color:var(--ot-text-muted)]"
+                  class="attendance-employee-sub"
                 >
                   {{ t('attendance.field.importedEmployee') }}:
                   {{ formatImportedEmployee(data) }}
@@ -760,12 +756,12 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('attendance.field.department')"
-            style="min-width: 13rem"
+            style="width: 12rem; min-width: 12rem"
           >
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="ot-truncate-2"
+                class="attendance-meta-text"
               >
                 {{ data.departmentName || data.importedDepartmentName || '-' }}
               </span>
@@ -774,12 +770,12 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('attendance.field.position')"
-            style="min-width: 13rem"
+            style="width: 12rem; min-width: 12rem"
           >
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="ot-truncate-2"
+                class="attendance-meta-text"
               >
                 {{ data.positionName || data.importedPositionName || '-' }}
               </span>
@@ -788,12 +784,12 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('attendance.field.line')"
-            style="min-width: 12rem"
+            style="width: 11rem; min-width: 11rem"
           >
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="ot-truncate-2"
+                class="attendance-meta-text"
               >
                 {{ formatLine(data) }}
               </span>
@@ -802,18 +798,18 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('attendance.field.shift')"
-            style="min-width: 14rem"
+            style="width: 13rem; min-width: 13rem"
           >
             <template #body="{ data }">
               <div
                 v-if="data"
-                class="flex flex-col"
+                class="attendance-shift-cell"
               >
-                <span class="font-bold text-[color:var(--ot-text)]">
+                <span class="attendance-shift-name">
                   {{ formatShift(data) }}
                 </span>
 
-                <span class="text-xs text-[color:var(--ot-text-muted)]">
+                <span class="attendance-shift-time">
                   {{ formatShiftTime(data) }}
                 </span>
               </div>
@@ -822,7 +818,7 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('attendance.field.scanIn')"
-            style="min-width: 8rem"
+            style="width: 8rem; min-width: 8rem"
           >
             <template #body="{ data }">
               <span
@@ -837,7 +833,7 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('attendance.field.scanOut')"
-            style="min-width: 8rem"
+            style="width: 8rem; min-width: 8rem"
           >
             <template #body="{ data }">
               <span
@@ -853,7 +849,7 @@ onBeforeUnmount(() => {
           <Column
             field="importedStatus"
             :header="t('attendance.field.importedStatus')"
-            style="min-width: 11rem"
+            style="width: 11rem; min-width: 11rem"
           >
             <template #body="{ data }">
               <Tag
@@ -867,7 +863,7 @@ onBeforeUnmount(() => {
           <Column
             field="status"
             :header="t('attendance.field.derivedStatus')"
-            style="min-width: 11rem"
+            style="width: 11rem; min-width: 11rem"
           >
             <template #body="{ data }">
               <Tag
@@ -881,7 +877,7 @@ onBeforeUnmount(() => {
           <Column
             field="dayType"
             :header="t('attendance.field.dayType')"
-            style="min-width: 10rem"
+            style="width: 10rem; min-width: 10rem"
           >
             <template #body="{ data }">
               <Tag
@@ -895,7 +891,7 @@ onBeforeUnmount(() => {
           <Column
             field="shiftMatchStatus"
             :header="t('attendance.field.shiftMatch')"
-            style="min-width: 10rem"
+            style="width: 10rem; min-width: 10rem"
           >
             <template #body="{ data }">
               <Tag
@@ -909,7 +905,7 @@ onBeforeUnmount(() => {
           <Column
             field="workedMinutes"
             :header="t('attendance.field.worked')"
-            style="min-width: 8rem"
+            style="width: 8rem; min-width: 8rem"
           >
             <template #body="{ data }">
               <span
@@ -925,7 +921,7 @@ onBeforeUnmount(() => {
           <Column
             field="lateMinutes"
             :header="t('attendance.field.late')"
-            style="min-width: 7rem"
+            style="width: 7rem; min-width: 7rem"
           >
             <template #body="{ data }">
               <span
@@ -941,7 +937,7 @@ onBeforeUnmount(() => {
           <Column
             field="earlyOutMinutes"
             :header="t('attendance.field.earlyOut')"
-            style="min-width: 8rem"
+            style="width: 8rem; min-width: 8rem"
           >
             <template #body="{ data }">
               <span
@@ -956,12 +952,12 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('attendance.field.importNo')"
-            style="min-width: 11rem"
+            style="width: 11rem; min-width: 11rem"
           >
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="text-sm text-[color:var(--ot-text-muted)]"
+                class="attendance-code-text"
               >
                 {{ formatImportNo(data) }}
               </span>
@@ -970,12 +966,13 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('attendance.field.issues')"
-            style="min-width: 20rem"
+            style="width: 20rem; min-width: 20rem"
           >
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="ot-truncate-2 text-sm text-[color:var(--ot-text-muted)]"
+                class="attendance-issue-text"
+                :title="formatIssues(data.validationIssues) || data.derivedStatusReason || '-'"
               >
                 {{ formatIssues(data.validationIssues) || data.derivedStatusReason || '-' }}
               </span>
@@ -989,6 +986,10 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .attendance-records-page {
+  --attendance-code-rgb: 37 99 235;
+  --attendance-name-rgb: 15 23 42;
+  --attendance-meta-rgb: 71 85 105;
+
   --attendance-present-rgb: 34 197 94;
   --attendance-late-rgb: 245 158 11;
   --attendance-absent-rgb: 239 68 68;
@@ -1005,56 +1006,194 @@ onBeforeUnmount(() => {
   --attendance-missing-rgb: 239 68 68;
 }
 
-:deep(.attendance-status-tag) {
-  --attendance-tag-rgb: var(--attendance-off-rgb);
-  min-height: 1.45rem;
-  border: 1px solid rgb(var(--attendance-tag-rgb) / 0.28);
-  background: rgb(var(--attendance-tag-rgb) / 0.11);
-  color: rgb(var(--attendance-tag-rgb) / 1);
-  padding: 0.14rem 0.48rem;
-  font-size: 0.72rem;
-  font-weight: 700;
+/* =========================
+   Filter bar
+   ========================= */
+
+.attendance-records-filter-bar {
+  display: flex !important;
+  grid-template-columns: none !important;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.75rem;
 }
 
-:deep(.attendance-tag-present) {
+.attendance-records-filter-bar > .ot-field {
+  min-width: 0;
+}
+
+.attendance-filter-search {
+  flex: 1 1 260px;
+  min-width: 220px;
+}
+
+.attendance-filter-employee {
+  flex: 0 1 150px;
+  min-width: 130px;
+}
+
+.attendance-filter-select {
+  flex: 0 1 180px;
+  min-width: 155px;
+}
+
+.attendance-filter-day {
+  flex: 0 1 150px;
+  min-width: 135px;
+}
+
+.attendance-filter-date {
+  flex: 0 1 190px;
+  min-width: 170px;
+}
+
+.attendance-records-filter-actions {
+  flex: 0 0 auto;
+  min-width: max-content;
+  margin-left: auto;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+}
+
+/* =========================
+   Text helpers
+   ========================= */
+
+.attendance-date-text,
+.attendance-code-text,
+.attendance-meta-text,
+.attendance-issue-text {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.attendance-date-text {
+  color: rgb(var(--attendance-name-rgb));
+  font-size: 0.8rem;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+
+.attendance-code-text {
+  color: rgb(var(--attendance-code-rgb));
+  font-size: 0.78rem;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+
+.attendance-meta-text {
+  color: rgb(var(--attendance-meta-rgb));
+  font-size: 0.76rem;
+  font-weight: 500;
+}
+
+.attendance-issue-text {
+  max-width: 19rem;
+  color: rgb(var(--attendance-meta-rgb));
+  font-size: 0.74rem;
+  font-weight: 500;
+}
+
+.attendance-employee-cell,
+.attendance-shift-cell {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.attendance-employee-main,
+.attendance-shift-name {
+  display: inline-block;
+  max-width: 16rem;
+  overflow: hidden;
+  color: rgb(var(--attendance-name-rgb));
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attendance-employee-sub,
+.attendance-shift-time {
+  display: inline-block;
+  max-width: 16rem;
+  margin-top: 0.12rem;
+  overflow: hidden;
+  color: rgb(var(--attendance-meta-rgb));
+  font-size: 0.68rem;
+  font-weight: 500;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* =========================
+   RGB tags / chips
+   ========================= */
+
+.attendance-rgb-tag {
+  --attendance-tag-rgb: var(--attendance-off-rgb);
+  display: inline-flex !important;
+  min-height: 1.42rem;
+  max-width: 100%;
+  align-items: center !important;
+  justify-content: center !important;
+  border: 1px solid rgb(var(--attendance-tag-rgb) / 0.28);
+  border-radius: 999px;
+  background: rgb(var(--attendance-tag-rgb) / 0.11);
+  color: rgb(var(--attendance-tag-rgb) / 1);
+  padding: 0.12rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 750;
+  line-height: 1;
+  text-align: center !important;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.attendance-tag-present,
+.attendance-tag-working {
   --attendance-tag-rgb: var(--attendance-present-rgb);
 }
 
-:deep(.attendance-tag-late) {
+.attendance-tag-late,
+.attendance-tag-sunday {
   --attendance-tag-rgb: var(--attendance-late-rgb);
 }
 
-:deep(.attendance-tag-absent) {
+.attendance-tag-absent,
+.attendance-tag-holiday {
   --attendance-tag-rgb: var(--attendance-absent-rgb);
 }
 
-:deep(.attendance-tag-info) {
+.attendance-tag-info {
   --attendance-tag-rgb: var(--attendance-info-rgb);
 }
 
-:deep(.attendance-tag-leave) {
+.attendance-tag-leave {
   --attendance-tag-rgb: var(--attendance-leave-rgb);
 }
 
-:deep(.attendance-tag-off) {
+.attendance-tag-off {
   --attendance-tag-rgb: var(--attendance-off-rgb);
 }
 
-:deep(.attendance-tag-unknown),
-:deep(.attendance-tag-default) {
+.attendance-tag-unknown,
+.attendance-tag-default {
   --attendance-tag-rgb: var(--attendance-unknown-rgb);
-}
-
-:deep(.attendance-tag-working) {
-  --attendance-tag-rgb: var(--attendance-working-rgb);
-}
-
-:deep(.attendance-tag-sunday) {
-  --attendance-tag-rgb: var(--attendance-sunday-rgb);
-}
-
-:deep(.attendance-tag-holiday) {
-  --attendance-tag-rgb: var(--attendance-holiday-rgb);
 }
 
 .scan-time-chip,
@@ -1067,7 +1206,8 @@ onBeforeUnmount(() => {
   border-radius: 9999px;
   background: rgb(var(--attendance-chip-rgb) / 0.11);
   color: rgb(var(--attendance-chip-rgb) / 1);
-  font-weight: 700;
+  font-weight: 750;
+  text-align: center;
   white-space: nowrap;
 }
 
@@ -1103,65 +1243,112 @@ onBeforeUnmount(() => {
   --attendance-chip-rgb: var(--attendance-late-rgb);
 }
 
-/* =========================================================
-   Attendance Records responsive filter
-   - Wide: one row when enough space
-   - Medium: wraps naturally to 2 rows
-   - Mobile: one column
-   ========================================================= */
+/* =========================
+   PrimeVue table center
+   ========================= */
 
-.attendance-records-filter-bar {
+:deep(.attendance-records-table.p-datatable .p-datatable-table) {
+  width: max-content !important;
+  min-width: 100% !important;
+  table-layout: auto !important;
+}
+
+:deep(.attendance-records-table.p-datatable .p-datatable-thead > tr > th),
+:deep(.attendance-records-table.p-datatable .p-datatable-tbody > tr > td) {
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+:deep(.attendance-records-table.p-datatable .p-datatable-thead > tr > th) {
+  width: auto !important;
+  min-width: auto !important;
+  max-width: none !important;
+  padding: 0.58rem 0.68rem !important;
+  white-space: nowrap !important;
+  font-size: 0.78rem !important;
+  font-weight: 650 !important;
+}
+
+:deep(.attendance-records-table.p-datatable .p-datatable-tbody > tr > td) {
+  width: auto !important;
+  min-width: auto !important;
+  max-width: none !important;
+  height: 58px !important;
+  padding: 0.42rem 0.62rem !important;
+  white-space: nowrap !important;
+  font-size: 0.8rem !important;
+}
+
+:deep(.attendance-records-table.p-datatable .p-datatable-column-header-content),
+:deep(.attendance-records-table.p-datatable .p-column-header-content) {
   display: flex !important;
-  grid-template-columns: none !important;
-  flex-wrap: wrap;
-  align-items: end;
-  gap: 0.75rem;
+  width: 100% !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 0.25rem !important;
+  text-align: center !important;
 }
 
-.attendance-records-filter-bar > .ot-field {
-  min-width: 0;
+:deep(.attendance-records-table.p-datatable .p-datatable-column-title),
+:deep(.attendance-records-table.p-datatable .p-column-title) {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
 }
 
-/* Search should be wider */
-.attendance-filter-search {
-  flex: 1 1 260px;
-  min-width: 220px;
+:deep(.attendance-records-table.p-datatable .p-datatable-tbody > tr > td > *) {
+  margin-inline: auto !important;
 }
 
-/* Employee No can be compact */
-.attendance-filter-employee {
-  flex: 0 1 150px;
-  min-width: 130px;
+:deep(.attendance-records-table.p-datatable .p-tag),
+:deep(.attendance-records-table.p-datatable .p-button) {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin-inline: auto !important;
+  text-align: center !important;
 }
 
-/* Status dropdowns */
-.attendance-filter-select {
-  flex: 0 1 180px;
-  min-width: 155px;
+:deep(.attendance-records-table.p-datatable .p-tag-value) {
+  max-width: 100%;
+  overflow: hidden;
+  text-align: center !important;
+  text-overflow: ellipsis;
 }
 
-/* Day Type */
-.attendance-filter-day {
-  flex: 0 1 150px;
-  min-width: 135px;
+:deep(.attendance-action-button .p-button-label) {
+  font-weight: 500 !important;
 }
 
-/* Date pickers */
-.attendance-filter-date {
-  flex: 0 1 190px;
-  min-width: 170px;
+:deep(.attendance-action-button .p-button-icon) {
+  font-size: 0.76rem;
 }
 
-/* Action group stays at the right when there is enough space */
-.attendance-records-filter-actions {
-  flex: 0 0 auto;
-  min-width: max-content;
-  margin-left: auto;
-  flex-wrap: nowrap;
-  justify-content: flex-end;
+/* =========================
+   Dark mode
+   ========================= */
+
+:global(.dark) .attendance-records-page {
+  --attendance-name-rgb: 226 232 240;
+  --attendance-meta-rgb: 203 213 225;
 }
 
-/* If screen is not enough, actions go to new row */
+:global(.dark) .attendance-rgb-tag {
+  border-color: rgb(var(--attendance-tag-rgb) / 0.42);
+  background: rgb(var(--attendance-tag-rgb) / 0.18);
+}
+
+:global(.dark) .scan-time-chip,
+:global(.dark) .minute-chip {
+  border-color: rgb(var(--attendance-chip-rgb) / 0.42);
+  background: rgb(var(--attendance-chip-rgb) / 0.18);
+}
+
+/* =========================
+   Responsive
+   ========================= */
+
 @media (max-width: 1440px) {
   .attendance-records-filter-actions {
     flex: 1 1 100%;
@@ -1170,7 +1357,6 @@ onBeforeUnmount(() => {
   }
 }
 
-/* Tablet: 2-column style */
 @media (max-width: 768px) {
   .attendance-filter-search,
   .attendance-filter-employee,
@@ -1186,7 +1372,6 @@ onBeforeUnmount(() => {
   }
 }
 
-/* Mobile: 1-column style */
 @media (max-width: 520px) {
   .attendance-filter-search,
   .attendance-filter-employee,

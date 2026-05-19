@@ -1,5 +1,7 @@
 <!-- frontend/src/modules/payment/views/PaymentExchangeRateView.vue -->
 <script setup>
+// frontend/src/modules/payment/views/PaymentExchangeRateView.vue
+
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
@@ -128,11 +130,17 @@ function normalizePayload(res) {
 
 function normalizeItems(payload) {
   if (Array.isArray(payload)) return payload
+
   return Array.isArray(payload?.items) ? payload.items : []
 }
 
 function normalizeTotal(payload) {
-  return Number(payload?.pagination?.total || payload?.pagination?.totalRecords || payload?.total || 0)
+  return Number(
+    payload?.pagination?.total ||
+      payload?.pagination?.totalRecords ||
+      payload?.total ||
+      0,
+  )
 }
 
 function normalizeRow(row) {
@@ -181,8 +189,18 @@ function formatStatusLabel(value) {
   return value ? t('common.active') : t('common.inactive')
 }
 
-function getStatusSeverity(value) {
-  return value ? 'success' : 'danger'
+function activeTagClass(value) {
+  return value ? 'payment-status-active' : 'payment-status-inactive'
+}
+
+function roundingTagClass(value) {
+  const mode = upper(value || 'ROUND')
+
+  if (mode === 'CEIL') return 'payment-rounding-ceil'
+  if (mode === 'FLOOR') return 'payment-rounding-floor'
+  if (mode === 'NONE') return 'payment-rounding-none'
+
+  return 'payment-rounding-round'
 }
 
 function buildQuery(page) {
@@ -443,7 +461,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="ot-page-shell">
+  <div class="ot-page-shell payment-exchange-rate-page">
     <section class="ot-filter-bar payment-exchange-rate-filter-bar">
       <div class="ot-field">
         <label class="ot-field-label">
@@ -488,7 +506,7 @@ onBeforeUnmount(() => {
           :label="t('payment.exchangeRates.newExchangeRate')"
           icon="pi pi-plus"
           size="small"
-          class="whitespace-nowrap"
+          class="payment-action-button whitespace-nowrap"
           @click="openCreateDialog"
         />
 
@@ -498,6 +516,7 @@ onBeforeUnmount(() => {
           severity="secondary"
           outlined
           size="small"
+          class="payment-action-button"
           :loading="backgroundLoading"
           @click="refresh"
         />
@@ -508,6 +527,7 @@ onBeforeUnmount(() => {
           severity="secondary"
           outlined
           size="small"
+          class="payment-action-button"
           @click="clearFilters"
         />
       </div>
@@ -588,12 +608,12 @@ onBeforeUnmount(() => {
             field="code"
             :header="t('common.code')"
             sortable
-            style="min-width: 11rem"
+            style="width: 10rem; min-width: 10rem"
           >
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="font-semibold text-[color:var(--ot-text)]"
+                class="payment-code-text"
               >
                 {{ data.code || '—' }}
               </span>
@@ -604,20 +624,20 @@ onBeforeUnmount(() => {
             field="name"
             :header="t('payment.exchangeRates.rateName')"
             sortable
-            style="min-width: 18rem"
+            style="width: 18rem; min-width: 18rem"
           >
             <template #body="{ data }">
               <div
                 v-if="data"
-                class="min-w-0"
+                class="payment-name-stack"
               >
-                <div class="font-medium text-[color:var(--ot-text)]">
+                <div class="payment-name-text">
                   {{ data.name || '—' }}
                 </div>
 
                 <div
                   v-if="data.description"
-                  class="mt-0.5 max-w-[360px] truncate text-xs text-[color:var(--ot-text-muted)]"
+                  class="payment-description-text"
                   :title="data.description"
                 >
                   {{ data.description }}
@@ -628,15 +648,14 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('payment.exchangeRates.currencyPair')"
-            style="min-width: 10rem"
+            style="width: 10rem; min-width: 10rem"
           >
             <template #body="{ data }">
-              <span
+              <Tag
                 v-if="data"
-                class="whitespace-nowrap text-sm text-[color:var(--ot-text)]"
-              >
-                {{ formatCurrencyPair(data) }}
-              </span>
+                :value="formatCurrencyPair(data)"
+                class="payment-rgb-tag payment-currency-tag"
+              />
             </template>
           </Column>
 
@@ -644,12 +663,12 @@ onBeforeUnmount(() => {
             field="rate"
             :header="t('payment.exchangeRates.rate')"
             sortable
-            style="min-width: 9rem"
+            style="width: 9rem; min-width: 9rem"
           >
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="whitespace-nowrap text-sm text-[color:var(--ot-text)]"
+                class="payment-rate-text"
               >
                 {{ formatRate(data.rate) }}
               </span>
@@ -658,25 +677,22 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('payment.exchangeRates.rounding')"
-            style="min-width: 14rem"
+            style="width: 13rem; min-width: 13rem"
           >
             <template #body="{ data }">
               <div
                 v-if="data"
-                class="text-xs leading-5 text-[color:var(--ot-text-muted)]"
+                class="payment-rounding-stack"
               >
-                <div>
-                  {{ t('payment.exchangeRates.mode') }}:
-                  <span class="text-[color:var(--ot-text)]">
-                    {{ data.roundingMode || 'ROUND' }}
-                  </span>
-                </div>
+                <Tag
+                  :value="data.roundingMode || 'ROUND'"
+                  class="payment-rgb-tag"
+                  :class="roundingTagClass(data.roundingMode)"
+                />
 
-                <div>
+                <div class="payment-rounding-unit">
                   {{ t('payment.exchangeRates.unit') }}:
-                  <span class="text-[color:var(--ot-text)]">
-                    {{ formatNumber(data.roundingUnit || 100) }}
-                  </span>
+                  {{ formatNumber(data.roundingUnit || 100) }}
                 </div>
               </div>
             </template>
@@ -684,16 +700,16 @@ onBeforeUnmount(() => {
 
           <Column
             :header="t('payment.exchangeRates.denominations')"
-            style="min-width: 26rem"
+            style="width: 22rem; min-width: 22rem"
           >
             <template #body="{ data }">
-              <div
+              <span
                 v-if="data"
-                class="max-w-[460px] truncate text-xs text-[color:var(--ot-text-muted)]"
+                class="payment-denomination-text"
                 :title="formatDenominations(data.denominations)"
               >
                 {{ formatDenominations(data.denominations) }}
-              </div>
+              </span>
             </template>
           </Column>
 
@@ -701,15 +717,14 @@ onBeforeUnmount(() => {
             field="isActive"
             :header="t('common.status')"
             sortable
-            style="min-width: 8rem"
+            style="width: 8rem; min-width: 8rem"
           >
             <template #body="{ data }">
               <Tag
                 v-if="data"
                 :value="formatStatusLabel(data.isActive)"
-                :severity="getStatusSeverity(data.isActive)"
-                class="payment-status-tag"
-                :class="data.isActive ? 'payment-status-active' : 'payment-status-inactive'"
+                class="payment-rgb-tag"
+                :class="activeTagClass(data.isActive)"
               />
             </template>
           </Column>
@@ -718,12 +733,12 @@ onBeforeUnmount(() => {
             field="updatedAt"
             :header="t('common.updatedAt')"
             sortable
-            style="min-width: 13rem"
+            style="width: 13rem; min-width: 13rem"
           >
             <template #body="{ data }">
               <span
                 v-if="data"
-                class="whitespace-nowrap text-xs text-[color:var(--ot-text-muted)]"
+                class="payment-meta-text"
               >
                 {{ formatDateTime(data.updatedAt || data.createdAt) || '—' }}
               </span>
@@ -734,19 +749,18 @@ onBeforeUnmount(() => {
             :header="t('common.actions')"
             frozen
             align-frozen="right"
-            header-class="ot-action-header"
-            body-class="ot-action-cell"
-            style="width: 5.5rem; min-width: 5.5rem"
+            header-class="payment-action-header"
+            body-class="payment-action-cell"
+            style="width: 7rem; min-width: 7rem"
           >
             <template #body="{ data }">
               <Button
                 v-if="data"
+                :label="t('common.edit')"
                 icon="pi pi-pencil"
-                severity="secondary"
-                text
-                rounded
                 size="small"
-                :aria-label="t('common.edit')"
+                outlined
+                class="payment-table-edit-button"
                 @click="openEditDialog(data)"
               />
             </template>
@@ -923,20 +937,23 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div class="flex items-center gap-2">
+        <div class="payment-active-box">
+          <div>
+            <div class="payment-active-title">
+              {{ t('common.active') }}
+            </div>
+
+            <div class="payment-active-help">
+              {{ t('payment.exchangeRates.activeHelp') || t('payment.exchangeRates.dialogNote') }}
+            </div>
+          </div>
+
           <Checkbox
             v-model="form.isActive"
             input-id="payment-exchange-rate-active"
             binary
             :disabled="saving"
           />
-
-          <label
-            for="payment-exchange-rate-active"
-            class="text-sm text-[color:var(--ot-text)]"
-          >
-            {{ t('common.active') }}
-          </label>
         </div>
       </div>
 
@@ -963,71 +980,218 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-@media (min-width: 1280px) {
-  .payment-exchange-rate-filter-bar {
-    grid-template-columns:
-      minmax(260px, 1fr)
-      minmax(180px, 220px)
-      auto;
-    align-items: end;
-  }
-
-  .payment-exchange-rate-filter-actions {
-    flex-wrap: nowrap;
-    justify-content: flex-end;
-    min-width: max-content;
-  }
+.payment-exchange-rate-page {
+  --payment-code-rgb: 37 99 235;
+  --payment-name-rgb: 15 23 42;
+  --payment-meta-rgb: 71 85 105;
+  --payment-active-rgb: 34 197 94;
+  --payment-inactive-rgb: 239 68 68;
+  --payment-info-rgb: 59 130 246;
+  --payment-warning-rgb: 245 158 11;
+  --payment-muted-rgb: 100 116 139;
+  --payment-purple-rgb: 168 85 247;
 }
 
-:deep(.payment-exchange-rate-table .p-datatable-table) {
-  width: max-content !important;
-  min-width: 100% !important;
-  table-layout: auto !important;
+.payment-exchange-rate-filter-bar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  align-items: end;
 }
 
-:deep(.payment-exchange-rate-table .p-datatable-thead > tr > th) {
-  white-space: nowrap !important;
+.payment-exchange-rate-filter-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  min-width: 0;
 }
 
-:deep(.payment-exchange-rate-table .p-datatable-tbody > tr > td) {
-  vertical-align: middle !important;
-  white-space: nowrap !important;
+.payment-exchange-rate-filter-actions > * {
+  flex: 0 0 auto;
 }
 
-:deep(.payment-exchange-rate-table .p-tag.payment-status-tag) {
-  min-height: 1.35rem !important;
-  padding: 0.12rem 0.48rem !important;
-  font-size: 0.7rem !important;
-  font-weight: 500 !important;
-  line-height: 1 !important;
-  border-radius: 999px !important;
-  border: 1px solid transparent !important;
-  white-space: nowrap !important;
+/* =========================
+   Table text
+   ========================= */
+
+.payment-code-text {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgb(var(--payment-code-rgb));
+  font-size: 0.82rem;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
 }
 
-:deep(.p-tag.payment-status-active) {
-  background: #dcfce7 !important;
-  color: #166534 !important;
-  border-color: #22c55e !important;
+.payment-name-stack,
+.payment-rounding-stack {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
 }
 
-:deep(.p-tag.payment-status-inactive) {
-  background: #fee2e2 !important;
-  color: #991b1b !important;
-  border-color: #ef4444 !important;
+.payment-name-text {
+  max-width: 100%;
+  overflow: hidden;
+  color: rgb(var(--payment-name-rgb));
+  font-size: 0.82rem;
+  font-weight: 650;
+  line-height: 1.25;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+
+.payment-description-text {
+  max-width: 17rem;
+  margin-top: 0.16rem;
+  overflow: hidden;
+  color: rgb(var(--payment-meta-rgb));
+  font-size: 0.72rem;
+  font-weight: 500;
+  line-height: 1.25;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.payment-rate-text,
+.payment-meta-text,
+.payment-denomination-text,
+.payment-rounding-unit {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  color: rgb(var(--payment-meta-rgb));
+  font-size: 0.78rem;
+  font-weight: 500;
+  text-align: center;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.payment-rate-text {
+  color: rgb(var(--payment-name-rgb));
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.payment-denomination-text {
+  max-width: 21rem;
+}
+
+.payment-rounding-unit {
+  margin-top: 0.18rem;
+  font-size: 0.7rem;
+}
+
+.payment-active-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border: 1px solid var(--ot-border);
+  border-radius: 0.85rem;
+  background: var(--ot-surface);
+  padding: 0.75rem 0.9rem;
+}
+
+.payment-active-title {
+  color: var(--ot-text);
+  font-size: 0.86rem;
+  font-weight: 650;
+}
+
+.payment-active-help {
+  margin-top: 0.18rem;
+  color: var(--ot-text-muted);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+/* =========================
+   RGB tags
+   ========================= */
+
+.payment-rgb-tag {
+  --payment-tag-rgb: var(--payment-muted-rgb);
+  display: inline-flex !important;
+  min-height: 1.42rem;
+  max-width: 100%;
+  align-items: center !important;
+  justify-content: center !important;
+  border: 1px solid rgb(var(--payment-tag-rgb) / 0.28);
+  border-radius: 999px;
+  background: rgb(var(--payment-tag-rgb) / 0.11);
+  color: rgb(var(--payment-tag-rgb) / 1);
+  padding: 0.12rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 750;
+  line-height: 1;
+  text-align: center !important;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.payment-currency-tag {
+  --payment-tag-rgb: var(--payment-info-rgb);
+}
+
+.payment-status-active {
+  --payment-tag-rgb: var(--payment-active-rgb);
+}
+
+.payment-status-inactive {
+  --payment-tag-rgb: var(--payment-inactive-rgb);
+}
+
+.payment-rounding-round {
+  --payment-tag-rgb: var(--payment-info-rgb);
+}
+
+.payment-rounding-ceil {
+  --payment-tag-rgb: var(--payment-warning-rgb);
+}
+
+.payment-rounding-floor {
+  --payment-tag-rgb: var(--payment-purple-rgb);
+}
+
+.payment-rounding-none {
+  --payment-tag-rgb: var(--payment-muted-rgb);
+}
+
+/* =========================
+   Dialog notes
+   ========================= */
 
 .payment-exchange-rate-note {
   display: flex;
   gap: 0.5rem;
   align-items: flex-start;
-  border: 1px solid rgba(34, 197, 94, 0.35);
+  border: 1px solid rgb(var(--payment-active-rgb) / 0.35);
   border-radius: 0.85rem;
-  background: rgba(34, 197, 94, 0.08);
+  background: rgb(var(--payment-active-rgb) / 0.08);
   color: var(--ot-text);
   padding: 0.65rem 0.75rem;
   font-size: 0.78rem;
   line-height: 1.5;
+}
+
+.payment-exchange-rate-note i {
+  color: rgb(var(--payment-active-rgb));
+  margin-top: 0.15rem;
 }
 
 .payment-exchange-rate-preview {
@@ -1037,20 +1201,165 @@ onBeforeUnmount(() => {
   border-radius: 0.85rem;
   background: var(--ot-surface);
   padding: 0.68rem 0.75rem;
+  color: var(--ot-text);
   font-size: 0.78rem;
   line-height: 1.5;
-  color: var(--ot-text);
 }
 
-:global(.dark) :deep(.p-tag.payment-status-active) {
-  background: rgba(34, 197, 94, 0.18) !important;
-  color: #86efac !important;
-  border-color: rgba(34, 197, 94, 0.45) !important;
+/* =========================
+   PrimeVue table center
+   ========================= */
+
+:deep(.payment-exchange-rate-table.p-datatable .p-datatable-table) {
+  width: max-content !important;
+  min-width: 100% !important;
+  table-layout: auto !important;
 }
 
-:global(.dark) :deep(.p-tag.payment-status-inactive) {
-  background: rgba(239, 68, 68, 0.18) !important;
-  color: #fca5a5 !important;
-  border-color: rgba(239, 68, 68, 0.45) !important;
+:deep(.payment-exchange-rate-table.p-datatable .p-datatable-thead > tr > th),
+:deep(.payment-exchange-rate-table.p-datatable .p-datatable-tbody > tr > td) {
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+:deep(.payment-exchange-rate-table.p-datatable .p-datatable-thead > tr > th) {
+  width: auto !important;
+  min-width: auto !important;
+  max-width: none !important;
+  padding: 0.58rem 0.68rem !important;
+  white-space: nowrap !important;
+  font-size: 0.78rem !important;
+  font-weight: 650 !important;
+}
+
+:deep(.payment-exchange-rate-table.p-datatable .p-datatable-tbody > tr > td) {
+  width: auto !important;
+  min-width: auto !important;
+  max-width: none !important;
+  height: 68px !important;
+  padding: 0.46rem 0.68rem !important;
+  white-space: nowrap !important;
+  font-size: 0.8rem !important;
+}
+
+:deep(.payment-exchange-rate-table.p-datatable .p-datatable-column-header-content),
+:deep(.payment-exchange-rate-table.p-datatable .p-column-header-content) {
+  display: flex !important;
+  width: 100% !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 0.25rem !important;
+  text-align: center !important;
+}
+
+:deep(.payment-exchange-rate-table.p-datatable .p-datatable-column-title),
+:deep(.payment-exchange-rate-table.p-datatable .p-column-title) {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+}
+
+:deep(.payment-exchange-rate-table.p-datatable .p-sortable-column-icon),
+:deep(.payment-exchange-rate-table.p-datatable .p-datatable-sort-icon) {
+  margin-inline-start: 0.25rem !important;
+  margin-inline-end: 0 !important;
+}
+
+:deep(.payment-exchange-rate-table.p-datatable .p-datatable-tbody > tr > td > *) {
+  margin-inline: auto !important;
+}
+
+:deep(.payment-exchange-rate-table.p-datatable .p-tag),
+:deep(.payment-exchange-rate-table.p-datatable .p-button) {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin-inline: auto !important;
+  text-align: center !important;
+}
+
+:deep(.payment-exchange-rate-table.p-datatable .p-tag-value) {
+  max-width: 100%;
+  overflow: hidden;
+  text-align: center !important;
+  text-overflow: ellipsis;
+}
+
+:deep(.payment-exchange-rate-table.p-datatable .payment-action-header),
+:deep(.payment-exchange-rate-table.p-datatable .payment-action-cell) {
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+:deep(.payment-table-edit-button .p-button-label),
+:deep(.payment-action-button .p-button-label) {
+  font-weight: 500 !important;
+}
+
+:deep(.payment-action-button .p-button-icon),
+:deep(.payment-table-edit-button .p-button-icon) {
+  font-size: 0.76rem;
+}
+
+/* =========================
+   Dark mode
+   ========================= */
+
+:global(.dark) .payment-exchange-rate-page {
+  --payment-name-rgb: 226 232 240;
+  --payment-meta-rgb: 203 213 225;
+}
+
+:global(.dark) .payment-rgb-tag {
+  border-color: rgb(var(--payment-tag-rgb) / 0.42);
+  background: rgb(var(--payment-tag-rgb) / 0.18);
+}
+
+:global(.dark) .payment-exchange-rate-note {
+  border-color: rgb(var(--payment-active-rgb) / 0.42);
+  background: rgb(var(--payment-active-rgb) / 0.14);
+}
+
+/* =========================
+   Responsive
+   ========================= */
+
+@media (max-width: 768px) {
+  .payment-exchange-rate-filter-actions {
+    justify-content: stretch;
+  }
+
+  .payment-exchange-rate-filter-actions > * {
+    flex: 1 1 100%;
+  }
+}
+
+@media (min-width: 1024px) {
+  .payment-exchange-rate-filter-bar {
+    grid-template-columns:
+      minmax(260px, 1.4fr)
+      minmax(180px, 0.8fr);
+  }
+
+  .payment-exchange-rate-filter-actions {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (min-width: 1280px) {
+  .payment-exchange-rate-filter-bar {
+    grid-template-columns:
+      minmax(300px, 1.2fr)
+      minmax(190px, 0.75fr)
+      auto;
+  }
+
+  .payment-exchange-rate-filter-actions {
+    grid-column: auto;
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    min-width: max-content;
+  }
 }
 </style>
