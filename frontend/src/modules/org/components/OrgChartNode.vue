@@ -56,13 +56,19 @@ const isMatched = computed(() => {
   return props.matchedIds.includes(nodeKey.value) || !!nodeData.value.highlighted
 })
 
+const AUTO_EXPAND_MAX_DEPTH = 2
+
 const initialExpanded = computed(() => {
   if (!hasChildren.value) return false
 
+  // When search returns expanded path, keep it open.
   if (props.expandedIds.includes(nodeKey.value)) return true
-  if (props.node?.expanded === true) return true
 
-  return true
+  // Auto expand only 3 visible levels:
+  // depth 0 = A open
+  // depth 1 = B open
+  // depth 2 = C visible but closed
+  return props.depth < AUTO_EXPAND_MAX_DEPTH
 })
 
 const isOpen = ref(initialExpanded.value)

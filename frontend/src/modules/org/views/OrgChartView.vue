@@ -167,7 +167,7 @@ function normalizeTreeNode(node) {
 
   return {
     key: s(node.key || data.id),
-    expanded: true,
+    expanded: false,
     data: {
       id: s(data.id),
       name: s(data.name || data.displayName || node.label || t('common.unknown')),
