@@ -37,6 +37,7 @@ import AttendanceRecordsView from '@/modules/attendance/views/AttendanceRecordsV
 import OTAttendanceVerificationView from '@/modules/attendance/views/OTAttendanceVerificationView.vue'
 
 import PaymentExchangeRateView from '@/modules/payment/views/PaymentExchangeRateView.vue'
+import PaymentAllowancePolicyView from '@/modules/payment/views/PaymentAllowancePolicyView.vue'
 
 import ForbiddenView from '@/modules/errors/views/ForbiddenView.vue'
 
@@ -469,6 +470,21 @@ const routes = [
           title: 'Payment Process',
           titleKey: 'nav.paymentProcess',
           requiredAnyPermissions: ['PAYMENT_PROCESS'],
+        },
+      },
+      {
+        path: 'payment/allowance-policies',
+        name: 'payment-allowance-policies',
+        component: PaymentAllowancePolicyView,
+        meta: {
+          requiresAuth: true,
+          title: 'Payment Allowance Policies',
+          titleKey: 'nav.paymentAllowancePolicies',
+          requiredAnyPermissions: [
+            'PAYMENT_ALLOWANCE_POLICY_VIEW',
+            'PAYMENT_ALLOWANCE_POLICY_CREATE',
+            'PAYMENT_ALLOWANCE_POLICY_UPDATE',
+          ],
         },
       },
 

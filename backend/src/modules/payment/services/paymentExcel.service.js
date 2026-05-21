@@ -34,6 +34,25 @@ function buildBreakdownColumns(data, breakdown = {}) {
   }, {})
 }
 
+function allowancePolicyText(item = {}) {
+  const policies = Array.isArray(item.allowancePolicies) ? item.allowancePolicies : []
+
+  if (!policies.length) return ''
+
+  return policies
+    .map((policy) => {
+      const code = s(policy.code)
+      const name = s(policy.name)
+      const amount = n(policy.amount, 0)
+      const currency = s(policy.currency)
+
+      return [code, name, amount ? `${amount} ${currency}` : '']
+        .filter(Boolean)
+        .join(' - ')
+    })
+    .join('; ')
+}
+
 function buildSalaryTemplateWorkbook() {
   const workbook = XLSX.utils.book_new()
 
@@ -79,18 +98,30 @@ function buildSummaryRows(data) {
     ['OT Requests', data.otRequestCount || 0],
     ['Payment Rows', summary.totalItemCount || 0],
     ['Payable Rows', summary.payableItemCount || 0],
+    ['Rows With Allowance', summary.allowanceItemCount || 0],
     ['Missing Salary Rows', summary.missingSalaryItemCount || 0],
 
-    ['Not Prepared Requests', Array.isArray(issues.notPreparedRequests) ? issues.notPreparedRequests.length : 0],
-    ['Missing Payable Employees', Array.isArray(issues.missingPayableEmployees) ? issues.missingPayableEmployees.length : 0],
+    [
+      'Missing Payable Employees',
+      Array.isArray(issues.missingPayableEmployees)
+        ? issues.missingPayableEmployees.length
+        : 0,
+    ],
 
     ['Total Payable Minutes', summary.totalPayableMinutes || 0],
     ['Total Payable Hours', summary.totalPayableHours || 0],
 
-    ['Total Amount USD', summary.totalAmountUsd || 0],
-    ['Total KHR Raw', summary.totalAmountKhrRaw || 0],
-    ['Total KHR Rounded', summary.totalAmountKhrRounded || 0],
-    ['Total KHR Round Difference', summary.totalKhrRoundDifference || 0],
+    ['OT Amount USD', summary.totalAmountUsd || 0],
+    ['OT KHR Raw', summary.totalAmountKhrRaw || 0],
+    ['OT KHR Rounded', summary.totalAmountKhrRounded || 0],
+    ['OT KHR Round Difference', summary.totalKhrRoundDifference || 0],
+
+    ['Allowance USD', summary.totalAllowanceUsd || 0],
+    ['Allowance KHR Raw', summary.totalAllowanceKhrRaw || 0],
+    ['Allowance KHR Rounded', summary.totalAllowanceKhrRounded || 0],
+
+    ['Total Payable KHR Raw', summary.totalPayableKhrRaw || 0],
+    ['Total Payable KHR Rounded', summary.totalPayableKhrRounded || 0],
 
     ['Generated At', data.generatedAtDisplayHm || ''],
     ['Exported By', s(data.exportedBy)],
@@ -113,16 +144,25 @@ function buildEmployeeSummaryRows(data) {
     'Monthly Salary': n(item.monthlySalary, 0),
     Currency: item.currency || '',
     'Request Count': n(item.requestCount, 0),
+    'Allowance Count': n(item.allowanceCount, 0),
+
     'Payable Minutes': n(item.payableMinutes, 0),
     'Payable Hours': n(item.payableHours, 0),
 
-    'Amount USD': n(item.amountUsd, 0),
+    'OT Amount USD': n(item.amountUsd, 0),
     Rate: data.exchangeRate?.rate || '',
-    'Raw KHR': n(item.amountKhrRaw, 0),
-    'Rounded KHR': n(item.amountKhrRounded, 0),
-    'Round Diff KHR': n(item.khrRoundDifference, 0),
+    'OT Raw KHR': n(item.amountKhrRaw, 0),
+    'OT Rounded KHR': n(item.amountKhrRounded, 0),
+    'OT Round Diff KHR': n(item.khrRoundDifference, 0),
 
-    ...buildBreakdownColumns(data, item.khrBreakdown),
+    'Allowance USD': n(item.allowanceAmountUsd, 0),
+    'Allowance Raw KHR': n(item.allowanceAmountKhrRaw, 0),
+    'Allowance Rounded KHR': n(item.allowanceAmountKhrRounded, 0),
+
+    'Total Payable Raw KHR': n(item.totalPayableKhrRaw, 0),
+    'Total Payable Rounded KHR': n(item.totalPayableKhrRounded, 0),
+
+    ...buildBreakdownColumns(data, item.totalPayableKhrBreakdown),
   }))
 }
 
@@ -135,16 +175,25 @@ function buildDayTypeSummaryRows(data) {
     No: index + 1,
     'Day Type': item.dayType || '',
     'Request Count': n(item.requestCount, 0),
+    'Allowance Count': n(item.allowanceCount, 0),
+
     'Payable Minutes': n(item.payableMinutes, 0),
     'Payable Hours': n(item.payableHours, 0),
 
-    'Amount USD': n(item.amountUsd, 0),
+    'OT Amount USD': n(item.amountUsd, 0),
     Rate: data.exchangeRate?.rate || '',
-    'Raw KHR': n(item.amountKhrRaw, 0),
-    'Rounded KHR': n(item.amountKhrRounded, 0),
-    'Round Diff KHR': n(item.khrRoundDifference, 0),
+    'OT Raw KHR': n(item.amountKhrRaw, 0),
+    'OT Rounded KHR': n(item.amountKhrRounded, 0),
+    'OT Round Diff KHR': n(item.khrRoundDifference, 0),
 
-    ...buildBreakdownColumns(data, item.khrBreakdown),
+    'Allowance USD': n(item.allowanceAmountUsd, 0),
+    'Allowance Raw KHR': n(item.allowanceAmountKhrRaw, 0),
+    'Allowance Rounded KHR': n(item.allowanceAmountKhrRounded, 0),
+
+    'Total Payable Raw KHR': n(item.totalPayableKhrRaw, 0),
+    'Total Payable Rounded KHR': n(item.totalPayableKhrRounded, 0),
+
+    ...buildBreakdownColumns(data, item.totalPayableKhrBreakdown),
   }))
 }
 
@@ -159,9 +208,6 @@ function buildDetailRows(data) {
     'Day Type': item.dayType || '',
     Status: item.status || '',
 
-    'Attendance Verification Status': item.attendanceVerificationStatus || '',
-    'Attendance Verified At': item.attendanceVerifiedAt || '',
-
     'Employee ID': item.employeeNo || '',
     'Employee Name': item.employeeName || '',
     Department: item.departmentName || '',
@@ -169,7 +215,6 @@ function buildDetailRows(data) {
     Line: item.lineName || '',
     Shift: item.shiftName || '',
 
-    'OT Option': item.shiftOtOptionLabel || '',
     'Start Time': item.requestStartTime || '',
     'End Time': item.requestEndTime || '',
 
@@ -200,13 +245,22 @@ function buildDetailRows(data) {
     Multiplier: n(item.multiplier, 0),
 
     Currency: item.currency || '',
-    'Amount USD': n(item.amountUsd, 0),
+    'OT Amount USD': n(item.amountUsd, 0),
     Rate: n(item.exchangeRate, 0),
-    'Raw KHR': n(item.amountKhrRaw, 0),
-    'Rounded KHR': n(item.amountKhrRounded, 0),
-    'Round Diff KHR': n(item.khrRoundDifference, 0),
+    'OT Raw KHR': n(item.amountKhrRaw, 0),
+    'OT Rounded KHR': n(item.amountKhrRounded, 0),
+    'OT Round Diff KHR': n(item.khrRoundDifference, 0),
 
-    ...buildBreakdownColumns(data, item.khrBreakdown),
+    'Allowance Policies': allowancePolicyText(item),
+    'Allowance Count': n(item.allowanceCount, 0),
+    'Allowance USD': n(item.allowanceAmountUsd, 0),
+    'Allowance Raw KHR': n(item.allowanceAmountKhrRaw, 0),
+    'Allowance Rounded KHR': n(item.allowanceAmountKhrRounded, 0),
+
+    'Total Payable Raw KHR': n(item.totalPayableKhrRaw, 0),
+    'Total Payable Rounded KHR': n(item.totalPayableKhrRounded, 0),
+
+    ...buildBreakdownColumns(data, item.totalPayableKhrBreakdown),
 
     'Salary Found': item.hasSalary ? 'Yes' : 'No',
     'Attendance/Policy Payable Found': item.hasAttendancePolicyPayable ? 'Yes' : 'No',
@@ -216,7 +270,10 @@ function buildDetailRows(data) {
 }
 
 function buildCashSummaryRows(data) {
-  const breakdown = data.summary?.totalKhrBreakdown || {}
+  const breakdown =
+    data.summary?.totalPayableKhrBreakdown ||
+    data.summary?.totalKhrBreakdown ||
+    {}
 
   return getDenominations(data).map((denomination, index) => ({
     No: index + 1,
@@ -229,24 +286,6 @@ function buildCashSummaryRows(data) {
 function buildIssuesRows(data) {
   const rows = []
   const issues = data.issues || {}
-
-  for (const item of issues.notPreparedRequests || []) {
-    rows.push({
-      Type: 'Attendance Verification Not Saved',
-      Row: '',
-      'OT Request No': item.requestNo || '',
-      'OT Date': item.otDate || '',
-      'Employee ID': '',
-      Name: '',
-      Department: '',
-      Position: '',
-      Line: '',
-      'OT Result': '',
-      Reason:
-        item.reason ||
-        'Attendance verification has not been saved for this approved OT request',
-    })
-  }
 
   for (const item of issues.invalidSalaryRows || []) {
     rows.push({
@@ -346,8 +385,11 @@ function buildPaymentWorkbook(data) {
     buildEmployeeSummaryRows(data),
     [
       8, 16, 28, 22, 22, 18,
-      16, 12, 14, 18, 18,
-      14, 12, 14, 16, 16,
+      16, 12, 14, 16,
+      18, 18,
+      16, 12, 14, 16, 16,
+      16, 18, 20,
+      22, 24,
       ...denominationWidths(data),
     ],
   )
@@ -357,8 +399,11 @@ function buildPaymentWorkbook(data) {
     'Day Type Summary',
     buildDayTypeSummaryRows(data),
     [
-      8, 18, 14, 18, 18,
-      14, 12, 14, 16, 16,
+      8, 18, 14, 16,
+      18, 18,
+      16, 12, 14, 16, 16,
+      16, 18, 20,
+      22, 24,
       ...denominationWidths(data),
     ],
   )
@@ -371,11 +416,10 @@ function buildPaymentWorkbook(data) {
       8,
 
       18, 14, 16, 14,
-      24, 22,
 
       16, 28, 22, 22, 18, 18,
 
-      24, 14, 14,
+      14, 14,
 
       18, 16, 18,
       18, 18, 18,
@@ -388,6 +432,10 @@ function buildPaymentWorkbook(data) {
       16, 16, 12,
 
       12, 14, 12, 14, 16, 16,
+
+      34, 16, 16, 18, 22,
+      24, 26,
+
       ...denominationWidths(data),
 
       14, 28, 16, 14,

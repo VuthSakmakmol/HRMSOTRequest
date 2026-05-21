@@ -40,8 +40,11 @@ const toast = useToast()
 const auth = useAuthStore()
 const { t } = useI18n()
 
-const PAGE_SIZE = 10
+const PAGE_SIZE = 20
 const SEARCH_DEBOUNCE_MS = 250
+const LOOKUP_PAGE_SIZE = 20
+const LOOKUP_SEARCH_DEBOUNCE_MS = 250
+const LOOKUP_PREFETCH_DELAY_MS = 120
 
 const saving = ref(false)
 const exporting = ref(false)
@@ -218,6 +221,172 @@ const isSaveDisabled = computed(() => {
 
 let searchTimer = null
 let currentRequestId = 0
+let backgroundPrefetchRunId = 0
+
+const lookupSearchTimers = {
+  department: null,
+  position: null,
+  line: null,
+  shift: null,
+  manager: null,
+}
+
+function createLookupState() {
+  return reactive({
+    page: 0,
+    total: 0,
+    totalPages: 1,
+    hasMore: true,
+    search: '',
+    requestId: 0,
+    scope: 'ALL',
+  })
+}
+
+const departmentLookup = createLookupState()
+const positionLookup = createLookupState()
+const lineLookup = createLookupState()
+const shiftLookup = createLookupState()
+const managerLookup = createLookupState()
+
+function sleep(ms = 0) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms)
+  })
+}
+
+function normalizePagination(payload = {}, fallbackPage = 1) {
+  const pagination = payload?.pagination || {}
+
+  const page = Number(pagination.page || fallbackPage || 1)
+  const limit = Number(pagination.limit || LOOKUP_PAGE_SIZE)
+  const total = Number(pagination.total || payload?.total || 0)
+  const totalPages = Math.max(
+    1,
+    Number(pagination.totalPages || Math.ceil(total / Math.max(limit, 1)) || 1),
+  )
+
+  const hasMore =
+    pagination.hasMore !== undefined
+      ? !!pagination.hasMore
+      : page < totalPages
+
+  return {
+    page,
+    limit,
+    total,
+    totalPages,
+    hasMore,
+  }
+}
+
+function mergeOptionLists(current = [], incoming = []) {
+  const map = new Map()
+
+  for (const item of current) {
+    const key = item?.value === null ? '__NULL__' : String(item?.value || '')
+
+    if (key) {
+      map.set(key, item)
+    }
+  }
+
+  for (const item of incoming) {
+    const key = item?.value === null ? '__NULL__' : String(item?.value || '')
+
+    if (key) {
+      map.set(key, item)
+    }
+  }
+
+  return Array.from(map.values())
+}
+
+function resetLookupState(state, search = '') {
+  state.page = 0
+  state.total = 0
+  state.totalPages = 1
+  state.hasMore = true
+  state.search = String(search || '').trim()
+}
+
+function shouldLoadMoreLookup(event, options = [], state, loading) {
+  if (loading) return false
+  if (!state.hasMore) return false
+
+  const last = Number(event?.last || 0)
+
+  return last >= Math.max(0, options.length - 6)
+}
+
+function runLookupSearchSoon(key, callback) {
+  window.clearTimeout(lookupSearchTimers[key])
+
+  lookupSearchTimers[key] = window.setTimeout(() => {
+    callback()
+  }, LOOKUP_SEARCH_DEBOUNCE_MS)
+}
+
+function upsertOption(targetRef, option) {
+  if (!option || option.value === undefined || option.value === '') return
+
+  targetRef.value = mergeOptionLists(targetRef.value, [option])
+}
+
+function ensureManagerOptionFromRow(row = {}) {
+  const managerId =
+    normalizeRefId(row?.reportsToEmployeeId) ||
+    row?.reportsToEmployeeId ||
+    null
+
+  if (!managerId) return
+
+  const label =
+    buildLabel(row?.reportsToEmployeeCode, row?.reportsToEmployeeName) ||
+    row?.lineManagerNames ||
+    managerId
+
+  upsertOption(managerOptions, {
+    label,
+    value: managerId,
+  })
+}
+
+function ensureLineOptionsFromRow(row = {}) {
+  const lines = Array.isArray(row?.lines) ? row.lines : []
+
+  for (const line of lines) {
+    const value = normalizeLineRefId(line)
+
+    if (!value) continue
+
+    upsertOption(lineOptions, {
+      label: line.name || line.lineName || line.label || line.code || value,
+      value,
+      id: value,
+      _id: value,
+      lineId: value,
+      code: line.code || line.lineCode || '',
+      name: line.name || line.lineName || '',
+    })
+  }
+
+  if (!lines.length && row?.lineId) {
+    const value = normalizeLineRefId(row.lineId)
+
+    if (value) {
+      upsertOption(lineOptions, {
+        label: row.lineName || row.linesLabel || row.lineCode || value,
+        value,
+        id: value,
+        _id: value,
+        lineId: value,
+        code: row.lineCode || '',
+        name: row.lineName || '',
+      })
+    }
+  }
+}
 
 function normalizePayload(res) {
   return res?.data?.data || res?.data || {}
@@ -469,109 +638,300 @@ function buildQuery(page) {
   }
 }
 
-async function fetchDepartmentsForDropdown(search = '') {
-  loadingDepartments.value = true
+async function fetchDepartmentsForDropdown(search = '', options = {}) {
+  const page = Number(options.page || 1)
+  const reset = options.reset !== false && page === 1
+  const prefetch = options.prefetch === true
+  const cleanSearch = String(search || '').trim()
+
+  if (reset) {
+    resetLookupState(departmentLookup, cleanSearch)
+  }
+
+  if (!departmentLookup.hasMore && page > 1) return
+
+  const requestId = ++departmentLookup.requestId
+
+  if (!prefetch) {
+    loadingDepartments.value = true
+  }
 
   try {
     const res = await getDepartmentLookupOptions({
-      limit: 100,
-      search: String(search || '').trim(),
+      page,
+      limit: LOOKUP_PAGE_SIZE,
+      search: cleanSearch,
       isActive: true,
     })
 
-    departmentOptions.value = mapDepartmentOptions(normalizeItems(normalizePayload(res)))
+    if (requestId !== departmentLookup.requestId) return
+
+    const payload = normalizePayload(res)
+    const mapped = mapDepartmentOptions(normalizeItems(payload))
+    const pagination = normalizePagination(payload, page)
+
+    departmentLookup.page = pagination.page
+    departmentLookup.total = pagination.total
+    departmentLookup.totalPages = pagination.totalPages
+    departmentLookup.hasMore = pagination.hasMore
+    departmentLookup.search = cleanSearch
+
+    departmentOptions.value = reset
+      ? mapped
+      : mergeOptionLists(departmentOptions.value, mapped)
+
+    if (reset && departmentLookup.hasMore) {
+      window.setTimeout(() => {
+        fetchDepartmentsForDropdown(cleanSearch, {
+          page: 2,
+          reset: false,
+          prefetch: true,
+        })
+      }, LOOKUP_PREFETCH_DELAY_MS)
+    }
   } catch (error) {
-    showToast(
-      'error',
-      t('org.employee.departmentLoadFailed'),
-      getApiErrorMessage(error, t('org.employee.departmentLoadFailed')),
-    )
+    if (!prefetch) {
+      showToast(
+        'error',
+        t('org.employee.departmentLoadFailed'),
+        getApiErrorMessage(error, t('org.employee.departmentLoadFailed')),
+      )
+    }
   } finally {
-    loadingDepartments.value = false
+    if (!prefetch) {
+      loadingDepartments.value = false
+    }
   }
 }
 
-async function fetchPositionsForDropdown(departmentId = '', search = '') {
-  loadingPositions.value = true
+async function fetchPositionsForDropdown(departmentId = '', search = '', options = {}) {
+  const page = Number(options.page || 1)
+  const reset = options.reset !== false && page === 1
+  const prefetch = options.prefetch === true
+  const cleanSearch = String(search || '').trim()
+  const cleanDepartmentId = String(departmentId || '').trim()
+
+  if (reset) {
+    resetLookupState(positionLookup, cleanSearch)
+  }
+
+  if (!positionLookup.hasMore && page > 1) return
+
+  const requestId = ++positionLookup.requestId
+
+  if (!prefetch) {
+    loadingPositions.value = true
+  }
 
   try {
     const res = await getPositionLookupOptions({
-      limit: 100,
-      search: String(search || '').trim(),
-      departmentId: String(departmentId || '').trim(),
+      page,
+      limit: LOOKUP_PAGE_SIZE,
+      search: cleanSearch,
+      departmentId: cleanDepartmentId,
       isActive: true,
     })
 
-    positionOptions.value = mapPositionOptions(normalizeItems(normalizePayload(res)))
+    if (requestId !== positionLookup.requestId) return
+
+    const payload = normalizePayload(res)
+    const mapped = mapPositionOptions(normalizeItems(payload))
+    const pagination = normalizePagination(payload, page)
+
+    positionLookup.page = pagination.page
+    positionLookup.total = pagination.total
+    positionLookup.totalPages = pagination.totalPages
+    positionLookup.hasMore = pagination.hasMore
+    positionLookup.search = cleanSearch
+
+    positionOptions.value = reset
+      ? mapped
+      : mergeOptionLists(positionOptions.value, mapped)
+
+    if (reset && positionLookup.hasMore) {
+      window.setTimeout(() => {
+        fetchPositionsForDropdown(cleanDepartmentId, cleanSearch, {
+          page: 2,
+          reset: false,
+          prefetch: true,
+        })
+      }, LOOKUP_PREFETCH_DELAY_MS)
+    }
   } catch (error) {
-    showToast(
-      'error',
-      t('org.employee.positionLoadFailed'),
-      getApiErrorMessage(error, t('org.employee.positionLoadFailed')),
-    )
+    if (!prefetch) {
+      showToast(
+        'error',
+        t('org.employee.positionLoadFailed'),
+        getApiErrorMessage(error, t('org.employee.positionLoadFailed')),
+      )
+    }
   } finally {
-    loadingPositions.value = false
+    if (!prefetch) {
+      loadingPositions.value = false
+    }
   }
 }
 
-async function fetchLinesForDropdown(departmentId = '', search = '') {
-  loadingLines.value = true
+async function fetchLinesForDropdown(departmentId = '', search = '', options = {}) {
+  const page = Number(options.page || 1)
+  const reset = options.reset !== false && page === 1
+  const prefetch = options.prefetch === true
+  const cleanSearch = String(search || '').trim()
+  const cleanDepartmentId = String(departmentId || '').trim()
+
+  if (reset) {
+    resetLookupState(lineLookup, cleanSearch)
+  }
+
+  if (!lineLookup.hasMore && page > 1) return
+
+  const requestId = ++lineLookup.requestId
+
+  if (!prefetch) {
+    loadingLines.value = true
+  }
 
   try {
     const res = await getLineLookupOptions({
-      page: 1,
-      limit: 100,
-      search: String(search || '').trim(),
-      departmentId: String(departmentId || '').trim(),
+      page,
+      limit: LOOKUP_PAGE_SIZE,
+      search: cleanSearch,
+      departmentId: cleanDepartmentId,
       isActive: true,
     })
 
-    lineOptions.value = mapLineOptions(normalizeItems(normalizePayload(res)))
+    if (requestId !== lineLookup.requestId) return
+
+    const payload = normalizePayload(res)
+    const mapped = mapLineOptions(normalizeItems(payload))
+    const pagination = normalizePagination(payload, page)
+
+    lineLookup.page = pagination.page
+    lineLookup.total = pagination.total
+    lineLookup.totalPages = pagination.totalPages
+    lineLookup.hasMore = pagination.hasMore
+    lineLookup.search = cleanSearch
+
+    lineOptions.value = reset
+      ? mapped
+      : mergeOptionLists(lineOptions.value, mapped)
+
+    if (reset && lineLookup.hasMore) {
+      window.setTimeout(() => {
+        fetchLinesForDropdown(cleanDepartmentId, cleanSearch, {
+          page: 2,
+          reset: false,
+          prefetch: true,
+        })
+      }, LOOKUP_PREFETCH_DELAY_MS)
+    }
   } catch (error) {
-    showToast(
-      'error',
-      t('org.employee.lineLoadFailed'),
-      getApiErrorMessage(error, t('org.employee.lineLoadFailed')),
-    )
+    if (!prefetch) {
+      showToast(
+        'error',
+        t('org.employee.lineLoadFailed'),
+        getApiErrorMessage(error, t('org.employee.lineLoadFailed')),
+      )
+    }
   } finally {
-    loadingLines.value = false
+    if (!prefetch) {
+      loadingLines.value = false
+    }
   }
 }
 
-async function fetchShiftsForDropdown(search = '') {
-  loadingShifts.value = true
+async function fetchShiftsForDropdown(search = '', options = {}) {
+  const page = Number(options.page || 1)
+  const reset = options.reset !== false && page === 1
+  const prefetch = options.prefetch === true
+  const cleanSearch = String(search || '').trim()
+
+  if (reset) {
+    resetLookupState(shiftLookup, cleanSearch)
+  }
+
+  if (!shiftLookup.hasMore && page > 1) return
+
+  const requestId = ++shiftLookup.requestId
+
+  if (!prefetch) {
+    loadingShifts.value = true
+  }
 
   try {
     const res = await getShiftLookupOptions({
-      page: 1,
-      limit: 100,
-      search: String(search || '').trim(),
+      page,
+      limit: LOOKUP_PAGE_SIZE,
+      search: cleanSearch,
       isActive: true,
     })
 
-    shiftOptions.value = mapShiftOptions(normalizeItems(normalizePayload(res)))
+    if (requestId !== shiftLookup.requestId) return
+
+    const payload = normalizePayload(res)
+    const mapped = mapShiftOptions(normalizeItems(payload))
+    const pagination = normalizePagination(payload, page)
+
+    shiftLookup.page = pagination.page
+    shiftLookup.total = pagination.total
+    shiftLookup.totalPages = pagination.totalPages
+    shiftLookup.hasMore = pagination.hasMore
+    shiftLookup.search = cleanSearch
+
+    shiftOptions.value = reset
+      ? mapped
+      : mergeOptionLists(shiftOptions.value, mapped)
+
+    if (reset && shiftLookup.hasMore) {
+      window.setTimeout(() => {
+        fetchShiftsForDropdown(cleanSearch, {
+          page: 2,
+          reset: false,
+          prefetch: true,
+        })
+      }, LOOKUP_PREFETCH_DELAY_MS)
+    }
   } catch (error) {
-    showToast(
-      'error',
-      t('org.employee.shiftLoadFailed'),
-      getApiErrorMessage(error, t('org.employee.shiftLoadFailed')),
-    )
+    if (!prefetch) {
+      showToast(
+        'error',
+        t('org.employee.shiftLoadFailed'),
+        getApiErrorMessage(error, t('org.employee.shiftLoadFailed')),
+      )
+    }
   } finally {
-    loadingShifts.value = false
+    if (!prefetch) {
+      loadingShifts.value = false
+    }
   }
 }
+async function fetchManagersForDropdown(search = '', options = {}) {
+  const page = Number(options.page || 1)
+  const reset = options.reset !== false && page === 1
+  const prefetch = options.prefetch === true
+  const cleanSearch = String(search || '').trim()
 
-async function fetchManagersForDropdown() {
-  loadingManagers.value = true
+  if (reset) {
+    resetLookupState(managerLookup, cleanSearch)
+  }
+
+  if (!managerLookup.hasMore && page > 1) return
+
+  const requestId = ++managerLookup.requestId
+
+  if (!prefetch) {
+    loadingManagers.value = true
+  }
 
   try {
     let res
+    let usedScope = 'ALL'
 
     try {
       res = await getEmployeeLookupOptions({
-        page: 1,
-        limit: 100,
-        search: '',
+        page,
+        limit: LOOKUP_PAGE_SIZE,
+        search: cleanSearch,
         isActive: true,
         scope: 'ALL',
       })
@@ -580,33 +940,176 @@ async function fetchManagersForDropdown() {
         throw error
       }
 
+      usedScope = 'MANAGED'
+
       res = await getEmployeeLookupOptions({
-        page: 1,
-        limit: 100,
-        search: '',
+        page,
+        limit: LOOKUP_PAGE_SIZE,
+        search: cleanSearch,
         isActive: true,
         scope: 'MANAGED',
       })
     }
 
-    managerOptions.value = mapManagerOptions(normalizeItems(normalizePayload(res)))
+    if (requestId !== managerLookup.requestId) return
+
+    const payload = normalizePayload(res)
+    const mapped = mapManagerOptions(normalizeItems(payload))
+    const pagination = normalizePagination(payload, page)
+
+    managerLookup.page = pagination.page
+    managerLookup.total = pagination.total
+    managerLookup.totalPages = pagination.totalPages
+    managerLookup.hasMore = pagination.hasMore
+    managerLookup.search = cleanSearch
+    managerLookup.scope = usedScope
+
+    managerOptions.value = reset
+      ? mapped
+      : mergeOptionLists(managerOptions.value, mapped)
+
+    if (reset && managerLookup.hasMore) {
+      window.setTimeout(() => {
+        fetchManagersForDropdown(cleanSearch, {
+          page: 2,
+          reset: false,
+          prefetch: true,
+        })
+      }, LOOKUP_PREFETCH_DELAY_MS)
+    }
   } catch (error) {
-    showToast(
-      'error',
-      t('org.employee.managerLoadFailed'),
-      getApiErrorMessage(error, t('org.employee.managerLoadFailed')),
-    )
+    if (!prefetch) {
+      showToast(
+        'error',
+        t('org.employee.managerLoadFailed'),
+        getApiErrorMessage(error, t('org.employee.managerLoadFailed')),
+      )
+    }
   } finally {
-    loadingManagers.value = false
+    if (!prefetch) {
+      loadingManagers.value = false
+    }
+  }
+}
+function onDepartmentLookupFilter(event) {
+  const search = String(event?.value || '').trim()
+
+  runLookupSearchSoon('department', () => {
+    fetchDepartmentsForDropdown(search, {
+      page: 1,
+      reset: true,
+    })
+  })
+}
+
+function onDepartmentLookupLazyLoad(event) {
+  if (shouldLoadMoreLookup(event, departmentOptions.value, departmentLookup, loadingDepartments.value)) {
+    fetchDepartmentsForDropdown(departmentLookup.search, {
+      page: departmentLookup.page + 1,
+      reset: false,
+      prefetch: true,
+    })
   }
 }
 
-async function fetchPage(page, { replace = false, silent = false } = {}) {
+function onPositionLookupFilter(event) {
+  const search = String(event?.value || '').trim()
+
+  runLookupSearchSoon('position', () => {
+    fetchPositionsForDropdown(filters.departmentId || form.departmentId, search, {
+      page: 1,
+      reset: true,
+    })
+  })
+}
+
+function onPositionLookupLazyLoad(event) {
+  if (shouldLoadMoreLookup(event, positionOptions.value, positionLookup, loadingPositions.value)) {
+    fetchPositionsForDropdown(filters.departmentId || form.departmentId, positionLookup.search, {
+      page: positionLookup.page + 1,
+      reset: false,
+      prefetch: true,
+    })
+  }
+}
+
+function onLineLookupFilter(event) {
+  const search = String(event?.value || '').trim()
+
+  runLookupSearchSoon('line', () => {
+    fetchLinesForDropdown(filters.departmentId || form.departmentId, search, {
+      page: 1,
+      reset: true,
+    })
+  })
+}
+
+function onLineLookupLazyLoad(event) {
+  if (shouldLoadMoreLookup(event, lineOptions.value, lineLookup, loadingLines.value)) {
+    fetchLinesForDropdown(filters.departmentId || form.departmentId, lineLookup.search, {
+      page: lineLookup.page + 1,
+      reset: false,
+      prefetch: true,
+    })
+  }
+}
+
+function onShiftLookupFilter(event) {
+  const search = String(event?.value || '').trim()
+
+  runLookupSearchSoon('shift', () => {
+    fetchShiftsForDropdown(search, {
+      page: 1,
+      reset: true,
+    })
+  })
+}
+
+function onShiftLookupLazyLoad(event) {
+  if (shouldLoadMoreLookup(event, shiftOptions.value, shiftLookup, loadingShifts.value)) {
+    fetchShiftsForDropdown(shiftLookup.search, {
+      page: shiftLookup.page + 1,
+      reset: false,
+      prefetch: true,
+    })
+  }
+}
+
+function onManagerLookupFilter(event) {
+  const search = String(event?.value || '').trim()
+
+  runLookupSearchSoon('manager', () => {
+    fetchManagersForDropdown(search, {
+      page: 1,
+      reset: true,
+    })
+  })
+}
+
+function onManagerLookupLazyLoad(event) {
+  if (shouldLoadMoreLookup(event, managerOptions.value, managerLookup, loadingManagers.value)) {
+    fetchManagersForDropdown(managerLookup.search, {
+      page: managerLookup.page + 1,
+      reset: false,
+      prefetch: true,
+    })
+  }
+}
+
+async function fetchPage(
+  page,
+  {
+    replace = false,
+    silent = false,
+    prefetch = false,
+  } = {},
+) {
   if (!replace && loadedPages.value.has(page)) return
 
   const requestId = ++currentRequestId
+  const shouldShowLoading = silent && !prefetch && !hasAnyData.value
 
-  if (silent) {
+  if (shouldShowLoading) {
     backgroundLoading.value = true
   }
 
@@ -623,6 +1126,8 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
     totalRecords.value = total
 
     if (replace) {
+      // Keep total placeholder length for stable virtual scroll.
+      // API fetches only PAGE_SIZE rows, not all employees.
       const nextRows = total > 0 ? Array.from({ length: total }, () => null) : []
 
       for (let index = 0; index < items.length; index += 1) {
@@ -650,17 +1155,44 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
   } catch (error) {
     bootstrapped.value = true
 
-    showToast(
-      'error',
-      t('common.loadFailed'),
-      getApiErrorMessage(error, t('org.employee.loadFailed')),
-    )
+    if (!prefetch) {
+      showToast(
+        'error',
+        t('common.loadFailed'),
+        getApiErrorMessage(error, t('org.employee.loadFailed')),
+      )
+    }
   } finally {
-    backgroundLoading.value = false
+    if (shouldShowLoading) {
+      backgroundLoading.value = false
+    }
   }
 }
 
+async function startBackgroundEmployeePrefetch() {
+  const runId = ++backgroundPrefetchRunId
+  const total = Number(totalRecords.value || 0)
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+
+  if (totalPages <= 1) return
+
+  for (let page = 2; page <= totalPages; page += 1) {
+    if (runId !== backgroundPrefetchRunId) return
+    if (loadedPages.value.has(page)) continue
+
+    await sleep(BACKGROUND_PREFETCH_DELAY_MS)
+
+    if (runId !== backgroundPrefetchRunId) return
+
+    await fetchPage(page, {
+      silent: true,
+      prefetch: true,
+    })
+  }
+}
 async function reloadFirstPage({ keepVisible = true } = {}) {
+  backgroundPrefetchRunId += 1
+
   if (!keepVisible) {
     rows.value = []
     totalRecords.value = 0
@@ -672,6 +1204,8 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
     replace: true,
     silent: true,
   })
+
+  startBackgroundEmployeePrefetch()
 }
 
 function runSearchSoon() {
@@ -800,6 +1334,9 @@ async function openEditDialog(row) {
     fetchLinesForDropdown(form.departmentId),
     fetchManagersForDropdown(),
   ])
+
+  ensureLineOptionsFromRow(row)
+  ensureManagerOptionFromRow(row)
 
   form.positionId = normalizeRefId(row?.positionId) || row?.positionId || ''
 
@@ -1075,20 +1612,28 @@ function managerLabel(row) {
   return buildLabel(row?.reportsToEmployeeCode, row?.reportsToEmployeeName) || '-'
 }
 
-onMounted(async () => {
-  await Promise.all([
-    fetchDepartmentsForDropdown(),
-    fetchPositionsForDropdown(''),
-    fetchLinesForDropdown(''),
-    fetchShiftsForDropdown(),
-    fetchManagersForDropdown(),
-  ])
+// frontend/src/modules/org/views/EmployeeView.vue
 
+onMounted(async () => {
   await reloadFirstPage({ keepVisible: false })
+
+  window.setTimeout(() => {
+    Promise.all([
+      fetchDepartmentsForDropdown('', { page: 1, reset: true }),
+      fetchPositionsForDropdown('', '', { page: 1, reset: true }),
+      fetchLinesForDropdown('', '', { page: 1, reset: true }),
+      fetchShiftsForDropdown('', { page: 1, reset: true }),
+      fetchManagersForDropdown('', { page: 1, reset: true }),
+    ])
+  }, 0)
 })
 
 onBeforeUnmount(() => {
   window.clearTimeout(searchTimer)
+
+  Object.values(lookupSearchTimers).forEach((timer) => {
+    window.clearTimeout(timer)
+  })
 })
 </script>
 
@@ -1130,7 +1675,15 @@ onBeforeUnmount(() => {
           option-value="value"
           class="w-full"
           size="small"
+          filter
           :loading="loadingDepartments"
+          :virtual-scroller-options="{
+            itemSize: 38,
+            lazy: true,
+            showLoader: false,
+            onLazyLoad: onDepartmentLookupLazyLoad,
+          }"
+          @filter="onDepartmentLookupFilter"
           @change="onDepartmentFilterChange"
         />
       </div>
@@ -1147,7 +1700,15 @@ onBeforeUnmount(() => {
           option-value="value"
           class="w-full"
           size="small"
+          filter
           :loading="loadingPositions"
+          :virtual-scroller-options="{
+            itemSize: 38,
+            lazy: true,
+            showLoader: false,
+            onLazyLoad: onPositionLookupLazyLoad,
+          }"
+          @filter="onPositionLookupFilter"
           @change="onPositionFilterChange"
         />
       </div>
@@ -1164,7 +1725,15 @@ onBeforeUnmount(() => {
           option-value="value"
           class="w-full"
           size="small"
+          filter
           :loading="loadingLines"
+          :virtual-scroller-options="{
+            itemSize: 38,
+            lazy: true,
+            showLoader: false,
+            onLazyLoad: onLineLookupLazyLoad,
+          }"
+          @filter="onLineLookupFilter"
           @change="onLineFilterChange"
         />
       </div>
@@ -1181,14 +1750,22 @@ onBeforeUnmount(() => {
           option-value="value"
           class="w-full"
           size="small"
+          filter
           :loading="loadingShifts"
+          :virtual-scroller-options="{
+            itemSize: 38,
+            lazy: true,
+            showLoader: false,
+            onLazyLoad: onShiftLookupLazyLoad,
+          }"
+          @filter="onShiftLookupFilter"
           @change="onShiftFilterChange"
         />
       </div>
 
       <div class="ot-field">
         <label class="ot-field-label">
-          {{ t('common.status') }}
+          {{ t('common.statuss') }}
         </label>
 
         <Select
@@ -1496,7 +2073,7 @@ onBeforeUnmount(() => {
 
           <Column
             field="isActive"
-            :header="t('common.status')"
+            :header="t('common.statuss')"
             sortable
             style="min-width: 6rem"
           >
@@ -1649,6 +2226,13 @@ onBeforeUnmount(() => {
               class="w-full"
               :loading="loadingLines"
               :placeholder="t('org.employee.selectLines')"
+              :virtual-scroller-options="{
+                itemSize: 38,
+                lazy: true,
+                showLoader: false,
+                onLazyLoad: onLineLookupLazyLoad,
+              }"
+              @filter="onLineLookupFilter"
               @change="onFormLineChange"
             />
 
@@ -1690,6 +2274,13 @@ onBeforeUnmount(() => {
               show-clear
               :loading="loadingManagers"
               :placeholder="t('org.employee.selectManager')"
+              :virtual-scroller-options="{
+                itemSize: 38,
+                lazy: true,
+                showLoader: false,
+                onLazyLoad: onManagerLookupLazyLoad,
+              }"
+              @filter="onManagerLookupFilter"
             />
           </div>
 

@@ -304,6 +304,31 @@ async function insertManyInChunks(
   return result
 }
 
+async function loadAccountMapForEmployeeIds(employeeIds = []) {
+  const ids = uniqueIds(employeeIds).filter(isObjectId)
+
+  if (!ids.length) return new Map()
+
+  const accounts = await Account.find(
+    {
+      employeeId: {
+        $in: ids.map(objectId),
+      },
+    },
+    'employeeId loginId isActive',
+  ).lean()
+
+  const accountByEmployeeId = new Map()
+
+  for (const account of accounts) {
+    if (account.employeeId) {
+      accountByEmployeeId.set(id(account.employeeId), account)
+    }
+  }
+
+  return accountByEmployeeId
+}
+
 async function buildAccountDocsInBatches({
   validRows = [],
   importedEmployeeByCode = new Map(),
@@ -1708,7 +1733,7 @@ async function list(query, currentUser = null) {
   const sort = buildEmployeeSort(query.sortBy, query.sortOrder)
   const skip = (query.page - 1) * query.limit
 
-  const [items, total, accountByEmployeeId] = await Promise.all([
+  const [items, total] = await Promise.all([
     Employee.find(filter)
       .populate('departmentId', 'name code')
       .populate('positionId', POSITION_POPULATE_FIELDS)
@@ -1723,9 +1748,11 @@ async function list(query, currentUser = null) {
       .lean(),
 
     Employee.countDocuments(filter),
-
-    loadAccountMapForEmployees(),
   ])
+
+  const accountByEmployeeId = await loadAccountMapForEmployeeIds(
+    items.map((item) => item._id).filter(Boolean),
+  )
 
   return {
     items: items.map((item) =>

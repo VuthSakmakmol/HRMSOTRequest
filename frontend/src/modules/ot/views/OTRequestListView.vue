@@ -45,7 +45,6 @@ const exporting = ref(false)
 const filters = reactive({
   search: '',
   status: '',
-  dayType: '',
   otDateFrom: '',
   otDateTo: '',
   sortBy: 'createdAt',
@@ -85,13 +84,6 @@ const statusOptions = computed(() => [
   { label: t('ot.status.rejected'), value: 'REJECTED' },
   { label: t('ot.status.requesterDisagreed'), value: 'REQUESTER_DISAGREED' },
   { label: t('ot.status.cancelled'), value: 'CANCELLED' },
-])
-
-const dayTypeOptions = computed(() => [
-  { label: t('ot.requests.allDayTypes'), value: '' },
-  { label: t('ot.dayType.workingDay'), value: 'WORKING_DAY' },
-  { label: t('ot.dayType.sunday'), value: 'SUNDAY' },
-  { label: t('ot.dayType.holiday'), value: 'HOLIDAY' },
 ])
 
 function normalizePayload(res) {
@@ -135,10 +127,6 @@ function normalizeRow(row) {
   }
 }
 
-function rowIdOf(row) {
-  return String(row?.id || row?._id || row?.requestId || row?.otRequestId || '').trim()
-}
-
 function upper(value) {
   return String(value || '').trim().toUpperCase()
 }
@@ -150,6 +138,18 @@ function firstText(...values) {
   }
 
   return ''
+}
+
+function firstPositiveNumber(...values) {
+  for (const value of values) {
+    const number = Number(value)
+
+    if (Number.isFinite(number) && number > 0) {
+      return number
+    }
+  }
+
+  return 0
 }
 
 function pad2(value) {
@@ -273,76 +273,6 @@ function approvalDisplayTagClass(row) {
   return ['ot-request-rgb-tag', 'approval-display-tag', 'ot-request-tag-muted']
 }
 
-function dayTypeLabel(value, key = '') {
-  if (key) return t(key)
-
-  const normalized = upper(value)
-
-  if (normalized === 'HOLIDAY') return t('ot.dayType.holiday')
-  if (normalized === 'SUNDAY') return t('ot.dayType.sunday')
-  if (normalized === 'WORKING_DAY') return t('ot.dayType.workingDay')
-
-  return normalized || t('common.unknown')
-}
-
-function dayTypeTagClass(value) {
-  const normalized = upper(value)
-
-  if (normalized === 'HOLIDAY') return ['ot-request-rgb-tag', 'ot-request-tag-holiday']
-  if (normalized === 'SUNDAY') return ['ot-request-rgb-tag', 'ot-request-tag-sunday']
-  if (normalized === 'WORKING_DAY') return ['ot-request-rgb-tag', 'ot-request-tag-working']
-
-  return ['ot-request-rgb-tag', 'ot-request-tag-muted']
-}
-
-function isLegacyManualMode(row) {
-  const shiftId = String(row?.shiftId || '').trim()
-  const shiftOtOptionId = String(row?.shiftOtOptionId || '').trim()
-
-  return !shiftId && !shiftOtOptionId
-}
-
-function timingSourceLabel(row) {
-  const source = upper(row?.otTimingSource || row?.timingSource || 'SHIFT_OPTION')
-
-  if (source === 'CUSTOM_FIXED') return t('ot.requests.customFixed')
-
-  return t('ot.requests.preset')
-}
-
-function timingSourceTagClass(row) {
-  const source = upper(row?.otTimingSource || row?.timingSource || 'SHIFT_OPTION')
-
-  if (source === 'CUSTOM_FIXED') return ['ot-request-rgb-tag', 'ot-request-tag-info']
-
-  return ['ot-request-rgb-tag', 'ot-request-tag-muted']
-}
-
-function formatTimeRange(row) {
-  const start = String(row?.requestStartTime || row?.startTime || row?.otStartTime || '').trim()
-  const end = String(row?.requestEndTime || row?.endTime || row?.otEndTime || '').trim()
-
-  if (!start && !end) return '-'
-
-  return [start, end].filter(Boolean).join(' - ')
-}
-
-function formatOtOptionLabel(row) {
-  const label = String(
-    row?.shiftOtOptionLabel ||
-      row?.shiftOTOptionLabel ||
-      row?.otOptionLabel ||
-      row?.shiftOtOptionName ||
-      row?.otOptionName ||
-      row?.optionName ||
-      '',
-  ).trim()
-
-  if (label) return label
-
-  return isLegacyManualMode(row) ? t('ot.approval.legacyManual') : '-'
-}
-
 function formatMinutesLabel(value) {
   const minutes = Number(value || 0)
 
@@ -361,6 +291,40 @@ function formatMinutesLabel(value) {
   if (hours) return t('ot.common.hourValue', { value: hours })
 
   return t('ot.common.minuteValue', { value: mins })
+}
+
+function totalOtMinutesOf(row) {
+  return firstPositiveNumber(
+    row?.requestedMinutes,
+    row?.totalRequestedMinutes,
+    row?.otRequestedMinutes,
+    row?.totalOtMinutes,
+    row?.otMinutes,
+    row?.durationMinutes,
+    row?.plannedMinutes,
+    row?.approvedRequestedMinutes,
+
+    // Fallback only, used when backend does not send requestedMinutes.
+    row?.totalMinutes,
+  )
+}
+
+function employeeTotalOtMinutesOf(employee, row) {
+  return firstPositiveNumber(
+    employee?.requestedMinutes,
+    employee?.totalRequestedMinutes,
+    employee?.otRequestedMinutes,
+    employee?.totalOtMinutes,
+    employee?.otMinutes,
+    employee?.durationMinutes,
+    employee?.plannedMinutes,
+    employee?.approvedRequestedMinutes,
+
+    // Fallback only.
+    employee?.totalMinutes,
+    employee?.approvedMinutes,
+    totalOtMinutesOf(row),
+  )
 }
 
 function formatRequester(row) {
@@ -472,172 +436,12 @@ function employeeDepartmentOf(employee) {
   ).trim() || '-'
 }
 
-function employeeLineOf(employee, row = null) {
-  const directLabel = firstText(
-    employee?.lineLabel,
-    employee?.productionLineLabel,
-    employee?.employeeLineLabel,
-    employee?.assignedLineLabel,
-    employee?.lineDisplay,
-    employee?.productionLineDisplay,
-    employee?.lineText,
-  )
-
-  if (directLabel) return directLabel
-
-  const code = firstText(
-    employee?.lineCode,
-    employee?.productionLineCode,
-    employee?.employeeLineCode,
-    employee?.assignedLineCode,
-    employee?.line?.code,
-    employee?.line?.lineCode,
-    employee?.productionLine?.code,
-    employee?.productionLine?.lineCode,
-    employee?.productionLineId?.code,
-    employee?.productionLineId?.lineCode,
-    employee?.lineId?.code,
-    employee?.lineId?.lineCode,
-    row?.lineCode,
-    row?.productionLineCode,
-    row?.line?.code,
-    row?.productionLine?.code,
-  )
-
-  const name = firstText(
-    employee?.lineName,
-    employee?.productionLineName,
-    employee?.employeeLineName,
-    employee?.assignedLineName,
-    employee?.line?.name,
-    employee?.line?.lineName,
-    employee?.productionLine?.name,
-    employee?.productionLine?.lineName,
-    employee?.productionLineId?.name,
-    employee?.productionLineId?.lineName,
-    employee?.lineId?.name,
-    employee?.lineId?.lineName,
-    row?.lineName,
-    row?.productionLineName,
-    row?.line?.name,
-    row?.productionLine?.name,
-  )
-
-  if (code && name) return `${code} · ${name}`
-  if (code) return code
-  if (name) return name
-
-  const fallback = firstText(
-    employee?.lineNo,
-    employee?.lineNumber,
-    employee?.productionLineNo,
-    employee?.productionLineNumber,
-    employee?.line,
-    employee?.productionLine,
-  )
-
-  return fallback
-}
-
-function lineSummaryOfRow(row) {
-  const employees = getTargetEmployees(row)
-  const uniqueLines = Array.from(
-    new Set(
-      employees
-        .map((employee) => employeeLineOf(employee, row))
-        .map((line) => String(line || '').trim())
-        .filter(Boolean),
-    ),
-  )
-
-  if (uniqueLines.length === 1) return uniqueLines[0]
-  if (uniqueLines.length > 1) return uniqueLines.join(', ')
-
-  return firstText(
-    row?.lineLabel,
-    row?.productionLineLabel,
-    row?.lineCode,
-    row?.productionLineCode,
-    row?.lineName,
-    row?.productionLineName,
-  ) || '-'
-}
-
-function employeeOtTimeOf(employee, row) {
-  const employeeStart = String(
-    employee?.requestStartTime ||
-      employee?.startTime ||
-      employee?.otStartTime ||
-      employee?.approvedStartTime ||
-      '',
-  ).trim()
-
-  const employeeEnd = String(
-    employee?.requestEndTime ||
-      employee?.endTime ||
-      employee?.otEndTime ||
-      employee?.approvedEndTime ||
-      '',
-  ).trim()
-
-  if (employeeStart || employeeEnd) {
-    return [employeeStart, employeeEnd].filter(Boolean).join(' - ')
-  }
-
-  return formatTimeRange(row)
-}
-
-function employeeBreakMinutesOf(employee, row) {
-  const value = Number(
-    employee?.breakMinutes ??
-      employee?.otBreakMinutes ??
-      employee?.approvedBreakMinutes ??
-      row?.breakMinutes ??
-      0,
-  )
-
-  return Number.isFinite(value) && value >= 0 ? value : 0
-}
-
-function employeeTotalMinutesOf(employee, row) {
-  const value = Number(
-    employee?.totalMinutes ??
-      employee?.requestedMinutes ??
-      employee?.otMinutes ??
-      employee?.approvedMinutes ??
-      row?.totalMinutes ??
-      row?.requestedMinutes ??
-      0,
-  )
-
-  return Number.isFinite(value) && value >= 0 ? value : 0
-}
-
-function employeeTimeModeOf(employee) {
-  const mode = upper(employee?.otTimeMode || employee?.timeMode || 'DEFAULT')
-
-  return mode === 'CUSTOM' ? 'CUSTOM' : 'DEFAULT'
-}
-
-function employeeTimeModeLabel(employee) {
-  return employeeTimeModeOf(employee) === 'CUSTOM'
-    ? t('ot.requests.timeMode.custom')
-    : t('ot.requests.timeMode.default')
-}
-
-function employeeTimeModeTagClass(employee) {
-  return employeeTimeModeOf(employee) === 'CUSTOM'
-    ? ['ot-request-rgb-tag', 'ot-request-tag-pending']
-    : ['ot-request-rgb-tag', 'ot-request-tag-approved']
-}
-
 function buildQuery(page) {
   return {
     page,
     limit: PAGE_SIZE,
     search: String(filters.search || '').trim() || undefined,
     status: filters.status || undefined,
-    dayType: filters.dayType || undefined,
     otDateFrom: formatDateYMD(filters.otDateFrom),
     otDateTo: formatDateYMD(filters.otDateTo),
     sortBy: filters.sortBy,
@@ -649,7 +453,6 @@ function buildExportQuery() {
   return {
     search: String(filters.search || '').trim() || undefined,
     status: filters.status || undefined,
-    dayType: filters.dayType || undefined,
     otDateFrom: formatDateYMD(filters.otDateFrom),
     otDateTo: formatDateYMD(filters.otDateTo),
     sortBy: filters.sortBy,
@@ -775,7 +578,6 @@ async function onVirtualLazyLoad(event) {
 async function clearFilters() {
   filters.search = ''
   filters.status = ''
-  filters.dayType = ''
   filters.otDateFrom = ''
   filters.otDateTo = ''
   filters.sortBy = 'createdAt'
@@ -890,23 +692,6 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="ot-field">
-        <label class="ot-field-label">
-          {{ t('ot.requests.dayType') }}
-        </label>
-
-        <Select
-          v-model="filters.dayType"
-          :options="dayTypeOptions"
-          option-label="label"
-          option-value="value"
-          :placeholder="t('ot.requests.dayType')"
-          class="w-full"
-          size="small"
-          @change="onFilterChange"
-        />
-      </div>
-
-      <div class="ot-field">
         <HolidayDatePicker
           v-model="filters.otDateFrom"
           :label="t('ot.requests.otDateFrom')"
@@ -986,7 +771,7 @@ onBeforeUnmount(() => {
         :title="t('ot.requests.loading')"
         :message="t('ot.requests.fetchingRecords')"
         :rows="8"
-        :columns="14"
+        :columns="8"
       />
 
       <DataTable
@@ -1122,104 +907,13 @@ onBeforeUnmount(() => {
 
         <Column
           :header="t('ot.requests.otTime')"
-          style="width: 10rem; min-width: 10rem"
-        >
-          <template #body="{ data }">
-            <span
-              v-if="data"
-              class="ot-request-meta-text"
-            >
-              {{ formatTimeRange(data) }}
-            </span>
-          </template>
-        </Column>
-
-        <Column
-          :header="t('ot.requests.otOption')"
-          style="width: 14rem; min-width: 14rem"
-        >
-          <template #body="{ data }">
-            <div
-              v-if="data"
-              class="ot-option-cell"
-            >
-              <div class="ot-request-main-text">
-                {{ formatOtOptionLabel(data) }}
-              </div>
-
-              <div class="ot-request-sub-text">
-                {{ t('ot.approval.requested') }}:
-                {{ formatMinutesLabel(data.requestedMinutes) }}
-              </div>
-            </div>
-          </template>
-        </Column>
-
-        <Column
-          :header="t('ot.approval.breakTime')"
-          style="width: 8rem; min-width: 8rem"
-        >
-          <template #body="{ data }">
-            <span
-              v-if="data"
-              class="ot-request-meta-text"
-            >
-              {{ formatMinutesLabel(data.breakMinutes) }}
-            </span>
-          </template>
-        </Column>
-
-        <Column
-          :header="t('ot.approval.totalRequestPaid')"
-          style="width: 11rem; min-width: 11rem"
-        >
-          <template #body="{ data }">
-            <Tag
-              v-if="data"
-              :value="formatMinutesLabel(data.totalMinutes)"
-              :class="['ot-request-rgb-tag', 'ot-request-tag-approved']"
-            />
-          </template>
-        </Column>
-
-        <Column
-          :header="t('nav.lines')"
-          style="width: 12rem; min-width: 12rem"
-        >
-          <template #body="{ data }">
-            <span
-              v-if="data"
-              class="ot-request-line-text"
-            >
-              {{ lineSummaryOfRow(data) }}
-            </span>
-          </template>
-        </Column>
-
-        <Column
-          :header="t('ot.requests.timing')"
           style="width: 9rem; min-width: 9rem"
         >
           <template #body="{ data }">
             <Tag
               v-if="data"
-              :value="timingSourceLabel(data)"
-              :class="timingSourceTagClass(data)"
-            />
-          </template>
-        </Column>
-
-        <Column
-          field="dayType"
-          :header="t('ot.requests.dayType')"
-          sortable
-          style="width: 10rem; min-width: 10rem"
-        >
-          <template #body="{ data }">
-            <Tag
-              v-if="data"
-              :value="dayTypeLabel(data.dayType, data.dayTypeKey)"
-              :class="dayTypeTagClass(data.dayType)"
+              :value="formatMinutesLabel(totalOtMinutesOf(data))"
+              :class="['ot-request-rgb-tag', 'ot-request-tag-info']"
             />
           </template>
         </Column>
@@ -1253,11 +947,7 @@ onBeforeUnmount(() => {
                   <div>{{ t('common.name') }}</div>
                   <div>{{ t('nav.positions') }}</div>
                   <div>{{ t('ot.requests.otTime') }}</div>
-                  <div>{{ t('ot.requests.break') }}</div>
-                  <div>{{ t('ot.approval.totalPaid') }}</div>
-                  <div>{{ t('ot.requests.mode') }}</div>
                   <div>{{ t('nav.departments') }}</div>
-                  <div>{{ t('nav.lines') }}</div>
                 </div>
 
                 <div
@@ -1281,31 +971,12 @@ onBeforeUnmount(() => {
                     {{ employeePositionOf(employee) }}
                   </div>
 
-                  <div class="cell-center cell-mono cell-wrap">
-                    {{ employeeOtTimeOf(employee, data) }}
-                  </div>
-
                   <div class="cell-center cell-mono">
-                    {{ employeeBreakMinutesOf(employee, data) }}{{ t('ot.common.minShort') }}
-                  </div>
-
-                  <div class="cell-center cell-mono">
-                    {{ formatMinutesLabel(employeeTotalMinutesOf(employee, data)) }}
-                  </div>
-
-                  <div class="cell-center">
-                    <Tag
-                      :value="employeeTimeModeLabel(employee)"
-                      :class="employeeTimeModeTagClass(employee)"
-                    />
+                    {{ formatMinutesLabel(employeeTotalOtMinutesOf(employee, data)) }}
                   </div>
 
                   <div class="cell-center cell-wrap">
                     {{ employeeDepartmentOf(employee) }}
-                  </div>
-
-                  <div class="cell-center cell-wrap">
-                    {{ employeeLineOf(employee, data) || '-' }}
                   </div>
                 </div>
               </div>
@@ -1338,9 +1009,6 @@ onBeforeUnmount(() => {
   --ot-req-rejected-rgb: 239 68 68;
   --ot-req-info-rgb: 59 130 246;
   --ot-req-muted-rgb: 100 116 139;
-  --ot-req-holiday-rgb: 239 68 68;
-  --ot-req-sunday-rgb: 245 158 11;
-  --ot-req-working-rgb: 34 197 94;
 }
 
 .ot-request-filter-bar {
@@ -1388,20 +1056,6 @@ onBeforeUnmount(() => {
   font-size: 0.78rem;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
-}
-
-.ot-request-line-text {
-  display: inline-flex;
-  max-width: 11rem;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  color: var(--ot-text);
-  font-size: 0.78rem;
-  font-weight: 500;
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .ot-request-updating-bar {
@@ -1463,18 +1117,6 @@ onBeforeUnmount(() => {
 
 :deep(.ot-request-tag-muted) {
   --ot-request-tag-rgb: var(--ot-req-muted-rgb);
-}
-
-:deep(.ot-request-tag-working) {
-  --ot-request-tag-rgb: var(--ot-req-working-rgb);
-}
-
-:deep(.ot-request-tag-sunday) {
-  --ot-request-tag-rgb: var(--ot-req-sunday-rgb);
-}
-
-:deep(.ot-request-tag-holiday) {
-  --ot-request-tag-rgb: var(--ot-req-holiday-rgb);
 }
 
 :deep(.p-tag.approval-display-tag) {
@@ -1580,8 +1222,7 @@ onBeforeUnmount(() => {
   overflow: hidden !important;
 }
 
-.requester-cell,
-.ot-option-cell {
+.requester-cell {
   display: flex;
   min-width: max-content;
   flex-direction: column;
@@ -1613,27 +1254,6 @@ onBeforeUnmount(() => {
   padding: 0.55rem 0.7rem;
 }
 
-.ot-expanded-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.7rem;
-  margin-bottom: 0.5rem;
-}
-
-.ot-expanded-title {
-  font-size: 0.8rem;
-  font-weight: 650;
-  color: var(--ot-text);
-}
-
-.ot-expanded-subtitle {
-  margin-top: 0.08rem;
-  color: var(--ot-text-muted);
-  font-size: 0.68rem;
-  font-weight: 500;
-}
-
 .ot-expanded-content {
   width: 100%;
   max-width: 100%;
@@ -1654,16 +1274,12 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns:
     2.7rem
-    minmax(4.8rem, 0.55fr)
+    minmax(5rem, 0.6fr)
     minmax(8rem, 1.1fr)
-    minmax(7rem, 0.85fr)
-    minmax(6.8rem, 0.7fr)
-    minmax(4.2rem, 0.42fr)
-    minmax(4.8rem, 0.48fr)
-    minmax(4.8rem, 0.46fr)
-    minmax(7rem, 0.8fr)
-    minmax(7rem, 0.8fr);
-  min-width: 980px;
+    minmax(7rem, 0.9fr)
+    minmax(6rem, 0.7fr)
+    minmax(8rem, 0.9fr);
+  min-width: 680px;
   align-items: stretch;
 }
 
@@ -1733,7 +1349,7 @@ onBeforeUnmount(() => {
 
 @media (min-width: 1024px) {
   .ot-request-filter-bar {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .ot-request-filter-actions {
@@ -1744,11 +1360,10 @@ onBeforeUnmount(() => {
 @media (min-width: 1280px) {
   .ot-request-filter-bar {
     grid-template-columns:
-      minmax(240px, 1.2fr)
-      minmax(180px, 0.85fr)
-      minmax(180px, 0.85fr)
-      minmax(170px, 0.8fr)
-      minmax(170px, 0.8fr);
+      minmax(260px, 1.2fr)
+      minmax(190px, 0.85fr)
+      minmax(180px, 0.8fr)
+      minmax(180px, 0.8fr);
   }
 }
 
@@ -1766,11 +1381,6 @@ onBeforeUnmount(() => {
 
   .ot-request-filter-actions > * {
     flex: 1 1 100%;
-  }
-
-  .ot-expanded-header {
-    align-items: stretch;
-    flex-direction: column;
   }
 
   .ot-expanded-box {
@@ -1798,13 +1408,9 @@ onBeforeUnmount(() => {
       5.8rem
       8.8rem
       8.2rem
-      7.4rem
-      4.8rem
-      5.4rem
-      5.4rem
-      8.5rem
-      9.5rem;
-    min-width: 980px;
+      6.4rem
+      8.5rem;
+    min-width: 640px;
   }
 
   .ot-expanded-grid-row > div {

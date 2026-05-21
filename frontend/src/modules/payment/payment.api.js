@@ -83,6 +83,31 @@ export function updatePaymentExchangeRate(id, payload) {
   return api.patch(`/payment/exchange-rates/${id}`, payload)
 }
 
+
+// =========================
+// Payment Allowance Policies
+// =========================
+export function getPaymentAllowancePolicies(params = {}) {
+  return api.get('/payment/allowance-policies', { params })
+}
+
+export function getPaymentAllowancePolicyLookupOptions(params = {}) {
+  return api.get('/payment/allowance-policies/lookup', { params })
+}
+
+export function getPaymentAllowancePolicyById(id) {
+  return api.get(`/payment/allowance-policies/${id}`)
+}
+
+export function createPaymentAllowancePolicy(payload) {
+  return api.post('/payment/allowance-policies', payload)
+}
+
+export function updatePaymentAllowancePolicy(id, payload) {
+  return api.patch(`/payment/allowance-policies/${id}`, payload)
+}
+
+
 // =========================
 // Payment Process
 // =========================

@@ -13,6 +13,10 @@ const AttendanceRecord = require('../../attendance/models/AttendanceRecord')
 const { classifyDayType } = require('../../calendar/services/dayType.service')
 const { verifyAttendanceAgainstOT } = require('../../attendance/utils/attendanceVerification')
 
+const {
+  getActiveAllowancePoliciesForCalculation,
+} = require('../../allowance/services/paymentAllowancePolicy.service')
+
 const { parseSalaryExcel } = require('./salaryExcelParser.service')
 const {
   formatYmdToDmy,
@@ -935,6 +939,223 @@ function calculateExchangeAmount(amount, exchangeRate) {
   }
 }
 
+function normalizeAllowancePolicy(policy = {}) {
+  return {
+    id: getObjectIdString(policy.id || policy._id),
+    code: upper(policy.code),
+    name: s(policy.name),
+    allowanceType: upper(policy.allowanceType || 'FOOD'),
+    triggerType: upper(policy.triggerType || 'OT_MINUTES'),
+    minOtMinutes: safeNonNegativeInt(policy.minOtMinutes, 0),
+    amount: safeNonNegativeNumber(policy.amount, 0),
+    currency: upper(policy.currency || 'KHR'),
+    applyPer: upper(policy.applyPer || 'EMPLOYEE_PER_DAY'),
+  }
+}
+
+function buildPaymentDayKey(item = {}) {
+  const employeeKey = item.employeeId || item.employeeNo
+  const dateKey = s(item.otDate)
+
+  if (!employeeKey || !dateKey) return ''
+
+  return `${employeeKey}::${dateKey}`
+}
+
+function calculateAllowanceAmount(policy = {}, exchangeRate = {}) {
+  const amount = safeNonNegativeNumber(policy.amount, 0)
+  const currency = upper(policy.currency || 'KHR')
+
+  if (amount <= 0) {
+    return {
+      allowanceAmountUsd: 0,
+      allowanceAmountKhrRaw: 0,
+      allowanceAmountKhrRounded: 0,
+      allowanceKhrBreakdown: buildDenominationBreakdown(0, exchangeRate.denominations),
+    }
+  }
+
+  if (currency === 'USD') {
+    const exchange = calculateExchangeAmount(amount, exchangeRate)
+
+    return {
+      allowanceAmountUsd: exchange.amountUsd,
+      allowanceAmountKhrRaw: exchange.amountKhrRaw,
+      allowanceAmountKhrRounded: exchange.amountKhrRounded,
+      allowanceKhrBreakdown: exchange.khrBreakdown,
+    }
+  }
+
+  const amountKhr = Math.round(amount)
+
+  return {
+    allowanceAmountUsd: 0,
+    allowanceAmountKhrRaw: amountKhr,
+    allowanceAmountKhrRounded: amountKhr,
+    allowanceKhrBreakdown: buildDenominationBreakdown(amountKhr, exchangeRate.denominations),
+  }
+}
+
+function buildAllowanceMatch(policy = {}, exchangeRate = {}) {
+  const calculated = calculateAllowanceAmount(policy, exchangeRate)
+
+  return {
+    policyId: policy.id,
+    code: policy.code,
+    name: policy.name,
+    allowanceType: policy.allowanceType,
+    triggerType: policy.triggerType,
+    minOtMinutes: policy.minOtMinutes,
+    amount: policy.amount,
+    currency: policy.currency,
+    applyPer: policy.applyPer,
+
+    ...calculated,
+  }
+}
+
+function emptyAllowanceFields(exchangeRate = {}) {
+  return {
+    allowancePolicies: [],
+    allowanceCount: 0,
+
+    allowanceAmountUsd: 0,
+    allowanceAmountKhrRaw: 0,
+    allowanceAmountKhrRounded: 0,
+    allowanceKhrBreakdown: emptyBreakdown(exchangeRate.denominations),
+
+    totalPayableKhrRaw: 0,
+    totalPayableKhrRounded: 0,
+    totalPayableKhrBreakdown: emptyBreakdown(exchangeRate.denominations),
+  }
+}
+
+function applyAllowancePoliciesToItems(items = [], policies = [], exchangeRate = {}) {
+  const normalizedPolicies = (Array.isArray(policies) ? policies : [])
+    .map(normalizeAllowancePolicy)
+    .filter((policy) => policy.id && policy.triggerType === 'OT_MINUTES')
+
+  const nextItems = items.map((item) => ({
+    ...item,
+    ...emptyAllowanceFields(exchangeRate),
+  }))
+
+  if (!normalizedPolicies.length || !nextItems.length) {
+    return nextItems.map((item) => ({
+      ...item,
+      totalPayableKhrRaw: safeNonNegativeNumber(item.amountKhrRaw, 0),
+      totalPayableKhrRounded: safeNonNegativeNumber(item.amountKhrRounded, 0),
+      totalPayableKhrBreakdown: buildDenominationBreakdown(
+        safeNonNegativeNumber(item.amountKhrRounded, 0),
+        exchangeRate.denominations,
+      ),
+    }))
+  }
+
+  const dayGroups = new Map()
+
+  nextItems.forEach((item, index) => {
+    const key = buildPaymentDayKey(item)
+    if (!key) return
+
+    const existing = dayGroups.get(key) || {
+      key,
+      indexes: [],
+      totalPayableMinutes: 0,
+    }
+
+    existing.indexes.push(index)
+    existing.totalPayableMinutes += safeNonNegativeNumber(item.payableMinutes, 0)
+
+    dayGroups.set(key, existing)
+  })
+
+  normalizedPolicies.forEach((policy) => {
+    if (policy.applyPer === 'EMPLOYEE_PER_REQUEST') {
+      nextItems.forEach((item, index) => {
+        const payableMinutes = safeNonNegativeNumber(item.payableMinutes, 0)
+
+        if (payableMinutes < policy.minOtMinutes) return
+
+        const allowance = buildAllowanceMatch(policy, exchangeRate)
+        const current = nextItems[index]
+
+        nextItems[index] = mergeItemAllowance(current, allowance, exchangeRate)
+      })
+
+      return
+    }
+
+    dayGroups.forEach((group) => {
+      if (group.totalPayableMinutes < policy.minOtMinutes) return
+      if (!group.indexes.length) return
+
+      const firstIndex = group.indexes[0]
+      const allowance = buildAllowanceMatch(policy, exchangeRate)
+      const current = nextItems[firstIndex]
+
+      nextItems[firstIndex] = mergeItemAllowance(current, allowance, exchangeRate)
+    })
+  })
+
+  return nextItems.map((item) => finalizeItemPayableKhr(item, exchangeRate))
+}
+
+function mergeItemAllowance(item = {}, allowance = {}, exchangeRate = {}) {
+  const allowancePolicies = Array.isArray(item.allowancePolicies)
+    ? [...item.allowancePolicies]
+    : []
+
+  allowancePolicies.push(allowance)
+
+  const allowanceAmountUsd =
+    safeNonNegativeNumber(item.allowanceAmountUsd, 0) +
+    safeNonNegativeNumber(allowance.allowanceAmountUsd, 0)
+
+  const allowanceAmountKhrRaw =
+    safeNonNegativeNumber(item.allowanceAmountKhrRaw, 0) +
+    safeNonNegativeNumber(allowance.allowanceAmountKhrRaw, 0)
+
+  const allowanceAmountKhrRounded =
+    safeNonNegativeNumber(item.allowanceAmountKhrRounded, 0) +
+    safeNonNegativeNumber(allowance.allowanceAmountKhrRounded, 0)
+
+  const allowanceKhrBreakdown = addBreakdown(
+    item.allowanceKhrBreakdown || emptyBreakdown(exchangeRate.denominations),
+    allowance.allowanceKhrBreakdown,
+  )
+
+  return {
+    ...item,
+    allowancePolicies,
+    allowanceCount: allowancePolicies.length,
+    allowanceAmountUsd: roundAmount(allowanceAmountUsd, 2),
+    allowanceAmountKhrRaw,
+    allowanceAmountKhrRounded,
+    allowanceKhrBreakdown,
+  }
+}
+
+function finalizeItemPayableKhr(item = {}, exchangeRate = {}) {
+  const totalPayableKhrRaw =
+    safeNonNegativeNumber(item.amountKhrRaw, 0) +
+    safeNonNegativeNumber(item.allowanceAmountKhrRaw, 0)
+
+  const totalPayableKhrRounded =
+    safeNonNegativeNumber(item.amountKhrRounded, 0) +
+    safeNonNegativeNumber(item.allowanceAmountKhrRounded, 0)
+
+  return {
+    ...item,
+    totalPayableKhrRaw,
+    totalPayableKhrRounded,
+    totalPayableKhrBreakdown: buildDenominationBreakdown(
+      totalPayableKhrRounded,
+      exchangeRate.denominations,
+    ),
+  }
+}
+
 function buildPaymentItem({ otRequest, employee, formula, salaryInfo, exchangeRate }) {
   const employeeNo = normalizeEmployeeNo(employee.employeeNo || employee.employeeCode)
   const employeeName = s(employee.employeeName || employee.name)
@@ -1114,7 +1335,13 @@ function buildPayableWarningIssue(otRequest = {}, employee = {}) {
   }
 }
 
-async function buildPaymentItems({ otRequests, salaryMap, formula, exchangeRate }) {
+async function buildPaymentItems({
+    otRequests,
+    salaryMap,
+    formula,
+    exchangeRate,
+    allowancePolicies = [],
+  }) {
   const items = []
   const missingSalaryEmployeesMap = new Map()
   const missingPayableEmployeesMap = new Map()
@@ -1196,7 +1423,7 @@ async function buildPaymentItems({ otRequests, salaryMap, formula, exchangeRate 
   }
 
   return {
-    items,
+    items: applyAllowancePoliciesToItems(items, allowancePolicies, exchangeRate),
     missingSalaryEmployees: Array.from(missingSalaryEmployeesMap.values()),
     missingPayableEmployees: Array.from(missingPayableEmployeesMap.values()),
     payableWarningEmployees: Array.from(payableWarningEmployeesMap.values()),
@@ -1235,8 +1462,18 @@ function summarizePaymentItems(items = [], exchangeRate = {}) {
   let totalKhrRoundDifference = 0
   let totalKhrBreakdown = emptyBreakdown(exchangeRate.denominations)
 
+  let totalAllowanceUsd = 0
+  let totalAllowanceKhrRaw = 0
+  let totalAllowanceKhrRounded = 0
+  let totalAllowanceKhrBreakdown = emptyBreakdown(exchangeRate.denominations)
+
+  let totalPayableKhrRaw = 0
+  let totalPayableKhrRounded = 0
+  let totalPayableKhrBreakdown = emptyBreakdown(exchangeRate.denominations)
+
   let payableItemCount = 0
   let missingSalaryItemCount = 0
+  let allowanceItemCount = 0
 
   for (const item of items) {
     totalPayableMinutes += safeNonNegativeNumber(item.payableMinutes, 0)
@@ -1246,6 +1483,25 @@ function summarizePaymentItems(items = [], exchangeRate = {}) {
     totalAmountKhrRounded += safeNonNegativeNumber(item.amountKhrRounded, 0)
     totalKhrRoundDifference += safeNonNegativeNumber(item.khrRoundDifference, 0)
     totalKhrBreakdown = addBreakdown(totalKhrBreakdown, item.khrBreakdown)
+
+    totalAllowanceUsd += safeNonNegativeNumber(item.allowanceAmountUsd, 0)
+    totalAllowanceKhrRaw += safeNonNegativeNumber(item.allowanceAmountKhrRaw, 0)
+    totalAllowanceKhrRounded += safeNonNegativeNumber(item.allowanceAmountKhrRounded, 0)
+    totalAllowanceKhrBreakdown = addBreakdown(
+      totalAllowanceKhrBreakdown,
+      item.allowanceKhrBreakdown,
+    )
+
+    totalPayableKhrRaw += safeNonNegativeNumber(item.totalPayableKhrRaw, 0)
+    totalPayableKhrRounded += safeNonNegativeNumber(item.totalPayableKhrRounded, 0)
+    totalPayableKhrBreakdown = addBreakdown(
+      totalPayableKhrBreakdown,
+      item.totalPayableKhrBreakdown,
+    )
+
+    if (safeNonNegativeNumber(item.allowanceAmountKhrRounded, 0) > 0) {
+      allowanceItemCount += 1
+    }
 
     if (item.hasSalary) payableItemCount += 1
     if (!item.hasSalary) missingSalaryItemCount += 1
@@ -1270,7 +1526,18 @@ function summarizePaymentItems(items = [], exchangeRate = {}) {
         amountKhrRounded: 0,
         khrRoundDifference: 0,
         khrBreakdown: emptyBreakdown(exchangeRate.denominations),
+
+        allowanceAmountUsd: 0,
+        allowanceAmountKhrRaw: 0,
+        allowanceAmountKhrRounded: 0,
+        allowanceKhrBreakdown: emptyBreakdown(exchangeRate.denominations),
+
+        totalPayableKhrRaw: 0,
+        totalPayableKhrRounded: 0,
+        totalPayableKhrBreakdown: emptyBreakdown(exchangeRate.denominations),
+
         requestCount: 0,
+        allowanceCount: 0,
       }
 
       existing.payableMinutes += safeNonNegativeNumber(item.payableMinutes, 0)
@@ -1284,7 +1551,33 @@ function summarizePaymentItems(items = [], exchangeRate = {}) {
       existing.amountKhrRounded += safeNonNegativeNumber(item.amountKhrRounded, 0)
       existing.khrRoundDifference += safeNonNegativeNumber(item.khrRoundDifference, 0)
       existing.khrBreakdown = addBreakdown(existing.khrBreakdown, item.khrBreakdown)
+
+      existing.allowanceAmountUsd = roundAmount(
+        existing.allowanceAmountUsd + safeNonNegativeNumber(item.allowanceAmountUsd, 0),
+        2,
+      )
+      existing.allowanceAmountKhrRaw += safeNonNegativeNumber(item.allowanceAmountKhrRaw, 0)
+      existing.allowanceAmountKhrRounded += safeNonNegativeNumber(
+        item.allowanceAmountKhrRounded,
+        0,
+      )
+      existing.allowanceKhrBreakdown = addBreakdown(
+        existing.allowanceKhrBreakdown,
+        item.allowanceKhrBreakdown,
+      )
+
+      existing.totalPayableKhrRaw += safeNonNegativeNumber(item.totalPayableKhrRaw, 0)
+      existing.totalPayableKhrRounded += safeNonNegativeNumber(
+        item.totalPayableKhrRounded,
+        0,
+      )
+      existing.totalPayableKhrBreakdown = addBreakdown(
+        existing.totalPayableKhrBreakdown,
+        item.totalPayableKhrBreakdown,
+      )
+
       existing.requestCount += 1
+      existing.allowanceCount += safeNonNegativeNumber(item.allowanceCount, 0)
 
       summaryByEmployeeMap.set(employeeKey, existing)
     }
@@ -1301,7 +1594,18 @@ function summarizePaymentItems(items = [], exchangeRate = {}) {
       amountKhrRounded: 0,
       khrRoundDifference: 0,
       khrBreakdown: emptyBreakdown(exchangeRate.denominations),
+
+      allowanceAmountUsd: 0,
+      allowanceAmountKhrRaw: 0,
+      allowanceAmountKhrRounded: 0,
+      allowanceKhrBreakdown: emptyBreakdown(exchangeRate.denominations),
+
+      totalPayableKhrRaw: 0,
+      totalPayableKhrRounded: 0,
+      totalPayableKhrBreakdown: emptyBreakdown(exchangeRate.denominations),
+
       requestCount: 0,
+      allowanceCount: 0,
     }
 
     existingDayType.payableMinutes += safeNonNegativeNumber(item.payableMinutes, 0)
@@ -1321,7 +1625,36 @@ function summarizePaymentItems(items = [], exchangeRate = {}) {
       existingDayType.khrBreakdown,
       item.khrBreakdown,
     )
+
+    existingDayType.allowanceAmountUsd = roundAmount(
+      existingDayType.allowanceAmountUsd + safeNonNegativeNumber(item.allowanceAmountUsd, 0),
+      2,
+    )
+    existingDayType.allowanceAmountKhrRaw += safeNonNegativeNumber(
+      item.allowanceAmountKhrRaw,
+      0,
+    )
+    existingDayType.allowanceAmountKhrRounded += safeNonNegativeNumber(
+      item.allowanceAmountKhrRounded,
+      0,
+    )
+    existingDayType.allowanceKhrBreakdown = addBreakdown(
+      existingDayType.allowanceKhrBreakdown,
+      item.allowanceKhrBreakdown,
+    )
+
+    existingDayType.totalPayableKhrRaw += safeNonNegativeNumber(item.totalPayableKhrRaw, 0)
+    existingDayType.totalPayableKhrRounded += safeNonNegativeNumber(
+      item.totalPayableKhrRounded,
+      0,
+    )
+    existingDayType.totalPayableKhrBreakdown = addBreakdown(
+      existingDayType.totalPayableKhrBreakdown,
+      item.totalPayableKhrBreakdown,
+    )
+
     existingDayType.requestCount += 1
+    existingDayType.allowanceCount += safeNonNegativeNumber(item.allowanceCount, 0)
 
     summaryByDayTypeMap.set(dayType, existingDayType)
   }
@@ -1330,6 +1663,7 @@ function summarizePaymentItems(items = [], exchangeRate = {}) {
     totalItemCount: items.length,
     payableItemCount,
     missingSalaryItemCount,
+    allowanceItemCount,
 
     totalPayableMinutes,
     totalPayableHours: roundAmount(totalPayableMinutes / 60, 4),
@@ -1340,6 +1674,15 @@ function summarizePaymentItems(items = [], exchangeRate = {}) {
     totalAmountKhrRounded,
     totalKhrRoundDifference,
     totalKhrBreakdown,
+
+    totalAllowanceUsd: roundAmount(totalAllowanceUsd, 2),
+    totalAllowanceKhrRaw,
+    totalAllowanceKhrRounded,
+    totalAllowanceKhrBreakdown,
+
+    totalPayableKhrRaw,
+    totalPayableKhrRounded,
+    totalPayableKhrBreakdown,
 
     summaryByEmployee: Array.from(summaryByEmployeeMap.values()).sort((a, b) =>
       String(a.employeeNo).localeCompare(String(b.employeeNo)),
@@ -1362,21 +1705,23 @@ async function buildPaymentPreview({
 
   const formula = await getFormulaOrThrow(formulaId)
   const exchangeRate = await getExchangeRateOrThrow(exchangeRateId, formula)
+  const allowancePolicies = await getActiveAllowancePoliciesForCalculation()
 
   const parsedSalary = parseSalaryExcel(salaryFile.buffer)
   const otRequests = await fetchApprovedOTRequests(fromDate, toDate)
 
   const {
-    items,
-    missingSalaryEmployees,
-    missingPayableEmployees,
-    payableWarningEmployees,
-    verificationSummaries,
+  items,
+  missingSalaryEmployees,
+  missingPayableEmployees,
+  payableWarningEmployees,
+  verificationSummaries,
   } = await buildPaymentItems({
     otRequests,
     salaryMap: parsedSalary.salaryMap,
     formula,
     exchangeRate,
+    allowancePolicies,
   })
 
   const summary = summarizePaymentItems(items, exchangeRate)
@@ -1395,6 +1740,7 @@ async function buildPaymentPreview({
 
     formula,
     exchangeRate,
+    allowancePolicies,
 
     salaryFile: {
       originalName: s(salaryFile.originalname),

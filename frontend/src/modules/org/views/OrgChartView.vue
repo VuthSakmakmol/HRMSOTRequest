@@ -26,7 +26,6 @@ const toast = useToast()
 const { t } = useI18n()
 
 const SEARCH_DEBOUNCE_MS = 250
-const DEFAULT_ZOOM = 0.72
 
 const loading = ref(false)
 const searchKeyword = ref(String(route.query.search || '').trim())
@@ -42,23 +41,14 @@ const chartPayload = ref({
   tree: [],
 })
 
-const zoom = ref(DEFAULT_ZOOM)
-const panX = ref(0)
-const panY = ref(0)
-const isPanning = ref(false)
-
-const panStart = ref({
-  pointerId: null,
-  clientX: 0,
-  clientY: 0,
-  panX: 0,
-  panY: 0,
-})
-
 let searchTimer = null
 
 function s(value) {
   return String(value ?? '').trim()
+}
+
+function upper(value) {
+  return s(value).toUpperCase()
 }
 
 function buildLabel(...parts) {
@@ -66,84 +56,6 @@ function buildLabel(...parts) {
     .map((part) => s(part))
     .filter(Boolean)
     .join(' - ')
-}
-
-function clampZoom(value) {
-  return Math.max(0.45, Math.min(1.6, Number(value || DEFAULT_ZOOM)))
-}
-
-function zoomIn() {
-  zoom.value = clampZoom(zoom.value + 0.08)
-}
-
-function zoomOut() {
-  zoom.value = clampZoom(zoom.value - 0.08)
-}
-
-function resetView() {
-  zoom.value = DEFAULT_ZOOM
-  panX.value = 0
-  panY.value = 0
-}
-
-const zoomPercent = computed(() => `${Math.round(zoom.value * 100)}%`)
-
-const canvasStyle = computed(() => ({
-  transform: `translate(${panX.value}px, ${panY.value}px) scale(${zoom.value})`,
-  transformOrigin: 'top center',
-}))
-
-const canvasOuterStyle = computed(() => ({
-  minHeight: `${Math.max(720, Math.round(960 * zoom.value))}px`,
-  minWidth: '100%',
-}))
-
-function shouldIgnorePan(event) {
-  const target = event?.target
-
-  return !!target?.closest?.(
-    'button, input, textarea, select, .p-button, .p-inputtext, .p-select, .p-checkbox, .p-dropdown, .org-toggle-btn, .org-chart-sticky-controls',
-  )
-}
-
-function startPan(event) {
-  if (event.button !== 0) return
-  if (shouldIgnorePan(event)) return
-
-  isPanning.value = true
-
-  panStart.value = {
-    pointerId: event.pointerId,
-    clientX: event.clientX,
-    clientY: event.clientY,
-    panX: panX.value,
-    panY: panY.value,
-  }
-
-  event.currentTarget?.setPointerCapture?.(event.pointerId)
-  event.preventDefault()
-}
-
-function movePan(event) {
-  if (!isPanning.value) return
-
-  const deltaX = event.clientX - panStart.value.clientX
-  const deltaY = event.clientY - panStart.value.clientY
-
-  panX.value = panStart.value.panX + deltaX
-  panY.value = panStart.value.panY + deltaY
-}
-
-function endPan(event) {
-  if (!isPanning.value) return
-
-  try {
-    event.currentTarget?.releasePointerCapture?.(panStart.value.pointerId)
-  } catch {
-    // ignore release errors
-  }
-
-  isPanning.value = false
 }
 
 function normalizeLineManagers(value) {
@@ -158,12 +70,96 @@ function normalizeLineManagers(value) {
     .filter((manager) => manager.id || manager.employeeCode || manager.displayName)
 }
 
+function normalizeWorkflowRole(data = {}) {
+  // Backend source of truth:
+  // Employee.otWorkflowRole enum = NONE / APPROVER / ACKNOWLEDGE
+  const raw =
+    data.otWorkflowRole ||
+    data.workflowRole ||
+    data.approvalRole ||
+    data.approverRole ||
+    data.approvalMode ||
+    data.approverMode ||
+    data.workflowMode ||
+    data.workflowLabel ||
+    data.approvalLabel ||
+    data.roleType ||
+    data.actionType ||
+    ''
+
+  const value = upper(raw)
+
+  if (
+    value === 'APPROVER' ||
+    value === 'APPROVE' ||
+    value.includes('APPROVER') ||
+    value.includes('APPROVE') ||
+    data.isApprover === true ||
+    data.canApprove === true
+  ) {
+    return 'APPROVER'
+  }
+
+  if (
+    value === 'ACKNOWLEDGE' ||
+    value === 'ACKNOWLEDGER' ||
+    value === 'ACK' ||
+    value.includes('ACKNOWLEDGE') ||
+    value.includes('ACKNOWLEDGER') ||
+    value.includes('ACK') ||
+    data.isAcknowledger === true ||
+    data.canAcknowledge === true
+  ) {
+    return 'ACKNOWLEDGE'
+  }
+
+  return 'NONE'
+}
+
+function normalizeLines(data = {}) {
+  const rawLines = Array.isArray(data.lines) ? data.lines : []
+
+  const lines = rawLines
+    .map((line) => ({
+      id: s(line?.id || line?._id),
+      code: s(line?.code),
+      name: s(line?.name),
+      label: s(line?.label) || buildLabel(line?.code, line?.name),
+    }))
+    .filter((line) => line.id || line.code || line.name || line.label)
+
+  const fallbackLine = {
+    id: s(data.lineId),
+    code: s(data.lineCode),
+    name: s(data.lineName),
+    label: buildLabel(data.lineCode, data.lineName),
+  }
+
+  if (!lines.length && (fallbackLine.id || fallbackLine.code || fallbackLine.name)) {
+    lines.push(fallbackLine)
+  }
+
+  const seen = new Set()
+
+  return lines.filter((line) => {
+    const key = line.id || line.code || line.label
+
+    if (!key) return false
+    if (seen.has(key)) return false
+
+    seen.add(key)
+    return true
+  })
+}
+
 function normalizeTreeNode(node) {
   if (!node) return null
 
   const data = node.data || {}
   const lineManagers = normalizeLineManagers(data.lineManagers)
   const employeeCode = s(data.employeeCode || data.employeeNo)
+  const lines = normalizeLines(data)
+  const workflowRole = normalizeWorkflowRole(data)
 
   return {
     key: s(node.key || data.id),
@@ -181,8 +177,25 @@ function normalizeTreeNode(node) {
       department: s(data.department || data.departmentName || t('org.orgChart.noDepartment')),
       departmentName: s(data.departmentName || data.department || ''),
 
-      lineCode: s(data.lineCode),
-      lineName: s(data.lineName),
+      lineId: s(data.lineId) || lines[0]?.id || null,
+      lineCode: s(data.lineCode) || lines[0]?.code || '',
+      lineName: s(data.lineName) || lines[0]?.name || '',
+      lineIds: Array.isArray(data.lineIds)
+        ? data.lineIds.map((lineId) => s(lineId)).filter(Boolean)
+        : lines.map((line) => line.id).filter(Boolean),
+      lines,
+      lineCodes: Array.isArray(data.lineCodes)
+        ? data.lineCodes.map((item) => s(item)).filter(Boolean)
+        : lines.map((line) => line.code).filter(Boolean),
+      lineNames: Array.isArray(data.lineNames)
+        ? data.lineNames.map((item) => s(item)).filter(Boolean)
+        : lines.map((line) => line.name).filter(Boolean),
+      linesLabel:
+        s(data.linesLabel) ||
+        lines
+          .map((line) => line.label || buildLabel(line.code, line.name))
+          .filter(Boolean)
+          .join(', '),
 
       shiftCode: s(data.shiftCode),
       shiftName: s(data.shiftName),
@@ -192,6 +205,9 @@ function normalizeTreeNode(node) {
 
       isActive: typeof data.isActive === 'boolean' ? data.isActive : false,
       reportsToEmployeeId: s(data.reportsToEmployeeId) || null,
+
+      otWorkflowRole: workflowRole,
+      workflowRole,
 
       lineManagerIds: Array.isArray(data.lineManagerIds)
         ? data.lineManagerIds.map((id) => s(id)).filter(Boolean)
@@ -228,11 +244,13 @@ const rootOptions = computed(() => {
     const employeeCode = s(employee.employeeCode || employee.employeeNo)
     const displayName = s(employee.displayName || employee.name)
     const positionName = s(employee.positionName)
+    const role = normalizeWorkflowRole(employee)
 
     return {
       label: [
         buildLabel(employeeCode, displayName) || t('common.unknown'),
         positionName ? `(${positionName})` : '',
+        role && role !== 'NONE' ? `[${role}]` : '',
       ]
         .filter(Boolean)
         .join(' '),
@@ -248,11 +266,9 @@ const matchedEmployeeIds = computed(() => {
 })
 
 const expandedEmployeeIds = computed(() => {
-  const ids = Array.isArray(chartPayload.value?.expandedEmployeeIds)
+  return Array.isArray(chartPayload.value?.expandedEmployeeIds)
     ? chartPayload.value.expandedEmployeeIds
     : []
-
-  return ids
 })
 
 function syncRouteQuery() {
@@ -349,7 +365,6 @@ function onSearchInput() {
 
 function onRootChange(value) {
   selectedRootEmployeeId.value = s(value)
-  resetView()
   loadTree()
 }
 
@@ -456,7 +471,7 @@ onBeforeUnmount(() => {
       <div class="org-chart-body">
         <div v-if="loading">
           <Skeleton
-            height="38rem"
+            height="34rem"
             border-radius="1rem"
           />
         </div>
@@ -471,62 +486,13 @@ onBeforeUnmount(() => {
 
         <div
           v-else
-          class="org-chart-frame"
-          :class="{ 'org-chart-frame--panning': isPanning }"
-          @pointerdown="startPan"
-          @pointermove="movePan"
-          @pointerup="endPan"
-          @pointercancel="endPan"
+          class="org-tree-panel"
         >
-          <div class="org-chart-sticky-controls">
-            <span class="org-chart-zoom-badge">
-              {{ t('org.orgChart.zoomLabel', { zoom: zoomPercent }) }}
-            </span>
-
-            <Button
-              icon="pi pi-search-minus"
-              :label="t('org.orgChart.zoomOut')"
-              outlined
-              size="small"
-              class="org-chart-control-btn"
-              @click="zoomOut"
-            />
-
-            <Button
-              icon="pi pi-refresh"
-              :label="t('org.orgChart.resetZoom')"
-              outlined
-              size="small"
-              class="org-chart-control-btn"
-              @click="resetView"
-            />
-
-            <Button
-              icon="pi pi-search-plus"
-              :label="t('org.orgChart.zoomIn')"
-              outlined
-              size="small"
-              class="org-chart-control-btn"
-              @click="zoomIn"
-            />
-          </div>
-
-          <div
-            class="org-chart-viewport"
-            :style="canvasOuterStyle"
-          >
-            <div
-              class="org-chart-canvas"
-              :style="canvasStyle"
-            >
-              <OrgChartNode
-                :node="rootNode"
-                :matched-ids="matchedEmployeeIds"
-                :expanded-ids="expandedEmployeeIds"
-                :compact="true"
-              />
-            </div>
-          </div>
+          <OrgChartNode
+            :node="rootNode"
+            :matched-ids="matchedEmployeeIds"
+            :expanded-ids="expandedEmployeeIds"
+          />
         </div>
       </div>
     </section>
@@ -536,8 +502,6 @@ onBeforeUnmount(() => {
 <style scoped>
 .org-chart-page {
   --org-primary-rgb: 37, 99, 235;
-  --org-success-rgb: 22, 163, 74;
-  --org-muted-rgb: 100, 116, 139;
 }
 
 .org-chart-filter-bar {
@@ -587,80 +551,18 @@ onBeforeUnmount(() => {
   padding: 0.75rem;
 }
 
-.org-chart-frame {
-  position: relative;
-  min-height: 44rem;
+.org-tree-panel {
+  min-height: 34rem;
   max-height: calc(100vh - 10rem);
   overflow: auto;
   border: 1px solid var(--ot-border);
   border-radius: 1rem;
-  background:
-    radial-gradient(circle at top left, rgba(var(--org-primary-rgb), 0.07), transparent 28rem),
-    var(--ot-surface-2);
-  cursor: grab;
-  user-select: none;
-  touch-action: none;
+  background: var(--ot-surface-2);
+  padding: 0.9rem 0.95rem;
 }
 
-.org-chart-frame--panning {
-  cursor: grabbing;
-}
-
-.org-chart-sticky-controls {
-  position: sticky;
-  top: 0;
-  z-index: 20;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.45rem;
-  border-bottom: 1px solid var(--ot-border);
-  background: color-mix(in srgb, var(--ot-surface) 94%, transparent);
-  padding: 0.55rem;
-  backdrop-filter: blur(10px);
-}
-
-.org-chart-zoom-badge {
-  display: inline-flex;
-  align-items: center;
-  min-height: 1.9rem;
-  border: 1px solid rgba(var(--org-primary-rgb), 0.24);
-  border-radius: 999px;
-  background: rgba(var(--org-primary-rgb), 0.1);
-  padding: 0 0.65rem;
-  color: rgb(var(--org-primary-rgb));
-  font-size: 0.72rem;
-  font-weight: 750;
-  white-space: nowrap;
-}
-
-.org-chart-viewport {
-  display: flex;
-  width: 100%;
-  min-width: max-content;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 1.5rem 1.75rem 2.5rem;
-}
-
-.org-chart-canvas {
-  display: flex;
-  min-width: max-content;
-  align-items: flex-start;
-  justify-content: center;
-  transition: transform 0.12s ease;
-  will-change: transform;
-}
-
-:deep(.org-chart-control-btn.p-button) {
-  white-space: nowrap !important;
-}
-
-:global(.dark) .org-chart-frame {
-  background:
-    radial-gradient(circle at top left, rgba(var(--org-primary-rgb), 0.13), transparent 30rem),
-    var(--ot-surface-2);
+:global(.dark) .org-tree-panel {
+  background: var(--ot-surface-2);
 }
 
 @media (max-width: 768px) {
@@ -675,25 +577,10 @@ onBeforeUnmount(() => {
   .org-chart-check {
     justify-content: center;
   }
-}
 
-@media (max-width: 640px) {
-  .org-chart-frame {
-    min-height: 34rem;
+  .org-tree-panel {
     max-height: calc(100vh - 12rem);
-  }
-
-  .org-chart-sticky-controls {
-    justify-content: flex-start;
-  }
-
-  :deep(.org-chart-control-btn .p-button-label) {
-    display: none !important;
-  }
-
-  :deep(.org-chart-control-btn.p-button) {
-    width: 2.25rem !important;
-    padding-inline: 0 !important;
+    padding: 0.65rem;
   }
 }
 

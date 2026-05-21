@@ -280,6 +280,13 @@ const navGroups = computed(() => {
           permissions: ['PAYMENT_EXCHANGE_RATE_VIEW'],
         },
         {
+          key: 'payment-allowance-policies',
+          label: t('nav.paymentAllowancePolicies'),
+          icon: 'pi pi-gift',
+          to: '/payment/allowance-policies',
+          permissions: ['PAYMENT_ALLOWANCE_POLICY_VIEW'],
+        },
+        {
           key: 'payment-process',
           label: t('nav.paymentProcess'),
           icon: 'pi pi-file-excel',

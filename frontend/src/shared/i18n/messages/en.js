@@ -5,6 +5,7 @@ export default {
     appName: 'OT Request',
 
     loading: 'Loading',
+
     updating: 'Updating',
     search: 'Search',
     refresh: 'Refresh',
@@ -37,6 +38,7 @@ export default {
     thisData: 'This data',
 
     status: 'Status',
+    statuss: 'Status',
     allStatus: 'All Status',
     active: 'Active',
     inactive: 'Inactive',
@@ -73,7 +75,7 @@ export default {
     notifications: 'Notifications',
     language: 'Language',
 
-    statusValue: {
+    status: {
       active: 'Active',
       inactive: 'Inactive',
       unknown: 'Unknown',
@@ -247,13 +249,14 @@ export default {
     positions: 'Positions',
     lines: 'Lines',
     employees: 'Employees',
-    orgChart: 'Organization Chart',
+    orgChart: 'Overtime Flow',
 
     calendar: 'Calendar',
     holidayMaster: 'Holiday Master',
 
     shift: 'Shift',
     shiftMaster: 'Shift Master',
+    paymentAllowancePolicies: 'Allowance Policies',
 
     accessControl: 'Access Control',
     accounts: 'Accounts',
@@ -275,6 +278,7 @@ export default {
     paymentFormulas: 'Payment Formulas',
     paymentExchangeRates: 'Exchange Rates',
   },
+  
 
   access: {
     error: {
@@ -1137,7 +1141,7 @@ export default {
       selectRootPerson: 'Select root person',
       includeInactive: 'Include inactive',
 
-      treeTitle: 'Organization Chart',
+      treeTitle: 'Overtime Flow',
       zoomLabel: 'Zoom: {zoom}',
       zoomIn: 'Zoom In',
       zoomOut: 'Zoom Out',
@@ -2656,6 +2660,74 @@ export default {
       },
     },
 
+    allowancePolicies: {
+      tableTitle: 'Allowance Policy List',
+      searchPlaceholder: 'Search code, name, description, type, currency, or apply rule',
+
+      newPolicy: 'New Allowance Policy',
+      createTitle: 'Create Allowance Policy',
+      editTitle: 'Edit Allowance Policy',
+
+      policyName: 'Policy Name',
+      allowanceType: 'Allowance Type',
+      allTypes: 'All Types',
+      trigger: 'Trigger',
+      threshold: 'Threshold',
+      minOtMinutes: 'Minimum OT Minutes',
+      amount: 'Amount',
+      currency: 'Currency',
+      applyPerLabel: 'Apply Per',
+
+      codePlaceholder: 'Example: FOOD_ALLOWANCE_3H',
+      namePlaceholder: 'Example: Food Allowance for OT 3 Hours Up',
+      descriptionPlaceholder: 'Optional allowance policy description',
+
+      dialogNote:
+        'Allowance policies are used by Payment Process to add extra benefits automatically. Example: give food allowance when verified payable OT is 3 hours or more.',
+
+      previewTitle: 'Rule Preview',
+      otAtLeast: 'OT at least',
+
+      noData: 'No allowance policies matched your filters.',
+      loadFailed: 'Failed to load allowance policies.',
+      saveFailed: 'Failed to save allowance policy.',
+      createdSuccess: 'Allowance policy created successfully.',
+      updatedSuccess: 'Allowance policy updated successfully.',
+
+      types: {
+        food: 'Food',
+        transport: 'Transport',
+        night: 'Night',
+        holiday: 'Holiday',
+        other: 'Other',
+      },
+
+      triggerTypes: {
+        otMinutes: 'OT Minutes',
+      },
+
+      applyPer: {
+        employeePerDay: 'Employee per day',
+        employeePerRequest: 'Employee per request',
+      },
+
+      validation: {
+        codeRequired: 'Code is required.',
+        nameRequired: 'Name is required.',
+        minOtMinutesRequired: 'Minimum OT minutes must be at least 1.',
+        amountInvalid: 'Amount cannot be negative.',
+        effectiveRangeInvalid:
+          'Effective To must be greater than or equal to Effective From.',
+      },
+
+      error: {
+        invalidId: 'Invalid allowance policy ID.',
+        notFound: 'Allowance policy not found.',
+        codeRequired: 'Allowance policy code is required.',
+        codeExists: 'Allowance policy code already exists.',
+      },
+    },
+
     exchangeRates: {
       tableTitle: 'Payment Exchange Rates',
       newExchangeRate: 'New Rate',
@@ -2743,6 +2815,11 @@ export default {
         multipliers: 'Multipliers',
         calculation: 'Calculation',
       },
+      warning: {
+        invalidSalaryRow: 'Invalid salary row',
+        duplicateSalaryRow: 'Duplicate salary row',
+        noPayableMinutes: 'No payable minutes',
+      },
 
       action: {
         uploadSalary: 'Upload Salary',
@@ -2790,6 +2867,9 @@ export default {
         totalKhr: 'Total KHR',
         missingSalary: 'Missing Salary',
         warnings: 'Warnings',
+        totalOtKhr: 'OT KHR',
+        totalAllowanceKhr: 'Allowance KHR',
+        totalPayableKhr: 'Total Payable KHR',
       },
 
       table: {
@@ -2831,6 +2911,8 @@ export default {
         currency: 'Currency',
         decision: 'Decision',
         reason: 'Reason',
+        allowanceKhr: 'Allowance KHR',
+        totalPayableKhr: 'Total Payable KHR',
       },
 
       label: {

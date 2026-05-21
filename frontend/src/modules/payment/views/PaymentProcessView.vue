@@ -236,10 +236,24 @@ const summaryCards = computed(() => {
       className: 'card-purple',
     },
     {
-      label: t('payment.process.summary.totalKhr'),
+      label: t('payment.process.summary.totalOtKhr'),
       value: summary ? `${formatNumber(summary.totalAmountKhrRounded, 0)} KHR` : '—',
       icon: 'pi pi-money-bill',
       className: 'card-green',
+    },
+    {
+      label: t('payment.process.summary.totalAllowanceKhr'),
+      value: summary ? `${formatNumber(summary.totalAllowanceKhrRounded, 0)} KHR` : '—',
+      icon: 'pi pi-gift',
+      className: 'card-orange',
+    },
+    {
+      label: t('payment.process.summary.totalPayableKhr'),
+      value: summary
+        ? `${formatNumber(summary.totalPayableKhrRounded || summary.totalAmountKhrRounded, 0)} KHR`
+        : '—',
+      icon: 'pi pi-wallet',
+      className: 'card-purple',
     },
     {
       label: t('payment.process.summary.missingSalary'),
@@ -434,7 +448,13 @@ function formatMoney(value, currency = '') {
 }
 
 function khrPaper(row, denomination) {
-  return Number(row?.khrBreakdown?.[String(denomination)] || 0)
+  const key = String(denomination)
+
+  return Number(
+    row?.totalPayableKhrBreakdown?.[key] ??
+      row?.khrBreakdown?.[key] ??
+      0,
+  )
 }
 
 function parseDownloadFileName(response, fallback) {
@@ -1115,75 +1135,6 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <section class="ot-table-card">
-      <div class="ot-table-toolbar">
-        <div>
-          <h2 class="ot-table-title">
-            {{ t('payment.process.table.setup') }}
-          </h2>
-        </div>
-      </div>
-
-      <div class="payment-summary-grid payment-setup-grid">
-        <div class="payment-summary-card card-purple">
-          <div class="summary-icon">
-            <i class="pi pi-calculator" />
-          </div>
-
-          <div class="summary-content">
-            <div class="summary-label">
-              {{ t('payment.process.field.paymentFormula') }}
-            </div>
-
-            <div
-              class="summary-value"
-              :title="selectedFormula?.label || t('payment.process.empty.noFormula')"
-            >
-              {{ selectedFormula?.label || t('payment.process.empty.noFormula') }}
-            </div>
-          </div>
-        </div>
-
-        <div class="payment-summary-card card-green">
-          <div class="summary-icon">
-            <i class="pi pi-money-bill" />
-          </div>
-
-          <div class="summary-content">
-            <div class="summary-label">
-              {{ t('payment.process.field.exchangeRate') }}
-            </div>
-
-            <div
-              class="summary-value"
-              :title="selectedExchangeRate?.label || t('payment.process.field.noExchangeRate')"
-            >
-              {{ selectedExchangeRate?.label || t('payment.process.field.noExchangeRate') }}
-            </div>
-          </div>
-        </div>
-
-        <div class="payment-summary-card card-orange">
-          <div class="summary-icon">
-            <i class="pi pi-file-excel" />
-          </div>
-
-          <div class="summary-content">
-            <div class="summary-label">
-              {{ t('payment.process.field.salaryExcel') }}
-            </div>
-
-            <div
-              class="summary-value"
-              :title="fileName || t('payment.process.field.noFile')"
-            >
-              {{ fileName || t('payment.process.field.noFile') }}
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-
     <section
       v-if="previewResult"
       class="space-y-4"
@@ -1505,6 +1456,30 @@ onBeforeUnmount(() => {
                 <Tag
                   :value="formatNumber(data.amountKhrRounded, 0)"
                   class="payment-rgb-tag payment-status-active"
+                />
+              </template>
+            </Column>
+
+            <Column
+              :header="t('payment.process.column.allowanceKhr')"
+              style="width: 11rem; min-width: 11rem"
+            >
+              <template #body="{ data }">
+                <Tag
+                  :value="formatNumber(data.allowanceAmountKhrRounded || 0, 0)"
+                  class="payment-rgb-tag payment-tag-warning"
+                />
+              </template>
+            </Column>
+
+            <Column
+              :header="t('payment.process.column.totalPayableKhr')"
+              style="width: 12rem; min-width: 12rem"
+            >
+              <template #body="{ data }">
+                <Tag
+                  :value="formatNumber(data.totalPayableKhrRounded || data.amountKhrRounded || 0, 0)"
+                  class="payment-rgb-tag payment-tag-purple"
                 />
               </template>
             </Column>

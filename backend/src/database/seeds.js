@@ -305,6 +305,24 @@ const PERMISSIONS = [
     'PAYMENT',
     'Allow uploading salary Excel, previewing payment, and exporting payment calculation files',
   ),
+    permission(
+    'PAYMENT_ALLOWANCE_POLICY_VIEW',
+    'View Payment Allowance Policies',
+    'PAYMENT',
+    'Allow viewing payment allowance policy master records',
+  ),
+  permission(
+    'PAYMENT_ALLOWANCE_POLICY_CREATE',
+    'Create Payment Allowance Policies',
+    'PAYMENT',
+    'Allow creating payment allowance policy master records',
+  ),
+  permission(
+    'PAYMENT_ALLOWANCE_POLICY_UPDATE',
+    'Update Payment Allowance Policies',
+    'PAYMENT',
+    'Allow updating payment allowance policy master records',
+  ),
 ]
 
 async function seedPermissions() {
