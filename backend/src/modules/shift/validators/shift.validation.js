@@ -121,7 +121,10 @@ const listShiftQuerySchema = z.object({
     .optional()
     .default('')
     .transform((value) => s(value).toUpperCase())
-    .refine((value) => !value || ['DAY', 'NIGHT'].includes(value), 'shift.validation.typeInvalid'),
+    .refine(
+      (value) => !value || ['DAY', 'NIGHT'].includes(value),
+      'shift.validation.typeInvalid',
+    ),
 
   isActive: booleanLike,
 
@@ -163,7 +166,11 @@ const listShiftQuerySchema = z.object({
 })
 
 const shiftLookupQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+
   search: z.string().trim().optional().default(''),
+  q: z.string().trim().optional().default(''),
 
   type: z
     .string()
@@ -171,11 +178,12 @@ const shiftLookupQuerySchema = z.object({
     .optional()
     .default('')
     .transform((value) => s(value).toUpperCase())
-    .refine((value) => !value || ['DAY', 'NIGHT'].includes(value), 'shift.validation.typeInvalid'),
+    .refine(
+      (value) => !value || ['DAY', 'NIGHT'].includes(value),
+      'shift.validation.typeInvalid',
+    ),
 
   isActive: booleanLike,
-
-  limit: z.coerce.number().int().min(1).max(100).default(50),
 })
 
 const importShiftRowSchema = z.object({
@@ -228,10 +236,11 @@ function normalizeLookupQuery(raw = {}) {
   const parsed = shiftLookupQuerySchema.parse(raw)
 
   return {
-    search: parsed.search,
+    page: parsed.page,
+    limit: parsed.limit,
+    search: parsed.search || parsed.q,
     type: parsed.type,
     isActive: toBoolean(parsed.isActive, true),
-    limit: parsed.limit,
   }
 }
 

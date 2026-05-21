@@ -1,4 +1,5 @@
 // frontend/src/modules/auth/account.api.js
+
 import api from '@/shared/services/api'
 
 export function getAccounts(params = {}) {
@@ -25,10 +26,15 @@ export function getEmployeeOptions(params = {}) {
   return api.get('/org/employees/lookup', {
     params: {
       page: 1,
-      limit: 20,
+      limit: 10,
       search: '',
       q: '',
       isActive: true,
+
+      // Account admin should be able to search all employees.
+      // Backend will still protect this with EMPLOYEE_LOOKUP_ALL permission.
+      scope: 'ALL',
+
       ...params,
     },
   })

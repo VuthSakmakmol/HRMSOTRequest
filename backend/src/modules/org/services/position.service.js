@@ -402,21 +402,41 @@ async function syncChildPositionSnapshots(parentId, newItem) {
 }
 
 async function lookupPositions(query = {}) {
-  const filter = buildFilter(query)
-  const limit = Number(query.limit || 50)
+  const page = Math.max(1, Number(query.page || 1))
+  const limit = Math.max(1, Math.min(Number(query.limit || 10), 100))
+  const skip = (page - 1) * limit
 
-  const items = await Position.find(filter)
-    .sort({
-      level: 1,
-      name: 1,
-      code: 1,
-      _id: 1,
-    })
-    .limit(limit)
-    .lean()
+  const filter = buildFilter({
+    ...query,
+    search: s(query.search || query.q),
+  })
+
+  const [items, total] = await Promise.all([
+    Position.find(filter)
+      .sort({
+        level: 1,
+        name: 1,
+        code: 1,
+        _id: 1,
+      })
+      .skip(skip)
+      .limit(limit)
+      .lean(),
+
+    Position.countDocuments(filter),
+  ])
+
+  const totalPages = Math.max(1, Math.ceil(total / limit))
 
   return {
     items: items.map(mapLookupItem),
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages,
+      hasMore: page < totalPages,
+    },
     meta: {
       limit,
       count: items.length,

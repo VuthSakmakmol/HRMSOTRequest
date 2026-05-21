@@ -33,11 +33,19 @@ const toast = useToast()
 const { t } = useI18n()
 
 const PAGE_SIZE = 10
+const EMPLOYEE_LOOKUP_PAGE_SIZE = 10
 const SEARCH_DEBOUNCE_MS = 250
+const EMPLOYEE_SEARCH_DEBOUNCE_MS = 250
 
 const saving = ref(false)
 const resetting = ref(false)
-const loadingOptions = ref(false)
+
+const roleOptionsLoading = ref(false)
+const employeeLookupLoading = ref(false)
+
+const loadingOptions = computed(
+  () => roleOptionsLoading.value || employeeLookupLoading.value,
+)
 
 const rows = ref([])
 const totalRecords = ref(0)
@@ -48,6 +56,14 @@ const backgroundLoading = ref(false)
 
 const employeeOptions = ref([])
 const roleOptions = ref([])
+
+const employeeLookup = reactive({
+  page: 1,
+  total: 0,
+  hasMore: false,
+  search: '',
+  loadedPages: new Set(),
+})
 
 const createDialogVisible = ref(false)
 const editDialogVisible = ref(false)
@@ -134,7 +150,9 @@ const isResetDisabled = computed(() => {
 })
 
 let searchTimer = null
+let employeeSearchTimer = null
 let currentRequestId = 0
+let employeeLookupRequestId = 0
 
 function normalizePayload(res) {
   return res?.data?.data || res?.data || {}
@@ -148,6 +166,10 @@ function normalizeTotal(payload) {
   return Number(payload?.pagination?.total || payload?.total || 0)
 }
 
+function normalizePagination(payload) {
+  return payload?.pagination || {}
+}
+
 function normalizeId(row) {
   return String(row?.id || row?._id || '').trim()
 }
@@ -159,22 +181,108 @@ function normalizeRefId(value) {
 }
 
 function employeeLabel(item = {}) {
-  const employeeNo = String(item?.employeeNo || item?.code || '').trim()
+  const directLabel = String(item?.label || '').trim()
+  if (directLabel) return directLabel
+
+  const employeeCode = String(
+    item?.employeeCode ||
+      item?.employeeNo ||
+      item?.code ||
+      '',
+  ).trim()
+
   const displayName = String(item?.displayName || item?.name || '').trim()
 
   return (
-    [employeeNo, displayName].filter(Boolean).join(' - ') ||
+    [employeeCode, displayName].filter(Boolean).join(' - ') ||
     t('auth.account.unnamedEmployee')
   )
 }
 
+function makeEmployeeOption(item = {}) {
+  const value = normalizeId(item) || normalizeRefId(item?.employeeId)
+
+  if (!value) return null
+
+  return {
+    label: employeeLabel(item),
+    value,
+
+    employeeCode: item?.employeeCode || item?.employeeNo || item?.code || '',
+    displayName: item?.displayName || item?.name || '',
+    departmentName: item?.departmentName || '',
+    positionName: item?.positionName || '',
+    lineName: item?.linesLabel || item?.lineName || '',
+    raw: item,
+  }
+}
+
 function normalizeEmployeeOptions(payload) {
   return normalizeItems(payload)
-    .map((item) => ({
-      label: employeeLabel(item),
-      value: normalizeId(item),
-    }))
-    .filter((item) => item.value)
+    .map(makeEmployeeOption)
+    .filter(Boolean)
+}
+
+function buildEmployeePlaceholderRows(total) {
+  const size = Number(total || 0)
+
+  return size > 0 ? Array.from({ length: size }, () => null) : []
+}
+
+function placeEmployeeOptions(page, total, options = [], { replace = false } = {}) {
+  const startIndex = (page - 1) * EMPLOYEE_LOOKUP_PAGE_SIZE
+  const current = replace
+    ? buildEmployeePlaceholderRows(total)
+    : [...employeeOptions.value]
+
+  if (current.length !== total) {
+    if (total > current.length) {
+      current.length = total
+      current.fill(null, employeeOptions.value.length)
+    } else {
+      current.length = total
+    }
+  }
+
+  for (let index = 0; index < options.length; index += 1) {
+    current[startIndex + index] = options[index]
+  }
+
+  employeeOptions.value = current
+}
+
+function mergeEmployeeOptions(nextOptions = []) {
+  const current = [...employeeOptions.value]
+  const existingIndexes = new Map()
+
+  current.forEach((option, index) => {
+    if (option?.value) {
+      existingIndexes.set(option.value, index)
+    }
+  })
+
+  for (const option of nextOptions) {
+    if (!option?.value) continue
+
+    const existingIndex = existingIndexes.get(option.value)
+
+    if (existingIndex !== undefined) {
+      current[existingIndex] = option
+    } else {
+      current.unshift(option)
+    }
+  }
+
+  employeeOptions.value = current
+}
+
+function ensureEmployeeOption(item) {
+  if (!item || typeof item !== 'object') return
+
+  const option = makeEmployeeOption(item)
+  if (!option) return
+
+  mergeEmployeeOptions([option])
 }
 
 function normalizeRoleOptions(payload) {
@@ -298,33 +406,136 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
   })
 }
 
-async function fetchOptions() {
-  loadingOptions.value = true
+async function fetchEmployeeLookupPage(page = 1, { replace = false } = {}) {
+  if (!replace && employeeLookup.loadedPages.has(page)) return
+  if (employeeLookupLoading.value) return
+
+  const requestId = ++employeeLookupRequestId
+
+  employeeLookupLoading.value = true
 
   try {
-    const [employeeResult, roleResult] = await Promise.allSettled([
-      getEmployeeOptions({ page: 1, limit: 100, isActive: true }),
-      getRoleOptions({ page: 1, limit: 100, isActive: true }),
-    ])
+    const search = String(employeeLookup.search || '').trim()
 
-    if (employeeResult.status === 'fulfilled') {
-      employeeOptions.value = normalizeEmployeeOptions(
-        normalizePayload(employeeResult.value),
-      )
-    } else {
-      employeeOptions.value = []
-      showToast('warn', t('common.warning'), t('auth.account.employeeOptionsLoadFailed'))
+    const res = await getEmployeeOptions({
+      page,
+      limit: EMPLOYEE_LOOKUP_PAGE_SIZE,
+      search,
+      q: search,
+      isActive: true,
+      scope: 'ALL',
+    })
+
+    if (requestId !== employeeLookupRequestId) return
+
+    const payload = normalizePayload(res)
+    const options = normalizeEmployeeOptions(payload)
+    const pagination = normalizePagination(payload)
+
+    const total = Number(pagination.total || options.length || 0)
+    const currentPage = Number(pagination.page || page)
+    const totalPages = Number(
+      pagination.totalPages || Math.max(1, Math.ceil(total / EMPLOYEE_LOOKUP_PAGE_SIZE)),
+    )
+
+    if (replace) {
+      employeeLookup.loadedPages = new Set()
     }
 
-    if (roleResult.status === 'fulfilled') {
-      roleOptions.value = normalizeRoleOptions(normalizePayload(roleResult.value))
-    } else {
-      roleOptions.value = []
-      showToast('warn', t('common.warning'), t('auth.account.roleOptionsLoadFailed'))
-    }
+    placeEmployeeOptions(currentPage, total, options, { replace })
+
+    employeeLookup.page = currentPage
+    employeeLookup.total = total
+    employeeLookup.hasMore =
+      pagination.hasMore !== undefined
+        ? !!pagination.hasMore
+        : currentPage < totalPages
+
+    employeeLookup.loadedPages.add(currentPage)
+  } catch (error) {
+    employeeLookup.hasMore = false
+
+    showToast(
+      'warn',
+      t('common.warning'),
+      getApiErrorMessage(error, t('auth.account.employeeOptionsLoadFailed')),
+    )
   } finally {
-    loadingOptions.value = false
+    if (requestId === employeeLookupRequestId) {
+      employeeLookupLoading.value = false
+    }
   }
+}
+
+async function resetEmployeeLookup(search = '') {
+  employeeLookup.search = String(search || '').trim()
+  employeeLookup.page = 1
+  employeeLookup.total = 0
+  employeeLookup.hasMore = false
+  employeeLookup.loadedPages = new Set()
+  employeeOptions.value = []
+
+  await fetchEmployeeLookupPage(1, { replace: true })
+}
+
+function onEmployeeFilter(event) {
+  window.clearTimeout(employeeSearchTimer)
+
+  employeeSearchTimer = window.setTimeout(() => {
+    resetEmployeeLookup(event?.value || '')
+  }, EMPLOYEE_SEARCH_DEBOUNCE_MS)
+}
+
+async function onEmployeeLazyLoad(event) {
+  const first = Number(event?.first || 0)
+  const last = Number(event?.last || first + EMPLOYEE_LOOKUP_PAGE_SIZE)
+
+  const startPage = Math.floor(first / EMPLOYEE_LOOKUP_PAGE_SIZE) + 1
+  const endPage =
+    Math.floor(Math.max(last - 1, first) / EMPLOYEE_LOOKUP_PAGE_SIZE) + 1
+
+  for (let page = startPage; page <= endPage; page += 1) {
+    if (!employeeLookup.loadedPages.has(page)) {
+      await fetchEmployeeLookupPage(page)
+    }
+  }
+}
+
+function onEmployeeDropdownShow() {
+  if (!employeeOptions.value.length) {
+    resetEmployeeLookup('')
+  }
+}
+
+async function fetchRoleOptions() {
+  roleOptionsLoading.value = true
+
+  try {
+    const roleResult = await getRoleOptions({
+      page: 1,
+      limit: 100,
+      isActive: true,
+    })
+
+    roleOptions.value = normalizeRoleOptions(normalizePayload(roleResult))
+  } catch (error) {
+    roleOptions.value = []
+
+    showToast(
+      'warn',
+      t('common.warning'),
+      getApiErrorMessage(error, t('auth.account.roleOptionsLoadFailed')),
+    )
+  } finally {
+    roleOptionsLoading.value = false
+  }
+}
+
+async function fetchOptions() {
+  await Promise.allSettled([
+    resetEmployeeLookup(''),
+    fetchRoleOptions(),
+  ])
 }
 
 function runSearchSoon() {
@@ -397,10 +608,22 @@ function resetResetForm() {
 function openCreateDialog() {
   resetCreateForm()
   createDialogVisible.value = true
+
+  if (!employeeOptions.value.length || employeeLookup.search) {
+    resetEmployeeLookup('')
+  }
+
+  if (!roleOptions.value.length) {
+    fetchRoleOptions()
+  }
 }
 
 function openEditDialog(row) {
   selectedAccount.value = row
+
+  if (row?.employeeId && typeof row.employeeId === 'object') {
+    ensureEmployeeOption(row.employeeId)
+  }
 
   editForm.loginId = row?.loginId || ''
   editForm.displayName = row?.displayName || ''
@@ -414,6 +637,14 @@ function openEditDialog(row) {
   editDirectPermissionInput.value = editForm.directPermissionCodes.join(', ')
 
   editDialogVisible.value = true
+
+  if (!employeeOptions.value.length) {
+    resetEmployeeLookup('')
+  }
+
+  if (!roleOptions.value.length) {
+    fetchRoleOptions()
+  }
 }
 
 function openResetDialog(row) {
@@ -540,7 +771,7 @@ function formatRoleNames(roleIds = []) {
 
   const labelMap = new Map(roleOptions.value.map((item) => [item.value, item.label]))
 
-  return roleIds.map((id) => labelMap.get(id) || id).join(', ')
+  return roleIds.map((idValue) => labelMap.get(idValue) || idValue).join(', ')
 }
 
 function formatEmployeeName(employeeValue) {
@@ -550,7 +781,9 @@ function formatEmployeeName(employeeValue) {
     return employeeLabel(employeeValue)
   }
 
-  const found = employeeOptions.value.find((item) => item.value === employeeValue)
+  const found = employeeOptions.value.find(
+    (item) => item?.value === employeeValue,
+  )
 
   return found?.label || '-'
 }
@@ -564,6 +797,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.clearTimeout(searchTimer)
+  window.clearTimeout(employeeSearchTimer)
 })
 </script>
 
@@ -811,11 +1045,11 @@ onBeforeUnmount(() => {
           </Column>
 
           <Column
-              :header="t('common.actions')"
-              frozen
-              align-frozen="right"
-              style="width: 7rem; min-width: 7rem"
-            >
+            :header="t('common.actions')"
+            frozen
+            align-frozen="right"
+            style="width: 7rem; min-width: 7rem"
+          >
             <template #body="{ data }">
               <div
                 v-if="data"
@@ -901,10 +1135,52 @@ onBeforeUnmount(() => {
               option-value="value"
               filter
               show-clear
+              :filter-placeholder="t('common.search')"
               :placeholder="t('auth.account.selectEmployee')"
               class="w-full"
-              :loading="loadingOptions"
-            />
+              :loading="employeeLookupLoading"
+              :virtual-scroller-options="{
+                lazy: true,
+                onLazyLoad: onEmployeeLazyLoad,
+                itemSize: 48,
+                delay: 0,
+                showLoader: false,
+                loading: employeeLookupLoading,
+                numToleratedItems: 8,
+              }"
+              @filter="onEmployeeFilter"
+              @show="onEmployeeDropdownShow"
+            >
+              <template #option="{ option }">
+                <div
+                  v-if="option"
+                  class="flex min-w-0 flex-col gap-0.5 py-0.5"
+                >
+                  <span class="truncate text-sm font-semibold">
+                    {{ option.label }}
+                  </span>
+
+                  <span
+                    v-if="option.departmentName || option.positionName || option.lineName"
+                    class="truncate text-xs text-[color:var(--ot-muted)]"
+                  >
+                    {{
+                      [option.departmentName, option.positionName, option.lineName]
+                        .filter(Boolean)
+                        .join(' • ')
+                    }}
+                  </span>
+                </div>
+
+                <div
+                  v-else
+                  class="flex items-center gap-2 py-1 text-xs text-[color:var(--ot-muted)]"
+                >
+                  <i class="pi pi-spin pi-spinner" />
+                  <span>{{ t('common.loading') }}</span>
+                </div>
+              </template>
+            </Select>
           </div>
         </div>
 
@@ -1024,10 +1300,52 @@ onBeforeUnmount(() => {
               option-value="value"
               filter
               show-clear
+              :filter-placeholder="t('common.search')"
               :placeholder="t('auth.account.selectEmployee')"
               class="w-full"
-              :loading="loadingOptions"
-            />
+              :loading="employeeLookupLoading"
+              :virtual-scroller-options="{
+                lazy: true,
+                onLazyLoad: onEmployeeLazyLoad,
+                itemSize: 48,
+                delay: 0,
+                showLoader: false,
+                loading: employeeLookupLoading,
+                numToleratedItems: 8,
+              }"
+              @filter="onEmployeeFilter"
+              @show="onEmployeeDropdownShow"
+            >
+              <template #option="{ option }">
+                <div
+                  v-if="option"
+                  class="flex min-w-0 flex-col gap-0.5 py-0.5"
+                >
+                  <span class="truncate text-sm font-semibold">
+                    {{ option.label }}
+                  </span>
+
+                  <span
+                    v-if="option.departmentName || option.positionName || option.lineName"
+                    class="truncate text-xs text-[color:var(--ot-muted)]"
+                  >
+                    {{
+                      [option.departmentName, option.positionName, option.lineName]
+                        .filter(Boolean)
+                        .join(' • ')
+                    }}
+                  </span>
+                </div>
+
+                <div
+                  v-else
+                  class="flex items-center gap-2 py-1 text-xs text-[color:var(--ot-muted)]"
+                >
+                  <i class="pi pi-spin pi-spinner" />
+                  <span>{{ t('common.loading') }}</span>
+                </div>
+              </template>
+            </Select>
           </div>
 
           <div class="ot-field">

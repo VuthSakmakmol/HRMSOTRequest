@@ -7,6 +7,7 @@ const IMPORT_TIMEOUT_MS = 15 * 60 * 1000
 const EXPORT_TIMEOUT_MS = 180000
 const SAMPLE_TIMEOUT_MS = 60000
 const PROGRESS_TIMEOUT_MS = 15000
+const LOOKUP_TIMEOUT_MS = 120000
 
 function cleanId(id) {
   return encodeURIComponent(String(id ?? '').trim())
@@ -25,7 +26,10 @@ export function getEmployeeImportProgress(jobId) {
 }
 
 export function getEmployeeLookupOptions(params = {}) {
-  return api.get('/org/employees/lookup', { params })
+  return api.get('/org/employees/lookup', {
+    params,
+    timeout: LOOKUP_TIMEOUT_MS,
+  })
 }
 
 export function getEmployees(params = {}) {
