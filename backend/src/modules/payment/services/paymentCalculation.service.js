@@ -848,8 +848,133 @@ function firstPositiveNumber(...values) {
   return 0
 }
 
-function resolveEmployeePaidMinutes(employee = {}) {
-  return firstPositiveNumber(
+function firstNonNegativeNumber(...values) {
+  for (const value of values) {
+    if (value === undefined || value === null || value === '') continue
+
+    const number = Number(value)
+
+    if (Number.isFinite(number) && number >= 0) return number
+  }
+
+  return 0
+}
+
+function isHHmm(value) {
+  return /^([01]\d|2[0-3]):([0-5]\d)$/.test(s(value))
+}
+
+function timeToMinutes(value) {
+  if (!isHHmm(value)) return 0
+
+  const [hours, minutes] = s(value).split(':').map(Number)
+  return hours * 60 + minutes
+}
+
+function calculateRawTimeWindowMinutes(startTime, endTime) {
+  if (!isHHmm(startTime) || !isHHmm(endTime)) return 0
+
+  const start = timeToMinutes(startTime)
+  const end = timeToMinutes(endTime)
+
+  let minutes = end - start
+
+  if (minutes <= 0) {
+    minutes += 1440
+  }
+
+  return minutes
+}
+
+function calculatePaidTimeWindowMinutes(startTime, endTime, breakMinutes = 0) {
+  const rawMinutes = calculateRawTimeWindowMinutes(startTime, endTime)
+  const safeBreakMinutes = safeNonNegativeNumber(breakMinutes, 0)
+
+  if (rawMinutes <= 0) return 0
+
+  return Math.max(0, rawMinutes - safeBreakMinutes)
+}
+
+function resolveEmployeeRequestStartTime(employee = {}, otRequest = {}) {
+  return s(
+    employee.requestStartTime ||
+      employee.startTime ||
+      employee.customStartTime ||
+      employee.fixedStartTime ||
+      employee.expectedOtStartTime ||
+      otRequest.requestStartTime ||
+      otRequest.startTime ||
+      otRequest.expectedOtStartTime,
+  )
+}
+
+function resolveEmployeeRequestEndTime(employee = {}, otRequest = {}) {
+  return s(
+    employee.requestEndTime ||
+      employee.endTime ||
+      employee.customEndTime ||
+      employee.fixedEndTime ||
+      employee.expectedOtEndTime ||
+      otRequest.requestEndTime ||
+      otRequest.endTime ||
+      otRequest.expectedOtEndTime,
+  )
+}
+
+function resolveEmployeeBreakMinutes(employee = {}, otRequest = {}) {
+  return firstNonNegativeNumber(
+    employee.breakMinutes,
+    employee.customBreakMinutes,
+    employee.requestBreakMinutes,
+    employee.approvedBreakMinutes,
+    otRequest.breakMinutes,
+  )
+}
+
+function resolveEmployeeRequestedMinutes(employee = {}, otRequest = {}) {
+  const directMinutes = firstPositiveNumber(
+    employee.requestedMinutes,
+    employee.requestedOtMinutes,
+    employee.customRequestedMinutes,
+    employee.approvedRequestedMinutes,
+    employee.totalRequestPaidMinutes,
+    employee.totalPaidMinutes,
+    employee.requestPaidMinutes,
+    employee.totalMinutes,
+  )
+
+  if (directMinutes > 0) return directMinutes
+
+  const startTime = resolveEmployeeRequestStartTime(employee, otRequest)
+  const endTime = resolveEmployeeRequestEndTime(employee, otRequest)
+  const breakMinutes = resolveEmployeeBreakMinutes(employee, otRequest)
+
+  const calculatedMinutes = calculatePaidTimeWindowMinutes(
+    startTime,
+    endTime,
+    breakMinutes,
+  )
+
+  if (calculatedMinutes > 0) return calculatedMinutes
+
+  return resolveRequestPaidMinutes(otRequest)
+}
+
+function capPayableMinutesByEmployeeRequest(minutes, employee = {}, otRequest = {}) {
+  const payableMinutes = safeNonNegativeInt(minutes, 0)
+  const employeeRequestedMinutes = safeNonNegativeInt(
+    resolveEmployeeRequestedMinutes(employee, otRequest),
+    0,
+  )
+
+  if (payableMinutes <= 0) return 0
+  if (employeeRequestedMinutes <= 0) return payableMinutes
+
+  return Math.min(payableMinutes, employeeRequestedMinutes)
+}
+
+function resolveEmployeePaidMinutes(employee = {}, otRequest = {}) {
+  const payableMinutes = firstPositiveNumber(
     employee.approvedPaidMinutes,
     employee.payableMinutes,
     employee.paidMinutes,
@@ -863,6 +988,8 @@ function resolveEmployeePaidMinutes(employee = {}) {
     employee.attendancePaidMinutes,
     employee.attendancePayableMinutes,
   )
+
+  return capPayableMinutesByEmployeeRequest(payableMinutes, employee, otRequest)
 }
 
 function buildSalaryInfo(salaryMap, employeeNo) {
@@ -1166,15 +1293,18 @@ function buildPaymentItem({ otRequest, employee, formula, salaryInfo, exchangeRa
   const monthlySalary = safeNonNegativeNumber(salaryInfo.monthlySalary, 0)
   const hourlyRate = getHourlyRate(monthlySalary, formula)
 
-  const requestedMinutes = safeNonNegativeNumber(
-    otRequest.requestedMinutes ?? otRequest.requestedOtMinutes ?? otRequest.totalMinutes,
-    0,
-  )
+  // Important:
+  // Use employee-level OT time first.
+  // This fixes the case: request option = 2h, but one employee custom = 1h.
+  const requestStartTime = resolveEmployeeRequestStartTime(employee, otRequest)
+  const requestEndTime = resolveEmployeeRequestEndTime(employee, otRequest)
+  const requestedMinutes = resolveEmployeeRequestedMinutes(employee, otRequest)
+  const breakMinutes = resolveEmployeeBreakMinutes(employee, otRequest)
+  const requestPaidMinutes = requestedMinutes || resolveRequestPaidMinutes(otRequest)
 
-  const breakMinutes = safeNonNegativeNumber(otRequest.breakMinutes, 0)
-  const requestPaidMinutes = resolveRequestPaidMinutes(otRequest)
-
-  const payableMinutes = resolveEmployeePaidMinutes(employee)
+  // Important:
+  // Payable minutes must be capped by the employee's custom requested minutes.
+  const payableMinutes = resolveEmployeePaidMinutes(employee, otRequest)
   const hasAttendancePolicyPayable = payableMinutes > 0
 
   const payableHours = payableMinutes / 60
@@ -1229,8 +1359,8 @@ function buildPaymentItem({ otRequest, employee, formula, salaryInfo, exchangeRa
     shiftOtOptionLabel: s(otRequest.shiftOtOptionLabel),
     shiftOtOptionTimingMode: upper(otRequest.shiftOtOptionTimingMode),
 
-    requestStartTime: s(otRequest.requestStartTime || otRequest.startTime),
-    requestEndTime: s(otRequest.requestEndTime || otRequest.endTime),
+    requestStartTime,
+    requestEndTime,
 
     requestedMinutes,
     breakMinutes,
@@ -1371,7 +1501,7 @@ async function buildPaymentItems({
       const employeeNo = normalizeEmployeeNo(employee.employeeNo || employee.employeeCode)
       if (!employeeNo) continue
 
-      const payableMinutes = resolveEmployeePaidMinutes(employee)
+      const payableMinutes = resolveEmployeePaidMinutes(employee, otRequest)
 
       if (payableMinutes <= 0) {
         const key = `${s(otRequest.requestNo)}:${employeeNo}`

@@ -342,11 +342,16 @@ function normalizeShiftOptionsResponse(res) {
         sequence: Number(item?.sequence || 0),
         calculationPolicy: item?.calculationPolicy || null,
 
-        // Number 4 dropdown shows only OT option name.
         optionLabel: label,
       }
     })
     .filter((item) => item.id && item.label)
+    .sort((a, b) => {
+      const sequenceCompare = Number(a.sequence || 0) - Number(b.sequence || 0)
+      if (sequenceCompare !== 0) return sequenceCompare
+
+      return a.label.localeCompare(b.label)
+    })
 }
 
 function pad2(value) {
@@ -397,28 +402,13 @@ function calculateTimeWindowMinutes(startTime, endTime, breakMinutes = 0) {
   return Math.max(0, rawMinutes - safeBreak)
 }
 
-function formatMinutesLabel(value) {
-  const minutes = Number(value || 0)
-
-  if (!minutes) return t('ot.common.minuteValue', { value: 0 })
-
-  const hh = Math.floor(minutes / 60)
-  const mm = minutes % 60
-
-  if (hh && mm) {
-    return t('ot.common.hourMinuteValue', {
-      hours: hh,
-      minutes: mm,
-    })
-  }
-
-  if (hh) return t('ot.common.hourValue', { value: hh })
-  return t('ot.common.minuteValue', { value: mm })
-}
-
 function clearShiftOptions() {
   shiftOptions.value = []
   form.shiftOtOptionId = ''
+  form.otTimingSource = 'SHIFT_OPTION'
+  form.customStartTime = ''
+  form.customEndTime = ''
+  form.customBreakMinutes = 0
   selectedOptionDayType.value = ''
   lastLoadedShiftKey.value = ''
 }
@@ -517,8 +507,12 @@ async function loadShiftOptionsForSharedShift() {
 
   if (lastLoadedShiftKey.value === loadKey) return
 
+  const previousOptionId = String(form.shiftOtOptionId || '').trim()
+  const previousTimingSource = String(form.otTimingSource || 'SHIFT_OPTION')
+    .trim()
+    .toUpperCase()
+
   loadingShiftOptions.value = true
-  form.shiftOtOptionId = ''
 
   try {
     const res = await getShiftOTOptionsByShift(state.shift.shiftId, {
@@ -530,8 +524,25 @@ async function loadShiftOptionsForSharedShift() {
     shiftOptions.value = rows
     lastLoadedShiftKey.value = loadKey
 
-    if (rows.length === 1) {
+    const previousStillExists = rows.some((item) => item.id === previousOptionId)
+
+    if (previousStillExists) {
+      form.shiftOtOptionId = previousOptionId
+      form.otTimingSource = previousTimingSource === 'CUSTOM_FIXED'
+        ? 'CUSTOM_FIXED'
+        : 'SHIFT_OPTION'
+    } else if (rows.length) {
       form.shiftOtOptionId = rows[0].id
+      form.otTimingSource = 'SHIFT_OPTION'
+      form.customStartTime = ''
+      form.customEndTime = ''
+      form.customBreakMinutes = 0
+    } else {
+      form.shiftOtOptionId = ''
+      form.otTimingSource = 'SHIFT_OPTION'
+      form.customStartTime = ''
+      form.customEndTime = ''
+      form.customBreakMinutes = 0
     }
 
     if (!rows.length) {

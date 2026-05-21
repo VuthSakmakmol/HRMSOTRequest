@@ -2094,8 +2094,6 @@ export default {
         selectOtOption: 'Select OT option',
 
         customDefaultTime: 'Custom default OT time',
-        customDefaultTimeHelp:
-          'All selected employees use this time unless adjusted later.',
         flexible: 'Flexible',
 
         startTime: 'Start Time',
