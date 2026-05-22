@@ -111,7 +111,7 @@ const otOptionDropdownOptions = computed(() => {
     ...realOptions,
     {
       id: CUSTOM_OPTION_VALUE,
-      optionLabel: labelOr('ot.requests.create.otherCustomTime', 'Other / Custom time'),
+      optionLabel: labelOr('ot.requests.create.otherCustomTime', 'Other'),
       timingMode: 'CUSTOM_FIXED',
       requestStartTime: '',
       requestEndTime: '',
@@ -798,20 +798,6 @@ onMounted(() => {
                   <div class="ot-option-dropdown-main">
                     <strong>{{ option.optionLabel }}</strong>
                   </div>
-
-                  <Tag
-                    v-if="option.isCustomOption"
-                    :value="labelOr('common.other', 'Other')"
-                    severity="info"
-                    class="ot-option-type-tag"
-                  />
-
-                  <Tag
-                    v-else
-                    :value="timingModeLabel(option.timingMode)"
-                    severity="secondary"
-                    class="ot-option-type-tag"
-                  />
                 </div>
               </template>
             </Select>

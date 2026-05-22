@@ -55,6 +55,12 @@ const selectedEmployeeIds = computed(() =>
     .filter(Boolean),
 )
 
+const selectedEmployeePreviewRows = computed(() => selectedEmployees.value.slice(0, 5))
+
+const selectedEmployeeMoreCount = computed(() =>
+  Math.max(0, selectedEmployees.value.length - selectedEmployeePreviewRows.value.length),
+)
+
 const selectedOTOption = computed(() =>
   shiftOptions.value.find((item) => item.id === form.shiftOtOptionId) || null,
 )
@@ -84,7 +90,6 @@ const submitDisabled = computed(() => {
     loadingRequester.value ||
     loadingShiftOptions.value ||
     loadingUnavailableEmployees.value ||
-    employeePickerLoading.value ||
     submitting.value ||
     !selectedEmployeeIds.value.length
   )
@@ -138,7 +143,6 @@ function firstPositiveNumber(...values) {
 
   return 0
 }
-
 
 const defaultTiming = computed(() => {
   if (isCustomFixedTime.value) {
@@ -267,6 +271,17 @@ function showToast(severity, summary, detail, life = 3000) {
 
 function getEmployeeId(employee) {
   return String(employee?._id || employee?.id || employee?.employeeId || '').trim()
+}
+
+function formatSelectedEmployeePreviewLabel(employee = {}) {
+  return (
+    employee.employeeLabel ||
+    [employee.employeeNo, employee.displayName].filter(Boolean).join(' - ') ||
+    employee.employeeName ||
+    employee.employeeCode ||
+    getEmployeeId(employee) ||
+    t('common.unknown')
+  )
 }
 
 function extractShiftInfo(employee) {
@@ -433,7 +448,6 @@ function normalizeShiftOptionsResponse(res) {
     .filter((item) => item.id && item.label)
 }
 
-
 function pad2(value) {
   return String(value).padStart(2, '0')
 }
@@ -500,25 +514,6 @@ function durationHoursToMinutes(value) {
   if (!Number.isFinite(hours) || hours <= 0) return 0
 
   return Math.round(hours * 60)
-}
-
-function formatMinutesLabel(value) {
-  const minutes = Number(value || 0)
-
-  if (!minutes) return t('ot.common.minuteValue', { value: 0 })
-
-  const hh = Math.floor(minutes / 60)
-  const mm = minutes % 60
-
-  if (hh && mm) {
-    return t('ot.common.hourMinuteValue', {
-      hours: hh,
-      minutes: mm,
-    })
-  }
-
-  if (hh) return t('ot.common.hourValue', { value: hh })
-  return t('ot.common.minuteValue', { value: mm })
 }
 
 function clearShiftOptions() {
@@ -1264,7 +1259,46 @@ onMounted(async () => {
     />
 
     <div class="ot-create-bottom-grid">
-      <div />
+      <section class="ot-selected-preview-card">
+        <div class="ot-selected-preview-head">
+          <div>
+            <strong>{{ t('ot.requests.create.selectedPreviewTitle') }}</strong>
+
+            <span>
+              {{ t('ot.requests.create.selectedCount', { count: selectedEmployeeIds.length }) }}
+            </span>
+          </div>
+
+          <i class="pi pi-users" />
+        </div>
+
+        <div
+          v-if="selectedEmployeePreviewRows.length"
+          class="ot-selected-preview-list"
+        >
+          <span
+            v-for="employee in selectedEmployeePreviewRows"
+            :key="getEmployeeId(employee)"
+            class="ot-selected-preview-chip"
+          >
+            {{ formatSelectedEmployeePreviewLabel(employee) }}
+          </span>
+
+          <span
+            v-if="selectedEmployeeMoreCount"
+            class="ot-selected-preview-more"
+          >
+            {{ t('ot.requests.create.selectedPreviewMore', { count: selectedEmployeeMoreCount }) }}
+          </span>
+        </div>
+
+        <p
+          v-else
+          class="ot-selected-preview-empty"
+        >
+          {{ t('ot.requests.create.selectedPreviewEmpty') }}
+        </p>
+      </section>
 
       <OTSubmitBar
         :submitting="submitting"
@@ -1287,6 +1321,77 @@ onMounted(async () => {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 1rem;
+}
+
+.ot-selected-preview-card {
+  min-width: 0;
+  border: 1px solid var(--ot-border);
+  border-radius: 1rem;
+  background:
+    linear-gradient(135deg, rgba(59, 130, 246, 0.06), transparent),
+    var(--ot-surface);
+  padding: 0.75rem;
+}
+
+.ot-selected-preview-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.ot-selected-preview-head strong {
+  display: block;
+  color: var(--ot-text);
+  font-size: 0.86rem;
+  font-weight: 650;
+}
+
+.ot-selected-preview-head span {
+  display: block;
+  margin-top: 0.12rem;
+  color: var(--ot-text-muted);
+  font-size: 0.74rem;
+  font-weight: 500;
+}
+
+.ot-selected-preview-head i {
+  color: var(--p-primary-500);
+  font-size: 1.05rem;
+}
+
+.ot-selected-preview-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.65rem;
+}
+
+.ot-selected-preview-chip,
+.ot-selected-preview-more {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  border: 1px solid var(--ot-border);
+  border-radius: 999px;
+  background: var(--ot-bg);
+  padding: 0.22rem 0.5rem;
+  color: var(--ot-text);
+  font-size: 0.72rem;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.ot-selected-preview-more {
+  color: var(--p-primary-600);
+  font-weight: 650;
+}
+
+.ot-selected-preview-empty {
+  margin-top: 0.65rem;
+  color: var(--ot-text-muted);
+  font-size: 0.76rem;
+  line-height: 1.4;
 }
 
 @media (min-width: 1024px) {

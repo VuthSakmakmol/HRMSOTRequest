@@ -75,7 +75,6 @@ const PAGE_SIZE = 10
 const GROUP_VISIBLE_STEP = 10
 const BULK_PAGE_SIZE = 100
 const MAX_BULK_PAGES = 100
-const SEARCH_DEBOUNCE_MS = 260
 const SCROLL_LOAD_OFFSET = 140
 
 const loadingAccess = ref(false)
@@ -84,6 +83,7 @@ const loading = ref(false)
 const loadingMore = ref(false)
 const backgroundFetchingAll = ref(false)
 const selectingManaged = ref(false)
+const manualSelectionTouched = ref(false)
 
 const search = ref('')
 const employeeSearchValue = ref('')
@@ -102,18 +102,23 @@ const remoteLineOptions = ref([])
 const expandedLineRows = ref({})
 const lineVisibleCountMap = reactive({})
 
-const managedEmployeeIds = ref(new Set())
-const managedIdsLoaded = ref(false)
-
-let searchTimer = null
 let requestSeq = 0
 let backgroundLoadToken = 0
 let autoSelectKey = ''
+let lastWatchedOtDate = ''
 
 const selectedRows = computed(() => (Array.isArray(props.modelValue) ? props.modelValue : []))
 
 const selectedIds = computed(() => {
   return new Set(selectedRows.value.map((item) => getEmployeeId(item)).filter(Boolean))
+})
+
+const selectedRowsKey = computed(() => {
+  return selectedRows.value
+    .map((item) => getEmployeeId(item))
+    .filter(Boolean)
+    .sort()
+    .join('|')
 })
 
 const blockedStamp = computed(() => {
@@ -129,6 +134,13 @@ const hasMoreEmployees = computed(() => {
 
 const nextPageToLoad = computed(() => {
   return loadedPages.value.size + 1
+})
+
+const hasActiveTableFilter = computed(() => {
+  return Boolean(
+    toTrimmedString(search.value) ||
+      toTrimmedString(selectedLineId.value),
+  )
 })
 
 const defaultTime = computed(() => {
@@ -215,9 +227,13 @@ const displayedEmployees = computed(() => {
 
   return employees.value
     .filter((employee) => {
-      if (lineId && toTrimmedString(employee?.lineId) !== lineId) return false
+      if (lineId && toTrimmedString(employee?.lineId) !== lineId) {
+        return isSelected(employee)
+      }
 
       if (!keyword) return true
+
+      if (isSelected(employee)) return true
 
       const haystack = [
         employee.employeeNo,
@@ -271,7 +287,6 @@ function normalizeBoolean(...values) {
 function pad2(value) {
   return String(value).padStart(2, '0')
 }
-
 
 function isHHmm(value) {
   return /^([01]\d|2[0-3]):([0-5]\d)$/.test(String(value || '').trim())
@@ -331,26 +346,6 @@ function minutesToHoursNumber(value) {
   if (!Number.isFinite(minutes) || minutes <= 0) return null
 
   return Math.max(1, Math.round(minutes / 60))
-}
-
-function formatMinutesLabel(value) {
-  const minutes = Number(value || 0)
-
-  if (!minutes) return t('ot.common.minuteValue', { value: 0 })
-
-  const hh = Math.floor(minutes / 60)
-  const mm = minutes % 60
-
-  if (hh && mm) {
-    return t('ot.common.hourMinuteValue', {
-      hours: hh,
-      minutes: mm,
-    })
-  }
-
-  if (hh) return t('ot.common.hourValue', { value: hh })
-
-  return t('ot.common.minuteValue', { value: mm })
 }
 
 function getEmployeeId(employee) {
@@ -569,17 +564,7 @@ function getLineGroupKey(employee) {
   )
 }
 
-function isOutsideManagedEmployee(employeeId, explicitValue = undefined) {
-  if (explicitValue === true || explicitValue === false) return explicitValue
-
-  const id = toTrimmedString(employeeId)
-  if (!id) return false
-  if (!managedIdsLoaded.value) return false
-
-  return !managedEmployeeIds.value.has(id)
-}
-
-function normalizeEmployeeRecord(source = {}, options = {}) {
+function normalizeEmployeeRecord(source = {}) {
   const id = toTrimmedString(source?._id || source?.id || source?.employeeId || '')
 
   const employeeNo = toTrimmedString(
@@ -622,17 +607,12 @@ function normalizeEmployeeRecord(source = {}, options = {}) {
     positionName,
     ...line,
     ...shift,
-    isOutsideManaged: isOutsideManagedEmployee(
-      id,
-      options.isOutsideManaged ?? source?.isOutsideManaged,
-    ),
+    isOutsideManaged: source?.isOutsideManaged === true,
   }
 }
 
 function normalizeSelectedEmployeeRecord(source = {}) {
-  const base = normalizeEmployeeRecord(source, {
-    isOutsideManaged: source?.isOutsideManaged === true,
-  })
+  const base = normalizeEmployeeRecord(source)
 
   if (!base) return null
 
@@ -665,7 +645,7 @@ function normalizeSelectedEmployeeRecord(source = {}) {
   }
 }
 
-function normalizeEmployeeLookupResponse(res, options = {}) {
+function normalizeEmployeeLookupResponse(res) {
   const root = res?.data?.data || res?.data || {}
 
   const rows =
@@ -679,14 +659,7 @@ function normalizeEmployeeLookupResponse(res, options = {}) {
 
   const normalizedRows = Array.isArray(rows)
     ? rows
-        .map((item) =>
-          normalizeEmployeeRecord(item, {
-            isOutsideManaged:
-              options.markOutsideManaged === true
-                ? isOutsideManagedEmployee(getEmployeeId(item), item?.isOutsideManaged)
-                : false,
-          }),
-        )
+        .map((item) => normalizeEmployeeRecord(item))
         .filter(Boolean)
     : []
 
@@ -822,18 +795,6 @@ function getEditableEmployee(employee) {
   return getSelectedEmployee(employee) || normalizeSelectedEmployeeRecord(employee) || employee
 }
 
-function getEmployeeStartTime(employee) {
-  return toTrimmedString(getEditableEmployee(employee)?.requestStartTime || '')
-}
-
-function getEmployeeEndTime(employee) {
-  return toTrimmedString(getEditableEmployee(employee)?.requestEndTime || '')
-}
-
-function getEmployeeBreakMinutes(employee) {
-  return Number(getEditableEmployee(employee)?.breakMinutes || 0)
-}
-
 function getEmployeeRequestedMinutes(employee) {
   const editable = getEditableEmployee(employee)
 
@@ -950,7 +911,17 @@ function emitSelected(rows = []) {
   emit('update:modelValue', mergeUniqueRows(rows))
 }
 
-function selectRows(rows = []) {
+function markManualSelectionTouched() {
+  manualSelectionTouched.value = true
+}
+
+function selectRows(rows = [], options = {}) {
+  const isManual = options.manual !== false
+
+  if (isManual) {
+    markManualSelectionTouched()
+  }
+
   const safeRows = getSelectableRows(rows)
 
   if (!safeRows.length) {
@@ -966,7 +937,13 @@ function selectRows(rows = []) {
   emitSelected([...selectedRows.value, ...safeRows])
 }
 
-function removeRows(rows = []) {
+function removeRows(rows = [], options = {}) {
+  const isManual = options.manual !== false
+
+  if (isManual) {
+    markManualSelectionTouched()
+  }
+
   const removeIds = new Set(rows.map((item) => getEmployeeId(item)).filter(Boolean))
 
   emitSelected(
@@ -996,6 +973,8 @@ function toggleEmployee(employee, checked) {
 }
 
 function updateSelectedEmployeeDuration(employee, hoursValue) {
+  markManualSelectionTouched()
+
   const id = getEmployeeId(employee)
   if (!id) return
 
@@ -1048,6 +1027,8 @@ function updateSelectedEmployeeDuration(employee, hoursValue) {
 }
 
 function resetEmployeeTime(employee) {
+  markManualSelectionTouched()
+
   const id = getEmployeeId(employee)
   if (!id) return
 
@@ -1166,7 +1147,10 @@ function toggleLineExpanded(group) {
 }
 
 function syncLineState() {
-  const shouldOpenForSearch = Boolean(toTrimmedString(search.value))
+  const shouldOpenForSearch = Boolean(
+    toTrimmedString(search.value) ||
+      toTrimmedString(selectedLineId.value),
+  )
 
   const nextExpanded = {
     ...expandedLineRows.value,
@@ -1252,7 +1236,7 @@ function buildBulkManagedParams(targetPage) {
     search: '',
     q: '',
     lineId: '',
-    shiftId: toTrimmedString(props.selectedShiftId),
+    shiftId: '',
     isActive: true,
     scope: 'MANAGED',
   }
@@ -1305,49 +1289,12 @@ async function loadLineOptions() {
   }
 }
 
-async function loadManagedIds() {
-  managedEmployeeIds.value = new Set()
-  managedIdsLoaded.value = false
+function clearLineUiState() {
+  expandedLineRows.value = {}
 
-  if (!props.otDate) {
-    managedIdsLoaded.value = true
-    return
+  for (const key of Object.keys(lineVisibleCountMap)) {
+    delete lineVisibleCountMap[key]
   }
-
-  const ids = new Set()
-  let currentPage = 1
-  let keepLoading = true
-
-  while (keepLoading) {
-    const res = await getEmployeeLookupOptions({
-      page: currentPage,
-      limit: BULK_PAGE_SIZE,
-      search: '',
-      q: '',
-      lineId: '',
-      shiftId: toTrimmedString(props.selectedShiftId),
-      isActive: true,
-      scope: 'MANAGED',
-    })
-
-    const payload = normalizeEmployeeLookupResponse(res, {
-      markOutsideManaged: false,
-    })
-
-    for (const row of payload.rows) {
-      const id = getEmployeeId(row)
-      if (id) ids.add(id)
-    }
-
-    const loaded = currentPage * BULK_PAGE_SIZE
-    keepLoading = loaded < payload.total && payload.rows.length > 0
-    currentPage += 1
-
-    if (currentPage > MAX_BULK_PAGES) keepLoading = false
-  }
-
-  managedEmployeeIds.value = ids
-  managedIdsLoaded.value = true
 }
 
 function resetEmployeeListState() {
@@ -1357,11 +1304,7 @@ function resetEmployeeListState() {
   employees.value = []
   total.value = 0
   loadedPages.value = new Set()
-  expandedLineRows.value = {}
-
-  for (const key of Object.keys(lineVisibleCountMap)) {
-    delete lineVisibleCountMap[key]
-  }
+  clearLineUiState()
 }
 
 function mergeLoadedEmployees(existingRows = [], newRows = []) {
@@ -1388,8 +1331,26 @@ function mergeLoadedEmployees(existingRows = [], newRows = []) {
   })
 }
 
+function showSelectedOnlyTable() {
+  backgroundLoadToken += 1
+  backgroundFetchingAll.value = false
+  loading.value = false
+  loadingMore.value = false
+
+  employees.value = mergeLoadedEmployees(selectedRows.value, [])
+  total.value = employees.value.length
+  loadedPages.value = new Set()
+
+  clearLineUiState()
+  syncLineState()
+}
+
 function upsertEmployeesToTable(rows = []) {
-  employees.value = mergeLoadedEmployees(employees.value, rows)
+  employees.value = mergeLoadedEmployees(selectedRows.value, [
+    ...employees.value,
+    ...rows,
+  ])
+
   total.value = Math.max(Number(total.value || 0), employees.value.length)
   syncLineState()
 }
@@ -1411,11 +1372,19 @@ function openEmployeeGroup(employee) {
 function clearEmployeeSuggestionSearch() {
   employeeSearchValue.value = ''
   employeeSuggestions.value = []
+  search.value = ''
 }
 
 async function fetchEmployeePage(targetPage = 1, { replace = false, silent = false } = {}) {
   if (!props.otDate) {
     resetEmployeeListState()
+    return
+  }
+
+  // No search/line filter = never load all employees.
+  // Default table shows selected employees only.
+  if (!hasActiveTableFilter.value) {
+    showSelectedOnlyTable()
     return
   }
 
@@ -1431,15 +1400,9 @@ async function fetchEmployeePage(targetPage = 1, { replace = false, silent = fal
   }
 
   try {
-    if (employeeScope.value === 'ALL' && !managedIdsLoaded.value) {
-      await loadManagedIds()
-    }
-
     const res = await getEmployeeLookupOptions(buildEmployeeParams(targetPage))
 
-    const payload = normalizeEmployeeLookupResponse(res, {
-      markOutsideManaged: employeeScope.value === 'ALL',
-    })
+    const payload = normalizeEmployeeLookupResponse(res)
 
     if (currentSeq !== requestSeq) return
 
@@ -1448,7 +1411,7 @@ async function fetchEmployeePage(targetPage = 1, { replace = false, silent = fal
     if (replace) {
       employees.value = mergeLoadedEmployees(selectedRows.value, payload.rows)
       loadedPages.value = new Set([targetPage])
-      expandedLineRows.value = {}
+      clearLineUiState()
     } else {
       employees.value = mergeLoadedEmployees(employees.value, payload.rows)
       loadedPages.value.add(targetPage)
@@ -1474,52 +1437,24 @@ async function fetchEmployeePage(targetPage = 1, { replace = false, silent = fal
   }
 }
 
-async function fetchAllRemainingEmployeePages() {
-  if (!props.otDate) return
-  if (backgroundFetchingAll.value) return
-  if (!hasMoreEmployees.value) return
-
-  const token = ++backgroundLoadToken
-
-  backgroundFetchingAll.value = true
-
-  try {
-    let page = nextPageToLoad.value
-
-    while (
-      token === backgroundLoadToken &&
-      props.otDate &&
-      hasMoreEmployees.value &&
-      page <= MAX_BULK_PAGES
-    ) {
-      await fetchEmployeePage(page, {
-        replace: false,
-        silent: true,
-      })
-
-      page = nextPageToLoad.value
-    }
-  } finally {
-    if (token === backgroundLoadToken) {
-      backgroundFetchingAll.value = false
-    }
-  }
-}
-
 async function resetAndLoadEmployees() {
   resetEmployeeListState()
+
+  if (!hasActiveTableFilter.value) {
+    showSelectedOnlyTable()
+    return
+  }
 
   await fetchEmployeePage(1, {
     replace: true,
   })
-
-  fetchAllRemainingEmployeePages()
 }
 
 async function onLazyScroll(event) {
   const target = event?.target
   if (!target) return
 
+  if (!hasActiveTableFilter.value) return
   if (loading.value || loadingMore.value || backgroundFetchingAll.value) return
   if (!hasMoreEmployees.value) return
 
@@ -1532,8 +1467,6 @@ async function onLazyScroll(event) {
     replace: false,
     silent: false,
   })
-
-  fetchAllRemainingEmployeePages()
 }
 
 async function autoSelectManagedEmployees() {
@@ -1543,7 +1476,11 @@ async function autoSelectManagedEmployees() {
   if (props.blockedLoading) return
   if (selectingManaged.value) return
 
-  const nextKey = `${props.otDate}|${props.selectedShiftId}|${blockedStamp.value}`
+  // Auto-select is only first-time helper.
+  // After user manually changes/unselects employee, do not auto-select again.
+  if (manualSelectionTouched.value) return
+
+  const nextKey = `${props.otDate}|${blockedStamp.value}`
 
   if (autoSelectKey === nextKey) return
 
@@ -1557,10 +1494,7 @@ async function autoSelectManagedEmployees() {
 
     while (keepLoading) {
       const res = await getEmployeeLookupOptions(buildBulkManagedParams(currentPage))
-
-      const payload = normalizeEmployeeLookupResponse(res, {
-        markOutsideManaged: false,
-      })
+      const payload = normalizeEmployeeLookupResponse(res)
 
       rows.push(...payload.rows)
 
@@ -1576,7 +1510,9 @@ async function autoSelectManagedEmployees() {
     })
 
     emitSelected(mergeUniqueRows([...selectedRows.value, ...selectableRows]))
-    upsertEmployeesToTable(selectableRows)
+    employees.value = mergeLoadedEmployees(selectableRows, [])
+    total.value = employees.value.length
+    syncLineState()
   } catch (error) {
     toast.add({
       severity: 'error',
@@ -1605,9 +1541,11 @@ function removeInvalidSelectedRows() {
 async function searchEmployeeSuggestions(event = {}) {
   const keyword = toTrimmedString(event.query)
   employeeSearchValue.value = keyword
+  search.value = keyword
 
   if (!props.otDate || !keyword) {
     employeeSuggestions.value = []
+    showSelectedOnlyTable()
     return
   }
 
@@ -1616,28 +1554,29 @@ async function searchEmployeeSuggestions(event = {}) {
   loadingSuggestions.value = true
 
   try {
-    if (suggestionScope === 'ALL' && !managedIdsLoaded.value) {
-      await loadManagedIds()
-    }
-
     const res = await getEmployeeLookupOptions({
       page: 1,
       limit: 20,
       search: keyword,
       q: keyword,
       lineId: '',
-      shiftId: toTrimmedString(props.selectedShiftId),
+      shiftId: '',
       isActive: true,
       scope: suggestionScope,
       all: suggestionScope === 'ALL',
       includeAll: suggestionScope === 'ALL',
     })
 
-    const payload = normalizeEmployeeLookupResponse(res, {
-      markOutsideManaged: suggestionScope === 'ALL',
-    })
+    const payload = normalizeEmployeeLookupResponse(res)
 
     employeeSuggestions.value = payload.rows
+
+    // Show only selected rows + current search matches.
+    employees.value = mergeLoadedEmployees(selectedRows.value, payload.rows)
+    total.value = employees.value.length
+    loadedPages.value = new Set([1])
+    clearLineUiState()
+    syncLineState()
   } catch {
     employeeSuggestions.value = []
   } finally {
@@ -1646,12 +1585,11 @@ async function searchEmployeeSuggestions(event = {}) {
 }
 
 function onEmployeeAutocompleteSelect(event = {}) {
-  const employee = normalizeEmployeeRecord(event.value, {
-    isOutsideManaged: event.value?.isOutsideManaged === true,
-  })
+  const employee = normalizeEmployeeRecord(event.value)
 
   if (!employee) {
     clearEmployeeSuggestionSearch()
+    showSelectedOnlyTable()
     return
   }
 
@@ -1666,6 +1604,7 @@ function onEmployeeAutocompleteSelect(event = {}) {
     })
 
     clearEmployeeSuggestionSearch()
+    showSelectedOnlyTable()
     return
   }
 
@@ -1676,26 +1615,32 @@ function onEmployeeAutocompleteSelect(event = {}) {
     selectedLineId.value = ''
   }
 
-  upsertEmployeesToTable([employee])
-  openEmployeeGroup(employee)
   selectRows([employee])
+
+  // Keep table simple after select:
+  // selected employees only, so it will not show every line.
+  employees.value = mergeLoadedEmployees([...selectedRows.value, employee], [])
+  total.value = employees.value.length
+  clearLineUiState()
+  syncLineState()
+  openEmployeeGroup(employee)
+
   clearEmployeeSuggestionSearch()
 }
 
-function onSearchInput() {
-  window.clearTimeout(searchTimer)
-
-  searchTimer = window.setTimeout(() => {
-    resetAndLoadEmployees()
-  }, SEARCH_DEBOUNCE_MS)
-}
-
 function onFilterChange() {
+  if (!toTrimmedString(selectedLineId.value)) {
+    showSelectedOnlyTable()
+    return
+  }
+
   resetAndLoadEmployees()
 }
 
-watch(employeeScope, async () => {
-  await resetAndLoadEmployees()
+watch(employeeScope, () => {
+  // Switching My Employees / All Employees should not load all rows.
+  // It only changes autocomplete/search scope.
+  showSelectedOnlyTable()
 })
 
 watch(
@@ -1715,20 +1660,29 @@ watch(defaultTimeKey, () => {
 })
 
 watch(
-  () => [props.otDate, props.selectedShiftId].join('|'),
+  () => props.otDate,
   async () => {
+    const nextOtDate = toTrimmedString(props.otDate)
+    const dateChanged = nextOtDate !== lastWatchedOtDate
+
+    if (dateChanged) {
+      // New OT date = allow first-time auto-select again.
+      manualSelectionTouched.value = false
+      autoSelectKey = ''
+      lastWatchedOtDate = nextOtDate
+    }
+
     search.value = ''
     employeeSearchValue.value = ''
     employeeSuggestions.value = []
     selectedLineId.value = ''
+
     resetEmployeeListState()
-    autoSelectKey = ''
 
     if (!props.otDate) return
 
-    await loadManagedIds()
-    await resetAndLoadEmployees()
     await autoSelectManagedEmployees()
+    showSelectedOnlyTable()
   },
 )
 
@@ -1737,8 +1691,17 @@ watch(
   async () => {
     removeInvalidSelectedRows()
     await autoSelectManagedEmployees()
+    showSelectedOnlyTable()
   },
 )
+
+watch(selectedRowsKey, () => {
+  // When user selects/removes employee, do not reload all lines.
+  // Keep table simple.
+  if (!hasActiveTableFilter.value || manualSelectionTouched.value) {
+    showSelectedOnlyTable()
+  }
+})
 
 onMounted(async () => {
   await Promise.all([
@@ -1746,13 +1709,14 @@ onMounted(async () => {
     loadLineOptions(),
   ])
 
-  await loadManagedIds()
-  await resetAndLoadEmployees()
+  lastWatchedOtDate = toTrimmedString(props.otDate)
+
   await autoSelectManagedEmployees()
+  showSelectedOnlyTable()
 })
 
 onBeforeUnmount(() => {
-  window.clearTimeout(searchTimer)
+  backgroundLoadToken += 1
 })
 </script>
 
@@ -1992,6 +1956,7 @@ onBeforeUnmount(() => {
                     <td>
                       {{ employee.positionName || '-' }}
                     </td>
+
                     <td>
                       <div class="ot-time-total-cell">
                         <InputNumber
@@ -2055,7 +2020,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div
-          v-else-if="!hasMoreEmployees && loadedCount"
+          v-else-if="!hasMoreEmployees && loadedCount && hasActiveTableFilter"
           class="ot-end-line"
         >
           {{ t('ot.requests.create.employeePicker.allMatchedLoaded') }}
@@ -2271,22 +2236,6 @@ onBeforeUnmount(() => {
 .cell-strong {
   font-weight: 600;
   color: var(--ot-text);
-}
-
-.ot-time-readonly {
-  display: inline-flex;
-  min-width: 4.8rem;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--ot-border);
-  border-radius: 0.78rem;
-  background: var(--ot-bg);
-  padding: 0.38rem 0.55rem;
-  color: var(--ot-text);
-  font-size: 0.78rem;
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
-  text-align: center;
 }
 
 .ot-duration-input {
