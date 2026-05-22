@@ -292,6 +292,13 @@ function formatMinutesLabel(value) {
 
 function totalOtMinutesOf(row) {
   return firstPositiveNumber(
+    // Backend paid OT source of truth: after break deduction.
+    row?.totalRequestPaidMinutes,
+    row?.totalMinutes,
+    row?.paidMinutes,
+    row?.approvedMinutes,
+
+    // Fallback only for old data.
     row?.requestedMinutes,
     row?.totalRequestedMinutes,
     row?.otRequestedMinutes,
@@ -300,14 +307,19 @@ function totalOtMinutesOf(row) {
     row?.durationMinutes,
     row?.plannedMinutes,
     row?.approvedRequestedMinutes,
-
-    // Fallback only, used when backend does not send requestedMinutes.
-    row?.totalMinutes,
   )
 }
 
+
 function employeeTotalOtMinutesOf(employee, row) {
   return firstPositiveNumber(
+    // Backend paid OT source of truth: after break deduction.
+    employee?.totalRequestPaidMinutes,
+    employee?.totalMinutes,
+    employee?.paidMinutes,
+    employee?.approvedMinutes,
+
+    // Fallback only for old data.
     employee?.requestedMinutes,
     employee?.totalRequestedMinutes,
     employee?.otRequestedMinutes,
@@ -317,9 +329,6 @@ function employeeTotalOtMinutesOf(employee, row) {
     employee?.plannedMinutes,
     employee?.approvedRequestedMinutes,
 
-    // Fallback only.
-    employee?.totalMinutes,
-    employee?.approvedMinutes,
     totalOtMinutesOf(row),
   )
 }

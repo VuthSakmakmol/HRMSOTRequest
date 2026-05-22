@@ -43,6 +43,7 @@ const form = reactive({
   customStartTime: '',
   customEndTime: '',
   customBreakMinutes: 0,
+  customDurationHours: null,
   reason: '',
 })
 
@@ -92,41 +93,76 @@ const submitDisabled = computed(() => {
 const requestPreview = computed(() => {
   if (!sharedShift.value || !selectedOTOption.value) return null
 
-  const requestedMinutes = Number(selectedOTOption.value.requestedMinutes || 0)
+  const breakMinutes = Number(selectedOTOption.value.breakMinutes || 0)
+
+  const totalRequestPaidMinutes = firstPositiveNumber(
+    selectedOTOption.value.totalRequestPaidMinutes,
+    selectedOTOption.value.totalMinutes,
+    selectedOTOption.value.paidMinutes,
+  )
+
+  const requestedMinutes = totalRequestPaidMinutes || Number(selectedOTOption.value.requestedMinutes || 0)
 
   return {
     timingMode: String(selectedOTOption.value.timingMode || 'AFTER_SHIFT_END')
       .trim()
       .toUpperCase(),
+
     requestStartTime: String(selectedOTOption.value.requestStartTime || '').trim(),
     requestEndTime: String(selectedOTOption.value.requestEndTime || '').trim(),
-    breakMinutes: 0,
+
+    breakMinutes,
+
+    // User-facing requested OT = after break deduction.
     requestedMinutes,
     requestedHours: Number(
-      selectedOTOption.value.requestedHours ||
+      selectedOTOption.value.totalRequestPaidHours ||
+        selectedOTOption.value.totalHours ||
         (requestedMinutes / 60).toFixed(2),
     ),
+
+    totalRequestPaidMinutes: requestedMinutes,
+    totalMinutes: requestedMinutes,
+    totalHours: Number((requestedMinutes / 60).toFixed(2)),
   }
 })
 
+function firstPositiveNumber(...values) {
+  for (const value of values) {
+    const number = Number(value)
+
+    if (Number.isFinite(number) && number > 0) {
+      return number
+    }
+  }
+
+  return 0
+}
+
+
 const defaultTiming = computed(() => {
   if (isCustomFixedTime.value) {
-    const startTime = String(form.customStartTime || '').trim()
-    const endTime = String(form.customEndTime || '').trim()
-    const breakMinutes = Number(form.customBreakMinutes || 0)
-    const totalMinutes =
-      startTime && endTime
-        ? calculateTimeWindowMinutes(startTime, endTime, breakMinutes)
-        : 0
+    const startTime = String(
+      form.customStartTime ||
+        requestPreview.value?.requestStartTime ||
+        selectedOTOption.value?.requestStartTime ||
+        selectedOTOption.value?.startTime ||
+        '',
+    ).trim()
+
+    const requestedMinutes = durationHoursToMinutes(form.customDurationHours)
+    const endTime = startTime && requestedMinutes
+      ? addMinutesToHHmm(startTime, requestedMinutes)
+      : ''
 
     return {
       source: 'CUSTOM_FIXED',
       startTime,
       endTime,
-      breakMinutes,
-      requestedMinutes: totalMinutes,
-      totalMinutes,
-      totalHours: Number((totalMinutes / 60).toFixed(2)),
+      breakMinutes: 0,
+      requestedMinutes,
+      totalMinutes: requestedMinutes,
+      totalHours: Number((requestedMinutes / 60).toFixed(2)),
     }
   }
 
@@ -135,9 +171,28 @@ const defaultTiming = computed(() => {
     startTime: String(requestPreview.value?.requestStartTime || '').trim(),
     endTime: String(requestPreview.value?.requestEndTime || '').trim(),
     breakMinutes: Number(requestPreview.value?.breakMinutes || 0),
-    requestedMinutes: Number(requestPreview.value?.requestedMinutes || 0),
-    totalMinutes: Number(requestPreview.value?.requestedMinutes || 0),
-    totalHours: Number(requestPreview.value?.requestedHours || 0),
+
+    // User-facing requested OT = after break.
+    requestedMinutes: Number(
+      requestPreview.value?.totalRequestPaidMinutes ||
+        requestPreview.value?.totalMinutes ||
+        requestPreview.value?.requestedMinutes ||
+        0,
+    ),
+
+    totalMinutes: Number(
+      requestPreview.value?.totalRequestPaidMinutes ||
+        requestPreview.value?.totalMinutes ||
+        requestPreview.value?.requestedMinutes ||
+        0,
+    ),
+
+    totalHours: Number(
+      requestPreview.value?.totalRequestPaidHours ||
+        requestPreview.value?.totalHours ||
+        requestPreview.value?.requestedHours ||
+        0,
+    ),
   }
 })
 
@@ -307,9 +362,22 @@ function normalizeShiftOptionsResponse(res) {
 
   return rows
     .map((item) => {
-      const requestedMinutes = Number(item?.requestedMinutes || 0)
-      const requestedHours = Number(
-        item?.requestedHours || (requestedMinutes / 60).toFixed(2),
+      const grossRequestedMinutes = Number(item?.requestedMinutes || 0)
+      const breakMinutes = Number(item?.breakMinutes || 0)
+
+      const paidMinutes =
+        firstPositiveNumber(
+          item?.totalRequestPaidMinutes,
+          item?.totalMinutes,
+          item?.paidMinutes,
+        ) ||
+        Math.max(0, grossRequestedMinutes - breakMinutes) ||
+        grossRequestedMinutes
+
+      const paidHours = Number(
+        item?.totalRequestPaidHours ||
+          item?.totalHours ||
+          (paidMinutes / 60).toFixed(2),
       )
 
       const timingMode = String(item?.timingMode || 'AFTER_SHIFT_END')
@@ -331,28 +399,40 @@ function normalizeShiftOptionsResponse(res) {
         id: String(item?.id || item?._id || '').trim(),
         label,
         timingMode,
+
         applicableDayTypes: Array.isArray(item?.applicableDayTypes)
           ? item.applicableDayTypes
           : [],
+
         dayTypeLabel,
         requestStartTime,
         requestEndTime,
-        requestedMinutes,
-        requestedHours,
+
+        // Keep gross only for internal reference/debug, not for normal user display.
+        grossRequestedMinutes,
+        grossRequestedHours: Number((grossRequestedMinutes / 60).toFixed(2)),
+
+        breakMinutes,
+
+        // User-facing requested OT = paid after break.
+        requestedMinutes: paidMinutes,
+        requestedHours: paidHours,
+
+        totalRequestPaidMinutes: paidMinutes,
+        totalRequestPaidHours: paidHours,
+        totalMinutes: paidMinutes,
+        totalHours: paidHours,
+
         sequence: Number(item?.sequence || 0),
         calculationPolicy: item?.calculationPolicy || null,
 
+        // Dropdown shows only OT option name.
         optionLabel: label,
       }
     })
     .filter((item) => item.id && item.label)
-    .sort((a, b) => {
-      const sequenceCompare = Number(a.sequence || 0) - Number(b.sequence || 0)
-      if (sequenceCompare !== 0) return sequenceCompare
-
-      return a.label.localeCompare(b.label)
-    })
 }
+
 
 function pad2(value) {
   return String(value).padStart(2, '0')
@@ -402,13 +482,48 @@ function calculateTimeWindowMinutes(startTime, endTime, breakMinutes = 0) {
   return Math.max(0, rawMinutes - safeBreak)
 }
 
+function addMinutesToHHmm(startTime, minutesToAdd = 0) {
+  if (!isHHmm(startTime)) return ''
+
+  const start = timeToMinutes(startTime)
+  const safeMinutes = Math.max(0, Number(minutesToAdd || 0))
+  const total = (start + safeMinutes) % 1440
+  const hours = Math.floor(total / 60)
+  const minutes = total % 60
+
+  return `${pad2(hours)}:${pad2(minutes)}`
+}
+
+function durationHoursToMinutes(value) {
+  const hours = Number(value || 0)
+
+  if (!Number.isFinite(hours) || hours <= 0) return 0
+
+  return Math.round(hours * 60)
+}
+
+function formatMinutesLabel(value) {
+  const minutes = Number(value || 0)
+
+  if (!minutes) return t('ot.common.minuteValue', { value: 0 })
+
+  const hh = Math.floor(minutes / 60)
+  const mm = minutes % 60
+
+  if (hh && mm) {
+    return t('ot.common.hourMinuteValue', {
+      hours: hh,
+      minutes: mm,
+    })
+  }
+
+  if (hh) return t('ot.common.hourValue', { value: hh })
+  return t('ot.common.minuteValue', { value: mm })
+}
+
 function clearShiftOptions() {
   shiftOptions.value = []
   form.shiftOtOptionId = ''
-  form.otTimingSource = 'SHIFT_OPTION'
-  form.customStartTime = ''
-  form.customEndTime = ''
-  form.customBreakMinutes = 0
   selectedOptionDayType.value = ''
   lastLoadedShiftKey.value = ''
 }
@@ -507,12 +622,8 @@ async function loadShiftOptionsForSharedShift() {
 
   if (lastLoadedShiftKey.value === loadKey) return
 
-  const previousOptionId = String(form.shiftOtOptionId || '').trim()
-  const previousTimingSource = String(form.otTimingSource || 'SHIFT_OPTION')
-    .trim()
-    .toUpperCase()
-
   loadingShiftOptions.value = true
+  form.shiftOtOptionId = ''
 
   try {
     const res = await getShiftOTOptionsByShift(state.shift.shiftId, {
@@ -524,25 +635,8 @@ async function loadShiftOptionsForSharedShift() {
     shiftOptions.value = rows
     lastLoadedShiftKey.value = loadKey
 
-    const previousStillExists = rows.some((item) => item.id === previousOptionId)
-
-    if (previousStillExists) {
-      form.shiftOtOptionId = previousOptionId
-      form.otTimingSource = previousTimingSource === 'CUSTOM_FIXED'
-        ? 'CUSTOM_FIXED'
-        : 'SHIFT_OPTION'
-    } else if (rows.length) {
+    if (rows.length === 1) {
       form.shiftOtOptionId = rows[0].id
-      form.otTimingSource = 'SHIFT_OPTION'
-      form.customStartTime = ''
-      form.customEndTime = ''
-      form.customBreakMinutes = 0
-    } else {
-      form.shiftOtOptionId = ''
-      form.otTimingSource = 'SHIFT_OPTION'
-      form.customStartTime = ''
-      form.customEndTime = ''
-      form.customBreakMinutes = 0
     }
 
     if (!rows.length) {
@@ -572,30 +666,31 @@ async function loadShiftOptionsForSharedShift() {
 }
 
 function getEmployeeTiming(employee = {}) {
+  const employeeMode = String(employee?.otTimeMode || 'DEFAULT').trim().toUpperCase()
+  const useEmployeeCustomTime = employeeMode === 'CUSTOM'
+
   const startTime = String(
-    employee?.requestStartTime ||
-      employee?.startTime ||
-      defaultTiming.value.startTime ||
-      '',
+    useEmployeeCustomTime
+      ? employee?.requestStartTime || employee?.startTime || defaultTiming.value.startTime || ''
+      : defaultTiming.value.startTime || employee?.requestStartTime || employee?.startTime || '',
   ).trim()
 
   const endTime = String(
-    employee?.requestEndTime ||
-      employee?.endTime ||
-      defaultTiming.value.endTime ||
-      '',
+    useEmployeeCustomTime
+      ? employee?.requestEndTime || employee?.endTime || defaultTiming.value.endTime || ''
+      : defaultTiming.value.endTime || employee?.requestEndTime || employee?.endTime || '',
   ).trim()
 
   const breakMinutes = Number(
-    employee?.breakMinutes ??
-      defaultTiming.value.breakMinutes ??
-      0,
+    useEmployeeCustomTime
+      ? employee?.breakMinutes ?? defaultTiming.value.breakMinutes ?? 0
+      : defaultTiming.value.breakMinutes ?? employee?.breakMinutes ?? 0,
   )
 
   const requestedMinutes =
-    Number(employee?.requestedMinutes || 0) ||
-    calculateTimeWindowMinutes(startTime, endTime, breakMinutes) ||
-    Number(defaultTiming.value.requestedMinutes || 0)
+    (useEmployeeCustomTime ? Number(employee?.requestedMinutes || 0) : 0) ||
+    Number(defaultTiming.value.requestedMinutes || 0) ||
+    calculateTimeWindowMinutes(startTime, endTime, breakMinutes)
 
   return {
     startTime,
@@ -756,28 +851,20 @@ function validateBeforeSubmit(payload) {
   }
 
   if (payload.otTimingSource === 'CUSTOM_FIXED') {
-    if (!payload.customStartTime) return t('ot.requests.create.enterCustomStartTime')
-    if (!payload.customEndTime) return t('ot.requests.create.enterCustomEndTime')
-
-    if (!isHHmm(payload.customStartTime)) {
-      return t('ot.requests.create.customStartInvalid')
+    if (!Number(form.customDurationHours || 0)) {
+      return t('ot.requests.create.enterCustomDurationHours')
     }
 
-    if (!isHHmm(payload.customEndTime)) {
-      return t('ot.requests.create.customEndInvalid')
+    if (Number(form.customDurationHours || 0) <= 0) {
+      return t('ot.requests.create.enterCustomDurationHours')
     }
 
-    if (payload.customStartTime === payload.customEndTime) {
-      return t('ot.requests.create.customTimeSame')
+    if (!payload.customStartTime || !payload.customEndTime) {
+      return t('ot.requests.create.selectValidTiming')
     }
 
-    const rawMinutes = calculateRawTimeWindowMinutes(
-      payload.customStartTime,
-      payload.customEndTime,
-    )
-
-    if (Number(payload.customBreakMinutes || 0) >= rawMinutes) {
-      return t('ot.requests.create.breakTooLong')
+    if (!isHHmm(payload.customStartTime) || !isHHmm(payload.customEndTime)) {
+      return t('ot.requests.create.selectValidTiming')
     }
   }
 
@@ -1134,12 +1221,14 @@ watch(
     form.customStartTime,
     form.customEndTime,
     form.customBreakMinutes,
+    form.customDurationHours,
   ].join('|'),
   () => {
     if (!isCustomFixedTime.value) {
       form.customStartTime = ''
       form.customEndTime = ''
       form.customBreakMinutes = 0
+      form.customDurationHours = null
     }
   },
 )

@@ -9,7 +9,6 @@ import { useToast } from 'primevue/usetoast'
 import AutoComplete from 'primevue/autocomplete'
 import Button from 'primevue/button'
 import Checkbox from 'primevue/checkbox'
-import DatePicker from 'primevue/datepicker'
 import InputNumber from 'primevue/inputnumber'
 import Message from 'primevue/message'
 import ProgressSpinner from 'primevue/progressspinner'
@@ -150,14 +149,23 @@ const defaultTime = computed(() => {
   const breakMinutes = Number(preview.breakMinutes || 0)
 
   const requestedMinutes =
-    Number(preview.requestedMinutes || 0) ||
+    Number(
+      preview.totalRequestPaidMinutes ??
+        preview.totalMinutes ??
+        preview.requestedMinutes ??
+        0,
+    ) ||
     calculateTimeWindowMinutes(requestStartTime, requestEndTime, breakMinutes)
 
   return {
     requestStartTime,
     requestEndTime,
     breakMinutes,
+
+    // User-facing requested OT = after break.
     requestedMinutes,
+    totalRequestPaidMinutes: requestedMinutes,
+    totalMinutes: requestedMinutes,
   }
 })
 
@@ -264,23 +272,6 @@ function pad2(value) {
   return String(value).padStart(2, '0')
 }
 
-function hhmmToDate(value) {
-  const raw = toTrimmedString(value)
-  if (!isHHmm(raw)) return null
-
-  const [hours, minutes] = raw.split(':').map(Number)
-  const date = new Date()
-
-  date.setHours(hours, minutes, 0, 0)
-
-  return date
-}
-
-function dateToHHmm(value) {
-  if (!(value instanceof Date) || Number.isNaN(value.getTime())) return ''
-
-  return `${pad2(value.getHours())}:${pad2(value.getMinutes())}`
-}
 
 function isHHmm(value) {
   return /^([01]\d|2[0-3]):([0-5]\d)$/.test(String(value || '').trim())
@@ -313,6 +304,33 @@ function calculateTimeWindowMinutes(startTime, endTime, breakMinutes = 0) {
   const safeBreak = Number(breakMinutes || 0)
 
   return Math.max(0, rawMinutes - safeBreak)
+}
+
+function addMinutesToHHmm(startTime, minutesToAdd = 0) {
+  if (!isHHmm(startTime)) return ''
+
+  const start = timeToMinutes(startTime)
+  const total = (start + Number(minutesToAdd || 0)) % 1440
+  const hours = Math.floor(total / 60)
+  const minutes = total % 60
+
+  return `${pad2(hours)}:${pad2(minutes)}`
+}
+
+function durationHoursToMinutes(value) {
+  const hours = Math.round(Number(value || 0))
+
+  if (!Number.isFinite(hours) || hours <= 0) return 0
+
+  return hours * 60
+}
+
+function minutesToHoursNumber(value) {
+  const minutes = Number(value || 0)
+
+  if (!Number.isFinite(minutes) || minutes <= 0) return null
+
+  return Math.max(1, Math.round(minutes / 60))
 }
 
 function formatMinutesLabel(value) {
@@ -623,7 +641,12 @@ function normalizeSelectedEmployeeRecord(source = {}) {
   const breakMinutes = Number(source?.breakMinutes ?? defaultTime.value.breakMinutes ?? 0)
 
   const requestedMinutes =
-    Number(source?.requestedMinutes || 0) ||
+    Number(
+      source?.totalRequestPaidMinutes ??
+        source?.totalMinutes ??
+        source?.requestedMinutes ??
+        0,
+    ) ||
     calculateTimeWindowMinutes(startTime, endTime, breakMinutes) ||
     Number(defaultTime.value.requestedMinutes || 0)
 
@@ -632,7 +655,12 @@ function normalizeSelectedEmployeeRecord(source = {}) {
     requestStartTime: startTime,
     requestEndTime: endTime,
     breakMinutes,
+
+    // User-facing requested OT = after break.
     requestedMinutes,
+    totalRequestPaidMinutes: requestedMinutes,
+    totalMinutes: requestedMinutes,
+
     otTimeMode: toUpperCode(source?.otTimeMode || 'DEFAULT'),
   }
 }
@@ -809,7 +837,13 @@ function getEmployeeBreakMinutes(employee) {
 function getEmployeeRequestedMinutes(employee) {
   const editable = getEditableEmployee(employee)
 
-  const current = Number(editable?.requestedMinutes || 0)
+  const current = Number(
+    editable?.totalRequestPaidMinutes ??
+      editable?.totalMinutes ??
+      editable?.requestedMinutes ??
+      0,
+  )
+
   if (current > 0) return current
 
   return calculateTimeWindowMinutes(
@@ -817,6 +851,10 @@ function getEmployeeRequestedMinutes(employee) {
     editable?.requestEndTime,
     editable?.breakMinutes,
   )
+}
+
+function getEmployeeDurationHours(employee) {
+  return minutesToHoursNumber(getEmployeeRequestedMinutes(employee))
 }
 
 function getEmployeeTimeMode(employee) {
@@ -957,7 +995,7 @@ function toggleEmployee(employee, checked) {
   selectRows([employee])
 }
 
-function updateSelectedEmployeeTime(employee, patch = {}) {
+function updateSelectedEmployeeDuration(employee, hoursValue) {
   const id = getEmployeeId(employee)
   if (!id) return
 
@@ -973,27 +1011,37 @@ function updateSelectedEmployeeTime(employee, patch = {}) {
     return
   }
 
+  const normalized = normalizeSelectedEmployeeRecord(employee)
+
+  if (!normalized) return
+
   const baseRows = exists
     ? selectedRows.value
-    : [...selectedRows.value, normalizeSelectedEmployeeRecord(employee)]
+    : [...selectedRows.value, normalized]
 
+  const paidMinutes = durationHoursToMinutes(hoursValue)
   const nextRows = baseRows.map((item) => {
     if (getEmployeeId(item) !== id) return item
 
-    const next = {
-      ...item,
-      ...patch,
-      otTimeMode: 'CUSTOM',
-    }
-
-    next.breakMinutes = Number(next.breakMinutes || 0)
-    next.requestedMinutes = calculateTimeWindowMinutes(
-      next.requestStartTime,
-      next.requestEndTime,
-      next.breakMinutes,
+    const startTime = toTrimmedString(
+      item.requestStartTime ||
+        defaultTime.value.requestStartTime,
     )
 
-    return next
+    const endTime = startTime && paidMinutes
+      ? addMinutesToHHmm(startTime, paidMinutes)
+      : ''
+
+    return {
+      ...item,
+      requestStartTime: startTime,
+      requestEndTime: endTime,
+      breakMinutes: 0,
+      requestedMinutes: paidMinutes,
+      totalRequestPaidMinutes: paidMinutes,
+      totalMinutes: paidMinutes,
+      otTimeMode: 'CUSTOM',
+    }
   })
 
   emitSelected(nextRows)
@@ -1012,6 +1060,8 @@ function resetEmployeeTime(employee) {
       requestEndTime: defaultTime.value.requestEndTime,
       breakMinutes: defaultTime.value.breakMinutes,
       requestedMinutes: defaultTime.value.requestedMinutes,
+      totalRequestPaidMinutes: defaultTime.value.requestedMinutes,
+      totalMinutes: defaultTime.value.requestedMinutes,
       otTimeMode: 'DEFAULT',
     }
   })
@@ -1025,7 +1075,30 @@ function updateDefaultSelectedEmployeeTimes() {
   const nextRows = selectedRows.value.map((item) => {
     const mode = toUpperCode(item?.otTimeMode || 'DEFAULT')
 
-    if (mode === 'CUSTOM') return item
+    if (mode === 'CUSTOM') {
+      const paidMinutes = Number(
+        item?.totalRequestPaidMinutes ??
+          item?.totalMinutes ??
+          item?.requestedMinutes ??
+          0,
+      )
+
+      const startTime = defaultTime.value.requestStartTime
+      const endTime = startTime && paidMinutes
+        ? addMinutesToHHmm(startTime, paidMinutes)
+        : ''
+
+      return {
+        ...item,
+        requestStartTime: startTime,
+        requestEndTime: endTime,
+        breakMinutes: 0,
+        requestedMinutes: paidMinutes,
+        totalRequestPaidMinutes: paidMinutes,
+        totalMinutes: paidMinutes,
+        otTimeMode: 'CUSTOM',
+      }
+    }
 
     return {
       ...item,
@@ -1033,6 +1106,8 @@ function updateDefaultSelectedEmployeeTimes() {
       requestEndTime: defaultTime.value.requestEndTime,
       breakMinutes: defaultTime.value.breakMinutes,
       requestedMinutes: defaultTime.value.requestedMinutes,
+      totalRequestPaidMinutes: defaultTime.value.requestedMinutes,
+      totalMinutes: defaultTime.value.requestedMinutes,
       otTimeMode: 'DEFAULT',
     }
   })
@@ -1879,9 +1954,6 @@ onBeforeUnmount(() => {
                     <th>{{ t('ot.requests.employeeId') }}</th>
                     <th>{{ t('common.name') }}</th>
                     <th>{{ t('nav.positions') }}</th>
-                    <th>{{ t('ot.requests.create.employeePicker.columnStart') }}</th>
-                    <th>{{ t('ot.requests.create.employeePicker.columnEnd') }}</th>
-                    <th>{{ t('ot.requests.break') }}</th>
                     <th>{{ t('ot.requests.create.otTime') }}</th>
                     <th>{{ t('nav.shift') }}</th>
                   </tr>
@@ -1920,59 +1992,25 @@ onBeforeUnmount(() => {
                     <td>
                       {{ employee.positionName || '-' }}
                     </td>
-
-                    <td>
-                      <DatePicker
-                        :model-value="hhmmToDate(getEmployeeStartTime(employee))"
-                        time-only
-                        hour-format="24"
-                        show-icon
-                        :step-minute="5"
-                        :manual-input="false"
-                        class="ot-time-input"
-                        input-class="ot-time-input-field"
-                        :disabled="isEmployeeDisabled(employee) && !isSelected(employee)"
-                        @update:model-value="(value) => updateSelectedEmployeeTime(employee, {
-                          requestStartTime: dateToHHmm(value),
-                        })"
-                      />
-                    </td>
-
-                    <td>
-                      <DatePicker
-                        :model-value="hhmmToDate(getEmployeeEndTime(employee))"
-                        time-only
-                        hour-format="24"
-                        show-icon
-                        :step-minute="5"
-                        :manual-input="false"
-                        class="ot-time-input"
-                        input-class="ot-time-input-field"
-                        :disabled="isEmployeeDisabled(employee) && !isSelected(employee)"
-                        @update:model-value="(value) => updateSelectedEmployeeTime(employee, {
-                          requestEndTime: dateToHHmm(value),
-                        })"
-                      />
-                    </td>
-
-                    <td>
-                      <InputNumber
-                        :model-value="getEmployeeBreakMinutes(employee)"
-                        class="ot-break-input"
-                        input-class="ot-break-input-field"
-                        :min="0"
-                        :max="1440"
-                        :step="5"
-                        :disabled="isEmployeeDisabled(employee) && !isSelected(employee)"
-                        @update:model-value="(value) => updateSelectedEmployeeTime(employee, { breakMinutes: value })"
-                      />
-                    </td>
-
                     <td>
                       <div class="ot-time-total-cell">
-                        <span class="cell-mono">
-                          {{ formatMinutesLabel(getEmployeeRequestedMinutes(employee)) }}
-                        </span>
+                        <InputNumber
+                          :model-value="getEmployeeDurationHours(employee)"
+                          class="ot-duration-input"
+                          input-class="ot-duration-input-field"
+                          :min="1"
+                          :max="24"
+                          :step="1"
+                          :min-fraction-digits="0"
+                          :max-fraction-digits="0"
+                          suffix=" h"
+                          show-buttons
+                          button-layout="horizontal"
+                          decrement-button-icon="pi pi-minus"
+                          increment-button-icon="pi pi-plus"
+                          :disabled="isEmployeeDisabled(employee) && !isSelected(employee)"
+                          @update:model-value="(value) => updateSelectedEmployeeDuration(employee, value)"
+                        />
 
                         <Button
                           v-if="isSelected(employee) && getEmployeeTimeMode(employee) === 'CUSTOM'"
@@ -2235,23 +2273,39 @@ onBeforeUnmount(() => {
   color: var(--ot-text);
 }
 
-.ot-time-input {
-  width: 7.4rem;
+.ot-time-readonly {
+  display: inline-flex;
+  min-width: 4.8rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--ot-border);
+  border-radius: 0.78rem;
+  background: var(--ot-bg);
+  padding: 0.38rem 0.55rem;
+  color: var(--ot-text);
+  font-size: 0.78rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
 }
 
-:deep(.ot-time-input-field) {
-  width: 7.4rem !important;
+.ot-duration-input {
+  width: 8.8rem;
+}
+
+:deep(.ot-duration-input .p-inputnumber-input),
+:deep(.ot-duration-input-field) {
+  width: 3.9rem !important;
+  min-width: 3.9rem !important;
   text-align: center;
   font-size: 0.78rem !important;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
 }
 
-.ot-break-input {
-  width: 5rem;
-}
-
-:deep(.ot-break-input-field) {
-  width: 5rem !important;
-  text-align: center;
+:deep(.ot-duration-input .p-inputnumber-button) {
+  width: 1.85rem !important;
+  padding-inline: 0 !important;
 }
 
 .ot-suggest-option {
@@ -2289,7 +2343,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   gap: 0.25rem;
-  min-width: 5.5rem;
+  min-width: 9.6rem;
 }
 
 .ot-line-scroll-hint,

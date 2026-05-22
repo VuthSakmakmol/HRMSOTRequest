@@ -9,7 +9,6 @@ import { useToast } from 'primevue/usetoast'
 import Button from 'primevue/button'
 import Card from 'primevue/card'
 import InputNumber from 'primevue/inputnumber'
-import DatePicker from 'primevue/datepicker'
 import Message from 'primevue/message'
 import Select from 'primevue/select'
 import Tag from 'primevue/tag'
@@ -213,23 +212,39 @@ const calendarDays = computed(() => {
   return cells
 })
 
+const customDurationMinutes = computed(() => {
+  const hours = Math.round(Number(props.form.customDurationHours || 0))
+
+  if (!Number.isFinite(hours) || hours <= 0) return 0
+
+  return hours * 60
+})
+
+const customBaseStartTime = computed(() => {
+  return String(
+    props.form.customStartTime ||
+      props.requestPreview?.requestStartTime ||
+      selectedOption.value?.requestStartTime ||
+      selectedOption.value?.startTime ||
+      '',
+  ).trim()
+})
+
 const localRequestPreview = computed(() => {
   if (isCustomFixedTime.value) {
-    const startTime = String(props.form.customStartTime || '').trim()
-    const endTime = String(props.form.customEndTime || '').trim()
-    const breakMinutes = Number(props.form.customBreakMinutes || 0)
-
-    if (!startTime || !endTime) return null
-
-    const totalMinutes = calculateTimeWindowMinutes(startTime, endTime, breakMinutes)
+    const startTime = customBaseStartTime.value
+    const requestedMinutes = customDurationMinutes.value
+    const endTime = startTime && requestedMinutes
+      ? addMinutesToHHmm(startTime, requestedMinutes)
+      : ''
 
     return {
       timingMode: 'CUSTOM_FIXED',
       requestStartTime: startTime,
       requestEndTime: endTime,
-      breakMinutes,
-      requestedMinutes: totalMinutes,
-      requestedHours: Number((totalMinutes / 60).toFixed(2)),
+      breakMinutes: 0,
+      requestedMinutes,
+      requestedHours: Number((requestedMinutes / 60).toFixed(2)),
     }
   }
 
@@ -239,24 +254,21 @@ const localRequestPreview = computed(() => {
 const customTimeError = computed(() => {
   if (!isCustomFixedTime.value) return ''
 
-  const startTime = String(props.form.customStartTime || '').trim()
-  const endTime = String(props.form.customEndTime || '').trim()
-  const breakMinutes = Number(props.form.customBreakMinutes || 0)
+  const startTime = customBaseStartTime.value
+  const requestedMinutes = customDurationMinutes.value
 
-  if (!startTime || !endTime) return ''
+  if (!requestedMinutes) return ''
 
-  if (!isHHmm(startTime) || !isHHmm(endTime)) {
-    return t('ot.requests.create.customTimeInvalid')
+  if (!startTime || !isHHmm(startTime)) {
+    return t('ot.requests.create.selectValidTiming')
   }
 
-  if (startTime === endTime) {
-    return t('ot.requests.create.customTimeSame')
+  if (requestedMinutes <= 0) {
+    return t('ot.requests.create.enterCustomDurationHours')
   }
 
-  const rawMinutes = calculateRawWindowMinutes(startTime, endTime)
-
-  if (breakMinutes >= rawMinutes) {
-    return t('ot.requests.create.breakTooLong')
+  if (requestedMinutes > 1440) {
+    return t('ot.requests.create.customDurationTooLong')
   }
 
   return ''
@@ -383,6 +395,18 @@ function calculateTimeWindowMinutes(startTime, endTime, breakMinutes = 0) {
   return Math.max(0, rawMinutes - safeBreak)
 }
 
+function addMinutesToHHmm(startTime, minutesToAdd = 0) {
+  if (!isHHmm(startTime)) return ''
+
+  const start = timeToMinutes(startTime)
+  const safeMinutes = Math.max(0, Number(minutesToAdd || 0))
+  const total = (start + safeMinutes) % 1440
+  const hours = Math.floor(total / 60)
+  const minutes = total % 60
+
+  return `${pad2(hours)}:${pad2(minutes)}`
+}
+
 function formatMinutesLabel(value) {
   const minutes = Number(value || 0)
 
@@ -456,29 +480,10 @@ function applyCustomTimeDefaults(option = null) {
       '',
   ).trim()
 
-  const endTime = String(
-    preview.requestEndTime ||
-      sourceOption.requestEndTime ||
-      sourceOption.endTime ||
-      '',
-  ).trim()
-
-  const breakMinutes = Number(
-    preview.breakMinutes ??
-      sourceOption.breakMinutes ??
-      props.form.customBreakMinutes ??
-      0,
-  )
-
-  if (!String(props.form.customStartTime || '').trim()) {
-    props.form.customStartTime = startTime
-  }
-
-  if (!String(props.form.customEndTime || '').trim()) {
-    props.form.customEndTime = endTime
-  }
-
-  props.form.customBreakMinutes = Number.isFinite(breakMinutes) ? breakMinutes : 0
+  props.form.customStartTime = startTime
+  props.form.customEndTime = ''
+  props.form.customBreakMinutes = 0
+  props.form.customDurationHours = null
 }
 
 function handleOtOptionDropdownChange(value) {
@@ -498,13 +503,14 @@ function handleOtOptionDropdownChange(value) {
   props.form.customStartTime = ''
   props.form.customEndTime = ''
   props.form.customBreakMinutes = 0
+  props.form.customDurationHours = null
 }
 
 function formatOptionMeta(option = {}) {
   if (option?.isCustomOption) {
     return labelOr(
       'ot.requests.create.otherCustomTimeHelp',
-      'Set start time, end time, and break manually',
+      'Enter OT hours only. The system calculates the end time automatically.',
     )
   }
 
@@ -581,6 +587,10 @@ function ensureTimingDefaults() {
   if (props.form.customBreakMinutes === undefined || props.form.customBreakMinutes === null) {
     props.form.customBreakMinutes = 0
   }
+
+  if (props.form.customDurationHours === undefined) {
+    props.form.customDurationHours = null
+  }
 }
 
 async function fetchMonthHolidays() {
@@ -649,6 +659,7 @@ watch(
       props.form.customStartTime = ''
       props.form.customEndTime = ''
       props.form.customBreakMinutes = 0
+      props.form.customDurationHours = null
     }
   },
 )
@@ -837,57 +848,22 @@ onMounted(() => {
             <div class="ot-custom-time-grid">
               <div class="ot-field">
                 <label class="ot-field-label">
-                  {{ t('ot.requests.create.startTime') }}
+                  {{ labelOr('ot.requests.create.customDurationHours', 'OT Hours') }}
                   <span class="ot-required-star">*</span>
-                </label>
-
-                <DatePicker
-                  :model-value="hhmmToDate(props.form.customStartTime)"
-                  time-only
-                  hour-format="24"
-                  show-icon
-                  :step-minute="5"
-                  :manual-input="false"
-                  class="w-full ot-time-picker"
-                  input-class="w-full"
-                  placeholder="18:00"
-                  @update:model-value="updateCustomStartTime"
-                />
-              </div>
-
-              <div class="ot-field">
-                <label class="ot-field-label">
-                  {{ t('ot.requests.create.endTime') }}
-                  <span class="ot-required-star">*</span>
-                </label>
-
-                <DatePicker
-                  :model-value="hhmmToDate(props.form.customEndTime)"
-                  time-only
-                  hour-format="24"
-                  show-icon
-                  :step-minute="5"
-                  :manual-input="false"
-                  class="w-full ot-time-picker"
-                  input-class="w-full"
-                  placeholder="20:00"
-                  @update:model-value="updateCustomEndTime"
-                />
-              </div>
-
-              <div class="ot-field">
-                <label class="ot-field-label">
-                  {{ t('ot.requests.create.breakMinutes') }}
                 </label>
 
                 <InputNumber
-                  v-model="props.form.customBreakMinutes"
+                  v-model="props.form.customDurationHours"
                   class="w-full"
                   input-class="w-full"
-                  :min="0"
-                  :max="1440"
-                  :step="5"
+                  :min="1"
+                  :max="24"
+                  :step="1"
+                  :min-fraction-digits="0"
+                  :max-fraction-digits="0"
+                  suffix=" h"
                   show-buttons
+                  :placeholder="labelOr('ot.requests.create.customDurationPlaceholder', 'Example: 1, 2, 3, 4')"
                 />
               </div>
             </div>
@@ -1124,6 +1100,32 @@ onMounted(() => {
   border-radius: 999px;
   background: currentColor;
   opacity: 0.9;
+}
+
+
+.ot-auto-time-preview {
+  display: flex;
+  min-height: 2.55rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border: 1px solid var(--ot-border);
+  border-radius: 0.85rem;
+  background: var(--ot-bg);
+  padding: 0.55rem 0.75rem;
+  color: var(--ot-text);
+  font-size: 0.86rem;
+}
+
+.ot-auto-time-preview strong {
+  font-weight: 700;
+  color: var(--ot-text);
+}
+
+.ot-auto-time-preview span {
+  color: var(--ot-text-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
 }
 
 .ot-option-dropdown-row {

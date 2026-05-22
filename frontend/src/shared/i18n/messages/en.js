@@ -2099,6 +2099,7 @@ export default {
         startTime: 'Start Time',
         endTime: 'End Time',
         breakMinutes: 'Break Minutes',
+        otTime: 'OT Time',
 
         timing: 'Timing',
         start: 'Start',
