@@ -11,6 +11,8 @@ import Button from 'primevue/button'
 import Menu from 'primevue/menu'
 
 import AppLanguageSwitcher from '@/shared/components/AppLanguageSwitcher.vue'
+import NotificationBell from '@/modules/notification/components/NotificationBell.vue'
+
 import { useAuthStore } from '@/modules/auth/auth.store'
 import { useThemeStore } from '@/app/store/theme.store'
 
@@ -50,7 +52,11 @@ const displayName = computed(() => {
   const user = auth.user || {}
   const employee = user.employee || user.employeeProfile || user.profile || {}
 
-  const combinedName = [user.firstName, user.lastName].map(cleanText).filter(Boolean).join(' ')
+  const combinedName = [user.firstName, user.lastName]
+    .map(cleanText)
+    .filter(Boolean)
+    .join(' ')
+
   const employeeCombinedName = [employee.firstName, employee.lastName]
     .map(cleanText)
     .filter(Boolean)
@@ -65,6 +71,7 @@ const displayName = computed(() => {
       user.englishName,
       user.localName,
       combinedName,
+
       employee.displayName,
       employee.fullName,
       employee.name,
@@ -72,6 +79,7 @@ const displayName = computed(() => {
       employee.englishName,
       employee.localName,
       employeeCombinedName,
+
       user.loginId,
       user.username,
       user.employeeNo,
@@ -81,6 +89,7 @@ const displayName = computed(() => {
 
 const accountInitial = computed(() => {
   const name = displayName.value || 'U'
+
   return String(name).trim().charAt(0).toUpperCase() || 'U'
 })
 
@@ -166,15 +175,7 @@ function toggleProfileMenu(event) {
           @click="theme.toggle()"
         />
 
-        <Button
-          icon="pi pi-bell"
-          text
-          rounded
-          severity="secondary"
-          size="small"
-          class="topbar-icon-btn hidden md:!inline-flex"
-          :aria-label="t('common.notifications')"
-        />
+        <NotificationBell />
 
         <button
           type="button"
@@ -224,259 +225,144 @@ function toggleProfileMenu(event) {
 .app-topbar__inner {
   display: flex;
   min-width: 0;
-  height: 56px;
+  height: 4rem;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
-  padding-inline: 0.65rem;
+  gap: 1rem;
+  padding: 0 1rem;
 }
 
 .app-topbar__left {
   display: flex;
-  flex: 1 1 auto;
   min-width: 0;
   align-items: center;
-  gap: 0.45rem;
+  gap: 0.55rem;
 }
 
 .app-topbar__right {
   display: flex;
-  flex: 0 0 auto;
   min-width: 0;
   align-items: center;
-  gap: 0.28rem;
+  justify-content: flex-end;
+  gap: 0.55rem;
 }
 
 .app-topbar__divider {
-  display: none;
-  height: 1.65rem;
   width: 1px;
-  flex: 0 0 auto;
+  height: 1.65rem;
   background: var(--ot-border);
 }
 
 .app-topbar__title-wrap {
   min-width: 0;
-  flex: 1 1 auto;
 }
 
 .app-topbar__title {
+  max-width: min(46vw, 36rem);
   overflow: hidden;
-  max-width: 100%;
+  color: var(--ot-text);
+  font-size: 1rem;
+  font-weight: 850;
+  line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.82rem;
-  font-weight: 650;
-  line-height: 1.2;
-  color: var(--ot-text);
+}
+
+.topbar-icon-btn {
+  width: 2.35rem;
+  height: 2.35rem;
+  color: var(--ot-muted);
 }
 
 .topbar-profile-btn {
   display: inline-flex;
   min-width: 0;
-  max-width: 42vw;
+  max-width: 15rem;
   align-items: center;
-  gap: 0.42rem;
-  margin-left: 0.1rem;
-  border: 1px solid transparent;
+  gap: 0.55rem;
+  padding: 0.25rem 0.42rem 0.25rem 0.25rem;
+  border: 1px solid var(--ot-border);
   border-radius: 999px;
-  background: transparent;
-  padding: 0.22rem;
+  background: color-mix(in srgb, var(--ot-surface) 92%, white);
   color: var(--ot-text);
+  cursor: pointer;
   transition:
-    border-color 0.16s ease,
-    background-color 0.16s ease;
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .topbar-profile-btn:hover {
-  border-color: var(--ot-border);
-  background: color-mix(in srgb, var(--ot-text) 6%, transparent);
+  border-color: color-mix(in srgb, var(--primary-color) 35%, transparent);
+  background: color-mix(in srgb, var(--primary-color) 8%, transparent);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
 }
 
-:deep(.topbar-profile-btn__avatar) {
-  height: 2rem !important;
-  width: 2rem !important;
+.topbar-profile-btn__avatar {
   flex: 0 0 auto;
-  background: var(--ot-blue) !important;
-  color: #ffffff !important;
-  font-size: 0.72rem !important;
-  font-weight: 650 !important;
+  width: 1.9rem;
+  height: 1.9rem;
+  background: color-mix(in srgb, var(--primary-color) 16%, transparent);
+  color: var(--primary-color);
+  font-size: 0.78rem;
+  font-weight: 900;
 }
 
 .topbar-profile-btn__name {
-  display: none;
   min-width: 0;
   overflow: hidden;
+  color: var(--ot-text);
+  font-size: 0.82rem;
+  font-weight: 760;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.74rem;
-  font-weight: 600;
-  line-height: 1.1;
-  color: var(--ot-text);
 }
 
 .topbar-profile-btn__icon {
-  display: none;
   flex: 0 0 auto;
-  font-size: 0.62rem;
-  color: var(--ot-text-muted);
+  color: var(--ot-muted);
+  font-size: 0.75rem;
 }
 
-:deep(.topbar-icon-btn.p-button) {
-  width: 2rem !important;
-  height: 2rem !important;
-  color: var(--ot-text-muted) !important;
+:deep(.app-profile-menu) {
+  border: 1px solid var(--ot-border);
+  border-radius: 16px;
+  background: var(--ot-surface);
+  box-shadow: 0 20px 46px rgba(15, 23, 42, 0.14);
 }
 
-:deep(.topbar-icon-btn.p-button:hover) {
-  color: var(--ot-text) !important;
-  background: color-mix(in srgb, var(--ot-text) 7%, transparent) !important;
-}
-
-:deep(.app-language-switcher) {
-  width: 4.25rem;
-  min-width: 4.25rem;
-}
-
-:deep(.app-language-switcher .p-select-label) {
-  padding-inline: 0.5rem !important;
-  font-size: 0.72rem !important;
-}
-
-:global(.dark) .app-topbar {
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--ot-surface) 92%, #020617 8%),
-      color-mix(in srgb, var(--ot-surface) 84%, #020617 16%)
-    );
-  box-shadow:
-    0 1px 0 color-mix(in srgb, var(--ot-border) 70%, transparent),
-    0 10px 30px rgb(0 0 0 / 0.16);
-}
-
-:global(.app-profile-menu.p-menu) {
-  border: 1px solid var(--ot-border) !important;
-  background: var(--ot-surface) !important;
-  color: var(--ot-text) !important;
-  box-shadow: 0 18px 45px rgb(15 23 42 / 0.16) !important;
-}
-
-:global(.app-profile-menu .p-menuitem-link) {
-  color: var(--ot-text) !important;
-}
-
-:global(.app-profile-menu .p-menuitem-link:hover) {
-  background: color-mix(in srgb, var(--ot-text) 7%, transparent) !important;
-}
-
-:global(.app-profile-menu .p-menuitem-icon),
-:global(.app-profile-menu .p-menuitem-text) {
-  color: var(--ot-text) !important;
-}
-
-:global(.app-profile-menu .p-menu-separator) {
-  border-top-color: var(--ot-border) !important;
-}
-
-:global(.dark) :global(.app-profile-menu.p-menu) {
-  box-shadow: 0 18px 45px rgb(0 0 0 / 0.38) !important;
-}
-
-@media (min-width: 480px) {
+@media (max-width: 768px) {
   .app-topbar__inner {
-    gap: 0.65rem;
-    padding-inline: 0.75rem;
+    height: 3.75rem;
+    padding: 0 0.75rem;
+  }
+
+  .app-topbar__right {
+    gap: 0.4rem;
   }
 
   .app-topbar__title {
-    font-size: 0.86rem;
-  }
-}
-
-@media (min-width: 640px) {
-  .app-topbar__inner {
-    padding-inline: 1rem;
-  }
-
-  .app-topbar__divider {
-    display: block;
-  }
-
-  .app-topbar__title {
-    font-size: 0.9rem;
+    max-width: 42vw;
+    font-size: 0.92rem;
   }
 
   .topbar-profile-btn {
-    max-width: 13rem;
-    padding-inline: 0.28rem 0.5rem;
+    padding: 0.22rem;
   }
 
-  .topbar-profile-btn__name {
-    display: inline-block;
-    max-width: 7.5rem;
-  }
-
+  .topbar-profile-btn__name,
   .topbar-profile-btn__icon {
-    display: inline-block;
+    display: none;
   }
 }
 
-@media (min-width: 768px) {
-  .app-topbar__right {
-    gap: 0.35rem;
-  }
-
-  .topbar-profile-btn__name {
-    max-width: 10rem;
-  }
-}
-
-@media (min-width: 1024px) {
-  .app-topbar__inner {
-    padding-inline: 1.25rem;
-  }
-
-  .topbar-profile-btn {
-    max-width: 16rem;
-  }
-
-  .topbar-profile-btn__name {
-    max-width: 12rem;
-  }
-}
-
-@media (max-width: 380px) {
-  :deep(.app-language-switcher) {
-    width: 3.75rem;
-    min-width: 3.75rem;
-  }
-
-  .app-topbar__inner {
-    gap: 0.35rem;
-    padding-inline: 0.45rem;
-  }
-
-  .app-topbar__left {
-    gap: 0.28rem;
-  }
-
-  .app-topbar__right {
-    gap: 0.18rem;
+@media (max-width: 520px) {
+  .app-topbar__divider {
+    display: none;
   }
 
   .app-topbar__title {
-    font-size: 0.78rem;
-  }
-
-  :deep(.topbar-icon-btn.p-button) {
-    width: 1.85rem !important;
-    height: 1.85rem !important;
-  }
-
-  :deep(.topbar-profile-btn__avatar) {
-    height: 1.85rem !important;
-    width: 1.85rem !important;
+    max-width: 34vw;
   }
 }
 </style>

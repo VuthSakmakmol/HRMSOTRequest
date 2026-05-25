@@ -17,6 +17,17 @@ import {
   getShiftOTOptionsByShift,
 } from '@/modules/ot/ot.api'
 
+import {
+  buildCreateRequestPreview,
+  buildDefaultTimingFromPreview,
+  buildOTCreatePayload,
+  buildPickerRequestPreview,
+  getEmployeeId,
+  getSelectedOTOption,
+  normalizeCreateShiftOptionsResponse,
+  validateOTCreatePayload,
+} from '@/modules/ot/otCreatePayload'
+
 const router = useRouter()
 const toast = useToast()
 const { t } = useI18n()
@@ -62,7 +73,7 @@ const selectedEmployeeMoreCount = computed(() =>
 )
 
 const selectedOTOption = computed(() =>
-  shiftOptions.value.find((item) => item.id === form.shiftOtOptionId) || null,
+  getSelectedOTOption(shiftOptions.value, form.shiftOtOptionId),
 )
 
 const isCustomFixedTime = computed(() => {
@@ -98,38 +109,11 @@ const submitDisabled = computed(() => {
 const requestPreview = computed(() => {
   if (!sharedShift.value || !selectedOTOption.value) return null
 
-  const breakMinutes = Number(selectedOTOption.value.breakMinutes || 0)
-
-  const totalRequestPaidMinutes = firstPositiveNumber(
-    selectedOTOption.value.totalRequestPaidMinutes,
-    selectedOTOption.value.totalMinutes,
-    selectedOTOption.value.paidMinutes,
-  )
-
-  const requestedMinutes = totalRequestPaidMinutes || Number(selectedOTOption.value.requestedMinutes || 0)
-
-  return {
-    timingMode: String(selectedOTOption.value.timingMode || 'AFTER_SHIFT_END')
-      .trim()
-      .toUpperCase(),
-
-    requestStartTime: String(selectedOTOption.value.requestStartTime || '').trim(),
-    requestEndTime: String(selectedOTOption.value.requestEndTime || '').trim(),
-
-    breakMinutes,
-
-    // User-facing requested OT = after break deduction.
-    requestedMinutes,
-    requestedHours: Number(
-      selectedOTOption.value.totalRequestPaidHours ||
-        selectedOTOption.value.totalHours ||
-        (requestedMinutes / 60).toFixed(2),
-    ),
-
-    totalRequestPaidMinutes: requestedMinutes,
-    totalMinutes: requestedMinutes,
-    totalHours: Number((requestedMinutes / 60).toFixed(2)),
-  }
+  return buildCreateRequestPreview({
+    form,
+    shiftOptions: shiftOptions.value,
+    selectedOption: selectedOTOption.value,
+  })
 })
 
 function firstPositiveNumber(...values) {
@@ -145,69 +129,13 @@ function firstPositiveNumber(...values) {
 }
 
 const defaultTiming = computed(() => {
-  if (isCustomFixedTime.value) {
-    const startTime = String(
-      form.customStartTime ||
-        requestPreview.value?.requestStartTime ||
-        selectedOTOption.value?.requestStartTime ||
-        selectedOTOption.value?.startTime ||
-        '',
-    ).trim()
-
-    const requestedMinutes = durationHoursToMinutes(form.customDurationHours)
-    const endTime = startTime && requestedMinutes
-      ? addMinutesToHHmm(startTime, requestedMinutes)
-      : ''
-
-    return {
-      source: 'CUSTOM_FIXED',
-      startTime,
-      endTime,
-      breakMinutes: 0,
-      requestedMinutes,
-      totalMinutes: requestedMinutes,
-      totalHours: Number((requestedMinutes / 60).toFixed(2)),
-    }
-  }
-
-  return {
-    source: 'SHIFT_OPTION',
-    startTime: String(requestPreview.value?.requestStartTime || '').trim(),
-    endTime: String(requestPreview.value?.requestEndTime || '').trim(),
-    breakMinutes: Number(requestPreview.value?.breakMinutes || 0),
-
-    // User-facing requested OT = after break.
-    requestedMinutes: Number(
-      requestPreview.value?.totalRequestPaidMinutes ||
-        requestPreview.value?.totalMinutes ||
-        requestPreview.value?.requestedMinutes ||
-        0,
-    ),
-
-    totalMinutes: Number(
-      requestPreview.value?.totalRequestPaidMinutes ||
-        requestPreview.value?.totalMinutes ||
-        requestPreview.value?.requestedMinutes ||
-        0,
-    ),
-
-    totalHours: Number(
-      requestPreview.value?.totalRequestPaidHours ||
-        requestPreview.value?.totalHours ||
-        requestPreview.value?.requestedHours ||
-        0,
-    ),
-  }
+  return buildDefaultTimingFromPreview(requestPreview.value || {})
 })
 
-const pickerRequestPreview = computed(() => ({
-  timingMode: defaultTiming.value.source,
-  requestStartTime: defaultTiming.value.startTime,
-  requestEndTime: defaultTiming.value.endTime,
-  breakMinutes: defaultTiming.value.breakMinutes,
-  requestedMinutes: defaultTiming.value.requestedMinutes,
-  requestedHours: defaultTiming.value.totalHours,
-}))
+
+const pickerRequestPreview = computed(() =>
+  buildPickerRequestPreview(defaultTiming.value),
+)
 
 const selectedShiftState = computed(() => {
   if (!selectedEmployees.value.length) {
@@ -269,9 +197,7 @@ function showToast(severity, summary, detail, life = 3000) {
   })
 }
 
-function getEmployeeId(employee) {
-  return String(employee?._id || employee?.id || employee?.employeeId || '').trim()
-}
+
 
 function formatSelectedEmployeePreviewLabel(employee = {}) {
   return (
@@ -370,82 +296,11 @@ function normalizeUnavailableEmployeesResponse(res) {
 }
 
 function normalizeShiftOptionsResponse(res) {
-  const payload = res?.data?.data || res?.data || {}
-  const rows = Array.isArray(payload?.items) ? payload.items : []
+  const normalized = normalizeCreateShiftOptionsResponse(res)
 
-  selectedOptionDayType.value = String(payload?.dayType || '').trim().toUpperCase()
+  selectedOptionDayType.value = normalized.dayType
 
-  return rows
-    .map((item) => {
-      const grossRequestedMinutes = Number(item?.requestedMinutes || 0)
-      const breakMinutes = Number(item?.breakMinutes || 0)
-
-      const paidMinutes =
-        firstPositiveNumber(
-          item?.totalRequestPaidMinutes,
-          item?.totalMinutes,
-          item?.paidMinutes,
-        ) ||
-        Math.max(0, grossRequestedMinutes - breakMinutes) ||
-        grossRequestedMinutes
-
-      const paidHours = Number(
-        item?.totalRequestPaidHours ||
-          item?.totalHours ||
-          (paidMinutes / 60).toFixed(2),
-      )
-
-      const timingMode = String(item?.timingMode || 'AFTER_SHIFT_END')
-        .trim()
-        .toUpperCase()
-
-      const requestStartTime = String(
-        item?.requestStartTime || item?.fixedStartTime || '',
-      ).trim()
-
-      const requestEndTime = String(
-        item?.requestEndTime || item?.fixedEndTime || '',
-      ).trim()
-
-      const label = String(item?.label || '').trim()
-      const dayTypeLabel = String(item?.dayTypeLabel || '').trim()
-
-      return {
-        id: String(item?.id || item?._id || '').trim(),
-        label,
-        timingMode,
-
-        applicableDayTypes: Array.isArray(item?.applicableDayTypes)
-          ? item.applicableDayTypes
-          : [],
-
-        dayTypeLabel,
-        requestStartTime,
-        requestEndTime,
-
-        // Keep gross only for internal reference/debug, not for normal user display.
-        grossRequestedMinutes,
-        grossRequestedHours: Number((grossRequestedMinutes / 60).toFixed(2)),
-
-        breakMinutes,
-
-        // User-facing requested OT = paid after break.
-        requestedMinutes: paidMinutes,
-        requestedHours: paidHours,
-
-        totalRequestPaidMinutes: paidMinutes,
-        totalRequestPaidHours: paidHours,
-        totalMinutes: paidMinutes,
-        totalHours: paidHours,
-
-        sequence: Number(item?.sequence || 0),
-        calculationPolicy: item?.calculationPolicy || null,
-
-        // Dropdown shows only OT option name.
-        optionLabel: label,
-      }
-    })
-    .filter((item) => item.id && item.label)
+  return normalized.items
 }
 
 function pad2(value) {
@@ -727,61 +582,14 @@ function buildEmployeeTimeOverridesPayload() {
 }
 
 function buildPayload() {
-  const employees = buildEmployeePayloadRows()
-
-  const rootStartTime = String(
-    form.customStartTime ||
-      defaultTiming.value.startTime ||
-      requestPreview.value?.requestStartTime ||
-      '',
-  ).trim()
-
-  const rootEndTime = String(
-    form.customEndTime ||
-      defaultTiming.value.endTime ||
-      requestPreview.value?.requestEndTime ||
-      '',
-  ).trim()
-
-  const rootBreakMinutes = Number(
-    form.customBreakMinutes ??
-      defaultTiming.value.breakMinutes ??
-      requestPreview.value?.breakMinutes ??
-      0,
-  )
-
-  const rootRequestedMinutes =
-    Number(defaultTiming.value.requestedMinutes || 0) ||
-    calculateTimeWindowMinutes(rootStartTime, rootEndTime, rootBreakMinutes)
-
-  return {
-    employeeIds: selectedEmployeeIds.value,
-    employeeTimeOverrides: buildEmployeeTimeOverridesPayload(),
-    employees,
-
-    otDate: selectedDateYMD.value,
-
-    otTimingSource: String(form.otTimingSource || 'SHIFT_OPTION')
-      .trim()
-      .toUpperCase(),
-
-    shiftOtOptionId: String(form.shiftOtOptionId || '').trim(),
-
-    customStartTime: rootStartTime,
-    customEndTime: rootEndTime,
-    customBreakMinutes: rootBreakMinutes,
-
-    startTime: rootStartTime,
-    endTime: rootEndTime,
-    requestStartTime: rootStartTime,
-    requestEndTime: rootEndTime,
-    breakMinutes: rootBreakMinutes,
-    requestedMinutes: rootRequestedMinutes,
-    totalMinutes: rootRequestedMinutes,
-    totalHours: Number((rootRequestedMinutes / 60).toFixed(2)),
-
-    reason: String(form.reason || '').trim(),
-  }
+  return buildOTCreatePayload({
+    form,
+    selectedEmployees: selectedEmployees.value,
+    selectedEmployeeIds: selectedEmployeeIds.value,
+    requestPreview: requestPreview.value || {},
+    defaultTiming: defaultTiming.value || {},
+    selectedDateYMD: selectedDateYMD.value,
+  })
 }
 
 function validateEmployeeTimingRows(employeeRows = []) {
@@ -822,55 +630,16 @@ function validateEmployeeTimingRows(employeeRows = []) {
 }
 
 function validateBeforeSubmit(payload) {
-  if (loadingUnavailableEmployees.value) {
-    return t('ot.requests.create.waitAvailability')
-  }
-
-  if (!payload.otDate) return t('ot.requests.create.selectDateFirst')
-  if (!payload.employeeIds.length) return t('ot.requests.create.selectAtLeastOneEmployee')
-
-  if (selectedShiftState.value.mode === 'missing') {
-    return t('ot.requests.create.missingShift')
-  }
-
-  if (selectedShiftState.value.mode === 'mixed') {
-    return t('ot.requests.create.mixedShift')
-  }
-
-  if (!payload.shiftOtOptionId) {
-    return selectedOptionDayType.value
-      ? t('ot.requests.create.selectOtOptionForDayType', {
-          dayType: selectedOptionDayType.value,
-        })
-      : t('ot.requests.create.selectOtOptionRequired')
-  }
-
-  if (payload.otTimingSource === 'CUSTOM_FIXED') {
-    if (!Number(form.customDurationHours || 0)) {
-      return t('ot.requests.create.enterCustomDurationHours')
-    }
-
-    if (Number(form.customDurationHours || 0) <= 0) {
-      return t('ot.requests.create.enterCustomDurationHours')
-    }
-
-    if (!payload.customStartTime || !payload.customEndTime) {
-      return t('ot.requests.create.selectValidTiming')
-    }
-
-    if (!isHHmm(payload.customStartTime) || !isHHmm(payload.customEndTime)) {
-      return t('ot.requests.create.selectValidTiming')
-    }
-  }
-
-  if (!defaultTiming.value.startTime || !defaultTiming.value.endTime) {
-    return t('ot.requests.create.selectValidTiming')
-  }
-
-  const employeeTimingError = validateEmployeeTimingRows(payload.employees || [])
-  if (employeeTimingError) return employeeTimingError
-
-  return ''
+  return validateOTCreatePayload({
+    payload,
+    form,
+    selectedShiftState: selectedShiftState.value,
+    selectedOptionDayType: selectedOptionDayType.value,
+    loadingUnavailableEmployees: loadingUnavailableEmployees.value,
+    defaultTiming: defaultTiming.value || {},
+    findEmployeeLabel: findSelectedEmployeeLabel,
+    t,
+  })
 }
 
 function getErrorPayload(error) {

@@ -3001,4 +3001,25 @@ export default {
       },
     },
   },
+  notification: {
+    title: 'Notifications',
+    subtitle: 'Latest system updates',
+    emptyTitle: 'No notifications',
+    emptyText: 'You are all caught up.',
+    markAllRead: 'Mark all read',
+    type: {
+      otApprovalRequired: 'Approval Required',
+      otApproved: 'Approved',
+      otRejected: 'Rejected',
+      otRequesterConfirmationRequired: 'Confirmation Required',
+      otRequesterConfirmed: 'Requester Confirmed',
+      otRequesterDisagreed: 'Requester Disagreed',
+    },
+    error: {
+      notFound: 'Notification not found',
+    },
+    validation: {
+      idRequired: 'Notification ID is required',
+    },
+  },
 }

@@ -16,8 +16,25 @@ import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 
 import HolidayDatePicker from '@/modules/calendar/components/HolidayDatePicker.vue'
-import { getOTAcknowledgementInbox } from '@/modules/ot/ot.api'
 import AppTableLoading from '@/shared/components/AppTableLoading.vue'
+
+import { getApiErrorMessage } from '@/shared/utils/apiError'
+import { getOTAcknowledgementInbox } from '@/modules/ot/ot.api'
+
+import { useOTRealtimeRefresh } from '@/modules/ot/otRealtimeRefresh'
+
+
+import {
+  getApprovalDisplay,
+  getApprovalTagClass,
+  getEmployeeCount,
+  getEmployeeDisplay,
+  getEmployeePaidHoursLabel,
+  getPaidHoursLabel,
+  getRequesterDisplay,
+  getTargetEmployees,
+  normalizeOTRow,
+} from '@/modules/ot/otDisplay'
 
 const { t, te } = useI18n()
 const toast = useToast()
@@ -29,7 +46,6 @@ const rows = ref([])
 const totalRecords = ref(0)
 const loadedPages = ref(new Set())
 const expandedRows = ref({})
-
 const bootstrapped = ref(false)
 const backgroundLoading = ref(false)
 
@@ -38,43 +54,50 @@ const filters = reactive({
   status: '',
   otDateFrom: '',
   otDateTo: '',
-})
-
-const statusOptions = computed(() => [
-  { label: t('common.allStatus'), value: '' },
-  { label: t('ot.status.pending'), value: 'PENDING' },
-  {
-    label: t('ot.status.pendingRequesterConfirmation'),
-    value: 'PENDING_REQUESTER_CONFIRMATION',
-  },
-  { label: t('ot.status.approved'), value: 'APPROVED' },
-  { label: t('ot.status.rejected'), value: 'REJECTED' },
-  { label: t('ot.status.requesterDisagreed'), value: 'REQUESTER_DISAGREED' },
-  { label: t('ot.status.cancelled'), value: 'CANCELLED' },
-])
-
-const totalRequests = computed(() => Number(totalRecords.value || 0))
-const loadedCount = computed(() => rows.value.filter(Boolean).length)
-
-const summaryText = computed(() =>
-  t('common.loaded', {
-    loaded: loadedCount.value,
-    total: totalRequests.value,
-  }),
-)
-
-const hasAnyData = computed(() => rows.value.some(Boolean))
-const useVirtualScroll = computed(() => totalRequests.value > PAGE_SIZE)
-
-const firstLoading = computed(() => {
-  return backgroundLoading.value && !bootstrapped.value && !hasAnyData.value
+  sortBy: 'createdAt',
+  sortOrder: -1,
 })
 
 let searchTimer = null
 let currentRequestId = 0
 
-function label(key, fallback) {
-  return te(key) ? t(key) : fallback
+const statusOptions = computed(() => [
+  { label: tr('common.allStatus', 'All Status'), value: '' },
+  { label: tr('ot.status.pending', 'Pending Approval'), value: 'PENDING' },
+  {
+    label: tr('ot.status.pendingRequesterConfirmation', 'Waiting Requester Confirmation'),
+    value: 'PENDING_REQUESTER_CONFIRMATION',
+  },
+  { label: tr('ot.status.approved', 'Approved'), value: 'APPROVED' },
+  { label: tr('ot.status.rejected', 'Rejected'), value: 'REJECTED' },
+  { label: tr('ot.status.requesterDisagreed', 'Requester Disagreed'), value: 'REQUESTER_DISAGREED' },
+  { label: tr('ot.status.cancelled', 'Cancelled'), value: 'CANCELLED' },
+])
+
+const totalRequests = computed(() => Number(totalRecords.value || 0))
+const loadedCount = computed(() => rows.value.filter(Boolean).length)
+const hasAnyData = computed(() => rows.value.some(Boolean))
+const useVirtualScroll = computed(() => totalRequests.value > PAGE_SIZE)
+
+const summaryText = computed(() =>
+  tr('common.loaded', 'Loaded {loaded} of {total}', {
+    loaded: loadedCount.value,
+    total: totalRequests.value,
+  }),
+)
+
+const firstLoading = computed(() => {
+  return backgroundLoading.value && !bootstrapped.value && !hasAnyData.value
+})
+
+function tr(key, fallback, params) {
+  if (typeof te === 'function' && !te(key)) return fallback
+
+  const value = t(key, params || {})
+
+  if (!value || value === key) return fallback
+
+  return value
 }
 
 function normalizePayload(res) {
@@ -91,17 +114,30 @@ function normalizeItems(payload) {
   return []
 }
 
+function normalizeTotal(payload) {
+  return Number(
+    payload?.pagination?.total ||
+      payload?.pagination?.totalRecords ||
+      payload?.total ||
+      payload?.totalRecords ||
+      payload?.count ||
+      0,
+  )
+}
+
 function normalizeRow(row) {
   if (!row) return row
 
+  const normalized = normalizeOTRow(row)
+
   return {
-    ...row,
+    ...normalized,
     id: String(
-      row?.id ||
-        row?._id ||
-        row?.requestId ||
-        row?.otRequestId ||
-        row?.requestNo ||
+      normalized?.id ||
+        normalized?._id ||
+        normalized?.requestId ||
+        normalized?.otRequestId ||
+        normalized?.requestNo ||
         '',
     ).trim(),
   }
@@ -109,49 +145,6 @@ function normalizeRow(row) {
 
 function pad2(value) {
   return String(value).padStart(2, '0')
-}
-
-function upper(value) {
-  return String(value || '').trim().toUpperCase()
-}
-
-function firstText(...values) {
-  for (const value of values) {
-    const text = String(value || '').trim()
-    if (text) return text
-  }
-
-  return ''
-}
-
-function firstPositiveNumber(...values) {
-  for (const value of values) {
-    const number = Number(value)
-
-    if (Number.isFinite(number) && number > 0) {
-      return number
-    }
-  }
-
-  return 0
-}
-
-function errorMessage(error, fallback = '') {
-  return (
-    error?.response?.data?.message ||
-    error?.response?.data?.messageKey ||
-    error?.response?.data?.error ||
-    error?.message ||
-    fallback ||
-    t('common.somethingWentWrong')
-  )
-}
-
-function translateBackendKey(key, fallback = '-') {
-  const value = String(key || '').trim()
-  if (!value) return fallback
-
-  return te(value) ? t(value) : fallback
 }
 
 function formatDateYMD(value) {
@@ -204,220 +197,40 @@ function formatDateTimeDMY(value) {
   return `${dd}/${mm}/${yyyy}, ${hh}:${min}`
 }
 
-function buildQuery(page) {
-  return {
-    page,
-    limit: PAGE_SIZE,
-    search: String(filters.search || '').trim() || undefined,
-    status: filters.status || undefined,
-    otDateFrom: formatDateYMD(filters.otDateFrom),
-    otDateTo: formatDateYMD(filters.otDateTo),
-  }
+function displayRequester(row) {
+  return getRequesterDisplay(row)
 }
 
-function normalizeDisplayStatus(value) {
-  const status = upper(value)
-
-  if (status === 'PENDING_REQUESTER_CONFIRMATION') return 'PENDING'
-  if (status === 'REQUESTER_DISAGREED') return 'REJECTED'
-
-  return status
+function displayApproval(row) {
+  return getApprovalDisplay(row)
 }
 
-function statusLabel(value, key = '') {
-  if (key) return translateBackendKey(key, value || '-')
-
-  const status = normalizeDisplayStatus(value)
-
-  if (status === 'PENDING') return t('ot.status.pending')
-  if (status === 'APPROVED') return t('ot.status.approved')
-  if (status === 'REJECTED') return t('ot.status.rejected')
-  if (status === 'CANCELLED') return t('ot.status.cancelled')
-
-  return status || t('common.unknown')
+function displayApprovalTagClass(row) {
+  return getApprovalTagClass(row, 'ot-ack')
 }
 
-function statusTagClass(value) {
-  const status = normalizeDisplayStatus(value)
-
-  if (status === 'APPROVED') return ['ot-ack-rgb-tag', 'ot-ack-tag-approved']
-  if (status === 'REJECTED') return ['ot-ack-rgb-tag', 'ot-ack-tag-rejected']
-  if (status === 'CANCELLED') return ['ot-ack-rgb-tag', 'ot-ack-tag-muted']
-  if (status === 'PENDING') return ['ot-ack-rgb-tag', 'ot-ack-tag-pending']
-
-  return ['ot-ack-rgb-tag', 'ot-ack-tag-muted']
+function displayStaffCount(row) {
+  return Number(row?.effectiveEmployeeCount || row?.requestedEmployeeCount || getEmployeeCount(row) || 0)
 }
 
-function acknowledgementLabel(row) {
-  if (row?.acknowledgementKey) {
-    return translateBackendKey(row.acknowledgementKey, row?.acknowledgementLabel || 'FYI')
-  }
-
-  return row?.acknowledgementLabel || t('ot.acknowledge.fyi')
+function displayPaidTime(row) {
+  return getPaidHoursLabel(row)
 }
 
-function acknowledgementTagClass(row) {
-  const severity = upper(row?.acknowledgementSeverity)
-
-  if (severity === 'SUCCESS') return ['ot-ack-rgb-tag', 'ot-ack-tag-approved']
-  if (severity === 'WARNING' || severity === 'WARN') return ['ot-ack-rgb-tag', 'ot-ack-tag-pending']
-  if (severity === 'DANGER' || severity === 'ERROR') return ['ot-ack-rgb-tag', 'ot-ack-tag-rejected']
-
-  return ['ot-ack-rgb-tag', 'ot-ack-tag-info']
-}
-
-function staffTagClass() {
-  return ['ot-ack-rgb-tag', 'ot-ack-tag-info']
-}
-
-function formatMinutesLabel(value) {
-  const minutes = Number(value || 0)
-
-  if (!minutes) return t('ot.common.minuteValue', { value: 0 })
-
-  const hours = Math.floor(minutes / 60)
-  const mins = minutes % 60
-
-  if (hours && mins) {
-    return t('ot.common.hourMinuteValue', {
-      hours,
-      minutes: mins,
-    })
-  }
-
-  if (hours) return t('ot.common.hourValue', { value: hours })
-
-  return t('ot.common.minuteValue', { value: mins })
-}
-
-function totalOtMinutesOf(row) {
-  return firstPositiveNumber(
-    // Backend paid OT source of truth: after break deduction.
-    row?.totalRequestPaidMinutes,
-    row?.totalMinutes,
-    row?.paidMinutes,
-    row?.approvedMinutes,
-
-    // Fallback only for old data.
-    row?.requestedMinutes,
-    row?.totalRequestedMinutes,
-    row?.otRequestedMinutes,
-    row?.totalOtMinutes,
-    row?.otMinutes,
-    row?.durationMinutes,
-    row?.plannedMinutes,
-    row?.approvedRequestedMinutes,
-  )
-}
-
-
-function employeeTotalOtMinutesOf(employee, row) {
-  return firstPositiveNumber(
-    // Backend paid OT source of truth: after break deduction.
-    employee?.totalRequestPaidMinutes,
-    employee?.totalMinutes,
-    employee?.paidMinutes,
-    employee?.approvedMinutes,
-
-    // Fallback only for old data.
-    employee?.requestedMinutes,
-    employee?.totalRequestedMinutes,
-    employee?.otRequestedMinutes,
-    employee?.totalOtMinutes,
-    employee?.otMinutes,
-    employee?.durationMinutes,
-    employee?.plannedMinutes,
-    employee?.approvedRequestedMinutes,
-
-    totalOtMinutesOf(row),
-  )
-}
-
-function formatRequester(row) {
-  const name = String(
-    row?.requesterName ||
-      row?.createdByName ||
-      row?.ownerName ||
-      row?.employeeName ||
-      '',
-  ).trim()
-
-  const employeeNo = String(
-    row?.requesterEmployeeNo ||
-      row?.requesterEmployeeCode ||
-      row?.requesterCode ||
-      row?.createdByEmployeeNo ||
-      row?.employeeNo ||
-      '',
-  ).trim()
-
-  return {
-    name: name || '-',
-    employeeNo: employeeNo || '-',
-  }
-}
-
-function getTargetEmployees(row) {
-  if (Array.isArray(row?.employees)) return row.employees
-  if (Array.isArray(row?.approvedEmployees)) return row.approvedEmployees
-  if (Array.isArray(row?.requestedEmployees)) return row.requestedEmployees
-  if (Array.isArray(row?.employeeItems)) return row.employeeItems
-  if (Array.isArray(row?.targetEmployees)) return row.targetEmployees
-  if (Array.isArray(row?.employeeList)) return row.employeeList
-  if (Array.isArray(row?.staffRows)) return row.staffRows
-  if (Array.isArray(row?.employeeDetails)) return row.employeeDetails
-  if (Array.isArray(row?.requestEmployees)) return row.requestEmployees
-  if (Array.isArray(row?.staff)) return row.staff
-  if (Array.isArray(row?.details)) return row.details
-
-  return []
-}
-
-function getEmployeeCount(row) {
-  const explicitCount = Number(
-    row?.employeeCount ||
-      row?.approvedEmployeeCount ||
-      row?.requestedEmployeeCount ||
-      row?.totalEmployees ||
-      row?.staffCount ||
-      0,
-  )
-
-  if (explicitCount > 0) return explicitCount
-
-  return getTargetEmployees(row).length
+function displayEmployees(row) {
+  return getTargetEmployees(row)
 }
 
 function employeeIdOf(employee) {
   return String(employee?.employeeId || employee?._id || employee?.id || '').trim()
 }
 
-function employeeNameOf(employee) {
-  const employeeSnapshot = employee?.employee || employee?.employeeSnapshot || {}
-
-  return String(
-    employee?.employeeName ||
-      employee?.displayName ||
-      employee?.name ||
-      employee?.fullName ||
-      employeeSnapshot?.displayName ||
-      employeeSnapshot?.employeeName ||
-      '-',
-  ).trim() || '-'
+function employeeCodeOf(employee) {
+  return getEmployeeDisplay(employee).code
 }
 
-function employeeCodeOf(employee) {
-  const employeeSnapshot = employee?.employee || employee?.employeeSnapshot || {}
-
-  return String(
-    employee?.employeeCode ||
-      employee?.employeeNo ||
-      employee?.code ||
-      employee?.loginId ||
-      employeeSnapshot?.employeeCode ||
-      employeeSnapshot?.employeeNo ||
-      '-',
-  ).trim() || '-'
+function employeeNameOf(employee) {
+  return getEmployeeDisplay(employee).name
 }
 
 function employeePositionOf(employee) {
@@ -438,8 +251,47 @@ function employeeDepartmentOf(employee) {
   return String(
     employee?.departmentName ||
       employee?.department?.name ||
+      employee?.departmentSnapshot?.name ||
       '-',
   ).trim() || '-'
+}
+
+function employeePaidTimeOf(employee, row) {
+  return getEmployeePaidHoursLabel(employee, row)
+}
+
+function acknowledgementLabel(row) {
+  const key = String(row?.acknowledgementKey || '').trim()
+  const label = String(row?.acknowledgementLabel || '').trim()
+
+  if (key && typeof te === 'function' && te(key)) {
+    return t(key)
+  }
+
+  return label || tr('ot.acknowledge.fyi', 'FYI')
+}
+
+function acknowledgementTagClass(row) {
+  const severity = String(row?.acknowledgementSeverity || '').trim().toUpperCase()
+
+  if (severity === 'SUCCESS') return ['ot-ack-rgb-tag', 'ot-ack-tag-approved']
+  if (severity === 'WARNING' || severity === 'WARN') return ['ot-ack-rgb-tag', 'ot-ack-tag-pending']
+  if (severity === 'DANGER' || severity === 'ERROR') return ['ot-ack-rgb-tag', 'ot-ack-tag-rejected']
+
+  return ['ot-ack-rgb-tag', 'ot-ack-tag-info']
+}
+
+function buildQuery(page) {
+  return {
+    page,
+    limit: PAGE_SIZE,
+    search: String(filters.search || '').trim() || undefined,
+    status: filters.status || undefined,
+    otDateFrom: formatDateYMD(filters.otDateFrom),
+    otDateTo: formatDateYMD(filters.otDateTo),
+    sortBy: filters.sortBy,
+    sortOrder: filters.sortOrder === 1 ? 'asc' : 'desc',
+  }
 }
 
 async function fetchPage(page, { replace = false, silent = false } = {}) {
@@ -453,40 +305,35 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
   try {
     const res = await getOTAcknowledgementInbox(buildQuery(page))
+
     if (requestId !== currentRequestId) return
 
     const payload = normalizePayload(res)
     const items = normalizeItems(payload).map(normalizeRow)
-    const total = Number(
-      payload?.pagination?.total ||
-        payload?.pagination?.totalRecords ||
-        payload?.total ||
-        payload?.totalRecords ||
-        0,
-    )
+    const total = normalizeTotal(payload)
+    const startIndex = (page - 1) * PAGE_SIZE
 
     totalRecords.value = total
 
     if (replace) {
-      const nextRows = Array.from({ length: total }, () => null)
-      const startIndex = (page - 1) * PAGE_SIZE
+      const nextRows = total > 0 ? Array.from({ length: total }, () => null) : []
 
-      for (let i = 0; i < items.length; i += 1) {
-        nextRows[startIndex + i] = items[i]
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
       }
 
       rows.value = total === 0 ? [] : nextRows
       loadedPages.value = new Set([page])
+      expandedRows.value = {}
     } else {
       if (!rows.value.length && total > 0) {
         rows.value = Array.from({ length: total }, () => null)
       }
 
       const nextRows = [...rows.value]
-      const startIndex = (page - 1) * PAGE_SIZE
 
-      for (let i = 0; i < items.length; i += 1) {
-        nextRows[startIndex + i] = items[i]
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
       }
 
       rows.value = nextRows
@@ -499,24 +346,21 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
     toast.add({
       severity: 'error',
-      summary: t('common.loadFailed'),
-      detail: errorMessage(error, t('ot.acknowledge.loadFailed')),
-      life: 3000,
+      summary: tr('common.loadFailed', 'Load Failed'),
+      detail: getApiErrorMessage(error, tr('ot.acknowledge.loadFailed', 'Failed to load acknowledge inbox')),
+      life: 3500,
     })
   } finally {
     backgroundLoading.value = false
   }
 }
 
-async function reloadFirstPage({ keepVisible = true, resetExpanded = false } = {}) {
-  if (resetExpanded) {
-    expandedRows.value = {}
-  }
-
+async function reloadFirstPage({ keepVisible = true } = {}) {
   if (!keepVisible) {
     rows.value = []
     totalRecords.value = 0
     loadedPages.value = new Set()
+    expandedRows.value = {}
     bootstrapped.value = false
   }
 
@@ -526,11 +370,22 @@ async function reloadFirstPage({ keepVisible = true, resetExpanded = false } = {
   })
 }
 
+useOTRealtimeRefresh(
+  () =>
+    reloadFirstPage({
+      keepVisible: true,
+    }),
+  {
+    name: 'OTAcknowledgeInboxView',
+    debounceMs: 250,
+  },
+)
+
 function runSearchSoon() {
   window.clearTimeout(searchTimer)
 
   searchTimer = window.setTimeout(() => {
-    reloadFirstPage({ keepVisible: true, resetExpanded: true })
+    reloadFirstPage({ keepVisible: true })
   }, SEARCH_DEBOUNCE_MS)
 }
 
@@ -538,21 +393,15 @@ function onSearchInput() {
   runSearchSoon()
 }
 
-function onStatusChange() {
-  reloadFirstPage({ keepVisible: true, resetExpanded: true })
+function onFilterChange() {
+  reloadFirstPage({ keepVisible: true })
 }
 
-function onDateChange() {
-  reloadFirstPage({ keepVisible: true, resetExpanded: true })
-}
+function onSort(event) {
+  filters.sortBy = event.sortField || 'createdAt'
+  filters.sortOrder = typeof event.sortOrder === 'number' ? event.sortOrder : -1
 
-function clearFilters() {
-  filters.search = ''
-  filters.status = ''
-  filters.otDateFrom = ''
-  filters.otDateTo = ''
-
-  reloadFirstPage({ keepVisible: true, resetExpanded: true })
+  reloadFirstPage({ keepVisible: true })
 }
 
 async function onVirtualLazyLoad(event) {
@@ -571,8 +420,19 @@ async function onVirtualLazyLoad(event) {
   }
 }
 
+async function clearFilters() {
+  filters.search = ''
+  filters.status = ''
+  filters.otDateFrom = ''
+  filters.otDateTo = ''
+  filters.sortBy = 'createdAt'
+  filters.sortOrder = -1
+
+  await reloadFirstPage({ keepVisible: true })
+}
+
 onMounted(() => {
-  reloadFirstPage({ keepVisible: false, resetExpanded: true })
+  reloadFirstPage({ keepVisible: false })
 })
 
 onBeforeUnmount(() => {
@@ -585,7 +445,7 @@ onBeforeUnmount(() => {
     <section class="ot-filter-bar ot-ack-filter-bar">
       <div class="ot-field">
         <label class="ot-field-label">
-          {{ t('common.search') }}
+          {{ tr('common.search', 'Search') }}
         </label>
 
         <IconField>
@@ -593,7 +453,7 @@ onBeforeUnmount(() => {
 
           <InputText
             v-model="filters.search"
-            :placeholder="t('common.search')"
+            :placeholder="tr('common.search', 'Search')"
             class="w-full"
             size="small"
             @input="onSearchInput"
@@ -603,7 +463,7 @@ onBeforeUnmount(() => {
 
       <div class="ot-field">
         <label class="ot-field-label">
-          {{ t('common.status') }}
+          {{ tr('common.status', 'Status') }}
         </label>
 
         <Select
@@ -611,28 +471,28 @@ onBeforeUnmount(() => {
           :options="statusOptions"
           option-label="label"
           option-value="value"
-          :placeholder="t('common.status')"
+          :placeholder="tr('common.status', 'Status')"
           class="w-full"
           size="small"
-          @change="onStatusChange"
+          @change="onFilterChange"
         />
       </div>
 
       <div class="ot-field">
         <HolidayDatePicker
           v-model="filters.otDateFrom"
-          :label="t('ot.requests.otDateFrom')"
-          :placeholder="t('ot.requests.otDateFrom')"
-          @change="onDateChange"
+          :label="tr('ot.requests.otDateFrom', 'OT Date From')"
+          :placeholder="tr('ot.requests.otDateFrom', 'OT Date From')"
+          @change="onFilterChange"
         />
       </div>
 
       <div class="ot-field">
         <HolidayDatePicker
           v-model="filters.otDateTo"
-          :label="t('ot.requests.otDateTo')"
-          :placeholder="t('ot.requests.otDateTo')"
-          @change="onDateChange"
+          :label="tr('ot.requests.otDateTo', 'OT Date To')"
+          :placeholder="tr('ot.requests.otDateTo', 'OT Date To')"
+          @change="onFilterChange"
         />
       </div>
 
@@ -642,7 +502,7 @@ onBeforeUnmount(() => {
         </span>
 
         <Button
-          :label="t('common.clear')"
+          :label="tr('common.clear', 'Clear')"
           icon="pi pi-filter-slash"
           severity="secondary"
           outlined
@@ -657,7 +517,7 @@ onBeforeUnmount(() => {
       <div class="ot-table-toolbar">
         <div>
           <h2 class="ot-table-title">
-            {{ label('ot.acknowledge.inbox', 'OT Acknowledge Inbox') }}
+            {{ tr('ot.acknowledge.inboxTitle', 'OT Acknowledge Inbox') }}
           </h2>
         </div>
 
@@ -667,15 +527,15 @@ onBeforeUnmount(() => {
             class="ot-loaded-badge"
           >
             <i class="pi pi-spin pi-spinner" />
-            {{ t('common.updating') }}
+            {{ tr('common.updating', 'Updating') }}
           </span>
         </div>
       </div>
 
       <AppTableLoading
         v-if="firstLoading"
-        :title="t('ot.acknowledge.loading')"
-        :message="t('ot.acknowledge.fetchingRecords')"
+        :title="tr('ot.acknowledge.loading', 'Loading acknowledge inbox')"
+        :message="tr('ot.acknowledge.fetchingRecords', 'Fetching acknowledge records')"
         :rows="8"
         :columns="9"
       />
@@ -686,19 +546,27 @@ onBeforeUnmount(() => {
         :value="rows"
         data-key="id"
         lazy
+        removable-sort
         scrollable
         scroll-height="500px"
-        table-style="width: 100%; min-width: 980px; table-layout: fixed;"
+        :sort-field="filters.sortBy"
+        :sort-order="filters.sortOrder"
+        table-style="width: max-content; min-width: 100%; table-layout: auto;"
         class="ot-ack-table ot-data-table ot-data-table-compact"
-        :virtual-scroller-options="useVirtualScroll ? {
-          lazy: true,
-          onLazyLoad: onVirtualLazyLoad,
-          itemSize: 70,
-          delay: 0,
-          showLoader: false,
-          loading: false,
-          numToleratedItems: 12,
-        } : null"
+        :virtual-scroller-options="
+          useVirtualScroll
+            ? {
+                lazy: true,
+                onLazyLoad: onVirtualLazyLoad,
+                itemSize: 72,
+                delay: 0,
+                showLoader: false,
+                loading: false,
+                numToleratedItems: 12,
+              }
+            : null
+        "
+        @sort="onSort"
       >
         <template #empty>
           <div
@@ -706,95 +574,112 @@ onBeforeUnmount(() => {
             class="ot-empty-state"
           >
             <div class="ot-empty-icon">
-              <i class="pi pi-bell" />
+              <i class="pi pi-eye" />
             </div>
 
             <div class="ot-empty-title">
-              {{ t('common.noData') }}
+              {{ tr('common.noData', 'No Data') }}
             </div>
 
             <div class="ot-empty-text">
-              {{ t('ot.acknowledge.noData') }}
+              {{ tr('ot.acknowledge.noData', 'No acknowledge requests found') }}
             </div>
           </div>
         </template>
 
         <Column
           expander
-          style="width: 3.2rem"
+          style="width: 3rem; min-width: 3rem"
         />
 
         <Column
           field="requestNo"
-          :header="t('ot.requests.requestNo')"
-          style="width: 11rem"
+          :header="tr('ot.requests.requestNo', 'Request No')"
+          sortable
+          style="width: 10rem; min-width: 10rem"
         >
           <template #body="{ data }">
             <span
               v-if="data"
-              class="ot-ack-request-no-text"
+              class="ot-request-no-text"
             >
-              {{ data.requestNo || '-' }}
+              {{ data.requestNo || data.otRequestNo || '-' }}
             </span>
           </template>
         </Column>
 
         <Column
-          :header="t('ot.requests.requester')"
-          style="width: 11rem"
+          :header="tr('ot.requests.requester', 'Requester')"
+          style="width: 13rem; min-width: 13rem"
         >
           <template #body="{ data }">
             <div
               v-if="data"
               class="requester-cell"
             >
-              <div class="ot-ack-main-text">
-                {{ formatRequester(data).name }}
+              <div class="ot-main-text">
+                {{ displayRequester(data).name }}
               </div>
 
-              <div class="ot-ack-sub-text">
-                {{ formatRequester(data).employeeNo }}
+              <div class="ot-sub-text">
+                {{ displayRequester(data).employeeNo }}
               </div>
             </div>
           </template>
         </Column>
 
         <Column
-          :header="t('ot.approval.requestedStaff')"
-          style="width: 10rem"
+          field="status"
+          :header="tr('ot.requests.approvalStatus', 'Approval Status')"
+          style="width: 15rem; min-width: 15rem"
         >
           <template #body="{ data }">
             <Tag
               v-if="data"
-              :value="t('ot.requests.staffCount', { count: Number(data?.requestedEmployeeCount || getEmployeeCount(data)) })"
-              :class="staffTagClass()"
+              :value="displayApproval(data).label"
+              :class="displayApprovalTagClass(data)"
             />
           </template>
         </Column>
 
         <Column
-          field="status"
-          :header="t('ot.acknowledge.requestStatus')"
-          style="width: 11rem"
+          :header="tr('ot.acknowledge.type', 'Acknowledge')"
+          style="width: 10rem; min-width: 10rem"
         >
           <template #body="{ data }">
             <Tag
               v-if="data"
-              :value="statusLabel(data.status, data.statusKey)"
-              :class="statusTagClass(data.status)"
+              :value="acknowledgementLabel(data)"
+              :class="acknowledgementTagClass(data)"
+            />
+          </template>
+        </Column>
+
+        <Column
+          :header="tr('ot.approval.requestedStaff', 'Staff')"
+          style="width: 8rem; min-width: 8rem"
+        >
+          <template #body="{ data }">
+            <Tag
+              v-if="data"
+              :value="tr('ot.requests.staffCount', `${displayStaffCount(data)} staff`, {
+                count: displayStaffCount(data),
+              })"
+              :class="['ot-ack-rgb-tag', 'ot-ack-tag-info']"
             />
           </template>
         </Column>
 
         <Column
           field="otDate"
-          :header="t('ot.requests.otDate')"
-          style="width: 9rem"
+          :header="tr('ot.requests.otDate', 'OT Date')"
+          sortable
+          style="width: 9rem; min-width: 9rem"
         >
           <template #body="{ data }">
             <span
               v-if="data"
-              class="ot-ack-meta-text"
+              class="ot-meta-text"
             >
               {{ formatDateDMY(data.otDate) }}
             </span>
@@ -802,13 +687,13 @@ onBeforeUnmount(() => {
         </Column>
 
         <Column
-          :header="t('ot.requests.otTime')"
-          style="width: 9rem"
+          :header="tr('ot.requests.otTime', 'OT Time')"
+          style="width: 8rem; min-width: 8rem"
         >
           <template #body="{ data }">
             <Tag
               v-if="data"
-              :value="formatMinutesLabel(totalOtMinutesOf(data))"
+              :value="displayPaidTime(data)"
               :class="['ot-ack-rgb-tag', 'ot-ack-tag-info']"
             />
           </template>
@@ -816,13 +701,14 @@ onBeforeUnmount(() => {
 
         <Column
           field="createdAt"
-          :header="t('common.createdAt')"
-          style="width: 12rem"
+          :header="tr('common.createdAt', 'Created At')"
+          sortable
+          style="width: 12rem; min-width: 12rem"
         >
           <template #body="{ data }">
             <span
               v-if="data"
-              class="ot-ack-meta-text"
+              class="ot-meta-text"
             >
               {{ formatDateTimeDMY(data.createdAt) }}
             </span>
@@ -832,21 +718,34 @@ onBeforeUnmount(() => {
         <template #expansion="{ data }">
           <div class="ot-expanded-box">
             <div
-              v-if="getTargetEmployees(data).length"
+              v-if="displayEmployees(data).length"
               class="ot-expanded-content"
             >
+              <div class="ot-expanded-summary">
+                <span>
+                  {{ tr('ot.approval.employeeCount', `${displayEmployees(data).length} employees`, {
+                    count: displayEmployees(data).length,
+                  }) }}
+                </span>
+
+                <span>
+                  {{ tr('ot.requests.otTime', 'OT Time') }}:
+                  <strong>{{ displayPaidTime(data) }}</strong>
+                </span>
+              </div>
+
               <div class="ot-expanded-responsive-table">
                 <div class="ot-expanded-grid-row is-head">
-                  <div>{{ t('common.no') }}</div>
-                  <div>{{ t('ot.requests.employeeId') }}</div>
-                  <div>{{ t('common.name') }}</div>
-                  <div>{{ t('nav.positions') }}</div>
-                  <div>{{ t('ot.requests.otTime') }}</div>
-                  <div>{{ t('nav.departments') }}</div>
+                  <div>{{ tr('common.no', 'No') }}</div>
+                  <div>{{ tr('ot.requests.employeeId', 'Employee ID') }}</div>
+                  <div>{{ tr('common.name', 'Name') }}</div>
+                  <div>{{ tr('nav.positions', 'Position') }}</div>
+                  <div>{{ tr('ot.requests.otTime', 'OT Time') }}</div>
+                  <div>{{ tr('nav.departments', 'Department') }}</div>
                 </div>
 
                 <div
-                  v-for="(employee, index) in getTargetEmployees(data)"
+                  v-for="(employee, index) in displayEmployees(data)"
                   :key="employeeIdOf(employee) || index"
                   class="ot-expanded-grid-row"
                 >
@@ -867,7 +766,7 @@ onBeforeUnmount(() => {
                   </div>
 
                   <div class="cell-center cell-mono">
-                    {{ formatMinutesLabel(employeeTotalOtMinutesOf(employee, data)) }}
+                    {{ employeePaidTimeOf(employee, data) }}
                   </div>
 
                   <div class="cell-center cell-wrap">
@@ -881,413 +780,410 @@ onBeforeUnmount(() => {
               v-else
               class="ot-expanded-empty"
             >
-              {{ t('ot.requests.noEmployeeData') }}
+              {{ tr('ot.requests.noEmployeeData', 'No employee data') }}
             </div>
           </div>
         </template>
       </DataTable>
-
-      <div
-        v-if="backgroundLoading && hasAnyData"
-        class="ot-ack-updating-bar"
-      >
-        {{ t('common.updating') }}
-      </div>
     </section>
   </div>
 </template>
 
 <style scoped>
-.ot-ack-page {
-  --ot-ack-approved-rgb: 34 197 94;
-  --ot-ack-pending-rgb: 245 158 11;
-  --ot-ack-rejected-rgb: 239 68 68;
-  --ot-ack-info-rgb: 59 130 246;
-  --ot-ack-muted-rgb: 100 116 139;
-}
-
-.ot-ack-filter-bar {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
-  align-items: end;
-}
-
-.ot-ack-filter-actions {
-  grid-column: 1 / -1;
+.ot-page-shell {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 0.5rem;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.ot-filter-bar {
+  display: grid;
+  grid-template-columns: minmax(14rem, 1.4fr) minmax(11rem, 0.9fr) minmax(11rem, 0.9fr) minmax(11rem, 0.9fr) auto;
+  gap: 0.75rem;
+  align-items: end;
+  padding: 0.85rem;
+  border: 1px solid var(--surface-border);
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, rgba(59, 130, 246, 0.05), transparent 34%),
+    var(--surface-card);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+}
+
+.ot-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
   min-width: 0;
 }
 
-.ot-ack-filter-actions > * {
-  flex: 0 0 auto;
-}
-
-.ot-ack-request-no-text {
-  color: rgb(var(--ot-ack-info-rgb) / 1);
-  font-size: 0.8rem;
-  font-weight: 750;
-  font-variant-numeric: tabular-nums;
-}
-
-.ot-ack-main-text {
-  color: var(--ot-text);
-  font-size: 0.8rem;
-  font-weight: 650;
-  line-height: 1.25;
-}
-
-.ot-ack-sub-text {
-  margin-top: 0.12rem;
-  color: var(--ot-text-muted);
-  font-size: 0.7rem;
-  font-weight: 600;
-}
-
-.ot-ack-meta-text {
-  color: var(--ot-text);
-  font-size: 0.78rem;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-}
-
-.ot-ack-updating-bar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-top: 1px solid var(--ot-border);
-  padding: 0.55rem 0.75rem;
-  color: var(--ot-text-muted);
-  font-size: 0.75rem;
-  font-weight: 500;
-}
-
-:deep(.ot-ack-action-button .p-button-icon) {
-  font-size: 0.76rem;
-}
-
-/* =========================
-   RGB Tags
-   ========================= */
-
-:deep(.ot-ack-rgb-tag) {
-  --ot-ack-tag-rgb: var(--ot-ack-muted-rgb);
-  display: inline-flex !important;
-  min-height: 1.42rem;
-  align-items: center !important;
-  justify-content: center !important;
-  border: 1px solid rgb(var(--ot-ack-tag-rgb) / 0.28);
-  border-radius: 999px;
-  background: rgb(var(--ot-ack-tag-rgb) / 0.11);
-  color: rgb(var(--ot-ack-tag-rgb) / 1);
-  padding: 0.12rem 0.48rem;
-  font-size: 0.7rem;
+.ot-field-label {
+  font-size: 0.74rem;
   font-weight: 700;
-  line-height: 1;
-  text-align: center !important;
+  color: var(--text-color-secondary);
+  letter-spacing: 0.01em;
+}
+
+.ot-ack-filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 12rem;
+}
+
+.ot-ack-action-button {
   white-space: nowrap;
 }
 
-:deep(.ot-ack-tag-approved) {
-  --ot-ack-tag-rgb: var(--ot-ack-approved-rgb);
+.ot-loaded-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 2rem;
+  padding: 0.34rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid rgba(59, 130, 246, 0.18);
+  background: rgba(59, 130, 246, 0.08);
+  color: #2563eb;
+  font-size: 0.76rem;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
-:deep(.ot-ack-tag-pending) {
-  --ot-ack-tag-rgb: var(--ot-ack-pending-rgb);
-}
-
-:deep(.ot-ack-tag-rejected) {
-  --ot-ack-tag-rgb: var(--ot-ack-rejected-rgb);
-}
-
-:deep(.ot-ack-tag-info) {
-  --ot-ack-tag-rgb: var(--ot-ack-info-rgb);
-}
-
-:deep(.ot-ack-tag-muted) {
-  --ot-ack-tag-rgb: var(--ot-ack-muted-rgb);
-}
-
-/* =========================
-   Main table fixed center columns
-   ========================= */
-
-:deep(.ot-ack-table.p-datatable .p-datatable-table) {
-  width: 100% !important;
-  min-width: 980px !important;
-  table-layout: fixed !important;
-}
-
-:deep(.ot-ack-table.p-datatable .p-datatable-thead > tr > th),
-:deep(.ot-ack-table.p-datatable .p-datatable-tbody > tr > td) {
-  text-align: center !important;
-  vertical-align: middle !important;
-}
-
-:deep(.ot-ack-table.p-datatable .p-datatable-thead > tr > th) {
-  padding: 0.58rem 0.68rem !important;
-  white-space: nowrap !important;
-  font-size: 0.78rem !important;
-  font-weight: 650 !important;
-}
-
-:deep(.ot-ack-table.p-datatable .p-datatable-tbody > tr > td) {
-  height: 68px !important;
-  padding: 0.46rem 0.68rem !important;
-  white-space: nowrap !important;
-  font-size: 0.8rem !important;
-}
-
-:deep(.ot-ack-table.p-datatable .p-datatable-column-header-content),
-:deep(.ot-ack-table.p-datatable .p-column-header-content) {
-  display: flex !important;
-  width: 100% !important;
-  align-items: center !important;
-  justify-content: center !important;
-  gap: 0.25rem !important;
-  text-align: center !important;
-}
-
-:deep(.ot-ack-table.p-datatable .p-datatable-column-title),
-:deep(.ot-ack-table.p-datatable .p-column-title) {
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  text-align: center !important;
-}
-
-:deep(.ot-ack-table.p-datatable .p-datatable-tbody > tr > td > *) {
-  margin-inline: auto !important;
-}
-
-:deep(.ot-ack-table.p-datatable .p-tag),
-:deep(.ot-ack-table.p-datatable .p-button),
-:deep(.ot-ack-table.p-datatable .p-row-toggler) {
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  margin-inline: auto !important;
-  text-align: center !important;
-}
-
-:deep(.ot-ack-table.p-datatable .p-tag-value) {
-  max-width: 100%;
+.ot-table-card {
+  border: 1px solid var(--surface-border);
+  border-radius: 20px;
+  background: var(--surface-card);
+  box-shadow: 0 16px 42px rgba(15, 23, 42, 0.07);
   overflow: hidden;
-  text-align: center !important;
-  text-overflow: ellipsis;
 }
 
-:deep(.ot-ack-table.p-datatable .p-row-toggler) {
-  width: 1.72rem !important;
-  height: 1.72rem !important;
+.ot-table-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--surface-border);
+  background:
+    linear-gradient(135deg, rgba(59, 130, 246, 0.06), transparent 30%),
+    var(--surface-card);
 }
 
-:deep(.ot-ack-table.p-datatable .p-datatable-row-expansion > td) {
-  height: auto !important;
-  padding: 0 !important;
-  white-space: normal !important;
-  overflow: hidden !important;
+.ot-table-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--text-color);
+}
+
+.ot-table-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.ot-ack-table {
+  width: 100%;
+}
+
+.ot-ack-table :deep(.p-datatable-thead > tr > th) {
+  padding: 0.68rem 0.75rem;
+  font-size: 0.76rem;
+  font-weight: 800;
+  color: var(--text-color-secondary);
+  background: var(--surface-ground);
+  border-color: var(--surface-border);
+  white-space: nowrap;
+}
+
+.ot-ack-table :deep(.p-datatable-tbody > tr > td) {
+  padding: 0.6rem 0.75rem;
+  vertical-align: middle;
+  border-color: var(--surface-border);
+}
+
+.ot-ack-table :deep(.p-datatable-tbody > tr:hover) {
+  background: rgba(59, 130, 246, 0.035);
+}
+
+.ot-request-no-text {
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    'Liberation Mono',
+    'Courier New',
+    monospace;
+  font-size: 0.82rem;
+  font-weight: 800;
+  color: #2563eb;
+  white-space: nowrap;
 }
 
 .requester-cell {
   display: flex;
-  min-width: 0;
-  max-width: 100%;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
+  gap: 0.12rem;
+  min-width: 0;
 }
 
-/* =========================
-   Compact expanded dropdown
-   ========================= */
+.ot-main-text {
+  font-size: 0.83rem;
+  font-weight: 800;
+  color: var(--text-color);
+  line-height: 1.25;
+}
+
+.ot-sub-text {
+  font-size: 0.74rem;
+  font-weight: 650;
+  color: var(--text-color-secondary);
+  line-height: 1.2;
+}
+
+.ot-meta-text {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-color-secondary);
+  white-space: nowrap;
+}
+
+.ot-ack-rgb-tag {
+  border: 1px solid transparent;
+  box-shadow: none;
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.approval-display-tag {
+  max-width: 13rem;
+}
+
+.approval-display-tag :deep(.p-tag-value) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ot-ack-tag-approved {
+  border-color: rgba(34, 197, 94, 0.28) !important;
+  background: rgba(34, 197, 94, 0.12) !important;
+  color: #15803d !important;
+}
+
+.ot-ack-tag-rejected {
+  border-color: rgba(239, 68, 68, 0.28) !important;
+  background: rgba(239, 68, 68, 0.12) !important;
+  color: #b91c1c !important;
+}
+
+.ot-ack-tag-pending {
+  border-color: rgba(245, 158, 11, 0.3) !important;
+  background: rgba(245, 158, 11, 0.14) !important;
+  color: #b45309 !important;
+}
+
+.ot-ack-tag-info {
+  border-color: rgba(59, 130, 246, 0.25) !important;
+  background: rgba(59, 130, 246, 0.11) !important;
+  color: #1d4ed8 !important;
+}
+
+.ot-ack-tag-muted {
+  border-color: rgba(100, 116, 139, 0.24) !important;
+  background: rgba(100, 116, 139, 0.1) !important;
+  color: #475569 !important;
+}
 
 .ot-expanded-box {
-  width: 100%;
-  max-width: 100%;
-  overflow: hidden;
-  border-top: 1px solid var(--ot-border);
-  border-bottom: 1px solid var(--ot-border);
+  padding: 0.75rem;
   background:
-    linear-gradient(135deg, rgb(var(--ot-ack-info-rgb) / 0.05), transparent),
-    var(--ot-bg);
-  padding: 0.55rem 0.7rem;
+    linear-gradient(135deg, rgba(59, 130, 246, 0.04), transparent 34%),
+    var(--surface-ground);
+  border-radius: 14px;
 }
 
 .ot-expanded-content {
-  width: 100%;
-  max-width: 100%;
-  overflow: hidden;
+  overflow-x: auto;
+}
+
+.ot-expanded-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  margin-bottom: 0.6rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-color-secondary);
+}
+
+.ot-expanded-summary strong {
+  color: var(--text-color);
 }
 
 .ot-expanded-responsive-table {
-  width: 100%;
-  max-width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
-  border: 1px solid var(--ot-border);
-  border-radius: 0.8rem;
-  background: var(--ot-surface);
+  display: flex;
+  flex-direction: column;
+  min-width: 720px;
+  border: 1px solid var(--surface-border);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--surface-card);
 }
 
 .ot-expanded-grid-row {
   display: grid;
-  grid-template-columns:
-    2.7rem
-    minmax(5rem, 0.6fr)
-    minmax(8rem, 1.1fr)
-    minmax(7rem, 0.9fr)
-    minmax(6rem, 0.7fr)
-    minmax(8rem, 0.9fr);
-  min-width: 680px;
-  align-items: stretch;
-}
-
-.ot-expanded-grid-row > div {
-  display: flex;
-  min-width: 0;
+  grid-template-columns: 4rem 9rem minmax(12rem, 1.2fr) minmax(10rem, 1fr) 8rem minmax(10rem, 1fr);
   align-items: center;
-  justify-content: center;
-  border-bottom: 1px solid var(--ot-border);
-  padding: 0.42rem 0.48rem;
-  color: var(--ot-text);
-  font-size: 0.7rem;
-  font-weight: 500;
-  line-height: 1.25;
-  text-align: center;
+  min-height: 2.65rem;
+  border-bottom: 1px solid var(--surface-border);
 }
 
-.ot-expanded-grid-row.is-head > div {
-  background: color-mix(in srgb, var(--ot-bg) 82%, transparent);
-  color: var(--ot-text-muted);
-  font-size: 0.64rem;
-  font-weight: 650;
-  white-space: nowrap;
-}
-
-.ot-expanded-grid-row:last-child > div {
+.ot-expanded-grid-row:last-child {
   border-bottom: 0;
 }
 
-.ot-expanded-grid-row:not(.is-head):hover > div {
-  background: color-mix(in srgb, var(--ot-bg) 68%, transparent);
+.ot-expanded-grid-row > div {
+  padding: 0.55rem 0.65rem;
+  font-size: 0.78rem;
+  border-right: 1px solid var(--surface-border);
+}
+
+.ot-expanded-grid-row > div:last-child {
+  border-right: 0;
+}
+
+.ot-expanded-grid-row.is-head {
+  min-height: 2.4rem;
+  background: var(--surface-ground);
+}
+
+.ot-expanded-grid-row.is-head > div {
+  font-size: 0.72rem;
+  font-weight: 850;
+  color: var(--text-color-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .cell-center {
-  justify-content: center !important;
-  text-align: center !important;
+  text-align: center;
 }
 
 .cell-mono {
-  font-variant-numeric: tabular-nums;
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    'Liberation Mono',
+    'Courier New',
+    monospace;
+  font-weight: 800;
 }
 
 .cell-strong {
-  font-weight: 650 !important;
+  font-weight: 800;
+  color: var(--text-color);
 }
 
 .cell-wrap {
   overflow-wrap: anywhere;
-  text-align: center !important;
-  white-space: normal;
-  word-break: break-word;
 }
 
 .ot-expanded-empty {
-  border: 1px dashed var(--ot-border);
-  border-radius: 0.75rem;
-  padding: 0.8rem;
-  color: var(--ot-text-muted);
-  font-size: 0.72rem;
-  font-weight: 500;
+  padding: 0.9rem;
+  border: 1px dashed var(--surface-border);
+  border-radius: 14px;
+  color: var(--text-color-secondary);
+  font-size: 0.82rem;
+  text-align: center;
+  background: var(--surface-card);
+}
+
+.ot-empty-state {
+  display: flex;
+  min-height: 14rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  padding: 2rem;
+  color: var(--text-color-secondary);
+}
+
+.ot-empty-icon {
+  display: grid;
+  width: 3rem;
+  height: 3rem;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.1);
+  color: #2563eb;
+  font-size: 1.25rem;
+}
+
+.ot-empty-title {
+  font-size: 0.95rem;
+  font-weight: 850;
+  color: var(--text-color);
+}
+
+.ot-empty-text {
+  font-size: 0.82rem;
   text-align: center;
 }
 
-/* =========================
-   Responsive
-   ========================= */
-
-@media (min-width: 1024px) {
-  .ot-ack-filter-bar {
+@media (max-width: 1100px) {
+  .ot-filter-bar {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .ot-ack-filter-actions {
     grid-column: 1 / -1;
+    justify-content: flex-start;
+    min-width: 0;
   }
 }
 
-@media (min-width: 1280px) {
-  .ot-ack-filter-bar {
-    grid-template-columns:
-      minmax(260px, 1.2fr)
-      minmax(190px, 0.85fr)
-      minmax(180px, 0.8fr)
-      minmax(180px, 0.8fr);
+@media (max-width: 640px) {
+  .ot-filter-bar {
+    grid-template-columns: 1fr;
+    padding: 0.75rem;
   }
-}
 
-@media (max-width: 1200px) {
-  .ot-expanded-grid-row > div {
-    padding: 0.4rem 0.46rem;
-    font-size: 0.67rem;
-  }
-}
-
-@media (max-width: 768px) {
   .ot-ack-filter-actions {
-    justify-content: stretch;
+    flex-direction: column;
+    align-items: stretch;
   }
 
-  .ot-ack-filter-actions > * {
-    flex: 1 1 100%;
+  .ot-ack-action-button,
+  .ot-loaded-badge {
+    width: 100%;
+    justify-content: center;
   }
 
-  :deep(.ot-ack-table.p-datatable .p-datatable-table) {
-    min-width: 860px !important;
+  .ot-table-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .ot-table-actions {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .ot-expanded-box {
-    width: 100%;
-    max-width: 100%;
-    padding: 0.55rem;
-  }
-
-  .ot-expanded-content {
-    width: 100%;
-    max-width: 100%;
-    overflow: hidden;
-  }
-
-  .ot-expanded-responsive-table {
-    width: 100%;
-    max-width: 100%;
-    overflow-x: auto;
-    overflow-y: hidden;
-  }
-
-  .ot-expanded-grid-row {
-    grid-template-columns:
-      2.4rem
-      5.8rem
-      8.8rem
-      8.2rem
-      6.4rem
-      8.5rem;
-    min-width: 640px;
-  }
-
-  .ot-expanded-grid-row > div {
-    padding: 0.4rem 0.48rem;
-    font-size: 0.67rem;
-    line-height: 1.25;
-  }
-
-  .ot-expanded-grid-row.is-head > div {
-    font-size: 0.63rem;
+    padding: 0.5rem;
   }
 }
 </style>

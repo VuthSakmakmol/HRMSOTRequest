@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
-    "seed:admin": "node src/database/seeds/seedAdmin.js"
+    "seed:admin": "node src/database/seeds/seedAdmin.js",
+    "test": "npm run test:ot-timing && npm run test:ot-saved-data",
+    "test:ot-timing": "node src/modules/ot/tests/otRequestSourceOfTruth.test.js",
+    "test:ot-saved-data": "node src/modules/ot/tests/otSavedDataAudit.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

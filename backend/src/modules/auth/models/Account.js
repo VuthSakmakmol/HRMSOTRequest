@@ -46,6 +46,7 @@ const AccountSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Employee',
       default: null,
+      index: true,
     },
 
     roleIds: [
@@ -75,6 +76,70 @@ const AccountSchema = new mongoose.Schema(
       default: true,
       index: true,
     },
+
+    // Telegram notification channel.
+    // Linked by secure one-time token from logged-in HRMS account.
+    telegramChatId: {
+      type: String,
+      default: '',
+      trim: true,
+      index: true,
+    },
+
+    telegramUserId: {
+      type: String,
+      default: '',
+      trim: true,
+      index: true,
+    },
+
+    telegramUsername: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+
+    telegramFirstName: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+
+    telegramLastName: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+
+    telegramEnabled: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    telegramLinkedAt: {
+      type: Date,
+      default: null,
+    },
+
+    telegramLastMessageAt: {
+      type: Date,
+      default: null,
+    },
+
+    telegramLinkTokenHash: {
+      type: String,
+      default: '',
+      trim: true,
+      select: false,
+      index: true,
+    },
+
+    telegramLinkTokenExpiresAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
   },
   {
     timestamps: true,
@@ -93,6 +158,17 @@ AccountSchema.pre('validate', function normalize(next) {
 
   if (!this.passwordVersion || this.passwordVersion < 1) {
     this.passwordVersion = 1
+  }
+
+  this.telegramChatId = s(this.telegramChatId)
+  this.telegramUserId = s(this.telegramUserId)
+  this.telegramUsername = s(this.telegramUsername).replace(/^@+/, '')
+  this.telegramFirstName = s(this.telegramFirstName)
+  this.telegramLastName = s(this.telegramLastName)
+  this.telegramLinkTokenHash = s(this.telegramLinkTokenHash)
+
+  if (!this.telegramChatId) {
+    this.telegramEnabled = false
   }
 
   next()

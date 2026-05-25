@@ -18,12 +18,28 @@ import Tag from 'primevue/tag'
 
 import HolidayDatePicker from '@/modules/calendar/components/HolidayDatePicker.vue'
 import AppTableLoading from '@/shared/components/AppTableLoading.vue'
+
 import { useAuthStore } from '@/modules/auth/auth.store'
 import { getApiErrorMessage } from '@/shared/utils/apiError'
+
+import { useOTRealtimeRefresh } from '@/modules/ot/otRealtimeRefresh'
+
 import {
   exportOTRequestsExcel,
   getOTRequests,
 } from '@/modules/ot/ot.api'
+
+import {
+  getApprovalDisplay,
+  getApprovalTagClass,
+  getEmployeeCount,
+  getEmployeeDisplay,
+  getEmployeePaidHoursLabel,
+  getPaidHoursLabel,
+  getRequesterDisplay,
+  getTargetEmployees,
+  normalizeOTRow,
+} from '@/modules/ot/otDisplay'
 
 const router = useRouter()
 const toast = useToast()
@@ -37,7 +53,6 @@ const rows = ref([])
 const totalRecords = ref(0)
 const loadedPages = ref(new Set())
 const expandedRows = ref({})
-
 const bootstrapped = ref(false)
 const backgroundLoading = ref(false)
 const exporting = ref(false)
@@ -114,42 +129,19 @@ function normalizeTotal(payload) {
 function normalizeRow(row) {
   if (!row) return row
 
+  const normalized = normalizeOTRow(row)
+
   return {
-    ...row,
+    ...normalized,
     id: String(
-      row?.id ||
-        row?._id ||
-        row?.requestId ||
-        row?.otRequestId ||
-        row?.requestNo ||
+      normalized?.id ||
+        normalized?._id ||
+        normalized?.requestId ||
+        normalized?.otRequestId ||
+        normalized?.requestNo ||
         '',
     ).trim(),
   }
-}
-
-function upper(value) {
-  return String(value || '').trim().toUpperCase()
-}
-
-function firstText(...values) {
-  for (const value of values) {
-    const text = String(value || '').trim()
-    if (text) return text
-  }
-
-  return ''
-}
-
-function firstPositiveNumber(...values) {
-  for (const value of values) {
-    const number = Number(value)
-
-    if (Number.isFinite(number) && number > 0) {
-      return number
-    }
-  }
-
-  return 0
 }
 
 function pad2(value) {
@@ -206,220 +198,40 @@ function formatDateTimeDMY(value) {
   return `${dd}/${mm}/${yyyy}, ${hh}:${min}`
 }
 
-function statusLabel(value, key = '') {
-  if (key) return t(key)
-
-  const normalized = upper(value)
-
-  if (normalized === 'PENDING') return t('ot.status.pending')
-  if (normalized === 'PENDING_REQUESTER_CONFIRMATION') {
-    return t('ot.status.pendingRequesterConfirmation')
-  }
-  if (normalized === 'APPROVED') return t('ot.status.approved')
-  if (normalized === 'REJECTED') return t('ot.status.rejected')
-  if (normalized === 'REQUESTER_DISAGREED') return t('ot.status.requesterDisagreed')
-  if (normalized === 'CANCELLED') return t('ot.status.cancelled')
-
-  return normalized || t('common.unknown')
+function displayRequester(row) {
+  return getRequesterDisplay(row)
 }
 
-function approvalDisplay(row) {
-  const display = row?.approvalDisplay || {}
-
-  return {
-    type: firstText(display.type, row?.approvalDisplayType, row?.status, 'UNKNOWN'),
-    label: firstText(
-      display.label,
-      row?.approvalDisplayLabel,
-      row?.approvalStatusLabel,
-      row?.statusLabel,
-      statusLabel(row?.status, row?.statusKey),
-    ),
-    subLabel: firstText(display.subLabel, row?.approvalDisplaySubLabel, ''),
-    severity: firstText(display.severity, row?.approvalDisplaySeverity, ''),
-  }
+function displayApproval(row) {
+  return getApprovalDisplay(row)
 }
 
-function approvalDisplayTagClass(row) {
-  const display = approvalDisplay(row)
-  const type = upper(display.type)
-  const severity = upper(display.severity)
-
-  if (severity === 'SUCCESS' || type.includes('APPROVED')) {
-    return ['ot-request-rgb-tag', 'approval-display-tag', 'ot-request-tag-approved']
-  }
-
-  if (
-    severity === 'DANGER' ||
-    severity === 'ERROR' ||
-    type.includes('REJECTED') ||
-    type.includes('DISAGREED')
-  ) {
-    return ['ot-request-rgb-tag', 'approval-display-tag', 'ot-request-tag-rejected']
-  }
-
-  if (severity === 'INFO' || type.includes('CONFIRMATION')) {
-    return ['ot-request-rgb-tag', 'approval-display-tag', 'ot-request-tag-info']
-  }
-
-  if (severity === 'WARNING' || severity === 'WARN' || type.includes('PENDING')) {
-    return ['ot-request-rgb-tag', 'approval-display-tag', 'ot-request-tag-pending']
-  }
-
-  if (type.includes('CANCELLED')) {
-    return ['ot-request-rgb-tag', 'approval-display-tag', 'ot-request-tag-muted']
-  }
-
-  return ['ot-request-rgb-tag', 'approval-display-tag', 'ot-request-tag-muted']
+function displayApprovalTagClass(row) {
+  return getApprovalTagClass(row, 'ot-request')
 }
 
-function formatMinutesLabel(value) {
-  const minutes = Number(value || 0)
-
-  if (!minutes) return t('ot.common.minuteValue', { value: 0 })
-
-  const hours = Math.floor(minutes / 60)
-  const mins = minutes % 60
-
-  if (hours && mins) {
-    return t('ot.common.hourMinuteValue', {
-      hours,
-      minutes: mins,
-    })
-  }
-
-  if (hours) return t('ot.common.hourValue', { value: hours })
-
-  return t('ot.common.minuteValue', { value: mins })
+function displayStaffCount(row) {
+  return Number(row?.requestedEmployeeCount || getEmployeeCount(row) || 0)
 }
 
-function totalOtMinutesOf(row) {
-  return firstPositiveNumber(
-    // Backend paid OT source of truth.
-    row?.totalRequestPaidMinutes,
-    row?.totalMinutes,
-    row?.paidMinutes,
-    row?.approvedMinutes,
-
-    // Fallback only for old data.
-    row?.requestedMinutes,
-    row?.totalRequestedMinutes,
-    row?.otRequestedMinutes,
-    row?.totalOtMinutes,
-    row?.otMinutes,
-    row?.durationMinutes,
-    row?.plannedMinutes,
-    row?.approvedRequestedMinutes,
-  )
+function displayPaidTime(row) {
+  return getPaidHoursLabel(row)
 }
 
-function employeeTotalOtMinutesOf(employee, row) {
-  return firstPositiveNumber(
-    // Backend paid OT source of truth.
-    employee?.totalRequestPaidMinutes,
-    employee?.totalMinutes,
-    employee?.paidMinutes,
-    employee?.approvedMinutes,
-
-    // Fallback only for old data.
-    employee?.requestedMinutes,
-    employee?.totalRequestedMinutes,
-    employee?.otRequestedMinutes,
-    employee?.totalOtMinutes,
-    employee?.otMinutes,
-    employee?.durationMinutes,
-    employee?.plannedMinutes,
-    employee?.approvedRequestedMinutes,
-
-    totalOtMinutesOf(row),
-  )
-}
-
-function formatRequester(row) {
-  const name = String(
-    row?.requesterName ||
-      row?.createdByName ||
-      row?.ownerName ||
-      row?.employeeName ||
-      '',
-  ).trim()
-
-  const employeeNo = String(
-    row?.requesterEmployeeNo ||
-      row?.requesterEmployeeCode ||
-      row?.requesterCode ||
-      row?.createdByEmployeeNo ||
-      row?.employeeNo ||
-      '',
-  ).trim()
-
-  return {
-    name: name || '-',
-    employeeNo: employeeNo || '-',
-  }
-}
-
-function getTargetEmployees(row) {
-  if (Array.isArray(row?.employees)) return row.employees
-  if (Array.isArray(row?.approvedEmployees)) return row.approvedEmployees
-  if (Array.isArray(row?.requestedEmployees)) return row.requestedEmployees
-  if (Array.isArray(row?.employeeItems)) return row.employeeItems
-  if (Array.isArray(row?.targetEmployees)) return row.targetEmployees
-  if (Array.isArray(row?.employeeList)) return row.employeeList
-  if (Array.isArray(row?.staffRows)) return row.staffRows
-  if (Array.isArray(row?.employeeDetails)) return row.employeeDetails
-  if (Array.isArray(row?.requestEmployees)) return row.requestEmployees
-  if (Array.isArray(row?.staff)) return row.staff
-  if (Array.isArray(row?.details)) return row.details
-
-  return []
-}
-
-function getEmployeeCount(row) {
-  const explicitCount = Number(
-    row?.employeeCount ||
-      row?.approvedEmployeeCount ||
-      row?.requestedEmployeeCount ||
-      row?.totalEmployees ||
-      row?.staffCount ||
-      0,
-  )
-
-  if (explicitCount > 0) return explicitCount
-
-  return getTargetEmployees(row).length
+function displayEmployees(row) {
+  return getTargetEmployees(row)
 }
 
 function employeeIdOf(employee) {
   return String(employee?.employeeId || employee?._id || employee?.id || '').trim()
 }
 
-function employeeNameOf(employee) {
-  const employeeSnapshot = employee?.employee || employee?.employeeSnapshot || {}
-
-  return String(
-    employee?.employeeName ||
-      employee?.displayName ||
-      employee?.name ||
-      employee?.fullName ||
-      employeeSnapshot?.displayName ||
-      employeeSnapshot?.employeeName ||
-      '-',
-  ).trim() || '-'
+function employeeCodeOf(employee) {
+  return getEmployeeDisplay(employee).code
 }
 
-function employeeCodeOf(employee) {
-  const employeeSnapshot = employee?.employee || employee?.employeeSnapshot || {}
-
-  return String(
-    employee?.employeeCode ||
-      employee?.employeeNo ||
-      employee?.code ||
-      employee?.loginId ||
-      employeeSnapshot?.employeeCode ||
-      employeeSnapshot?.employeeNo ||
-      '-',
-  ).trim() || '-'
+function employeeNameOf(employee) {
+  return getEmployeeDisplay(employee).name
 }
 
 function employeePositionOf(employee) {
@@ -440,8 +252,13 @@ function employeeDepartmentOf(employee) {
   return String(
     employee?.departmentName ||
       employee?.department?.name ||
+      employee?.departmentSnapshot?.name ||
       '-',
   ).trim() || '-'
+}
+
+function employeePaidTimeOf(employee, row) {
+  return getEmployeePaidHoursLabel(employee, row)
 }
 
 function buildQuery(page) {
@@ -543,6 +360,17 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
     silent: true,
   })
 }
+
+useOTRealtimeRefresh(
+  () =>
+    reloadFirstPage({
+      keepVisible: true,
+    }),
+  {
+    name: 'OTRequestListView',
+    debounceMs: 250,
+  },
+)
 
 function runSearchSoon() {
   window.clearTimeout(searchTimer)
@@ -795,15 +623,19 @@ onBeforeUnmount(() => {
         :sort-order="filters.sortOrder"
         table-style="width: max-content; min-width: 100%; table-layout: auto;"
         class="ot-request-table ot-data-table ot-data-table-compact"
-        :virtual-scroller-options="useVirtualScroll ? {
-          lazy: true,
-          onLazyLoad: onVirtualLazyLoad,
-          itemSize: 70,
-          delay: 0,
-          showLoader: false,
-          loading: false,
-          numToleratedItems: 12,
-        } : null"
+        :virtual-scroller-options="
+          useVirtualScroll
+            ? {
+                lazy: true,
+                onLazyLoad: onVirtualLazyLoad,
+                itemSize: 70,
+                delay: 0,
+                showLoader: false,
+                loading: false,
+                numToleratedItems: 12,
+              }
+            : null
+        "
         @sort="onSort"
       >
         <template #empty>
@@ -856,11 +688,11 @@ onBeforeUnmount(() => {
               class="requester-cell"
             >
               <div class="ot-request-main-text">
-                {{ formatRequester(data).name }}
+                {{ displayRequester(data).name }}
               </div>
 
               <div class="ot-request-sub-text">
-                {{ formatRequester(data).employeeNo }}
+                {{ displayRequester(data).employeeNo }}
               </div>
             </div>
           </template>
@@ -877,8 +709,8 @@ onBeforeUnmount(() => {
               class="approval-status-cell"
             >
               <Tag
-                :value="approvalDisplay(data).label"
-                :class="approvalDisplayTagClass(data)"
+                :value="displayApproval(data).label"
+                :class="displayApprovalTagClass(data)"
               />
             </div>
           </template>
@@ -891,7 +723,7 @@ onBeforeUnmount(() => {
           <template #body="{ data }">
             <Tag
               v-if="data"
-              :value="t('ot.requests.staffCount', { count: Number(data?.requestedEmployeeCount || getEmployeeCount(data)) })"
+              :value="t('ot.requests.staffCount', { count: displayStaffCount(data) })"
               :class="['ot-request-rgb-tag', 'ot-request-tag-info']"
             />
           </template>
@@ -920,7 +752,7 @@ onBeforeUnmount(() => {
           <template #body="{ data }">
             <Tag
               v-if="data"
-              :value="formatMinutesLabel(totalOtMinutesOf(data))"
+              :value="displayPaidTime(data)"
               :class="['ot-request-rgb-tag', 'ot-request-tag-info']"
             />
           </template>
@@ -945,7 +777,7 @@ onBeforeUnmount(() => {
         <template #expansion="{ data }">
           <div class="ot-expanded-box">
             <div
-              v-if="getTargetEmployees(data).length"
+              v-if="displayEmployees(data).length"
               class="ot-expanded-content"
             >
               <div class="ot-expanded-responsive-table">
@@ -959,7 +791,7 @@ onBeforeUnmount(() => {
                 </div>
 
                 <div
-                  v-for="(employee, index) in getTargetEmployees(data)"
+                  v-for="(employee, index) in displayEmployees(data)"
                   :key="employeeIdOf(employee) || index"
                   class="ot-expanded-grid-row"
                 >
@@ -980,7 +812,7 @@ onBeforeUnmount(() => {
                   </div>
 
                   <div class="cell-center cell-mono">
-                    {{ formatMinutesLabel(employeeTotalOtMinutesOf(employee, data)) }}
+                    {{ employeePaidTimeOf(employee, data) }}
                   </div>
 
                   <div class="cell-center cell-wrap">
@@ -999,436 +831,407 @@ onBeforeUnmount(() => {
           </div>
         </template>
       </DataTable>
-
-      <div
-        v-if="backgroundLoading && hasAnyData"
-        class="ot-request-updating-bar"
-      >
-        {{ t('common.updating') }}
-      </div>
     </section>
   </div>
 </template>
 
 <style scoped>
-.ot-request-list-page {
-  --ot-req-approved-rgb: 34 197 94;
-  --ot-req-pending-rgb: 245 158 11;
-  --ot-req-rejected-rgb: 239 68 68;
-  --ot-req-info-rgb: 59 130 246;
-  --ot-req-muted-rgb: 100 116 139;
-}
-
-.ot-request-filter-bar {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
-  align-items: end;
-}
-
-.ot-request-filter-actions {
-  grid-column: 1 / -1;
+.ot-page-shell {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 0.5rem;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.ot-filter-bar {
+  display: grid;
+  grid-template-columns: minmax(14rem, 1.4fr) minmax(11rem, 0.9fr) minmax(11rem, 0.9fr) minmax(11rem, 0.9fr) auto;
+  gap: 0.75rem;
+  align-items: end;
+  padding: 0.85rem;
+  border: 1px solid var(--surface-border);
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, rgba(59, 130, 246, 0.05), transparent 34%),
+    var(--surface-card);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+}
+
+.ot-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
   min-width: 0;
 }
 
-.ot-request-filter-actions > * {
-  flex: 0 0 auto;
+.ot-field-label {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--text-color-secondary);
+  letter-spacing: 0.01em;
+}
+
+.ot-request-filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 18rem;
+}
+
+.ot-request-action-button {
+  white-space: nowrap;
+}
+
+.ot-request-export-button :deep(.p-button-label) {
+  white-space: nowrap;
+}
+
+.ot-loaded-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 2rem;
+  padding: 0.34rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid rgba(59, 130, 246, 0.18);
+  background: rgba(59, 130, 246, 0.08);
+  color: #2563eb;
+  font-size: 0.76rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.ot-table-card {
+  border: 1px solid var(--surface-border);
+  border-radius: 20px;
+  background: var(--surface-card);
+  box-shadow: 0 16px 42px rgba(15, 23, 42, 0.07);
+  overflow: hidden;
+}
+
+.ot-table-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--surface-border);
+  background:
+    linear-gradient(135deg, rgba(16, 185, 129, 0.06), transparent 30%),
+    var(--surface-card);
+}
+
+.ot-table-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--text-color);
+}
+
+.ot-table-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.ot-request-table {
+  width: 100%;
+}
+
+.ot-request-table :deep(.p-datatable-thead > tr > th) {
+  padding: 0.68rem 0.75rem;
+  font-size: 0.76rem;
+  font-weight: 800;
+  color: var(--text-color-secondary);
+  background: var(--surface-ground);
+  border-color: var(--surface-border);
+  white-space: nowrap;
+}
+
+.ot-request-table :deep(.p-datatable-tbody > tr > td) {
+  padding: 0.6rem 0.75rem;
+  vertical-align: middle;
+  border-color: var(--surface-border);
+}
+
+.ot-request-table :deep(.p-datatable-tbody > tr) {
+  transition:
+    background-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.ot-request-table :deep(.p-datatable-tbody > tr:hover) {
+  background: rgba(59, 130, 246, 0.035);
 }
 
 .ot-request-no-text {
-  color: rgb(var(--ot-req-info-rgb) / 1);
-  font-size: 0.8rem;
-  font-weight: 750;
-  font-variant-numeric: tabular-nums;
-}
-
-.ot-request-main-text {
-  color: var(--ot-text);
-  font-size: 0.8rem;
-  font-weight: 650;
-  line-height: 1.25;
-}
-
-.ot-request-sub-text {
-  margin-top: 0.12rem;
-  color: var(--ot-text-muted);
-  font-size: 0.7rem;
-  font-weight: 600;
-}
-
-.ot-request-meta-text {
-  color: var(--ot-text);
-  font-size: 0.78rem;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-}
-
-.ot-request-updating-bar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-top: 1px solid var(--ot-border);
-  padding: 0.55rem 0.75rem;
-  color: var(--ot-text-muted);
-  font-size: 0.75rem;
-  font-weight: 500;
-}
-
-:deep(.ot-request-action-button .p-button-icon) {
-  font-size: 0.76rem;
-}
-
-:deep(.ot-request-export-button .p-button-icon) {
-  font-size: 0.72rem;
-}
-
-/* =========================
-   RGB Tags
-   ========================= */
-
-:deep(.ot-request-rgb-tag) {
-  --ot-request-tag-rgb: var(--ot-req-muted-rgb);
-  display: inline-flex !important;
-  min-height: 1.42rem;
-  align-items: center !important;
-  justify-content: center !important;
-  border: 1px solid rgb(var(--ot-request-tag-rgb) / 0.28);
-  border-radius: 999px;
-  background: rgb(var(--ot-request-tag-rgb) / 0.11);
-  color: rgb(var(--ot-request-tag-rgb) / 1);
-  padding: 0.12rem 0.48rem;
-  font-size: 0.7rem;
-  font-weight: 700;
-  line-height: 1;
-  text-align: center !important;
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    'Liberation Mono',
+    'Courier New',
+    monospace;
+  font-size: 0.82rem;
+  font-weight: 800;
+  color: #2563eb;
   white-space: nowrap;
-}
-
-:deep(.ot-request-tag-approved) {
-  --ot-request-tag-rgb: var(--ot-req-approved-rgb);
-}
-
-:deep(.ot-request-tag-pending) {
-  --ot-request-tag-rgb: var(--ot-req-pending-rgb);
-}
-
-:deep(.ot-request-tag-rejected) {
-  --ot-request-tag-rgb: var(--ot-req-rejected-rgb);
-}
-
-:deep(.ot-request-tag-info) {
-  --ot-request-tag-rgb: var(--ot-req-info-rgb);
-}
-
-:deep(.ot-request-tag-muted) {
-  --ot-request-tag-rgb: var(--ot-req-muted-rgb);
-}
-
-:deep(.p-tag.approval-display-tag) {
-  max-width: 15rem;
-}
-
-:deep(.p-tag.approval-display-tag .p-tag-label) {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* =========================
-   Main table center
-   ========================= */
-
-:deep(.ot-request-table.p-datatable .p-datatable-table) {
-  width: max-content !important;
-  min-width: 100% !important;
-  table-layout: auto !important;
-}
-
-:deep(.ot-request-table.p-datatable .p-datatable-thead > tr > th),
-:deep(.ot-request-table.p-datatable .p-datatable-tbody > tr > td) {
-  text-align: center !important;
-  vertical-align: middle !important;
-}
-
-:deep(.ot-request-table.p-datatable .p-datatable-thead > tr > th) {
-  width: auto !important;
-  min-width: auto !important;
-  max-width: none !important;
-  padding: 0.58rem 0.68rem !important;
-  white-space: nowrap !important;
-  font-size: 0.78rem !important;
-  font-weight: 650 !important;
-}
-
-:deep(.ot-request-table.p-datatable .p-datatable-tbody > tr > td) {
-  width: auto !important;
-  min-width: auto !important;
-  max-width: none !important;
-  height: 68px !important;
-  padding: 0.46rem 0.68rem !important;
-  white-space: nowrap !important;
-  font-size: 0.8rem !important;
-}
-
-:deep(.ot-request-table.p-datatable .p-datatable-column-header-content),
-:deep(.ot-request-table.p-datatable .p-column-header-content) {
-  display: flex !important;
-  width: 100% !important;
-  align-items: center !important;
-  justify-content: center !important;
-  gap: 0.25rem !important;
-  text-align: center !important;
-}
-
-:deep(.ot-request-table.p-datatable .p-datatable-column-title),
-:deep(.ot-request-table.p-datatable .p-column-title) {
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  text-align: center !important;
-}
-
-:deep(.ot-request-table.p-datatable .p-sortable-column-icon),
-:deep(.ot-request-table.p-datatable .p-datatable-sort-icon) {
-  margin-inline-start: 0.25rem !important;
-  margin-inline-end: 0 !important;
-}
-
-:deep(.ot-request-table.p-datatable .p-datatable-tbody > tr > td > *) {
-  margin-inline: auto !important;
-}
-
-:deep(.ot-request-table.p-datatable .p-tag),
-:deep(.ot-request-table.p-datatable .p-button),
-:deep(.ot-request-table.p-datatable .p-row-toggler) {
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  margin-inline: auto !important;
-  text-align: center !important;
-}
-
-:deep(.ot-request-table.p-datatable .p-tag-value) {
-  max-width: 100%;
-  overflow: hidden;
-  text-align: center !important;
-  text-overflow: ellipsis;
-}
-
-:deep(.ot-request-table.p-datatable .p-row-toggler) {
-  width: 1.72rem !important;
-  height: 1.72rem !important;
-}
-
-:deep(.ot-request-table.p-datatable .p-datatable-row-expansion > td) {
-  height: auto !important;
-  padding: 0 !important;
-  white-space: normal !important;
-  overflow: hidden !important;
 }
 
 .requester-cell {
   display: flex;
-  min-width: max-content;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
+  gap: 0.12rem;
+  min-width: 0;
+}
+
+.ot-request-main-text {
+  font-size: 0.83rem;
+  font-weight: 800;
+  color: var(--text-color);
+  line-height: 1.25;
+}
+
+.ot-request-sub-text {
+  font-size: 0.74rem;
+  font-weight: 650;
+  color: var(--text-color-secondary);
+  line-height: 1.2;
+}
+
+.ot-request-meta-text {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-color-secondary);
+  white-space: nowrap;
 }
 
 .approval-status-cell {
   display: flex;
-  min-width: 0;
   align-items: center;
-  justify-content: center;
+  min-width: 0;
 }
 
-/* =========================
-   Compact expanded dropdown
-   ========================= */
+.ot-request-rgb-tag {
+  border: 1px solid transparent;
+  box-shadow: none;
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.approval-display-tag {
+  max-width: 13rem;
+}
+
+.approval-display-tag :deep(.p-tag-value) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ot-request-tag-approved {
+  border-color: rgba(34, 197, 94, 0.28) !important;
+  background: rgba(34, 197, 94, 0.12) !important;
+  color: #15803d !important;
+}
+
+.ot-request-tag-rejected {
+  border-color: rgba(239, 68, 68, 0.28) !important;
+  background: rgba(239, 68, 68, 0.12) !important;
+  color: #b91c1c !important;
+}
+
+.ot-request-tag-pending {
+  border-color: rgba(245, 158, 11, 0.3) !important;
+  background: rgba(245, 158, 11, 0.14) !important;
+  color: #b45309 !important;
+}
+
+.ot-request-tag-info {
+  border-color: rgba(59, 130, 246, 0.25) !important;
+  background: rgba(59, 130, 246, 0.11) !important;
+  color: #1d4ed8 !important;
+}
+
+.ot-request-tag-muted {
+  border-color: rgba(100, 116, 139, 0.24) !important;
+  background: rgba(100, 116, 139, 0.1) !important;
+  color: #475569 !important;
+}
 
 .ot-expanded-box {
-  width: 100%;
-  max-width: 100%;
-  overflow: hidden;
-  border-top: 1px solid var(--ot-border);
-  border-bottom: 1px solid var(--ot-border);
+  padding: 0.75rem;
   background:
-    linear-gradient(135deg, rgb(var(--ot-req-info-rgb) / 0.05), transparent),
-    var(--ot-bg);
-  padding: 0.55rem 0.7rem;
+    linear-gradient(135deg, rgba(59, 130, 246, 0.04), transparent 34%),
+    var(--surface-ground);
+  border-radius: 14px;
 }
 
 .ot-expanded-content {
-  width: 100%;
-  max-width: 100%;
-  overflow: hidden;
+  overflow-x: auto;
 }
 
 .ot-expanded-responsive-table {
-  width: 100%;
-  max-width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
-  border: 1px solid var(--ot-border);
-  border-radius: 0.8rem;
-  background: var(--ot-surface);
+  display: flex;
+  flex-direction: column;
+  min-width: 720px;
+  border: 1px solid var(--surface-border);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--surface-card);
 }
 
 .ot-expanded-grid-row {
   display: grid;
-  grid-template-columns:
-    2.7rem
-    minmax(5rem, 0.6fr)
-    minmax(8rem, 1.1fr)
-    minmax(7rem, 0.9fr)
-    minmax(6rem, 0.7fr)
-    minmax(8rem, 0.9fr);
-  min-width: 680px;
-  align-items: stretch;
-}
-
-.ot-expanded-grid-row > div {
-  display: flex;
-  min-width: 0;
+  grid-template-columns: 4rem 9rem minmax(12rem, 1.2fr) minmax(10rem, 1fr) 8rem minmax(10rem, 1fr);
   align-items: center;
-  justify-content: center;
-  border-bottom: 1px solid var(--ot-border);
-  padding: 0.42rem 0.48rem;
-  color: var(--ot-text);
-  font-size: 0.7rem;
-  font-weight: 500;
-  line-height: 1.25;
-  text-align: center;
+  min-height: 2.65rem;
+  border-bottom: 1px solid var(--surface-border);
 }
 
-.ot-expanded-grid-row.is-head > div {
-  background: color-mix(in srgb, var(--ot-bg) 82%, transparent);
-  color: var(--ot-text-muted);
-  font-size: 0.64rem;
-  font-weight: 650;
-  white-space: nowrap;
-}
-
-.ot-expanded-grid-row:last-child > div {
+.ot-expanded-grid-row:last-child {
   border-bottom: 0;
 }
 
-.ot-expanded-grid-row:not(.is-head):hover > div {
-  background: color-mix(in srgb, var(--ot-bg) 68%, transparent);
+.ot-expanded-grid-row > div {
+  padding: 0.55rem 0.65rem;
+  font-size: 0.78rem;
+  border-right: 1px solid var(--surface-border);
+}
+
+.ot-expanded-grid-row > div:last-child {
+  border-right: 0;
+}
+
+.ot-expanded-grid-row.is-head {
+  min-height: 2.4rem;
+  background: var(--surface-ground);
+}
+
+.ot-expanded-grid-row.is-head > div {
+  font-size: 0.72rem;
+  font-weight: 850;
+  color: var(--text-color-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .cell-center {
-  justify-content: center !important;
-  text-align: center !important;
+  text-align: center;
 }
 
 .cell-mono {
-  font-variant-numeric: tabular-nums;
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    'Liberation Mono',
+    'Courier New',
+    monospace;
+  font-weight: 800;
 }
 
 .cell-strong {
-  font-weight: 650 !important;
+  font-weight: 800;
+  color: var(--text-color);
 }
 
 .cell-wrap {
   overflow-wrap: anywhere;
-  text-align: center !important;
-  white-space: normal;
-  word-break: break-word;
 }
 
 .ot-expanded-empty {
-  border: 1px dashed var(--ot-border);
-  border-radius: 0.75rem;
-  padding: 0.8rem;
-  color: var(--ot-text-muted);
-  font-size: 0.72rem;
-  font-weight: 500;
+  padding: 0.9rem;
+  border: 1px dashed var(--surface-border);
+  border-radius: 14px;
+  color: var(--text-color-secondary);
+  font-size: 0.82rem;
+  text-align: center;
+  background: var(--surface-card);
+}
+
+.ot-empty-state {
+  display: flex;
+  min-height: 14rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  padding: 2rem;
+  color: var(--text-color-secondary);
+}
+
+.ot-empty-icon {
+  display: grid;
+  width: 3rem;
+  height: 3rem;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.1);
+  color: #2563eb;
+  font-size: 1.25rem;
+}
+
+.ot-empty-title {
+  font-size: 0.95rem;
+  font-weight: 850;
+  color: var(--text-color);
+}
+
+.ot-empty-text {
+  font-size: 0.82rem;
   text-align: center;
 }
 
-/* =========================
-   Responsive
-   ========================= */
-
-@media (min-width: 1024px) {
-  .ot-request-filter-bar {
+@media (max-width: 1100px) {
+  .ot-filter-bar {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .ot-request-filter-actions {
     grid-column: 1 / -1;
+    justify-content: flex-start;
+    min-width: 0;
   }
 }
 
-@media (min-width: 1280px) {
-  .ot-request-filter-bar {
-    grid-template-columns:
-      minmax(260px, 1.2fr)
-      minmax(190px, 0.85fr)
-      minmax(180px, 0.8fr)
-      minmax(180px, 0.8fr);
+@media (max-width: 640px) {
+  .ot-filter-bar {
+    grid-template-columns: 1fr;
+    padding: 0.75rem;
   }
-}
 
-@media (max-width: 1200px) {
-  .ot-expanded-grid-row > div {
-    padding: 0.4rem 0.46rem;
-    font-size: 0.67rem;
-  }
-}
-
-@media (max-width: 768px) {
   .ot-request-filter-actions {
-    justify-content: stretch;
+    flex-direction: column;
+    align-items: stretch;
   }
 
-  .ot-request-filter-actions > * {
-    flex: 1 1 100%;
+  .ot-request-action-button,
+  .ot-loaded-badge {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .ot-table-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .ot-table-actions {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .ot-expanded-box {
-    width: 100%;
-    max-width: 100%;
-    padding: 0.55rem;
-  }
-
-  .ot-expanded-content {
-    width: 100%;
-    max-width: 100%;
-    overflow: hidden;
-  }
-
-  .ot-expanded-responsive-table {
-    width: 100%;
-    max-width: 100%;
-    overflow-x: auto;
-    overflow-y: hidden;
-  }
-
-  .ot-expanded-grid-row {
-    grid-template-columns:
-      2.4rem
-      5.8rem
-      8.8rem
-      8.2rem
-      6.4rem
-      8.5rem;
-    min-width: 640px;
-  }
-
-  .ot-expanded-grid-row > div {
-    padding: 0.4rem 0.48rem;
-    font-size: 0.67rem;
-    line-height: 1.25;
-  }
-
-  .ot-expanded-grid-row.is-head > div {
-    font-size: 0.63rem;
+    padding: 0.5rem;
   }
 }
 </style>

@@ -10,6 +10,7 @@ const shiftRoutes = require('../modules/shift/routes')
 const attendanceRoutes = require('../modules/attendance/routes')
 const otRoutes = require('../modules/ot/routes')
 const paymentRoutes = require('../modules/payment/routes/payment.routes')
+const notificationRoutes = require('../modules/notification/routes')
 
 const router = express.Router()
 
@@ -21,5 +22,6 @@ router.use('/shift', shiftRoutes)
 router.use('/attendance', attendanceRoutes)
 router.use('/ot', otRoutes)
 router.use('/payment', paymentRoutes)
+router.use('/notifications', notificationRoutes)
 
 module.exports = router

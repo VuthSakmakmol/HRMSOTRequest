@@ -20,11 +20,28 @@ import Textarea from 'primevue/textarea'
 
 import HolidayDatePicker from '@/modules/calendar/components/HolidayDatePicker.vue'
 import AppTableLoading from '@/shared/components/AppTableLoading.vue'
+
+import { getApiErrorMessage } from '@/shared/utils/apiError'
+import { useOTRealtimeRefresh } from '@/modules/ot/otRealtimeRefresh'
+
 import {
   decideOTRequest,
   exportOTApprovalInboxExcel,
   getOTApprovalInbox,
 } from '@/modules/ot/ot.api'
+
+import {
+  getApprovalDisplay,
+  getApprovalTagClass,
+  getEmployeeCount,
+  getEmployeeDisplay,
+  getEmployeePaidHoursLabel,
+  getOTPermissions,
+  getPaidHoursLabel,
+  getRequesterDisplay,
+  getTargetEmployees,
+  normalizeOTRow,
+} from '@/modules/ot/otDisplay'
 
 const { t } = useI18n()
 const toast = useToast()
@@ -37,7 +54,6 @@ const totalRecords = ref(0)
 const loadedPages = ref(new Set())
 const expandedRows = ref({})
 const selectedRequestIds = ref([])
-
 const bootstrapped = ref(false)
 const backgroundLoading = ref(false)
 const exporting = ref(false)
@@ -47,6 +63,8 @@ const filters = reactive({
   status: '',
   otDateFrom: '',
   otDateTo: '',
+  sortBy: 'createdAt',
+  sortOrder: -1,
 })
 
 const decisionDialog = reactive({
@@ -64,31 +82,33 @@ const bulkDialog = reactive({
   rows: [],
 })
 
+let searchTimer = null
+let currentRequestId = 0
+
 const statusOptions = computed(() => [
-  { label: t('common.allStatus'), value: '' },
-  { label: t('ot.status.pending'), value: 'PENDING' },
+  { label: tr('common.allStatus', 'All Status'), value: '' },
+  { label: tr('ot.status.pending', 'Pending'), value: 'PENDING' },
   {
-    label: t('ot.status.pendingRequesterConfirmation'),
+    label: tr('ot.status.pendingRequesterConfirmation', 'Waiting Requester Confirmation'),
     value: 'PENDING_REQUESTER_CONFIRMATION',
   },
-  { label: t('ot.status.approved'), value: 'APPROVED' },
-  { label: t('ot.status.rejected'), value: 'REJECTED' },
-  { label: t('ot.status.requesterDisagreed'), value: 'REQUESTER_DISAGREED' },
-  { label: t('ot.status.cancelled'), value: 'CANCELLED' },
+  { label: tr('ot.status.approved', 'Approved'), value: 'APPROVED' },
+  { label: tr('ot.status.rejected', 'Rejected'), value: 'REJECTED' },
+  { label: tr('ot.status.requesterDisagreed', 'Requester Disagreed'), value: 'REQUESTER_DISAGREED' },
+  { label: tr('ot.status.cancelled', 'Cancelled'), value: 'CANCELLED' },
 ])
 
 const totalInbox = computed(() => Number(totalRecords.value || 0))
 const loadedCount = computed(() => rows.value.filter(Boolean).length)
+const hasAnyData = computed(() => rows.value.some(Boolean))
+const useVirtualScroll = computed(() => totalInbox.value > PAGE_SIZE)
 
 const summaryText = computed(() =>
-  t('common.loaded', {
+  tr('common.loaded', 'Loaded {loaded} of {total}', {
     loaded: loadedCount.value,
     total: totalInbox.value,
   }),
 )
-
-const hasAnyData = computed(() => rows.value.some(Boolean))
-const useVirtualScroll = computed(() => totalInbox.value > PAGE_SIZE)
 
 const firstLoading = computed(() => {
   return backgroundLoading.value && !bootstrapped.value && !hasAnyData.value
@@ -125,64 +145,59 @@ const bulkEmployeeCount = computed(() =>
 const decisionIsApprove = computed(() => decisionDialog.action === 'APPROVE')
 const decisionIsReject = computed(() => decisionDialog.action === 'REJECT')
 
-let searchTimer = null
-let currentRequestId = 0
+function tr(key, fallback, params) {
+  const value = t(key, params || {})
+
+  if (!value || value === key) return fallback
+
+  return value
+}
 
 function normalizePayload(res) {
   return res?.data?.data || res?.data || {}
 }
 
 function normalizeItems(payload) {
-  return Array.isArray(payload?.items) ? payload.items : []
+  if (Array.isArray(payload)) return payload
+  if (Array.isArray(payload?.items)) return payload.items
+  if (Array.isArray(payload?.requests)) return payload.requests
+  if (Array.isArray(payload?.otRequests)) return payload.otRequests
+  if (Array.isArray(payload?.rows)) return payload.rows
+
+  return []
+}
+
+function normalizeTotal(payload) {
+  return Number(
+    payload?.pagination?.total ||
+      payload?.pagination?.totalRecords ||
+      payload?.total ||
+      payload?.totalRecords ||
+      payload?.count ||
+      0,
+  )
 }
 
 function normalizeRow(row) {
   if (!row) return row
 
+  const normalized = normalizeOTRow(row)
+
   return {
-    ...row,
-    id: String(row?.id || row?._id || '').trim(),
+    ...normalized,
+    id: String(
+      normalized?.id ||
+        normalized?._id ||
+        normalized?.requestId ||
+        normalized?.otRequestId ||
+        normalized?.requestNo ||
+        '',
+    ).trim(),
   }
 }
 
 function rowIdOf(row) {
-  return String(row?.id || row?._id || '').trim()
-}
-
-function upper(value) {
-  return String(value || '').trim().toUpperCase()
-}
-
-function firstText(...values) {
-  for (const value of values) {
-    const text = String(value || '').trim()
-    if (text) return text
-  }
-
-  return ''
-}
-
-function firstPositiveNumber(...values) {
-  for (const value of values) {
-    const number = Number(value)
-
-    if (Number.isFinite(number) && number > 0) {
-      return number
-    }
-  }
-
-  return 0
-}
-
-function errorMessage(error, fallback = '') {
-  return (
-    error?.response?.data?.message ||
-    error?.response?.data?.messageKey ||
-    error?.response?.data?.error ||
-    error?.message ||
-    fallback ||
-    t('common.somethingWentWrong')
-  )
+  return String(row?.id || row?._id || row?.requestId || row?.otRequestId || '').trim()
 }
 
 function pad2(value) {
@@ -239,6 +254,113 @@ function formatDateTimeDMY(value) {
   return `${dd}/${mm}/${yyyy}, ${hh}:${min}`
 }
 
+function displayRequester(row) {
+  return getRequesterDisplay(row)
+}
+
+function displayApproval(row) {
+  return getApprovalDisplay(row)
+}
+
+function displayApprovalTagClass(row) {
+  return getApprovalTagClass(row, 'ot-approval')
+}
+
+function displayStaffCount(row) {
+  return Number(row?.effectiveEmployeeCount || row?.requestedEmployeeCount || getEmployeeCount(row) || 0)
+}
+
+function displayPaidTime(row) {
+  return getPaidHoursLabel(row)
+}
+
+function displayEmployees(row) {
+  return getTargetEmployees(row)
+}
+
+function employeeIdOf(employee) {
+  return String(employee?.employeeId || employee?._id || employee?.id || '').trim()
+}
+
+function employeeCodeOf(employee) {
+  return getEmployeeDisplay(employee).code
+}
+
+function employeeNameOf(employee) {
+  return getEmployeeDisplay(employee).name
+}
+
+function employeePositionOf(employee) {
+  const position = employee?.position || employee?.positionSnapshot || {}
+
+  return String(
+    employee?.positionName ||
+      employee?.position ||
+      employee?.positions ||
+      employee?.positionTitle ||
+      position?.name ||
+      position?.positionName ||
+      '-',
+  ).trim() || '-'
+}
+
+function employeeDepartmentOf(employee) {
+  return String(
+    employee?.departmentName ||
+      employee?.department?.name ||
+      employee?.departmentSnapshot?.name ||
+      '-',
+  ).trim() || '-'
+}
+
+function employeePaidTimeOf(employee, row) {
+  return getEmployeePaidHoursLabel(employee, row)
+}
+
+function rowPermissions(row) {
+  return getOTPermissions(row)
+}
+
+function canDecide(row) {
+  const permissions = rowPermissions(row)
+
+  return (
+    permissions.canApprove === true ||
+    permissions.canReject === true ||
+    row?.approvalContext?.canDecide === true ||
+    row?.canDecide === true
+  )
+}
+
+function canApprove(row) {
+  const permissions = rowPermissions(row)
+
+  return (
+    permissions.canApprove === true ||
+    row?.approvalContext?.canDecide === true ||
+    row?.canApprove === true ||
+    row?.canDecide === true
+  )
+}
+
+function canReject(row) {
+  const permissions = rowPermissions(row)
+
+  return (
+    permissions.canReject === true ||
+    row?.approvalContext?.canDecide === true ||
+    row?.canReject === true ||
+    row?.canDecide === true
+  )
+}
+
+function canSelectForBulk(row) {
+  if (!row) return false
+  if (!canApprove(row)) return false
+
+  return displayEmployees(row).some((employee) => employeeIdOf(employee))
+}
+
 function buildQuery(page) {
   return {
     page,
@@ -247,6 +369,8 @@ function buildQuery(page) {
     status: filters.status || undefined,
     otDateFrom: formatDateYMD(filters.otDateFrom),
     otDateTo: formatDateYMD(filters.otDateTo),
+    sortBy: filters.sortBy,
+    sortOrder: filters.sortOrder === 1 ? 'asc' : 'desc',
   }
 }
 
@@ -256,353 +380,9 @@ function buildExportQuery() {
     status: filters.status || undefined,
     otDateFrom: formatDateYMD(filters.otDateFrom),
     otDateTo: formatDateYMD(filters.otDateTo),
+    sortBy: filters.sortBy,
+    sortOrder: filters.sortOrder === 1 ? 'asc' : 'desc',
   }
-}
-
-function statusLabel(value, key = '') {
-  if (key) return t(key)
-
-  const normalized = upper(value)
-
-  if (normalized === 'PENDING') return t('ot.status.pending')
-  if (normalized === 'PENDING_REQUESTER_CONFIRMATION') {
-    return t('ot.status.pendingRequesterConfirmation')
-  }
-  if (normalized === 'APPROVED') return t('ot.status.approved')
-  if (normalized === 'REJECTED') return t('ot.status.rejected')
-  if (normalized === 'REQUESTER_DISAGREED') return t('ot.status.requesterDisagreed')
-  if (normalized === 'CANCELLED') return t('ot.status.cancelled')
-
-  return normalized || t('common.unknown')
-}
-
-function statusTagClass(value) {
-  const normalized = upper(value)
-
-  if (normalized === 'APPROVED') return ['ot-approval-rgb-tag', 'ot-approval-tag-approved']
-  if (normalized === 'REJECTED') return ['ot-approval-rgb-tag', 'ot-approval-tag-rejected']
-  if (normalized === 'REQUESTER_DISAGREED') return ['ot-approval-rgb-tag', 'ot-approval-tag-rejected']
-  if (normalized === 'PENDING_REQUESTER_CONFIRMATION') return ['ot-approval-rgb-tag', 'ot-approval-tag-info']
-  if (normalized === 'CANCELLED') return ['ot-approval-rgb-tag', 'ot-approval-tag-muted']
-  if (normalized === 'PENDING') return ['ot-approval-rgb-tag', 'ot-approval-tag-pending']
-
-  return ['ot-approval-rgb-tag', 'ot-approval-tag-muted']
-}
-
-function approvalDisplay(row) {
-  const display = row?.approvalDisplay || {}
-
-  return {
-    type: firstText(display.type, row?.approvalDisplayType, row?.status, 'UNKNOWN'),
-    label: firstText(
-      display.label,
-      row?.approvalDisplayLabel,
-      statusLabel(row?.status, row?.statusKey),
-    ),
-    subLabel: firstText(display.subLabel, row?.approvalDisplaySubLabel, ''),
-    severity: firstText(display.severity, row?.approvalDisplaySeverity, ''),
-  }
-}
-
-function approvalDisplayTagClass(row) {
-  const display = approvalDisplay(row)
-  const type = upper(display.type)
-  const severity = upper(display.severity)
-
-  if (severity === 'SUCCESS' || type.includes('APPROVED')) {
-    return ['ot-approval-rgb-tag', 'approval-display-tag', 'ot-approval-tag-approved']
-  }
-
-  if (
-    severity === 'DANGER' ||
-    severity === 'ERROR' ||
-    type.includes('REJECTED') ||
-    type.includes('DISAGREED')
-  ) {
-    return ['ot-approval-rgb-tag', 'approval-display-tag', 'ot-approval-tag-rejected']
-  }
-
-  if (severity === 'INFO' || type.includes('CONFIRMATION')) {
-    return ['ot-approval-rgb-tag', 'approval-display-tag', 'ot-approval-tag-info']
-  }
-
-  if (severity === 'WARNING' || severity === 'WARN' || type.includes('PENDING')) {
-    return ['ot-approval-rgb-tag', 'approval-display-tag', 'ot-approval-tag-pending']
-  }
-
-  if (type.includes('CANCELLED')) {
-    return ['ot-approval-rgb-tag', 'approval-display-tag', 'ot-approval-tag-muted']
-  }
-
-  return statusTagClass(row?.status)
-}
-
-function formatMinutesLabel(value) {
-  const minutes = Number(value || 0)
-
-  if (!minutes) return t('ot.common.minuteValue', { value: 0 })
-
-  const hours = Math.floor(minutes / 60)
-  const mins = minutes % 60
-
-  if (hours && mins) {
-    return t('ot.common.hourMinuteValue', {
-      hours,
-      minutes: mins,
-    })
-  }
-
-  if (hours) return t('ot.common.hourValue', { value: hours })
-
-  return t('ot.common.minuteValue', { value: mins })
-}
-
-function totalOtMinutesOf(row) {
-  return firstPositiveNumber(
-    // Backend paid OT source of truth: after break deduction.
-    row?.totalRequestPaidMinutes,
-    row?.totalMinutes,
-    row?.paidMinutes,
-    row?.approvedMinutes,
-
-    // Fallback only for old data.
-    row?.requestedMinutes,
-    row?.totalRequestedMinutes,
-    row?.otRequestedMinutes,
-    row?.totalOtMinutes,
-    row?.otMinutes,
-    row?.durationMinutes,
-    row?.plannedMinutes,
-    row?.approvedRequestedMinutes,
-  )
-}
-
-function employeeTotalOtMinutesOf(employee, row) {
-  return firstPositiveNumber(
-    // Backend paid OT source of truth: after break deduction.
-    employee?.totalRequestPaidMinutes,
-    employee?.totalMinutes,
-    employee?.paidMinutes,
-    employee?.approvedMinutes,
-
-    // Fallback only for old data.
-    employee?.requestedMinutes,
-    employee?.totalRequestedMinutes,
-    employee?.otRequestedMinutes,
-    employee?.totalOtMinutes,
-    employee?.otMinutes,
-    employee?.durationMinutes,
-    employee?.plannedMinutes,
-    employee?.approvedRequestedMinutes,
-
-    totalOtMinutesOf(row),
-  )
-}
-
-function formatRequester(row) {
-  const name = String(
-    row?.requesterName ||
-      row?.createdByName ||
-      row?.ownerName ||
-      row?.employeeName ||
-      '',
-  ).trim()
-
-  const employeeNo = String(
-    row?.requesterEmployeeNo ||
-      row?.requesterEmployeeCode ||
-      row?.createdByEmployeeNo ||
-      row?.employeeNo ||
-      '',
-  ).trim()
-
-  return {
-    name: name || '-',
-    employeeNo: employeeNo || '-',
-  }
-}
-
-function getTargetEmployees(row) {
-  if (Array.isArray(row?.employees)) return row.employees
-  if (Array.isArray(row?.approvedEmployees)) return row.approvedEmployees
-  if (Array.isArray(row?.requestedEmployees)) return row.requestedEmployees
-  if (Array.isArray(row?.employeeItems)) return row.employeeItems
-  if (Array.isArray(row?.targetEmployees)) return row.targetEmployees
-  if (Array.isArray(row?.employeeList)) return row.employeeList
-
-  return []
-}
-
-function getEmployeeCount(row) {
-  const explicitCount = Number(
-    row?.employeeCount ||
-      row?.approvedEmployeeCount ||
-      row?.requestedEmployeeCount ||
-      row?.totalEmployees ||
-      0,
-  )
-
-  if (explicitCount > 0) return explicitCount
-
-  return getTargetEmployees(row).length
-}
-
-function employeeIdOf(employee) {
-  return String(employee?.employeeId || employee?._id || employee?.id || '').trim()
-}
-
-function employeeNameOf(employee) {
-  return String(
-    employee?.employeeName ||
-      employee?.displayName ||
-      employee?.name ||
-      employee?.fullName ||
-      '-',
-  ).trim() || '-'
-}
-
-function employeeCodeOf(employee) {
-  return String(
-    employee?.employeeCode ||
-      employee?.employeeNo ||
-      employee?.code ||
-      employee?.loginId ||
-      '-',
-  ).trim() || '-'
-}
-
-function employeePositionOf(employee) {
-  return String(
-    employee?.positionName ||
-      employee?.position?.name ||
-      employee?.positionTitle ||
-      '-',
-  ).trim() || '-'
-}
-
-function employeeDepartmentOf(employee) {
-  return String(
-    employee?.departmentName ||
-      employee?.department?.name ||
-      '-',
-  ).trim() || '-'
-}
-
-function canDecide(row) {
-  return row?.canDecide === true
-}
-
-function canSelectForBulk(row) {
-  if (!row) return false
-  if (!canDecide(row)) return false
-
-  return getTargetEmployees(row).some((employee) => employeeIdOf(employee))
-}
-
-function resetDecisionDialog() {
-  decisionDialog.visible = false
-  decisionDialog.loading = false
-  decisionDialog.action = 'APPROVE'
-  decisionDialog.remark = ''
-  decisionDialog.row = null
-}
-
-function openDecision(row, action) {
-  if (!canDecide(row)) return
-
-  decisionDialog.visible = true
-  decisionDialog.loading = false
-  decisionDialog.action = action
-  decisionDialog.remark = ''
-  decisionDialog.row = row
-}
-
-function closeDecision() {
-  if (decisionDialog.loading) return
-
-  resetDecisionDialog()
-}
-
-function isRequestSelected(row) {
-  const id = rowIdOf(row)
-
-  return selectedRequestIds.value.includes(id)
-}
-
-function toggleRequestSelection(row, checked) {
-  const id = rowIdOf(row)
-
-  if (!id || !canSelectForBulk(row)) return
-
-  if (checked) {
-    if (selectedRequestIds.value.includes(id)) return
-
-    selectedRequestIds.value = [...selectedRequestIds.value, id]
-    return
-  }
-
-  selectedRequestIds.value = selectedRequestIds.value.filter((item) => item !== id)
-}
-
-function selectLoadedActionableRows() {
-  const ids = new Set(selectedRequestIds.value)
-
-  actionableLoadedRows.value.forEach((row) => {
-    const id = rowIdOf(row)
-    if (id) ids.add(id)
-  })
-
-  selectedRequestIds.value = Array.from(ids)
-}
-
-function unselectLoadedActionableRows() {
-  const loadedIds = new Set(actionableLoadedRows.value.map(rowIdOf).filter(Boolean))
-
-  selectedRequestIds.value = selectedRequestIds.value.filter((id) => !loadedIds.has(id))
-}
-
-function toggleLoadedSelection(checked) {
-  if (checked) {
-    selectLoadedActionableRows()
-    return
-  }
-
-  unselectLoadedActionableRows()
-}
-
-function clearBulkSelection() {
-  selectedRequestIds.value = []
-}
-
-function resetListViewState() {
-  expandedRows.value = {}
-  selectedRequestIds.value = []
-}
-
-function openBulkApproveSelected() {
-  if (!selectedBulkRows.value.length) {
-    toast.add({
-      severity: 'warn',
-      summary: t('ot.approval.noSelectedRequests'),
-      detail: t('ot.approval.selectAtLeastOne'),
-      life: 2500,
-    })
-    return
-  }
-
-  bulkDialog.visible = true
-  bulkDialog.loading = false
-  bulkDialog.remark = ''
-  bulkDialog.rows = [...selectedBulkRows.value]
-}
-
-function closeBulkDialog() {
-  if (bulkDialog.loading) return
-
-  bulkDialog.visible = false
-  bulkDialog.loading = false
-  bulkDialog.remark = ''
-  bulkDialog.rows = []
 }
 
 async function fetchPage(page, { replace = false, silent = false } = {}) {
@@ -621,30 +401,31 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
     const payload = normalizePayload(res)
     const items = normalizeItems(payload).map(normalizeRow)
-    const total = Number(payload?.pagination?.total || payload?.pagination?.totalRecords || 0)
+    const total = normalizeTotal(payload)
+    const startIndex = (page - 1) * PAGE_SIZE
 
     totalRecords.value = total
 
     if (replace) {
-      const nextRows = Array.from({ length: total }, () => null)
-      const startIndex = (page - 1) * PAGE_SIZE
+      const nextRows = total > 0 ? Array.from({ length: total }, () => null) : []
 
-      for (let i = 0; i < items.length; i += 1) {
-        nextRows[startIndex + i] = items[i]
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
       }
 
       rows.value = total === 0 ? [] : nextRows
       loadedPages.value = new Set([page])
+      expandedRows.value = {}
+      selectedRequestIds.value = []
     } else {
       if (!rows.value.length && total > 0) {
         rows.value = Array.from({ length: total }, () => null)
       }
 
       const nextRows = [...rows.value]
-      const startIndex = (page - 1) * PAGE_SIZE
 
-      for (let i = 0; i < items.length; i += 1) {
-        nextRows[startIndex + i] = items[i]
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
       }
 
       rows.value = nextRows
@@ -653,26 +434,26 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
 
     bootstrapped.value = true
   } catch (error) {
+    bootstrapped.value = true
+
     toast.add({
       severity: 'error',
-      summary: t('common.loadFailed'),
-      detail: errorMessage(error, t('ot.approval.loadFailed')),
-      life: 3000,
+      summary: tr('common.loadFailed', 'Load Failed'),
+      detail: getApiErrorMessage(error, tr('ot.approval.loadFailed', 'Failed to load approval inbox')),
+      life: 3500,
     })
   } finally {
     backgroundLoading.value = false
   }
 }
 
-async function reloadFirstPage({ keepVisible = true, resetState = false } = {}) {
-  if (resetState) {
-    resetListViewState()
-  }
-
+async function reloadFirstPage({ keepVisible = true } = {}) {
   if (!keepVisible) {
     rows.value = []
     totalRecords.value = 0
     loadedPages.value = new Set()
+    expandedRows.value = {}
+    selectedRequestIds.value = []
     bootstrapped.value = false
   }
 
@@ -682,11 +463,22 @@ async function reloadFirstPage({ keepVisible = true, resetState = false } = {}) 
   })
 }
 
+useOTRealtimeRefresh(
+  () =>
+    reloadFirstPage({
+      keepVisible: true,
+    }),
+  {
+    name: 'OTApprovalInboxView',
+    debounceMs: 250,
+  },
+)
+
 function runSearchSoon() {
   window.clearTimeout(searchTimer)
 
   searchTimer = window.setTimeout(() => {
-    reloadFirstPage({ keepVisible: true, resetState: true })
+    reloadFirstPage({ keepVisible: true })
   }, SEARCH_DEBOUNCE_MS)
 }
 
@@ -694,21 +486,15 @@ function onSearchInput() {
   runSearchSoon()
 }
 
-function onStatusChange() {
-  reloadFirstPage({ keepVisible: true, resetState: true })
+function onFilterChange() {
+  reloadFirstPage({ keepVisible: true })
 }
 
-function onDateChange() {
-  reloadFirstPage({ keepVisible: true, resetState: true })
-}
+function onSort(event) {
+  filters.sortBy = event.sortField || 'createdAt'
+  filters.sortOrder = typeof event.sortOrder === 'number' ? event.sortOrder : -1
 
-function clearFilters() {
-  filters.search = ''
-  filters.status = ''
-  filters.otDateFrom = ''
-  filters.otDateTo = ''
-
-  reloadFirstPage({ keepVisible: true, resetState: true })
+  reloadFirstPage({ keepVisible: true })
 }
 
 async function onVirtualLazyLoad(event) {
@@ -727,6 +513,112 @@ async function onVirtualLazyLoad(event) {
   }
 }
 
+async function clearFilters() {
+  filters.search = ''
+  filters.status = ''
+  filters.otDateFrom = ''
+  filters.otDateTo = ''
+  filters.sortBy = 'createdAt'
+  filters.sortOrder = -1
+
+  await reloadFirstPage({ keepVisible: true })
+}
+
+function isRequestSelected(row) {
+  const id = rowIdOf(row)
+
+  return !!id && selectedRequestIds.value.includes(id)
+}
+
+function toggleRequestSelection(row, checked) {
+  const id = rowIdOf(row)
+  if (!id || !canSelectForBulk(row)) return
+
+  const selected = new Set(selectedRequestIds.value)
+
+  if (checked) {
+    selected.add(id)
+  } else {
+    selected.delete(id)
+  }
+
+  selectedRequestIds.value = [...selected]
+}
+
+function toggleAllLoadedSelection(checked) {
+  const selected = new Set(selectedRequestIds.value)
+
+  for (const row of actionableLoadedRows.value) {
+    const id = rowIdOf(row)
+
+    if (!id) continue
+
+    if (checked) {
+      selected.add(id)
+    } else {
+      selected.delete(id)
+    }
+  }
+
+  selectedRequestIds.value = [...selected]
+}
+
+function clearBulkSelection() {
+  selectedRequestIds.value = []
+}
+
+function resetDecisionDialog() {
+  decisionDialog.visible = false
+  decisionDialog.loading = false
+  decisionDialog.action = 'APPROVE'
+  decisionDialog.remark = ''
+  decisionDialog.row = null
+}
+
+function openDecision(row, action) {
+  if (!canDecide(row)) return
+
+  if (action === 'APPROVE' && !canApprove(row)) return
+  if (action === 'REJECT' && !canReject(row)) return
+
+  decisionDialog.visible = true
+  decisionDialog.loading = false
+  decisionDialog.action = action
+  decisionDialog.remark = ''
+  decisionDialog.row = row
+}
+
+function closeDecision() {
+  if (decisionDialog.loading) return
+
+  resetDecisionDialog()
+}
+
+function openBulkDialog() {
+  if (!selectedBulkRows.value.length) return
+
+  bulkDialog.visible = true
+  bulkDialog.loading = false
+  bulkDialog.remark = ''
+  bulkDialog.rows = [...selectedBulkRows.value]
+}
+
+function closeBulkDialog() {
+  if (bulkDialog.loading) return
+
+  bulkDialog.visible = false
+  bulkDialog.loading = false
+  bulkDialog.remark = ''
+  bulkDialog.rows = []
+}
+
+function getFilenameFromHeader(res, fallback) {
+  const disposition = String(res?.headers?.['content-disposition'] || '')
+  const match = disposition.match(/filename="?([^"]+)"?/i)
+
+  return match?.[1] || fallback
+}
+
 function downloadBlob(blob, filename) {
   const url = window.URL.createObjectURL(blob)
   const link = document.createElement('a')
@@ -736,15 +628,15 @@ function downloadBlob(blob, filename) {
 
   document.body.appendChild(link)
   link.click()
-  document.body.removeChild(link)
+  link.remove()
 
   window.URL.revokeObjectURL(url)
 }
 
-async function onExportExcel() {
-  try {
-    exporting.value = true
+async function handleExport() {
+  exporting.value = true
 
+  try {
     const res = await exportOTApprovalInboxExcel(buildExportQuery())
 
     const blob =
@@ -754,20 +646,20 @@ async function onExportExcel() {
             type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
           })
 
-    downloadBlob(blob, 'ot-approval-inbox.xlsx')
+    downloadBlob(blob, getFilenameFromHeader(res, `ot-approval-inbox-${Date.now()}.xlsx`))
 
     toast.add({
       severity: 'success',
-      summary: t('ot.approval.exported'),
-      detail: t('ot.approval.exportedSuccess'),
+      summary: tr('ot.approval.exported', 'Exported'),
+      detail: tr('ot.approval.exportedSuccess', 'Approval inbox exported successfully'),
       life: 2500,
     })
   } catch (error) {
     toast.add({
       severity: 'error',
-      summary: t('ot.approval.exportFailed'),
-      detail: errorMessage(error, t('ot.approval.exportFailed')),
-      life: 3000,
+      summary: tr('ot.approval.exportFailed', 'Export Failed'),
+      detail: getApiErrorMessage(error, tr('ot.approval.exportFailed', 'Failed to export approval inbox')),
+      life: 3500,
     })
   } finally {
     exporting.value = false
@@ -783,10 +675,11 @@ async function submitDecision() {
   if (decisionDialog.action === 'REJECT' && !String(decisionDialog.remark || '').trim()) {
     toast.add({
       severity: 'warn',
-      summary: t('common.warning'),
-      detail: t('ot.approval.rejectionRemarkRequired'),
+      summary: tr('common.warning', 'Warning'),
+      detail: tr('ot.approval.rejectionRemarkRequired', 'Please enter a rejection remark'),
       life: 2500,
     })
+
     return
   }
 
@@ -800,20 +693,20 @@ async function submitDecision() {
 
     toast.add({
       severity: 'success',
-      summary: t('ot.approval.decisionSuccess'),
+      summary: tr('ot.approval.decisionSuccess', 'Decision Saved'),
       detail: decisionIsApprove.value
-        ? t('ot.approval.approveSuccess')
-        : t('ot.approval.rejectSuccess'),
+        ? tr('ot.approval.approveSuccess', 'Request approved successfully')
+        : tr('ot.approval.rejectSuccess', 'Request rejected successfully'),
       life: 2500,
     })
 
     resetDecisionDialog()
-    await reloadFirstPage({ keepVisible: false, resetState: true })
+    await reloadFirstPage({ keepVisible: false })
   } catch (error) {
     toast.add({
       severity: 'error',
-      summary: t('ot.approval.decisionFailed'),
-      detail: errorMessage(error, t('ot.approval.decisionFailed')),
+      summary: tr('ot.approval.decisionFailed', 'Decision Failed'),
+      detail: getApiErrorMessage(error, tr('ot.approval.decisionFailed', 'Failed to save decision')),
       life: 4000,
     })
 
@@ -853,30 +746,35 @@ async function submitBulkApproval() {
     if (successCount > 0) {
       toast.add({
         severity: 'success',
-        summary: t('ot.approval.bulkCompleted'),
+        summary: tr('ot.approval.bulkCompleted', 'Bulk Approval Completed'),
         detail:
           failedCount > 0
-            ? t('ot.approval.bulkPartial', { success: successCount, failed: failedCount })
-            : t('ot.approval.bulkSuccess', { count: successCount }),
+            ? tr('ot.approval.bulkPartial', `${successCount} approved, ${failedCount} failed`, {
+                success: successCount,
+                failed: failedCount,
+              })
+            : tr('ot.approval.bulkSuccess', `${successCount} requests approved`, {
+                count: successCount,
+              }),
         life: 3500,
       })
     } else {
       toast.add({
         severity: 'error',
-        summary: t('ot.approval.bulkFailed'),
-        detail: t('ot.approval.bulkNoApproved'),
+        summary: tr('ot.approval.bulkFailed', 'Bulk Approval Failed'),
+        detail: tr('ot.approval.bulkNoApproved', 'No request was approved'),
         life: 3500,
       })
     }
 
     closeBulkDialog()
     clearBulkSelection()
-    await reloadFirstPage({ keepVisible: false, resetState: true })
+    await reloadFirstPage({ keepVisible: false })
   } catch (error) {
     toast.add({
       severity: 'error',
-      summary: t('ot.approval.bulkFailed'),
-      detail: errorMessage(error, t('ot.approval.bulkFailed')),
+      summary: tr('ot.approval.bulkFailed', 'Bulk Approval Failed'),
+      detail: getApiErrorMessage(error, tr('ot.approval.bulkFailed', 'Bulk approval failed')),
       life: 4000,
     })
 
@@ -885,7 +783,7 @@ async function submitBulkApproval() {
 }
 
 onMounted(() => {
-  reloadFirstPage({ keepVisible: false, resetState: true })
+  reloadFirstPage({ keepVisible: false })
 })
 
 onBeforeUnmount(() => {
@@ -898,7 +796,7 @@ onBeforeUnmount(() => {
     <section class="ot-filter-bar ot-approval-filter-bar">
       <div class="ot-field">
         <label class="ot-field-label">
-          {{ t('common.search') }}
+          {{ tr('common.search', 'Search') }}
         </label>
 
         <IconField>
@@ -906,7 +804,7 @@ onBeforeUnmount(() => {
 
           <InputText
             v-model="filters.search"
-            :placeholder="t('common.search')"
+            :placeholder="tr('common.search', 'Search')"
             class="w-full"
             size="small"
             @input="onSearchInput"
@@ -916,7 +814,7 @@ onBeforeUnmount(() => {
 
       <div class="ot-field">
         <label class="ot-field-label">
-          {{ t('common.status') }}
+          {{ tr('common.status', 'Status') }}
         </label>
 
         <Select
@@ -924,28 +822,28 @@ onBeforeUnmount(() => {
           :options="statusOptions"
           option-label="label"
           option-value="value"
-          :placeholder="t('common.status')"
+          :placeholder="tr('common.status', 'Status')"
           class="w-full"
           size="small"
-          @change="onStatusChange"
+          @change="onFilterChange"
         />
       </div>
 
       <div class="ot-field">
         <HolidayDatePicker
           v-model="filters.otDateFrom"
-          :label="t('ot.requests.otDateFrom')"
-          :placeholder="t('ot.requests.otDateFrom')"
-          @change="onDateChange"
+          :label="tr('ot.requests.otDateFrom', 'OT Date From')"
+          :placeholder="tr('ot.requests.otDateFrom', 'OT Date From')"
+          @change="onFilterChange"
         />
       </div>
 
       <div class="ot-field">
         <HolidayDatePicker
           v-model="filters.otDateTo"
-          :label="t('ot.requests.otDateTo')"
-          :placeholder="t('ot.requests.otDateTo')"
-          @change="onDateChange"
+          :label="tr('ot.requests.otDateTo', 'OT Date To')"
+          :placeholder="tr('ot.requests.otDateTo', 'OT Date To')"
+          @change="onFilterChange"
         />
       </div>
 
@@ -955,7 +853,7 @@ onBeforeUnmount(() => {
         </span>
 
         <Button
-          :label="t('common.clear')"
+          :label="tr('common.clear', 'Clear')"
           icon="pi pi-filter-slash"
           severity="secondary"
           outlined
@@ -965,38 +863,14 @@ onBeforeUnmount(() => {
         />
 
         <Button
-          :label="t('ot.approval.exportExcel')"
+          :label="tr('ot.approval.exportExcel', 'Export Excel')"
           icon="pi pi-file-excel"
           severity="secondary"
           outlined
           size="small"
-          class="ot-approval-action-button ot-approval-export-button"
+          class="ot-approval-action-button"
           :loading="exporting"
-          @click="onExportExcel"
-        />
-
-        <Button
-          :label="
-            selectedBulkCount
-              ? t('ot.approval.approveSelectedWithCount', { count: selectedBulkCount })
-              : t('ot.approval.approveSelected')
-          "
-          icon="pi pi-check"
-          size="small"
-          class="ot-approval-action-button"
-          :disabled="!selectedBulkCount"
-          @click="openBulkApproveSelected"
-        />
-
-        <Button
-          v-if="selectedRequestIds.length"
-          :label="t('ot.approval.clearSelection')"
-          icon="pi pi-times"
-          severity="secondary"
-          text
-          size="small"
-          class="ot-approval-action-button"
-          @click="clearBulkSelection"
+          @click="handleExport"
         />
       </div>
     </section>
@@ -1005,7 +879,7 @@ onBeforeUnmount(() => {
       <div class="ot-table-toolbar">
         <div>
           <h2 class="ot-table-title">
-            {{ t('ot.approval.inbox') }}
+            {{ tr('ot.approval.inboxTitle', 'OT Approval Inbox') }}
           </h2>
         </div>
 
@@ -1015,17 +889,39 @@ onBeforeUnmount(() => {
             class="ot-loaded-badge"
           >
             <i class="pi pi-spin pi-spinner" />
-            {{ t('common.updating') }}
+            {{ tr('common.updating', 'Updating') }}
           </span>
+
+          <Button
+            v-if="selectedBulkCount > 0"
+            :label="tr('ot.approval.bulkApproveSelected', `Approve Selected (${selectedBulkCount})`, {
+              count: selectedBulkCount,
+            })"
+            icon="pi pi-check"
+            size="small"
+            class="ot-approval-action-button ot-approve-button"
+            @click="openBulkDialog"
+          />
+
+          <Button
+            v-if="selectedBulkCount > 0"
+            :label="tr('common.clear', 'Clear')"
+            icon="pi pi-times"
+            severity="secondary"
+            outlined
+            size="small"
+            class="ot-approval-action-button"
+            @click="clearBulkSelection"
+          />
         </div>
       </div>
 
       <AppTableLoading
         v-if="firstLoading"
-        :title="t('ot.approval.loading')"
-        :message="t('ot.approval.fetchingRecords')"
+        :title="tr('ot.approval.loading', 'Loading approval inbox')"
+        :message="tr('ot.approval.fetchingRecords', 'Fetching approval records')"
         :rows="8"
-        :columns="10"
+        :columns="9"
       />
 
       <DataTable
@@ -1034,19 +930,27 @@ onBeforeUnmount(() => {
         :value="rows"
         data-key="id"
         lazy
+        removable-sort
         scrollable
         scroll-height="500px"
-        table-style="width: 100%; min-width: 1080px; table-layout: fixed;"
+        :sort-field="filters.sortBy"
+        :sort-order="filters.sortOrder"
+        table-style="width: max-content; min-width: 100%; table-layout: auto;"
         class="ot-approval-table ot-data-table ot-data-table-compact"
-        :virtual-scroller-options="useVirtualScroll ? {
-          lazy: true,
-          onLazyLoad: onVirtualLazyLoad,
-          itemSize: 70,
-          delay: 0,
-          showLoader: false,
-          loading: false,
-          numToleratedItems: 12,
-        } : null"
+        :virtual-scroller-options="
+          useVirtualScroll
+            ? {
+                lazy: true,
+                onLazyLoad: onVirtualLazyLoad,
+                itemSize: 76,
+                delay: 0,
+                showLoader: false,
+                loading: false,
+                numToleratedItems: 12,
+              }
+            : null
+        "
+        @sort="onSort"
       >
         <template #empty>
           <div
@@ -1058,84 +962,73 @@ onBeforeUnmount(() => {
             </div>
 
             <div class="ot-empty-title">
-              {{ t('common.noData') }}
+              {{ tr('common.noData', 'No Data') }}
             </div>
 
             <div class="ot-empty-text">
-              {{ t('ot.approval.noData') }}
+              {{ tr('ot.approval.noData', 'No approval requests found') }}
             </div>
           </div>
         </template>
 
         <Column
-          expander
-          style="width: 3.2rem"
-        />
-
-        <Column
-          header=""
-          style="width: 3.6rem"
+          style="width: 3.25rem; min-width: 3.25rem"
         >
           <template #header>
-            <div
-              class="flex w-full justify-center"
-              @click.stop
-            >
-              <Checkbox
-                binary
-                :model-value="allLoadedActionableSelected"
-                :disabled="!actionableLoadedRows.length"
-                @update:model-value="toggleLoadedSelection"
-              />
-            </div>
+            <Checkbox
+              :model-value="allLoadedActionableSelected"
+              binary
+              :disabled="!actionableLoadedRows.length"
+              @update:model-value="toggleAllLoadedSelection"
+            />
           </template>
 
           <template #body="{ data }">
-            <div
-              v-if="data"
-              class="flex w-full justify-center"
-              @click.stop
-            >
-              <Checkbox
-                binary
-                :model-value="isRequestSelected(data)"
-                :disabled="!canSelectForBulk(data)"
-                @update:model-value="(checked) => toggleRequestSelection(data, checked)"
-              />
-            </div>
+            <Checkbox
+              v-if="data && canSelectForBulk(data)"
+              :model-value="isRequestSelected(data)"
+              binary
+              @update:model-value="(checked) => toggleRequestSelection(data, checked)"
+            />
           </template>
         </Column>
 
         <Column
+          expander
+          style="width: 3rem; min-width: 3rem"
+        />
+
+        <Column
           field="requestNo"
-          :header="t('ot.requests.requestNo')"
-          style="width: 7rem"
+          :header="tr('ot.requests.requestNo', 'Request No')"
+          sortable
+          style="width: 10rem; min-width: 10rem"
         >
           <template #body="{ data }">
             <span
               v-if="data"
-              class="ot-approval-request-no"
+              class="ot-request-no-text"
             >
-              {{ data.requestNo || '-' }}
+              {{ data.requestNo || data.otRequestNo || '-' }}
             </span>
           </template>
         </Column>
 
         <Column
-          :header="t('ot.requests.requester')"
-          style="width: 12rem"
+          :header="tr('ot.requests.requester', 'Requester')"
+          style="width: 13rem; min-width: 13rem"
         >
           <template #body="{ data }">
             <div
               v-if="data"
               class="requester-cell"
             >
-              <div class="ot-approval-main-text">
-                {{ formatRequester(data).name }}
+              <div class="ot-main-text">
+                {{ displayRequester(data).name }}
               </div>
 
-              <div class="ot-approval-sub-text">
-                {{ formatRequester(data).employeeNo }}
+              <div class="ot-sub-text">
+                {{ displayRequester(data).employeeNo }}
               </div>
             </div>
           </template>
@@ -1143,30 +1036,28 @@ onBeforeUnmount(() => {
 
         <Column
           field="status"
-          :header="t('ot.requests.approvalStatus')"
-          style="width: 14rem"
-        >
-          <template #body="{ data }">
-            <div
-              v-if="data"
-              class="approval-status-cell"
-            >
-              <Tag
-                :value="approvalDisplay(data).label"
-                :class="approvalDisplayTagClass(data)"
-              />
-            </div>
-          </template>
-        </Column>
-
-        <Column
-          :header="t('ot.approval.requestedStaff')"
-          style="width: 6rem"
+          :header="tr('ot.requests.approvalStatus', 'Approval Status')"
+          style="width: 15rem; min-width: 15rem"
         >
           <template #body="{ data }">
             <Tag
               v-if="data"
-              :value="t('ot.requests.staffCount', { count: Number(data?.requestedEmployeeCount || getEmployeeCount(data)) })"
+              :value="displayApproval(data).label"
+              :class="displayApprovalTagClass(data)"
+            />
+          </template>
+        </Column>
+
+        <Column
+          :header="tr('ot.approval.requestedStaff', 'Staff')"
+          style="width: 8rem; min-width: 8rem"
+        >
+          <template #body="{ data }">
+            <Tag
+              v-if="data"
+              :value="tr('ot.requests.staffCount', `${displayStaffCount(data)} staff`, {
+                count: displayStaffCount(data),
+              })"
               :class="['ot-approval-rgb-tag', 'ot-approval-tag-info']"
             />
           </template>
@@ -1174,13 +1065,14 @@ onBeforeUnmount(() => {
 
         <Column
           field="otDate"
-          :header="t('ot.requests.otDate')"
-          style="width: 8rem"
+          :header="tr('ot.requests.otDate', 'OT Date')"
+          sortable
+          style="width: 9rem; min-width: 9rem"
         >
           <template #body="{ data }">
             <span
               v-if="data"
-              class="ot-approval-meta-text"
+              class="ot-meta-text"
             >
               {{ formatDateDMY(data.otDate) }}
             </span>
@@ -1188,13 +1080,13 @@ onBeforeUnmount(() => {
         </Column>
 
         <Column
-          :header="t('ot.requests.otTime')"
-          style="width: 6rem"
+          :header="tr('ot.requests.otTime', 'OT Time')"
+          style="width: 8rem; min-width: 8rem"
         >
           <template #body="{ data }">
             <Tag
               v-if="data"
-              :value="formatMinutesLabel(totalOtMinutesOf(data))"
+              :value="displayPaidTime(data)"
               :class="['ot-approval-rgb-tag', 'ot-approval-tag-info']"
             />
           </template>
@@ -1202,13 +1094,14 @@ onBeforeUnmount(() => {
 
         <Column
           field="createdAt"
-          :header="t('common.createdAt')"
-          style="width: 8rem"
+          :header="tr('common.createdAt', 'Created At')"
+          sortable
+          style="width: 12rem; min-width: 12rem"
         >
           <template #body="{ data }">
             <span
               v-if="data"
-              class="ot-approval-meta-text"
+              class="ot-meta-text"
             >
               {{ formatDateTimeDMY(data.createdAt) }}
             </span>
@@ -1216,35 +1109,42 @@ onBeforeUnmount(() => {
         </Column>
 
         <Column
-          :header="t('common.actions')"
+          :header="tr('common.action', 'Action')"
           frozen
           align-frozen="right"
-          header-class="ot-action-column-header"
-          body-class="ot-action-column-body"
-          style="width: 10rem"
+          style="width: 13rem; min-width: 13rem"
         >
           <template #body="{ data }">
             <div
               v-if="data"
-              class="action-row"
+              class="ot-row-actions"
             >
               <Button
-                v-if="canDecide(data)"
+                v-if="canApprove(data)"
+                :label="tr('ot.approval.approve', 'Approve')"
                 icon="pi pi-check"
                 size="small"
-                class="action-btn ot-approval-action-button"
+                class="ot-action-mini ot-approve-button"
                 @click="openDecision(data, 'APPROVE')"
               />
 
               <Button
-                v-if="canDecide(data)"
+                v-if="canReject(data)"
+                :label="tr('ot.approval.reject', 'Reject')"
                 icon="pi pi-times"
-                size="small"
                 severity="danger"
                 outlined
-                class="action-btn ot-approval-action-button"
+                size="small"
+                class="ot-action-mini"
                 @click="openDecision(data, 'REJECT')"
               />
+
+              <span
+                v-if="!canDecide(data)"
+                class="ot-muted-action"
+              >
+                {{ tr('ot.approval.notYourTurn', 'Not your turn') }}
+              </span>
             </div>
           </template>
         </Column>
@@ -1252,21 +1152,34 @@ onBeforeUnmount(() => {
         <template #expansion="{ data }">
           <div class="ot-expanded-box">
             <div
-              v-if="getTargetEmployees(data).length"
+              v-if="displayEmployees(data).length"
               class="ot-expanded-content"
             >
+              <div class="ot-expanded-summary">
+                <span>
+                  {{ tr('ot.approval.employeeCount', `${displayEmployees(data).length} employees`, {
+                    count: displayEmployees(data).length,
+                  }) }}
+                </span>
+
+                <span>
+                  {{ tr('ot.requests.otTime', 'OT Time') }}:
+                  <strong>{{ displayPaidTime(data) }}</strong>
+                </span>
+              </div>
+
               <div class="ot-expanded-responsive-table">
                 <div class="ot-expanded-grid-row is-head">
-                  <div>{{ t('common.no') }}</div>
-                  <div>{{ t('ot.requests.employeeId') }}</div>
-                  <div>{{ t('common.name') }}</div>
-                  <div>{{ t('nav.positions') }}</div>
-                  <div>{{ t('ot.requests.otTime') }}</div>
-                  <div>{{ t('nav.departments') }}</div>
+                  <div>{{ tr('common.no', 'No') }}</div>
+                  <div>{{ tr('ot.requests.employeeId', 'Employee ID') }}</div>
+                  <div>{{ tr('common.name', 'Name') }}</div>
+                  <div>{{ tr('nav.positions', 'Position') }}</div>
+                  <div>{{ tr('ot.requests.otTime', 'OT Time') }}</div>
+                  <div>{{ tr('nav.departments', 'Department') }}</div>
                 </div>
 
                 <div
-                  v-for="(employee, index) in getTargetEmployees(data)"
+                  v-for="(employee, index) in displayEmployees(data)"
                   :key="employeeIdOf(employee) || index"
                   class="ot-expanded-grid-row"
                 >
@@ -1287,7 +1200,7 @@ onBeforeUnmount(() => {
                   </div>
 
                   <div class="cell-center cell-mono">
-                    {{ formatMinutesLabel(employeeTotalOtMinutesOf(employee, data)) }}
+                    {{ employeePaidTimeOf(employee, data) }}
                   </div>
 
                   <div class="cell-center cell-wrap">
@@ -1301,786 +1214,710 @@ onBeforeUnmount(() => {
               v-else
               class="ot-expanded-empty"
             >
-              {{ t('ot.requests.noEmployeeData') }}
+              {{ tr('ot.requests.noEmployeeData', 'No employee data') }}
             </div>
           </div>
         </template>
       </DataTable>
-
-      <div
-        v-if="backgroundLoading && hasAnyData"
-        class="flex items-center justify-center border-t border-[color:var(--ot-border)] px-3 py-2 text-xs text-[color:var(--ot-text-muted)]"
-      >
-        {{ t('common.updating') }}
-      </div>
     </section>
 
     <Dialog
       v-model:visible="decisionDialog.visible"
       modal
+      :draggable="false"
       :closable="!decisionDialog.loading"
+      :style="{ width: 'min(92vw, 34rem)' }"
       class="ot-decision-dialog"
-      :style="{ width: '52rem', maxWidth: '96vw' }"
+      @hide="closeDecision"
     >
       <template #header>
-        <div class="ot-decision-header">
-          <div class="min-w-0">
-            <div class="ot-decision-eyebrow">
-              {{ t('ot.approval.decisionEyebrow') }}
+        <div class="ot-dialog-header">
+          <span class="ot-dialog-icon">
+            <i :class="decisionIsApprove ? 'pi pi-check' : 'pi pi-times'" />
+          </span>
+
+          <div>
+            <div class="ot-dialog-title">
+              {{
+                decisionIsApprove
+                  ? tr('ot.approval.approveRequest', 'Approve OT Request')
+                  : tr('ot.approval.rejectRequest', 'Reject OT Request')
+              }}
             </div>
 
-            <div class="ot-decision-title">
-              {{ decisionIsApprove ? t('ot.approval.confirmApproval') : t('ot.approval.rejectRequest') }}
+            <div class="ot-dialog-subtitle">
+              {{ decisionDialog.row?.requestNo || '-' }}
             </div>
-          </div>
-
-          <div
-            v-if="decisionDialog.row"
-            class="ot-decision-header-tags"
-          >
-            <Tag
-              :value="decisionDialog.row.requestNo || '-'"
-              :class="['ot-approval-rgb-tag', 'ot-approval-tag-info']"
-            />
           </div>
         </div>
       </template>
 
-      <div class="ot-decision-body">
-        <div
-          v-if="decisionDialog.row"
-          class="ot-confirm-box"
-        >
-          <div class="ot-confirm-icon">
-            <i :class="decisionIsApprove ? 'pi pi-check-circle' : 'pi pi-times-circle'" />
+      <div class="ot-dialog-body">
+        <div class="ot-dialog-summary">
+          <div>
+            <span>{{ tr('ot.requests.requester', 'Requester') }}</span>
+            <strong>{{ displayRequester(decisionDialog.row || {}).label }}</strong>
           </div>
 
-          <div class="min-w-0">
-            <div class="ot-confirm-title">
-              {{ decisionIsApprove ? t('ot.approval.approveQuestion') : t('ot.approval.rejectQuestion') }}
-            </div>
+          <div>
+            <span>{{ tr('ot.approval.requestedStaff', 'Staff') }}</span>
+            <strong>{{ displayStaffCount(decisionDialog.row || {}) }}</strong>
+          </div>
 
-            <div class="ot-confirm-help">
-              {{ decisionIsApprove ? t('ot.approval.approveHelp') : t('ot.approval.rejectHelp') }}
-            </div>
+          <div>
+            <span>{{ tr('ot.requests.otTime', 'OT Time') }}</span>
+            <strong>{{ displayPaidTime(decisionDialog.row || {}) }}</strong>
           </div>
         </div>
 
-        <div
-          v-if="decisionDialog.row"
-          class="ot-confirm-info-grid"
-        >
-          <div class="ot-confirm-info-item">
-            <span>{{ t('ot.requests.otDate') }}</span>
-            <strong>{{ formatDateDMY(decisionDialog.row.otDate) }}</strong>
-          </div>
+        <label class="ot-dialog-label">
+          {{
+            decisionIsReject
+              ? tr('ot.approval.rejectRemark', 'Reject Remark')
+              : tr('ot.approval.approveRemark', 'Approve Remark')
+          }}
+        </label>
 
-          <div class="ot-confirm-info-item">
-            <span>{{ t('ot.requests.otTime') }}</span>
-            <strong>{{ formatMinutesLabel(totalOtMinutesOf(decisionDialog.row)) }}</strong>
-          </div>
-
-          <div class="ot-confirm-info-item">
-            <span>{{ t('ot.approval.requestedStaff') }}</span>
-            <strong>
-              {{ t('ot.requests.staffCount', { count: Number(decisionDialog.row?.requestedEmployeeCount || getEmployeeCount(decisionDialog.row)) }) }}
-            </strong>
-          </div>
-        </div>
-
-        <div class="ot-remark-box">
-          <label class="ot-remark-label">
-            {{ t('ot.approval.remark') }}
-            <span
-              v-if="decisionIsReject"
-              class="text-red-500"
-            >*</span>
-          </label>
-
-          <Textarea
-            v-model.trim="decisionDialog.remark"
-            rows="3"
-            auto-resize
-            class="w-full"
-            :placeholder="decisionIsApprove ? t('ot.approval.optionalApprovalRemark') : t('ot.approval.rejectionReasonPlaceholder')"
-          />
-        </div>
-
-        <div class="ot-decision-footer">
-          <Button
-            :label="t('common.cancel')"
-            text
-            size="small"
-            :disabled="decisionDialog.loading"
-            @click="closeDecision"
-          />
-
-          <Button
-            :label="decisionIsApprove ? t('ot.approval.yesApprove') : t('common.reject')"
-            :icon="decisionIsApprove ? 'pi pi-check' : 'pi pi-times'"
-            :severity="decisionIsApprove ? undefined : 'danger'"
-            :loading="decisionDialog.loading"
-            size="small"
-            @click="submitDecision"
-          />
-        </div>
+        <Textarea
+          v-model="decisionDialog.remark"
+          rows="4"
+          auto-resize
+          class="w-full"
+          :placeholder="
+            decisionIsReject
+              ? tr('ot.approval.rejectRemarkPlaceholder', 'Please enter reason for rejection')
+              : tr('ot.approval.approveRemarkPlaceholder', 'Optional remark')
+          "
+        />
       </div>
+
+      <template #footer>
+        <Button
+          :label="tr('common.cancel', 'Cancel')"
+          severity="secondary"
+          outlined
+          :disabled="decisionDialog.loading"
+          @click="closeDecision"
+        />
+
+        <Button
+          :label="
+            decisionIsApprove
+              ? tr('ot.approval.approve', 'Approve')
+              : tr('ot.approval.reject', 'Reject')
+          "
+          :icon="decisionIsApprove ? 'pi pi-check' : 'pi pi-times'"
+          :severity="decisionIsApprove ? undefined : 'danger'"
+          :loading="decisionDialog.loading"
+          :class="decisionIsApprove ? 'ot-approve-button' : ''"
+          @click="submitDecision"
+        />
+      </template>
     </Dialog>
 
     <Dialog
       v-model:visible="bulkDialog.visible"
       modal
+      :draggable="false"
       :closable="!bulkDialog.loading"
-      class="ot-bulk-dialog"
-      :style="{ width: '52rem', maxWidth: '96vw' }"
+      :style="{ width: 'min(92vw, 34rem)' }"
+      class="ot-decision-dialog"
+      @hide="closeBulkDialog"
     >
       <template #header>
-        <div class="ot-decision-header">
-          <div class="min-w-0">
-            <div class="ot-decision-eyebrow">
-              {{ t('ot.approval.bulkApproval') }}
+        <div class="ot-dialog-header">
+          <span class="ot-dialog-icon">
+            <i class="pi pi-check" />
+          </span>
+
+          <div>
+            <div class="ot-dialog-title">
+              {{ tr('ot.approval.bulkApprove', 'Bulk Approve') }}
             </div>
 
-            <div class="ot-decision-title">
-              {{ t('ot.approval.approveMultiple') }}
+            <div class="ot-dialog-subtitle">
+              {{
+                tr('ot.approval.bulkSummary', `${bulkRequestCount} requests · ${bulkEmployeeCount} employees`, {
+                  requests: bulkRequestCount,
+                  employees: bulkEmployeeCount,
+                })
+              }}
             </div>
-          </div>
-
-          <div class="ot-decision-header-tags">
-            <Tag
-              :value="t('ot.approval.requestCount', { count: bulkRequestCount })"
-              :class="['ot-approval-rgb-tag', 'ot-approval-tag-info']"
-            />
-
-            <Tag
-              :value="t('ot.requests.staffCount', { count: bulkEmployeeCount })"
-              :class="['ot-approval-rgb-tag', 'ot-approval-tag-approved']"
-            />
           </div>
         </div>
       </template>
 
-      <div class="ot-bulk-body">
-        <div class="ot-bulk-warning">
-          {{ t('ot.approval.bulkWarning') }}
+      <div class="ot-dialog-body">
+        <div class="ot-dialog-summary">
+          <div>
+            <span>{{ tr('ot.approval.requests', 'Requests') }}</span>
+            <strong>{{ bulkRequestCount }}</strong>
+          </div>
+
+          <div>
+            <span>{{ tr('ot.approval.employees', 'Employees') }}</span>
+            <strong>{{ bulkEmployeeCount }}</strong>
+          </div>
         </div>
 
-        <div class="ot-remark-box">
-          <label class="ot-remark-label">
-            {{ t('ot.approval.remark') }}
-          </label>
+        <label class="ot-dialog-label">
+          {{ tr('ot.approval.approveRemark', 'Approve Remark') }}
+        </label>
 
-          <Textarea
-            v-model.trim="bulkDialog.remark"
-            rows="3"
-            auto-resize
-            class="w-full"
-            :placeholder="t('ot.approval.bulkRemarkPlaceholder')"
-          />
-        </div>
-
-        <div class="ot-decision-footer">
-          <Button
-            :label="t('common.cancel')"
-            text
-            size="small"
-            :disabled="bulkDialog.loading"
-            @click="closeBulkDialog"
-          />
-
-          <Button
-            :label="t('ot.approval.approveAllSelected')"
-            icon="pi pi-check"
-            size="small"
-            :loading="bulkDialog.loading"
-            :disabled="!bulkDialog.rows.length"
-            @click="submitBulkApproval"
-          />
-        </div>
+        <Textarea
+          v-model="bulkDialog.remark"
+          rows="4"
+          auto-resize
+          class="w-full"
+          :placeholder="tr('ot.approval.approveRemarkPlaceholder', 'Optional remark')"
+        />
       </div>
+
+      <template #footer>
+        <Button
+          :label="tr('common.cancel', 'Cancel')"
+          severity="secondary"
+          outlined
+          :disabled="bulkDialog.loading"
+          @click="closeBulkDialog"
+        />
+
+        <Button
+          :label="tr('ot.approval.approve', 'Approve')"
+          icon="pi pi-check"
+          :loading="bulkDialog.loading"
+          class="ot-approve-button"
+          @click="submitBulkApproval"
+        />
+      </template>
     </Dialog>
   </div>
 </template>
 
 <style scoped>
-.ot-approval-page {
-  --ot-approval-approved-rgb: 34 197 94;
-  --ot-approval-pending-rgb: 245 158 11;
-  --ot-approval-rejected-rgb: 239 68 68;
-  --ot-approval-info-rgb: 59 130 246;
-  --ot-approval-muted-rgb: 100 116 139;
-}
-
-.ot-approval-filter-bar {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
-  align-items: end;
-}
-
-.ot-approval-filter-actions {
-  grid-column: 1 / -1;
+.ot-page-shell {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 0.5rem;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.ot-filter-bar {
+  display: grid;
+  grid-template-columns: minmax(14rem, 1.4fr) minmax(11rem, 0.9fr) minmax(11rem, 0.9fr) minmax(11rem, 0.9fr) auto;
+  gap: 0.75rem;
+  align-items: end;
+  padding: 0.85rem;
+  border: 1px solid var(--surface-border);
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, rgba(34, 197, 94, 0.05), transparent 34%),
+    var(--surface-card);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+}
+
+.ot-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
   min-width: 0;
 }
 
-.ot-approval-filter-actions > * {
-  flex: 0 0 auto;
-}
-
-.ot-approval-request-no {
-  color: rgb(var(--ot-approval-info-rgb) / 1);
-  font-size: 0.8rem;
-  font-weight: 750;
-  font-variant-numeric: tabular-nums;
-}
-
-.ot-approval-main-text {
-  color: var(--ot-text);
-  font-size: 0.8rem;
-  font-weight: 650;
-  line-height: 1.25;
-}
-
-.ot-approval-sub-text {
-  margin-top: 0.12rem;
-  color: var(--ot-text-muted);
-  font-size: 0.7rem;
-  font-weight: 600;
-}
-
-.ot-approval-meta-text {
-  color: var(--ot-text);
-  font-size: 0.78rem;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-}
-
-:deep(.ot-approval-action-button .p-button-icon) {
-  font-size: 0.76rem;
-}
-
-:deep(.ot-approval-export-button .p-button-icon) {
-  font-size: 0.72rem;
-}
-
-/* =========================
-   RGB Tags
-   ========================= */
-
-:deep(.ot-approval-rgb-tag) {
-  --ot-approval-tag-rgb: var(--ot-approval-muted-rgb);
-  display: inline-flex !important;
-  min-height: 1.42rem;
-  align-items: center !important;
-  justify-content: center !important;
-  border: 1px solid rgb(var(--ot-approval-tag-rgb) / 0.28);
-  border-radius: 999px;
-  background: rgb(var(--ot-approval-tag-rgb) / 0.11);
-  color: rgb(var(--ot-approval-tag-rgb) / 1);
-  padding: 0.12rem 0.48rem;
-  font-size: 0.7rem;
+.ot-field-label {
+  font-size: 0.74rem;
   font-weight: 700;
-  line-height: 1;
-  text-align: center !important;
+  color: var(--text-color-secondary);
+  letter-spacing: 0.01em;
+}
+
+.ot-approval-filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 18rem;
+}
+
+.ot-approval-action-button {
   white-space: nowrap;
 }
 
-:deep(.ot-approval-tag-approved) {
-  --ot-approval-tag-rgb: var(--ot-approval-approved-rgb);
-}
-
-:deep(.ot-approval-tag-pending) {
-  --ot-approval-tag-rgb: var(--ot-approval-pending-rgb);
-}
-
-:deep(.ot-approval-tag-rejected) {
-  --ot-approval-tag-rgb: var(--ot-approval-rejected-rgb);
-}
-
-:deep(.ot-approval-tag-info) {
-  --ot-approval-tag-rgb: var(--ot-approval-info-rgb);
-}
-
-:deep(.ot-approval-tag-muted) {
-  --ot-approval-tag-rgb: var(--ot-approval-muted-rgb);
-}
-
-:deep(.p-tag.approval-display-tag) {
-  max-width: 100%;
-}
-
-:deep(.p-tag.approval-display-tag .p-tag-label) {
-  overflow: hidden;
-  text-overflow: ellipsis;
+.ot-loaded-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 2rem;
+  padding: 0.34rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid rgba(59, 130, 246, 0.18);
+  background: rgba(59, 130, 246, 0.08);
+  color: #2563eb;
+  font-size: 0.76rem;
+  font-weight: 700;
   white-space: nowrap;
 }
 
-/* =========================
-   Main table fixed center columns
-   ========================= */
-
-:deep(.ot-approval-table .p-datatable-table) {
-  width: 100% !important;
-  min-width: 1080px !important;
-  table-layout: fixed !important;
-}
-
-:deep(.ot-approval-table .p-datatable-thead > tr > th),
-:deep(.ot-approval-table .p-datatable-tbody > tr > td) {
-  text-align: center !important;
-  vertical-align: middle !important;
-}
-
-:deep(.ot-approval-table .p-datatable-thead > tr > th) {
-  padding: 0.58rem 0.68rem !important;
-  white-space: nowrap !important;
-  font-size: 0.78rem !important;
-  font-weight: 650 !important;
-}
-
-:deep(.ot-approval-table .p-datatable-tbody > tr > td) {
-  height: 68px !important;
-  padding: 0.46rem 0.68rem !important;
-  white-space: nowrap !important;
-  font-size: 0.8rem !important;
-}
-
-:deep(.ot-approval-table .p-datatable-column-header-content),
-:deep(.ot-approval-table .p-column-header-content) {
-  display: flex !important;
-  width: 100% !important;
-  align-items: center !important;
-  justify-content: center !important;
-  gap: 0.25rem !important;
-  text-align: center !important;
-}
-
-:deep(.ot-approval-table .p-datatable-column-title),
-:deep(.ot-approval-table .p-column-title) {
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  text-align: center !important;
-}
-
-:deep(.ot-approval-table .p-datatable-tbody > tr > td > *) {
-  margin-inline: auto !important;
-}
-
-:deep(.ot-approval-table .p-tag),
-:deep(.ot-approval-table .p-button),
-:deep(.ot-approval-table .p-row-toggler) {
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  margin-inline: auto !important;
-  text-align: center !important;
-}
-
-:deep(.ot-approval-table .p-tag-value) {
-  max-width: 100%;
+.ot-table-card {
+  border: 1px solid var(--surface-border);
+  border-radius: 20px;
+  background: var(--surface-card);
+  box-shadow: 0 16px 42px rgba(15, 23, 42, 0.07);
   overflow: hidden;
-  text-align: center !important;
-  text-overflow: ellipsis;
 }
 
-:deep(.ot-approval-table .p-row-toggler) {
-  width: 1.72rem !important;
-  height: 1.72rem !important;
+.ot-table-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--surface-border);
+  background:
+    linear-gradient(135deg, rgba(16, 185, 129, 0.06), transparent 30%),
+    var(--surface-card);
 }
 
-/* Keep action column in Approval Inbox */
-:deep(.ot-approval-table .ot-action-column-header),
-:deep(.ot-approval-table .ot-action-column-body) {
-  position: sticky !important;
-  right: 0 !important;
-  z-index: 8 !important;
-  width: 10rem !important;
-  min-width: 10rem !important;
-  max-width: 10rem !important;
-  background: var(--ot-surface) !important;
-  box-shadow: -8px 0 18px rgba(15, 23, 42, 0.06) !important;
+.ot-table-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--text-color);
 }
 
-:deep(.ot-approval-table .ot-action-column-header) {
-  z-index: 10 !important;
-  background: linear-gradient(180deg, var(--ot-surface-2), var(--ot-surface-3)) !important;
+.ot-table-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
-:global(.dark) :deep(.ot-approval-table .ot-action-column-header),
-:global(.dark) :deep(.ot-approval-table .ot-action-column-body) {
-  box-shadow: -8px 0 18px rgba(0, 0, 0, 0.22) !important;
+.ot-approval-table {
+  width: 100%;
 }
 
-:deep(.ot-approval-table .p-datatable-row-expansion > td) {
-  height: auto !important;
-  padding: 0 !important;
-  white-space: normal !important;
-  overflow: hidden !important;
+.ot-approval-table :deep(.p-datatable-thead > tr > th) {
+  padding: 0.68rem 0.75rem;
+  font-size: 0.76rem;
+  font-weight: 800;
+  color: var(--text-color-secondary);
+  background: var(--surface-ground);
+  border-color: var(--surface-border);
+  white-space: nowrap;
+}
+
+.ot-approval-table :deep(.p-datatable-tbody > tr > td) {
+  padding: 0.6rem 0.75rem;
+  vertical-align: middle;
+  border-color: var(--surface-border);
+}
+
+.ot-approval-table :deep(.p-datatable-tbody > tr:hover) {
+  background: rgba(34, 197, 94, 0.035);
+}
+
+.ot-request-no-text {
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    'Liberation Mono',
+    'Courier New',
+    monospace;
+  font-size: 0.82rem;
+  font-weight: 800;
+  color: #16a34a;
+  white-space: nowrap;
 }
 
 .requester-cell {
   display: flex;
-  min-width: 0;
-  max-width: 100%;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-}
-
-.approval-status-cell {
-  display: flex;
+  gap: 0.12rem;
   min-width: 0;
-  max-width: 100%;
-  align-items: center;
-  justify-content: center;
 }
 
-.action-row {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.35rem;
-  flex-wrap: nowrap;
+.ot-main-text {
+  font-size: 0.83rem;
+  font-weight: 800;
+  color: var(--text-color);
+  line-height: 1.25;
+}
+
+.ot-sub-text {
+  font-size: 0.74rem;
+  font-weight: 650;
+  color: var(--text-color-secondary);
+  line-height: 1.2;
+}
+
+.ot-meta-text {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-color-secondary);
   white-space: nowrap;
 }
 
-:deep(.ot-approval-table .p-button.p-button-sm) {
-  padding: 0.32rem 0.54rem !important;
-  font-size: 0.76rem !important;
+.ot-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  min-width: 0;
 }
 
-:deep(.ot-approval-table .p-button.p-button-sm .p-button-icon) {
-  font-size: 0.74rem !important;
+.ot-action-mini {
+  min-height: 2rem;
+  padding-inline: 0.65rem;
+  white-space: nowrap;
 }
 
-/* =========================
-   Expanded employee area
-   ========================= */
+.ot-approve-button {
+  border-color: #16a34a !important;
+  background: #16a34a !important;
+  color: #ffffff !important;
+}
+
+.ot-approve-button:hover {
+  border-color: #15803d !important;
+  background: #15803d !important;
+  color: #ffffff !important;
+}
+
+.ot-muted-action {
+  color: var(--text-color-secondary);
+  font-size: 0.74rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.ot-approval-rgb-tag {
+  border: 1px solid transparent;
+  box-shadow: none;
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.approval-display-tag {
+  max-width: 13rem;
+}
+
+.approval-display-tag :deep(.p-tag-value) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ot-approval-tag-approved {
+  border-color: rgba(34, 197, 94, 0.28) !important;
+  background: rgba(34, 197, 94, 0.12) !important;
+  color: #15803d !important;
+}
+
+.ot-approval-tag-rejected {
+  border-color: rgba(239, 68, 68, 0.28) !important;
+  background: rgba(239, 68, 68, 0.12) !important;
+  color: #b91c1c !important;
+}
+
+.ot-approval-tag-pending {
+  border-color: rgba(245, 158, 11, 0.3) !important;
+  background: rgba(245, 158, 11, 0.14) !important;
+  color: #b45309 !important;
+}
+
+.ot-approval-tag-info {
+  border-color: rgba(59, 130, 246, 0.25) !important;
+  background: rgba(59, 130, 246, 0.11) !important;
+  color: #1d4ed8 !important;
+}
+
+.ot-approval-tag-muted {
+  border-color: rgba(100, 116, 139, 0.24) !important;
+  background: rgba(100, 116, 139, 0.1) !important;
+  color: #475569 !important;
+}
 
 .ot-expanded-box {
-  width: 100%;
-  max-width: 100%;
-  overflow: hidden;
-  border-top: 1px solid var(--ot-border);
-  border-bottom: 1px solid var(--ot-border);
+  padding: 0.75rem;
   background:
-    linear-gradient(135deg, rgb(var(--ot-approval-info-rgb) / 0.05), transparent),
-    var(--ot-bg);
-  padding: 0.55rem 0.7rem;
+    linear-gradient(135deg, rgba(34, 197, 94, 0.04), transparent 34%),
+    var(--surface-ground);
+  border-radius: 14px;
 }
 
 .ot-expanded-content {
-  width: 100%;
-  max-width: 100%;
-  overflow: hidden;
+  overflow-x: auto;
+}
+
+.ot-expanded-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  margin-bottom: 0.6rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-color-secondary);
+}
+
+.ot-expanded-summary strong {
+  color: var(--text-color);
 }
 
 .ot-expanded-responsive-table {
-  width: 100%;
-  max-width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
-  border: 1px solid var(--ot-border);
-  border-radius: 0.8rem;
-  background: var(--ot-surface);
+  display: flex;
+  flex-direction: column;
+  min-width: 720px;
+  border: 1px solid var(--surface-border);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--surface-card);
 }
 
 .ot-expanded-grid-row {
   display: grid;
-  grid-template-columns:
-    2.7rem
-    minmax(5rem, 0.6fr)
-    minmax(8rem, 1.1fr)
-    minmax(7rem, 0.9fr)
-    minmax(6rem, 0.7fr)
-    minmax(8rem, 0.9fr);
-  min-width: 680px;
-  align-items: stretch;
-}
-
-.ot-expanded-grid-row > div {
-  display: flex;
-  min-width: 0;
+  grid-template-columns: 4rem 9rem minmax(12rem, 1.2fr) minmax(10rem, 1fr) 8rem minmax(10rem, 1fr);
   align-items: center;
-  justify-content: center;
-  border-bottom: 1px solid var(--ot-border);
-  padding: 0.42rem 0.48rem;
-  color: var(--ot-text);
-  font-size: 0.7rem;
-  font-weight: 500;
-  line-height: 1.25;
-  text-align: center;
+  min-height: 2.65rem;
+  border-bottom: 1px solid var(--surface-border);
 }
 
-.ot-expanded-grid-row.is-head > div {
-  background: color-mix(in srgb, var(--ot-bg) 82%, transparent);
-  color: var(--ot-text-muted);
-  font-size: 0.64rem;
-  font-weight: 650;
-  white-space: nowrap;
-}
-
-.ot-expanded-grid-row:last-child > div {
+.ot-expanded-grid-row:last-child {
   border-bottom: 0;
 }
 
-.ot-expanded-grid-row:not(.is-head):hover > div {
-  background: color-mix(in srgb, var(--ot-bg) 68%, transparent);
+.ot-expanded-grid-row > div {
+  padding: 0.55rem 0.65rem;
+  font-size: 0.78rem;
+  border-right: 1px solid var(--surface-border);
+}
+
+.ot-expanded-grid-row > div:last-child {
+  border-right: 0;
+}
+
+.ot-expanded-grid-row.is-head {
+  min-height: 2.4rem;
+  background: var(--surface-ground);
+}
+
+.ot-expanded-grid-row.is-head > div {
+  font-size: 0.72rem;
+  font-weight: 850;
+  color: var(--text-color-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .cell-center {
-  justify-content: center !important;
-  text-align: center !important;
+  text-align: center;
 }
 
 .cell-mono {
-  font-variant-numeric: tabular-nums;
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    'Liberation Mono',
+    'Courier New',
+    monospace;
+  font-weight: 800;
 }
 
 .cell-strong {
-  font-weight: 650 !important;
+  font-weight: 800;
+  color: var(--text-color);
 }
 
 .cell-wrap {
   overflow-wrap: anywhere;
-  text-align: center !important;
-  white-space: normal;
-  word-break: break-word;
 }
 
 .ot-expanded-empty {
-  border: 1px dashed var(--ot-border);
-  border-radius: 0.75rem;
-  padding: 0.8rem;
-  color: var(--ot-text-muted);
-  font-size: 0.72rem;
-  font-weight: 500;
+  padding: 0.9rem;
+  border: 1px dashed var(--surface-border);
+  border-radius: 14px;
+  color: var(--text-color-secondary);
+  font-size: 0.82rem;
+  text-align: center;
+  background: var(--surface-card);
+}
+
+.ot-empty-state {
+  display: flex;
+  min-height: 14rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  padding: 2rem;
+  color: var(--text-color-secondary);
+}
+
+.ot-empty-icon {
+  display: grid;
+  width: 3rem;
+  height: 3rem;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(34, 197, 94, 0.1);
+  color: #16a34a;
+  font-size: 1.25rem;
+}
+
+.ot-empty-title {
+  font-size: 0.95rem;
+  font-weight: 850;
+  color: var(--text-color);
+}
+
+.ot-empty-text {
+  font-size: 0.82rem;
   text-align: center;
 }
 
-/* =========================
-   Decision dialogs
-   ========================= */
-
-.ot-decision-header {
+.ot-dialog-header {
   display: flex;
-  width: 100%;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
+  align-items: center;
+  gap: 0.75rem;
 }
 
-.ot-decision-eyebrow {
-  color: var(--ot-text-muted);
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.ot-decision-title {
-  margin-top: 0.12rem;
-  color: var(--ot-text);
-  font-size: 0.95rem;
-  font-weight: 700;
-}
-
-.ot-decision-header-tags {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 0.35rem;
-}
-
-.ot-decision-body,
-.ot-bulk-body {
+.ot-dialog-icon {
   display: grid;
+  width: 2.4rem;
+  height: 2.4rem;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(34, 197, 94, 0.12);
+  color: #16a34a;
+  font-size: 1rem;
+}
+
+.ot-dialog-title {
+  font-size: 1rem;
+  font-weight: 850;
+  color: var(--text-color);
+}
+
+.ot-dialog-subtitle {
+  margin-top: 0.1rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-color-secondary);
+}
+
+.ot-dialog-body {
+  display: flex;
+  flex-direction: column;
   gap: 0.85rem;
 }
 
-.ot-confirm-box {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.7rem;
-  border: 1px solid var(--ot-border);
-  border-radius: 0.9rem;
-  background: var(--ot-surface-2);
-  padding: 0.85rem;
-}
-
-.ot-confirm-icon {
-  display: flex;
-  width: 2rem;
-  height: 2rem;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  background: var(--ot-primary-soft);
-  color: var(--ot-primary);
-}
-
-.ot-confirm-title {
-  color: var(--ot-text);
-  font-size: 0.9rem;
-  font-weight: 700;
-}
-
-.ot-confirm-help {
-  margin-top: 0.18rem;
-  color: var(--ot-text-muted);
-  font-size: 0.78rem;
-}
-
-.ot-confirm-info-grid {
+.ot-dialog-summary {
   display: grid;
-  grid-template-columns: repeat(1, minmax(0, 1fr));
-  gap: 0.65rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.6rem;
 }
 
-.ot-confirm-info-item {
-  border: 1px solid var(--ot-border);
-  border-radius: 0.8rem;
-  background: var(--ot-surface);
+.ot-dialog-summary > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
   padding: 0.65rem;
+  border: 1px solid var(--surface-border);
+  border-radius: 14px;
+  background: var(--surface-ground);
 }
 
-.ot-confirm-info-item span {
-  display: block;
-  color: var(--ot-text-muted);
-  font-size: 0.68rem;
-  font-weight: 700;
+.ot-dialog-summary span {
+  font-size: 0.7rem;
+  font-weight: 800;
+  color: var(--text-color-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
-.ot-confirm-info-item strong {
-  display: block;
-  margin-top: 0.16rem;
-  color: var(--ot-text);
-  font-size: 0.8rem;
+.ot-dialog-summary strong {
+  font-size: 0.82rem;
+  font-weight: 850;
+  color: var(--text-color);
+  overflow-wrap: anywhere;
 }
 
-.ot-remark-box {
-  display: grid;
-  gap: 0.42rem;
-}
-
-.ot-remark-label {
-  color: var(--ot-text);
+.ot-dialog-label {
   font-size: 0.78rem;
-  font-weight: 700;
+  font-weight: 800;
+  color: var(--text-color-secondary);
 }
 
-.ot-decision-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-}
-
-.ot-bulk-warning {
-  border: 1px solid rgb(var(--ot-approval-pending-rgb) / 0.35);
-  border-radius: 0.85rem;
-  background: rgb(var(--ot-approval-pending-rgb) / 0.1);
-  padding: 0.75rem;
-  color: rgb(var(--ot-approval-pending-rgb) / 1);
-  font-size: 0.8rem;
-  font-weight: 600;
-}
-
-@media (min-width: 640px) {
-  .ot-confirm-info-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-
-@media (min-width: 1024px) {
-  .ot-approval-filter-bar {
+@media (max-width: 1100px) {
+  .ot-filter-bar {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .ot-approval-filter-actions {
     grid-column: 1 / -1;
+    justify-content: flex-start;
+    min-width: 0;
   }
 }
 
-@media (min-width: 1280px) {
-  .ot-approval-filter-bar {
-    grid-template-columns:
-      minmax(260px, 1.2fr)
-      minmax(190px, 0.85fr)
-      minmax(180px, 0.8fr)
-      minmax(180px, 0.8fr);
+@media (max-width: 760px) {
+  .ot-table-toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+  }
+
+  .ot-row-actions {
+    position: sticky;
+    right: 0;
+    z-index: 2;
+    padding: 0.25rem;
+    border-radius: 12px;
+    background: var(--surface-card);
+    box-shadow: -8px 0 18px rgba(15, 23, 42, 0.08);
+  }
+
+  .ot-dialog-summary {
+    grid-template-columns: 1fr;
   }
 }
 
-@media (max-width: 1200px) {
-  .ot-expanded-grid-row > div {
-    padding: 0.4rem 0.46rem;
-    font-size: 0.67rem;
+@media (max-width: 640px) {
+  .ot-filter-bar {
+    grid-template-columns: 1fr;
+    padding: 0.75rem;
   }
-}
 
-@media (max-width: 768px) {
   .ot-approval-filter-actions {
-    justify-content: stretch;
+    flex-direction: column;
+    align-items: stretch;
   }
 
-  .ot-approval-filter-actions > * {
-    flex: 1 1 100%;
+  .ot-approval-action-button,
+  .ot-loaded-badge {
+    width: 100%;
+    justify-content: center;
   }
 
-  :deep(.ot-approval-table .p-datatable-table) {
-    min-width: 980px !important;
+  .ot-table-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .ot-table-actions {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .ot-expanded-box {
-    width: 100%;
-    max-width: 100%;
-    padding: 0.55rem;
-  }
-
-  .ot-expanded-content {
-    width: 100%;
-    max-width: 100%;
-    overflow: hidden;
-  }
-
-  .ot-expanded-responsive-table {
-    width: 100%;
-    max-width: 100%;
-    overflow-x: auto;
-    overflow-y: hidden;
-  }
-
-  .ot-expanded-grid-row {
-    grid-template-columns:
-      2.4rem
-      5.8rem
-      8.8rem
-      8.2rem
-      6.4rem
-      8.5rem;
-    min-width: 640px;
-  }
-
-  .ot-expanded-grid-row > div {
-    padding: 0.4rem 0.48rem;
-    font-size: 0.67rem;
-    line-height: 1.25;
-  }
-
-  .ot-expanded-grid-row.is-head > div {
-    font-size: 0.63rem;
-  }
-
-  .cell-wrap {
-    overflow-wrap: anywhere;
-    white-space: normal;
-    word-break: break-word;
+    padding: 0.5rem;
   }
 }
 </style>

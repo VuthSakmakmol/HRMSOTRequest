@@ -1,5 +1,4 @@
 // backend/src/server.js
-// backend/src/server.js
 
 const http = require('http')
 const { Server } = require('socket.io')
@@ -9,7 +8,18 @@ const env = require('./config/env')
 const { connectMongo } = require('./database/mongoose')
 const { setIo } = require('./shared/services/socket.service')
 
+const {
+  setRealtimeServer,
+  attachSocketHandlers,
+} = require('./modules/realtime/realtime.service')
+
+const {
+  startTelegramPolling,
+  stopTelegramPolling,
+} = require('./modules/telegram/services/telegramPolling.service')
+
 let httpServer = null
+let isShuttingDown = false
 
 function createSocketServer(server) {
   const io = new Server(server, {
@@ -19,15 +29,12 @@ function createSocketServer(server) {
     },
   })
 
-  io.on('connection', (socket) => {
-    console.log('[socket] connected:', socket.id)
-
-    socket.on('disconnect', (reason) => {
-      console.log('[socket] disconnected:', socket.id, reason)
-    })
-  })
-
   setIo(io)
+
+  setRealtimeServer(io)
+  attachSocketHandlers(io)
+
+  app.set('io', io)
 
   return io
 }
@@ -40,9 +47,15 @@ async function start() {
 
     createSocketServer(httpServer)
 
-    httpServer.listen(env.port, () => {
+    httpServer.listen(env.port, async () => {
       console.log(`[server] http://localhost:${env.port}`)
       console.log(`[env] ${env.nodeEnv}`)
+
+      try {
+        await startTelegramPolling()
+      } catch (error) {
+        console.error('[TELEGRAM_POLLING_START_FAILED]', error)
+      }
     })
   } catch (error) {
     console.error('[server] startup error:', error)
@@ -50,8 +63,18 @@ async function start() {
   }
 }
 
-function shutdown(signal) {
+async function shutdown(signal) {
+  if (isShuttingDown) return
+
+  isShuttingDown = true
+
   console.log(`[server] ${signal} received. Shutting down...`)
+
+  try {
+    await stopTelegramPolling()
+  } catch (error) {
+    console.warn('[TELEGRAM_POLLING_STOP_FAILED]', error)
+  }
 
   if (!httpServer) {
     process.exit(0)
@@ -68,15 +91,20 @@ function shutdown(signal) {
   })
 }
 
-process.on('SIGTERM', () => shutdown('SIGTERM'))
-process.on('SIGINT', () => shutdown('SIGINT'))
+process.once('SIGTERM', () => {
+  shutdown('SIGTERM')
+})
 
-process.on('unhandledRejection', (error) => {
+process.once('SIGINT', () => {
+  shutdown('SIGINT')
+})
+
+process.once('unhandledRejection', (error) => {
   console.error('[process] unhandledRejection:', error)
   shutdown('unhandledRejection')
 })
 
-process.on('uncaughtException', (error) => {
+process.once('uncaughtException', (error) => {
   console.error('[process] uncaughtException:', error)
   shutdown('uncaughtException')
 })

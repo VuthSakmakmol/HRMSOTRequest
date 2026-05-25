@@ -7,6 +7,7 @@ import AppLayout from '@/layouts/AppLayout.vue'
 
 import LoginView from '@/modules/auth/views/LoginView.vue'
 import AccountsView from '@/modules/auth/views/AccountsView.vue'
+import ProfileView from '@/modules/auth/views/ProfileView.vue'
 import SystemRoleView from '@/modules/access/views/SystemRoleView.vue'
 import PermissionsView from '@/modules/access/views/PermissionsView.vue'
 
@@ -141,6 +142,17 @@ const routes = [
       {
         path: '',
         redirect: '/dashboard',
+      },
+
+      {
+        path: 'profile',
+        name: 'Profile',
+        component: ProfileView,
+        meta: {  
+          requiresAuth: true,
+          title: 'Profile',
+          titleKey: 'auth.profile',
+        },
       },
 
       // =========================

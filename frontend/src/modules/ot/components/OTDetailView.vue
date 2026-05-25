@@ -1,4 +1,3 @@
-<!-- frontend/src/modules/ot/components/OTDetailView.vue -->
 <script setup>
 // frontend/src/modules/ot/components/OTDetailView.vue
 
@@ -15,6 +14,17 @@ import Tag from 'primevue/tag'
 import Textarea from 'primevue/textarea'
 
 import { getHolidays } from '@/modules/calendar/holiday.api'
+
+import {
+  buildOTCreatePreview,
+  findFirstShiftOTOption,
+  findShiftOTOptionById,
+  formatOptionMeta as formatSharedOptionMeta,
+  isHHmm,
+  normalizeShiftOTOption,
+  normalizeShiftOTOptions,
+  timingModeLabel as sharedTimingModeLabel,
+} from '@/modules/ot/otCreatePreview'
 
 const props = defineProps({
   form: {
@@ -81,8 +91,16 @@ const weekLabels = computed(() => [
   t('calendar.holidayPicker.week.sat'),
 ])
 
+const safeShiftOptions = computed(() => normalizeShiftOTOptions(props.shiftOptions || []))
+
 const selectedOption = computed(() => {
-  return props.selectedOTOption || props.selectedOtOption || null
+  const explicitOption = props.selectedOTOption || props.selectedOtOption
+
+  if (explicitOption) {
+    return normalizeShiftOTOption(explicitOption)
+  }
+
+  return findShiftOTOptionById(safeShiftOptions.value, props.form.shiftOtOptionId)
 })
 
 const selectedDateYMD = computed(() => formatYMD(props.form.otDate))
@@ -93,18 +111,58 @@ const selectedTimingSource = computed(() => {
 
 const isCustomFixedTime = computed(() => selectedTimingSource.value === 'CUSTOM_FIXED')
 
-const safeShiftOptions = computed(() => {
-  return Array.isArray(props.shiftOptions) ? props.shiftOptions : []
+const otCreatePreview = computed(() => {
+  return buildOTCreatePreview({
+    form: props.form,
+    shiftOptions: safeShiftOptions.value,
+    selectedOption: selectedOption.value,
+    requestPreview: props.requestPreview,
+  })
+})
+
+const localRequestPreview = computed(() => {
+  const preview = otCreatePreview.value
+
+  return {
+    timingMode: preview.isCustomFixedTime ? 'CUSTOM_FIXED' : preview.selectedOption?.timingMode,
+    requestStartTime: preview.requestStartTime,
+    requestEndTime: preview.requestEndTime,
+    breakMinutes: preview.breakMinutes,
+    requestedMinutes: preview.requestedMinutes,
+    requestedHours: preview.requestedHours,
+    paidMinutes: preview.paidMinutes,
+    paidHours: preview.paidHours,
+    paidHoursLabel: preview.paidHoursLabel,
+    requestedHoursLabel: preview.requestedHoursLabel,
+    breakLabel: preview.breakLabel,
+  }
+})
+
+const customDurationMinutes = computed(() => {
+  return Number(otCreatePreview.value?.paidMinutes || 0)
+})
+
+const customBaseStartTime = computed(() => {
+  return String(otCreatePreview.value?.requestStartTime || '').trim()
 })
 
 const otOptionDropdownOptions = computed(() => {
   const realOptions = safeShiftOptions.value
-    .map((item) => ({
-      ...item,
-      id: String(item?.id || item?._id || '').trim(),
-      optionLabel: String(item?.optionLabel || item?.label || '').trim(),
-      isCustomOption: false,
-    }))
+    .map((item) => {
+      const normalized = normalizeShiftOTOption(item)
+
+      return {
+        ...normalized,
+        id: String(normalized?.id || normalized?._id || '').trim(),
+        optionLabel: String(
+          normalized?.optionLabel ||
+            normalized?.label ||
+            normalized?.name ||
+            '',
+        ).trim(),
+        isCustomOption: false,
+      }
+    })
     .filter((item) => item.id && item.optionLabel)
 
   return [
@@ -113,10 +171,13 @@ const otOptionDropdownOptions = computed(() => {
       id: CUSTOM_OPTION_VALUE,
       optionLabel: labelOr('ot.requests.create.otherCustomTime', 'Other'),
       timingMode: 'CUSTOM_FIXED',
+      timingModeLabel: labelOr('ot.requests.create.timingMode.customFixed', 'Custom fixed time'),
       requestStartTime: '',
       requestEndTime: '',
       requestedMinutes: 0,
       requestedHours: 0,
+      paidMinutes: 0,
+      paidHours: 0,
       isCustomOption: true,
     },
   ]
@@ -125,8 +186,10 @@ const otOptionDropdownOptions = computed(() => {
 const selectedOptionDropdownValue = computed({
   get() {
     if (isCustomFixedTime.value) return CUSTOM_OPTION_VALUE
+
     return String(props.form.shiftOtOptionId || '').trim()
   },
+
   set(value) {
     handleOtOptionDropdownChange(value)
   },
@@ -182,7 +245,6 @@ const selectedDaySeverity = computed(() => {
 const calendarDays = computed(() => {
   const year = currentMonth.value.getFullYear()
   const month = currentMonth.value.getMonth()
-
   const firstDayIndex = new Date(year, month, 1).getDay()
   const daysInMonth = new Date(year, month + 1, 0).getDate()
   const daysInPrevMonth = new Date(year, month, 0).getDate()
@@ -212,62 +274,23 @@ const calendarDays = computed(() => {
   return cells
 })
 
-const customDurationMinutes = computed(() => {
-  const hours = Math.round(Number(props.form.customDurationHours || 0))
-
-  if (!Number.isFinite(hours) || hours <= 0) return 0
-
-  return hours * 60
-})
-
-const customBaseStartTime = computed(() => {
-  return String(
-    props.form.customStartTime ||
-      props.requestPreview?.requestStartTime ||
-      selectedOption.value?.requestStartTime ||
-      selectedOption.value?.startTime ||
-      '',
-  ).trim()
-})
-
-const localRequestPreview = computed(() => {
-  if (isCustomFixedTime.value) {
-    const startTime = customBaseStartTime.value
-    const requestedMinutes = customDurationMinutes.value
-    const endTime = startTime && requestedMinutes
-      ? addMinutesToHHmm(startTime, requestedMinutes)
-      : ''
-
-    return {
-      timingMode: 'CUSTOM_FIXED',
-      requestStartTime: startTime,
-      requestEndTime: endTime,
-      breakMinutes: 0,
-      requestedMinutes,
-      requestedHours: Number((requestedMinutes / 60).toFixed(2)),
-    }
-  }
-
-  return props.requestPreview || null
-})
-
 const customTimeError = computed(() => {
   if (!isCustomFixedTime.value) return ''
 
   const startTime = customBaseStartTime.value
-  const requestedMinutes = customDurationMinutes.value
+  const paidMinutes = Number(otCreatePreview.value?.paidMinutes || 0)
 
-  if (!requestedMinutes) return ''
+  if (!props.form.customDurationHours) return ''
 
   if (!startTime || !isHHmm(startTime)) {
     return t('ot.requests.create.selectValidTiming')
   }
 
-  if (requestedMinutes <= 0) {
+  if (paidMinutes <= 0) {
     return t('ot.requests.create.enterCustomDurationHours')
   }
 
-  if (requestedMinutes > 1440) {
+  if (paidMinutes > 1440) {
     return t('ot.requests.create.customDurationTooLong')
   }
 
@@ -276,6 +299,7 @@ const customTimeError = computed(() => {
 
 function labelOr(key, fallback) {
   const value = t(key)
+
   return value === key ? fallback : value
 }
 
@@ -288,6 +312,7 @@ function getMonthStart(value) {
 
   if (Number.isNaN(date.getTime())) {
     const now = new Date()
+
     return new Date(now.getFullYear(), now.getMonth(), 1)
   }
 
@@ -298,6 +323,7 @@ function formatYMD(value) {
   if (!value) return ''
 
   const date = value instanceof Date ? value : new Date(value)
+
   if (Number.isNaN(date.getTime())) return ''
 
   return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
@@ -340,6 +366,7 @@ function buildCalendarCell(date, inCurrentMonth) {
 
 function hhmmToDate(value) {
   const raw = String(value || '').trim()
+
   if (!isHHmm(raw)) return null
 
   const [hours, minutes] = raw.split(':').map(Number)
@@ -364,95 +391,26 @@ function updateCustomEndTime(value) {
   props.form.customEndTime = dateToHHmm(value)
 }
 
-function isHHmm(value) {
-  return /^([01]\d|2[0-3]):([0-5]\d)$/.test(String(value || '').trim())
-}
-
-function timeToMinutes(value) {
-  if (!isHHmm(value)) return 0
-
-  const [hh, mm] = String(value).split(':').map(Number)
-  return hh * 60 + mm
-}
-
-function calculateRawWindowMinutes(startTime, endTime) {
-  const start = timeToMinutes(startTime)
-  const end = timeToMinutes(endTime)
-
-  let minutes = end - start
-
-  if (minutes <= 0) {
-    minutes += 1440
-  }
-
-  return minutes
-}
-
-function calculateTimeWindowMinutes(startTime, endTime, breakMinutes = 0) {
-  const rawMinutes = calculateRawWindowMinutes(startTime, endTime)
-  const safeBreak = Number(breakMinutes || 0)
-
-  return Math.max(0, rawMinutes - safeBreak)
-}
-
-function addMinutesToHHmm(startTime, minutesToAdd = 0) {
-  if (!isHHmm(startTime)) return ''
-
-  const start = timeToMinutes(startTime)
-  const safeMinutes = Math.max(0, Number(minutesToAdd || 0))
-  const total = (start + safeMinutes) % 1440
-  const hours = Math.floor(total / 60)
-  const minutes = total % 60
-
-  return `${pad2(hours)}:${pad2(minutes)}`
-}
-
-function formatMinutesLabel(value) {
-  const minutes = Number(value || 0)
-
-  if (!minutes) return t('ot.common.minuteValue', { value: 0 })
-
-  const hours = Math.floor(minutes / 60)
-  const mins = minutes % 60
-
-  if (hours && mins) {
-    return t('ot.common.hourMinuteValue', {
-      hours,
-      minutes: mins,
-    })
-  }
-
-  if (hours) return t('ot.common.hourValue', { value: hours })
-  return t('ot.common.minuteValue', { value: mins })
-}
-
 function timingModeLabel(value) {
   const normalized = String(value || '').trim().toUpperCase()
 
-  if (normalized === 'CUSTOM_FIXED') return t('ot.requests.create.timingMode.customFixed')
-  if (normalized === 'FIXED_TIME') return t('ot.requests.create.timingMode.fixedTime')
+  if (normalized === 'CUSTOM_FIXED') {
+    return labelOr('ot.requests.create.timingMode.customFixed', sharedTimingModeLabel(value))
+  }
 
-  return t('ot.requests.create.timingMode.afterShiftEnd')
+  if (normalized === 'FIXED_TIME') {
+    return labelOr('ot.requests.create.timingMode.fixedTime', sharedTimingModeLabel(value))
+  }
+
+  return labelOr('ot.requests.create.timingMode.afterShiftEnd', sharedTimingModeLabel(value))
 }
 
 function getRealShiftOptionById(optionId) {
-  const targetId = String(optionId || '').trim()
-
-  if (!targetId) return null
-
-  return (
-    safeShiftOptions.value.find((item) => {
-      return String(item?.id || item?._id || '').trim() === targetId
-    }) || null
-  )
+  return findShiftOTOptionById(safeShiftOptions.value, optionId)
 }
 
 function getFirstRealShiftOption() {
-  return (
-    safeShiftOptions.value.find((item) => {
-      return String(item?.id || item?._id || '').trim()
-    }) || null
-  )
+  return findFirstShiftOTOption(safeShiftOptions.value)
 }
 
 function ensurePolicyOptionForCustomTime() {
@@ -514,21 +472,7 @@ function formatOptionMeta(option = {}) {
     )
   }
 
-  const startTime = String(option?.requestStartTime || option?.startTime || '').trim()
-  const endTime = String(option?.requestEndTime || option?.endTime || '').trim()
-  const requestedMinutes = Number(option?.requestedMinutes || 0)
-
-  const parts = []
-
-  if (requestedMinutes > 0) {
-    parts.push(formatMinutesLabel(requestedMinutes))
-  }
-
-  if (startTime || endTime) {
-    parts.push(`${startTime || '-'} → ${endTime || '-'}`)
-  }
-
-  return parts.join(' · ') || timingModeLabel(option?.timingMode)
+  return formatSharedOptionMeta(option)
 }
 
 function normalizePayload(res) {
@@ -538,6 +482,7 @@ function normalizePayload(res) {
 function normalizeHolidayItems(payload) {
   if (Array.isArray(payload?.items)) return payload.items
   if (Array.isArray(payload?.rows)) return payload.rows
+
   return []
 }
 
@@ -639,6 +584,7 @@ watch(
     if (!value) return
 
     const date = new Date(value)
+
     if (Number.isNaN(date.getTime())) return
 
     const nextMonthStart = new Date(date.getFullYear(), date.getMonth(), 1)
@@ -664,6 +610,16 @@ watch(
   },
 )
 
+watch(
+  () => otCreatePreview.value?.calculatedEndTime,
+  (value) => {
+    if (!isCustomFixedTime.value) return
+    if (!value) return
+
+    props.form.customEndTime = value
+  },
+)
+
 onMounted(() => {
   ensureTimingDefaults()
 
@@ -672,6 +628,7 @@ onMounted(() => {
   }
 
   currentMonth.value = getMonthStart(props.form.otDate)
+
   fetchMonthHolidays()
 })
 </script>

@@ -5,6 +5,22 @@ const { successResponse } = require('../../../shared/utils/apiResponse')
 
 const otService = require('../services/ot.service')
 const otAcknowledgementService = require('../services/otAcknowledgement.service')
+const { presentOTRequest } = require('../services/otRequestPresenter.service')
+
+const {
+  buildTrustedCreatePayload,
+  buildTrustedUpdatePayload,
+} = require('../services/otRequestWriteGuard.service')
+
+const {
+  normalizeSavedOTRequestTiming,
+} = require('../services/otRequestSavedTiming.service')
+
+const {
+  notifyOTCreated,
+  notifyOTAfterDecision,
+  notifyOTAfterRequesterConfirmation,
+} = require('../services/otNotification.service')
 
 const {
   createOTRequestSchema,
@@ -19,6 +35,10 @@ const {
   otApprovalDecisionSchema,
   otRequesterConfirmationSchema,
 } = require('../validators/ot.validation')
+
+const {
+  emitOTChanged,
+} = require('../services/otRealtime.service')
 
 function parse(schema, data) {
   const result = schema.safeParse(data)
@@ -59,19 +79,62 @@ function setExcelHeaders(res, filename) {
     'Content-Type',
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   )
-
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
+}
+
+function presentItem(item, authUser) {
+  if (!item || typeof item !== 'object') return item
+
+  return {
+    ...item,
+    ...presentOTRequest(item, authUser),
+  }
+}
+
+function presentListResult(result, authUser) {
+  if (!result || typeof result !== 'object') return result
+
+  if (!Array.isArray(result.items)) {
+    return result
+  }
+
+  return {
+    ...result,
+    items: result.items.map((item) => presentItem(item, authUser)),
+  }
+}
+
+async function safeNotify(task) {
+  try {
+    await task()
+  } catch (error) {
+    console.error('[OT_NOTIFICATION_FAILED]', error)
+  }
+}
+
+async function safeRealtime(task) {
+  try {
+    await task()
+  } catch (error) {
+    console.error('[OT_REALTIME_FAILED]', error)
+  }
 }
 
 async function createOTRequest(req, res, next) {
   try {
     const payload = parse(createOTRequestSchema, req.body || {})
-    const item = await otService.create(payload, req.user)
+    const trustedPayload = await buildTrustedCreatePayload(payload)
+
+    const createdItem = await otService.create(trustedPayload, req.user)
+    const item = await normalizeSavedOTRequestTiming(createdItem)
+
+    await safeNotify(() => notifyOTCreated(item, req.user))
+    await safeRealtime(() => emitOTChanged(item, req.user, 'CREATED'))
 
     return successResponse(
       res,
       {
-        item,
+        item: presentItem(item, req.user),
       },
       201,
     )
@@ -84,10 +147,14 @@ async function updateOTRequest(req, res, next) {
   try {
     const params = parse(otRequestIdParamSchema, req.params || {})
     const payload = parse(updateOTRequestSchema, req.body || {})
-    const item = await otService.update(params.id, payload, req.user)
+    const trustedPayload = await buildTrustedUpdatePayload(params.id, payload)
+
+    const updatedItem = await otService.update(params.id, trustedPayload, req.user)
+    const item = await normalizeSavedOTRequestTiming(updatedItem)
+    await safeRealtime(() => emitOTChanged(item, req.user, 'UPDATED'))
 
     return successResponse(res, {
-      item,
+      item: presentItem(item, req.user),
     })
   } catch (error) {
     return next(error)
@@ -110,7 +177,7 @@ async function listOTRequests(req, res, next) {
     const query = parse(listOTRequestsQuerySchema, req.query || {})
     const result = await otService.list(query, req.user)
 
-    return successResponse(res, result)
+    return successResponse(res, presentListResult(result, req.user))
   } catch (error) {
     return next(error)
   }
@@ -135,7 +202,7 @@ async function getOTRequestDetail(req, res, next) {
     const item = await otService.getById(params.id, req.user)
 
     return successResponse(res, {
-      item,
+      item: presentItem(item, req.user),
     })
   } catch (error) {
     return next(error)
@@ -162,6 +229,7 @@ async function getShiftOTOptionsByShift(req, res, next) {
   try {
     const params = parse(shiftOptionsByShiftParamSchema, req.params || {})
     const query = parse(shiftOptionsByShiftQuerySchema, req.query || {})
+
     const result = await otService.getShiftOTOptionsByShift(params.shiftId, query)
 
     return successResponse(res, result)
@@ -175,7 +243,7 @@ async function listMyApprovalInbox(req, res, next) {
     const query = parse(listOTApprovalInboxQuerySchema, req.query || {})
     const result = await otService.listApprovalInbox(query, req.user)
 
-    return successResponse(res, result)
+    return successResponse(res, presentListResult(result, req.user))
   } catch (error) {
     return next(error)
   }
@@ -199,7 +267,7 @@ async function listMyAcknowledgementInbox(req, res, next) {
     const query = parse(listOTApprovalInboxQuerySchema, req.query || {})
     const result = await otAcknowledgementService.list(query, req.user)
 
-    return successResponse(res, result)
+    return successResponse(res, presentListResult(result, req.user))
   } catch (error) {
     return next(error)
   }
@@ -209,10 +277,15 @@ async function decideOTRequest(req, res, next) {
   try {
     const params = parse(otRequestIdParamSchema, req.params || {})
     const payload = parse(otApprovalDecisionSchema, req.body || {})
-    const item = await otService.decide(params.id, payload, req.user)
+
+    const decidedItem = await otService.decide(params.id, payload, req.user)
+    const item = await normalizeSavedOTRequestTiming(decidedItem)
+
+    await safeNotify(() => notifyOTAfterDecision(item, req.user))
+    await safeRealtime(() => emitOTChanged(item, req.user, 'DECIDED'))
 
     return successResponse(res, {
-      item,
+      item: presentItem(item, req.user),
     })
   } catch (error) {
     return next(error)
@@ -223,10 +296,15 @@ async function requesterConfirmOTRequest(req, res, next) {
   try {
     const params = parse(otRequestIdParamSchema, req.params || {})
     const payload = parse(otRequesterConfirmationSchema, req.body || {})
-    const item = await otService.requesterConfirm(params.id, payload, req.user)
+
+    const confirmedItem = await otService.requesterConfirm(params.id, payload, req.user)
+    const item = await normalizeSavedOTRequestTiming(confirmedItem)
+
+    await safeNotify(() => notifyOTAfterRequesterConfirmation(item, req.user))
+    await safeRealtime(() => emitOTChanged(item, req.user, 'REQUESTER_CONFIRMED'))
 
     return successResponse(res, {
-      item,
+      item: presentItem(item, req.user),
     })
   } catch (error) {
     return next(error)
