@@ -5,7 +5,14 @@ const ACCESS_TOKEN_KEY = 'ot_access_token'
 const AUTH_USER_KEY = 'ot_auth_user'
 
 const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || 'http://localhost:4112/api/v1'
+  import.meta.env.VITE_API_BASE_URL ||
+  (import.meta.env.DEV ? 'http://localhost:4112/api/v1' : '/api/v1')
+
+// Local development:
+// http://localhost:4112/api/v1
+//
+// Production on droplet with Nginx port 8081:
+// /api/v1
 
 function isBrowser() {
   return typeof window !== 'undefined'

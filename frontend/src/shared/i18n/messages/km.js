@@ -138,7 +138,15 @@ export default {
       invalid: 'លំដាប់តម្រៀបមិនត្រឹមត្រូវ។',
     },
   },
-
+  profile: {
+    unknownUser: 'អ្នកប្រើ',
+    accountInformation: 'ព័ត៌មានគណនី',
+    displayName: 'ឈ្មោះបង្ហាញ',
+    loginId: 'Login ID',
+    employee: 'បុគ្គលិក',
+    department: 'ផ្នែក',
+    position: 'មុខតំណែង',
+  },
   auth: {
     login: 'ចូលប្រើ',
     logout: 'ចេញពីប្រព័ន្ធ',

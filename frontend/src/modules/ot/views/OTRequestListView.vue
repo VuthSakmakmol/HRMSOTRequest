@@ -1,7 +1,5 @@
 <!-- frontend/src/modules/ot/views/OTRequestListView.vue -->
 <script setup>
-// frontend/src/modules/ot/views/OTRequestListView.vue
-
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -43,7 +41,7 @@ import {
 const router = useRouter()
 const toast = useToast()
 const auth = useAuthStore()
-const { t } = useI18n()
+const { t, te } = useI18n()
 
 const PAGE_SIZE = 10
 const SEARCH_DEBOUNCE_MS = 250
@@ -60,10 +58,15 @@ const bootstrapped = ref(false)
 const backgroundLoading = ref(false)
 const loadingMore = ref(false)
 const exporting = ref(false)
+const filtersPanelOpen = ref(false)
+const activeDatePicker = ref('')
 
 const tableScrollShell = ref(null)
 const filterBarRef = ref(null)
 const filterActionsStacked = ref(false)
+
+const otDateFromPickerRef = ref(null)
+const otDateToPickerRef = ref(null)
 
 const filters = reactive({
   search: '',
@@ -88,6 +91,26 @@ const hasMorePages = computed(() => loadedCount.value < totalRequests.value)
 
 const firstLoading = computed(() => {
   return backgroundLoading.value && !bootstrapped.value && !hasAnyData.value
+})
+
+function tr(key, fallback) {
+  return te(key) ? t(key) : fallback
+}
+
+const activeAdvancedFilterCount = computed(() => {
+  return [filters.status, filters.otDateFrom, filters.otDateTo].filter((value) =>
+    String(value || '').trim(),
+  ).length
+})
+
+const hasAdvancedFilters = computed(() => activeAdvancedFilterCount.value > 0)
+
+const filterButtonLabel = computed(() => {
+  const label = tr('common.filter', 'Filter')
+
+  return activeAdvancedFilterCount.value
+    ? `${label} (${activeAdvancedFilterCount.value})`
+    : label
 })
 
 const loadedLabel = computed(() =>
@@ -292,28 +315,6 @@ function employeeLineOf(employee) {
 
 function employeePaidTimeOf(employee, row) {
   return getEmployeePaidHoursLabel(employee, row)
-}
-
-function formatRequestTimeRange(row) {
-  const start = String(
-    row?.startTime ||
-      row?.otStartTime ||
-      row?.requestedStartTime ||
-      row?.fromTime ||
-      '',
-  ).trim()
-
-  const end = String(
-    row?.endTime ||
-      row?.otEndTime ||
-      row?.requestedEndTime ||
-      row?.toTime ||
-      '',
-  ).trim()
-
-  if (start && end) return `${start} - ${end}`
-
-  return ''
 }
 
 function buildQuery(page) {
@@ -536,11 +537,37 @@ function onFilterChange() {
   reloadFirstPage({ keepVisible: true })
 }
 
+function toggleFilters() {
+  filtersPanelOpen.value = !filtersPanelOpen.value
+}
+
 function onSort(event) {
   filters.sortBy = event?.sortField || 'createdAt'
   filters.sortOrder = typeof event?.sortOrder === 'number' ? event.sortOrder : -1
 
   reloadFirstPage({ keepVisible: true })
+}
+
+function setActiveDatePicker(name) {
+  activeDatePicker.value = name
+}
+
+function onDatePickerShow(name) {
+  activeDatePicker.value = name
+
+  if (name === 'from') {
+    otDateToPickerRef.value?.hide?.()
+  }
+
+  if (name === 'to') {
+    otDateFromPickerRef.value?.hide?.()
+  }
+}
+
+function onDatePickerHide(name) {
+  if (activeDatePicker.value === name) {
+    activeDatePicker.value = ''
+  }
 }
 
 async function clearFilters() {
@@ -550,6 +577,7 @@ async function clearFilters() {
   filters.otDateTo = ''
   filters.sortBy = 'createdAt'
   filters.sortOrder = -1
+  activeDatePicker.value = ''
 
   await reloadFirstPage({ keepVisible: true })
 }
@@ -630,95 +658,143 @@ onBeforeUnmount(() => {
       class="ot-filter-bar ot-request-filter-bar"
       :class="{ 'is-filter-stacked': filterActionsStacked }"
     >
-      <div class="ot-field">
-        <label class="ot-field-label">
-          {{ t('common.search') }}
-        </label>
+      <div class="ot-request-filter-primary">
+        <div class="ot-field ot-search-field">
+          <label class="ot-field-label">
+            {{ t('common.search') }}
+          </label>
 
-        <IconField>
-          <InputIcon class="pi pi-search" />
+          <IconField class="ot-search-icon-field">
+            <InputIcon class="pi pi-search" />
 
-          <InputText
-            v-model="filters.search"
-            :placeholder="t('common.search')"
-            class="w-full"
+            <InputText
+              v-model="filters.search"
+              :placeholder="t('common.search')"
+              class="w-full ot-request-search-input"
+              inputmode="search"
+              autocomplete="off"
+              autocapitalize="off"
+              autocorrect="off"
+              size="small"
+              @input="onSearchInput"
+            />
+          </IconField>
+        </div>
+
+        <div class="ot-request-filter-actions">
+          <span class="ot-loaded-badge">
+            {{ loadedLabel }}
+          </span>
+
+          <Button
+            :label="filterButtonLabel"
+            icon="pi pi-filter"
+            severity="secondary"
+            outlined
             size="small"
-            @input="onSearchInput"
+            :class="[
+              'ot-request-action-button',
+              'ot-filter-toggle-button',
+              { 'has-active-filters': hasAdvancedFilters },
+            ]"
+            :aria-expanded="filtersPanelOpen"
+            @click="toggleFilters"
           />
-        </IconField>
+
+          <Button
+            v-if="canExport"
+            :label="t('ot.requests.exportExcel')"
+            icon="pi pi-file-excel"
+            severity="secondary"
+            outlined
+            size="small"
+            class="ot-request-action-button ot-request-export-button"
+            :loading="exporting"
+            @click="handleExport"
+          />
+
+          <Button
+            v-if="canCreate"
+            :label="t('ot.requests.newRequest')"
+            icon="pi pi-plus"
+            size="small"
+            class="ot-request-action-button"
+            @click="openCreateRequest"
+          />
+        </div>
       </div>
 
-      <div class="ot-field">
-        <label class="ot-field-label">
-          {{ t('common.status') }}
-        </label>
+      <Transition name="ot-filter-panel">
+        <div
+          v-show="filtersPanelOpen"
+          class="ot-request-filter-panel"
+        >
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ t('common.status') }}
+            </label>
 
-        <Select
-          v-model="filters.status"
-          :options="statusOptions"
-          option-label="label"
-          option-value="value"
-          :placeholder="t('common.status')"
-          class="w-full"
-          size="small"
-          @change="onFilterChange"
-        />
-      </div>
+            <Select
+              v-model="filters.status"
+              :options="statusOptions"
+              option-label="label"
+              option-value="value"
+              :placeholder="t('common.status')"
+              class="w-full"
+              size="small"
+              @change="onFilterChange"
+            />
+          </div>
 
-      <div class="ot-field">
-        <HolidayDatePicker
-          v-model="filters.otDateFrom"
-          :label="t('ot.requests.otDateFrom')"
-          :placeholder="t('ot.requests.otDateFrom')"
-          @change="onFilterChange"
-        />
-      </div>
+          <div
+            class="ot-field ot-date-filter-field"
+            :class="{ 'is-date-open': activeDatePicker === 'from' }"
+            @pointerdown.capture="setActiveDatePicker('from')"
+            @focusin="setActiveDatePicker('from')"
+          >
+            <HolidayDatePicker
+              ref="otDateFromPickerRef"
+              v-model="filters.otDateFrom"
+              :label="t('ot.requests.otDateFrom')"
+              :placeholder="t('ot.requests.otDateFrom')"
+              panel-class="ot-request-date-panel ot-request-date-panel-from"
+              @show="onDatePickerShow('from')"
+              @hide="onDatePickerHide('from')"
+              @change="onFilterChange"
+            />
+          </div>
 
-      <div class="ot-field">
-        <HolidayDatePicker
-          v-model="filters.otDateTo"
-          :label="t('ot.requests.otDateTo')"
-          :placeholder="t('ot.requests.otDateTo')"
-          @change="onFilterChange"
-        />
-      </div>
+          <div
+            class="ot-field ot-date-filter-field"
+            :class="{ 'is-date-open': activeDatePicker === 'to' }"
+            @pointerdown.capture="setActiveDatePicker('to')"
+            @focusin="setActiveDatePicker('to')"
+          >
+            <HolidayDatePicker
+              ref="otDateToPickerRef"
+              v-model="filters.otDateTo"
+              :label="t('ot.requests.otDateTo')"
+              :placeholder="t('ot.requests.otDateTo')"
+              panel-class="ot-request-date-panel ot-request-date-panel-to"
+              @show="onDatePickerShow('to')"
+              @hide="onDatePickerHide('to')"
+              @change="onFilterChange"
+            />
+          </div>
 
-      <div class="ot-request-filter-actions">
-        <span class="ot-loaded-badge">
-          {{ loadedLabel }}
-        </span>
-
-        <Button
-          :label="t('common.clear')"
-          icon="pi pi-filter-slash"
-          severity="secondary"
-          outlined
-          size="small"
-          class="ot-request-action-button"
-          @click="clearFilters"
-        />
-
-        <Button
-          v-if="canExport"
-          :label="t('ot.requests.exportExcel')"
-          icon="pi pi-file-excel"
-          severity="secondary"
-          outlined
-          size="small"
-          class="ot-request-action-button ot-request-export-button"
-          :loading="exporting"
-          @click="handleExport"
-        />
-
-        <Button
-          v-if="canCreate"
-          :label="t('ot.requests.newRequest')"
-          icon="pi pi-plus"
-          size="small"
-          class="ot-request-action-button"
-          @click="openCreateRequest"
-        />
-      </div>
+          <div class="ot-request-filter-panel-actions">
+            <Button
+              :label="t('common.clear')"
+              icon="pi pi-filter-slash"
+              severity="secondary"
+              outlined
+              size="small"
+              class="ot-request-action-button"
+              @click="clearFilters"
+            />
+          </div>
+        </div>
+      </Transition>
     </section>
 
     <section class="ot-table-card">
@@ -838,13 +914,6 @@ onBeforeUnmount(() => {
                     displayApprovalTagClass(data),
                   ]"
                 />
-
-                <!--<div
-                  v-if="displayApproval(data).subLabel"
-                  class="approval-sub-label"
-                >
-                  {{ displayApproval(data).subLabel }}
-                </div> -->
               </div>
             </template>
           </Column>
@@ -884,13 +953,6 @@ onBeforeUnmount(() => {
                   :value="displayPaidTime(data)"
                   class="ot-request-rgb-tag ot-request-tag-info"
                 />
-
-                <!-- <span
-                  v-if="formatRequestTimeRange(data)"
-                  class="ot-request-sub-text"
-                >
-                  {{ formatRequestTimeRange(data) }}
-                </span> -->
               </div>
             </template>
           </Column>
@@ -1012,6 +1074,7 @@ onBeforeUnmount(() => {
   --ot-list-purple-rgb: 168 85 247;
   --ot-list-row-border: 148 163 184;
 
+  isolation: isolate;
   display: flex;
   width: 100%;
   max-width: 100%;
@@ -1030,24 +1093,42 @@ onBeforeUnmount(() => {
   font-family: inherit;
 }
 
-/* =========================
-   Filter bar
-   ========================= */
+/* Overlay safety */
+
+:global(.ot-request-date-panel),
+:global(.holiday-date-picker-panel),
+:global(.p-datepicker-overlay),
+:global(.p-datepicker-panel),
+:global(.p-datepicker.p-component-overlay),
+:global(.p-datepicker.p-connected-overlay),
+:global(.p-calendar-panel),
+:global(.p-select-overlay),
+:global(.p-select-panel) {
+  z-index: 40000 !important;
+}
+
+:global(.ot-request-date-panel),
+:global(.holiday-date-picker-panel),
+:global(.p-datepicker-overlay),
+:global(.p-datepicker-panel),
+:global(.p-datepicker.p-component-overlay),
+:global(.p-datepicker.p-connected-overlay),
+:global(.p-calendar-panel) {
+  max-width: calc(100vw - 1rem) !important;
+}
+
+/* Filter bar */
 
 .ot-request-filter-bar {
-  display: grid;
+  position: relative;
+  z-index: 5000;
+  display: flex;
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  grid-template-columns:
-    minmax(220px, 1.25fr)
-    minmax(150px, 0.75fr)
-    minmax(170px, 0.85fr)
-    minmax(170px, 0.85fr)
-    minmax(0, auto);
-  gap: 0.75rem;
-  align-items: end;
-  overflow: hidden;
+  flex-direction: column;
+  gap: 0.65rem;
+  overflow: visible;
   border: 1px solid var(--surface-border);
   border-radius: 1.05rem;
   background:
@@ -1057,12 +1138,13 @@ onBeforeUnmount(() => {
   padding: 0.85rem;
 }
 
-.ot-request-filter-bar.is-filter-stacked {
-  grid-template-columns:
-    minmax(220px, 1.25fr)
-    minmax(150px, 0.75fr)
-    minmax(170px, 0.85fr)
-    minmax(170px, 0.85fr);
+.ot-request-filter-primary {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: minmax(260px, 1fr) minmax(0, auto);
+  gap: 0.75rem;
+  align-items: end;
 }
 
 .ot-field {
@@ -1072,6 +1154,10 @@ onBeforeUnmount(() => {
   gap: 0.35rem;
 }
 
+.ot-search-field {
+  min-width: 0;
+}
+
 .ot-field-label {
   color: var(--text-color-secondary);
   font-size: 0.74rem;
@@ -1079,21 +1165,99 @@ onBeforeUnmount(() => {
   letter-spacing: 0.01em;
 }
 
+.ot-search-icon-field {
+  width: 100%;
+  min-width: 0;
+}
+
+.ot-search-field :deep(.ot-request-search-input.p-inputtext) {
+  min-height: 2.1rem;
+  font-size: 0.84rem;
+}
+
 .ot-request-filter-actions {
   display: flex;
   width: 100%;
   min-width: 0;
   max-width: 100%;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 0.45rem;
 }
 
-.ot-request-filter-bar.is-filter-stacked .ot-request-filter-actions {
-  grid-column: 1 / -1;
-  flex-wrap: wrap;
-  justify-content: flex-start;
+.ot-request-filter-panel {
+  position: relative;
+  z-index: 5100;
+  isolation: isolate;
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns:
+    minmax(150px, 0.75fr)
+    minmax(170px, 0.85fr)
+    minmax(170px, 0.85fr)
+    minmax(0, auto);
+  gap: 0.75rem;
+  align-items: end;
+  overflow: visible;
+  border-top: 1px solid rgb(var(--ot-list-row-border) / 0.12);
+  padding-top: 0.72rem;
+}
+
+.ot-request-filter-panel > .ot-field {
+  position: relative;
+  z-index: 1;
+}
+
+.ot-request-filter-panel > .ot-field.is-date-open {
+  z-index: 20000;
+}
+
+.ot-date-filter-field {
+  position: relative;
+  overflow: visible;
+}
+
+.ot-date-filter-field.is-date-open {
+  z-index: 20000;
+}
+
+.ot-date-filter-field.is-date-open :deep(.holiday-date-picker-field),
+.ot-date-filter-field.is-date-open :deep(.holiday-date-picker),
+.ot-date-filter-field.is-date-open :deep(.p-inputwrapper) {
+  position: relative;
+  z-index: 20001;
+}
+
+.ot-request-filter-panel-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.ot-filter-panel-enter-active,
+.ot-filter-panel-leave-active {
+  overflow: hidden;
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease,
+    max-height 0.16s ease;
+}
+
+.ot-filter-panel-enter-from,
+.ot-filter-panel-leave-to {
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+.ot-filter-panel-enter-to,
+.ot-filter-panel-leave-from {
+  max-height: 8rem;
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .ot-request-action-button {
@@ -1111,6 +1275,12 @@ onBeforeUnmount(() => {
 .ot-request-action-button :deep(.p-button-icon) {
   flex: 0 0 auto;
   font-size: 0.76rem;
+}
+
+.ot-filter-toggle-button.has-active-filters {
+  border-color: rgb(var(--ot-list-blue-rgb) / 0.36) !important;
+  background: rgb(var(--ot-list-blue-rgb) / 0.1) !important;
+  color: rgb(var(--ot-list-blue-rgb)) !important;
 }
 
 .ot-request-export-button :deep(.p-button-label) {
@@ -1134,11 +1304,11 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-/* =========================
-   Table card
-   ========================= */
+/* Table card */
 
 .ot-table-card {
+  position: relative;
+  z-index: 1;
   width: 100%;
   max-width: 100%;
   min-width: 0;
@@ -1177,6 +1347,7 @@ onBeforeUnmount(() => {
 }
 
 .ot-request-table-scroll {
+  position: relative;
   width: 100%;
   max-width: 100%;
   min-width: 0;
@@ -1188,16 +1359,16 @@ onBeforeUnmount(() => {
   scrollbar-gutter: stable;
 }
 
-/* =========================
-   PrimeVue table center/stability
-   ========================= */
+/* PrimeVue table center/stability */
 
 :deep(.ot-request-table.p-datatable) {
   max-width: 100% !important;
   min-width: 0 !important;
 }
 
-:deep(.ot-request-table.p-datatable .p-datatable-wrapper) {
+:deep(.ot-request-table.p-datatable .p-datatable-wrapper),
+:deep(.ot-request-table.p-datatable .p-datatable-table-container) {
+  position: static !important;
   max-width: 100% !important;
   min-width: 0 !important;
   overflow: visible !important;
@@ -1207,12 +1378,28 @@ onBeforeUnmount(() => {
   width: max-content !important;
   min-width: 100% !important;
   table-layout: auto !important;
+  border-collapse: separate !important;
+  border-spacing: 0 !important;
+}
+
+/* Freeze table header when scrolling */
+
+:deep(.ot-request-table.p-datatable .p-datatable-thead) {
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 80 !important;
+}
+
+:deep(.ot-request-table.p-datatable .p-datatable-thead > tr) {
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 81 !important;
 }
 
 :deep(.ot-request-table.p-datatable .p-datatable-thead > tr > th) {
   position: sticky !important;
-  top: 0;
-  z-index: 5;
+  top: 0 !important;
+  z-index: 82 !important;
   width: auto !important;
   min-width: auto !important;
   max-width: none !important;
@@ -1225,6 +1412,9 @@ onBeforeUnmount(() => {
   text-align: center !important;
   vertical-align: middle !important;
   white-space: nowrap !important;
+  box-shadow:
+    0 1px 0 rgb(var(--ot-list-row-border) / 0.16),
+    0 8px 14px rgb(15 23 42 / 0.045);
 }
 
 :deep(.ot-request-table.p-datatable .p-datatable-tbody > tr > td) {
@@ -1320,9 +1510,7 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
 }
 
-/* =========================
-   Table text
-   ========================= */
+/* Table text */
 
 .ot-request-no-text {
   display: inline-flex;
@@ -1374,18 +1562,6 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.approval-sub-label {
-  max-width: 13rem;
-  overflow: hidden;
-  color: var(--text-color-secondary);
-  font-size: 0.7rem;
-  font-weight: 520;
-  line-height: 1.2;
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .ot-request-meta-text {
   display: inline-flex;
   max-width: 100%;
@@ -1402,9 +1578,7 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-/* =========================
-   RGB tags
-   ========================= */
+/* RGB tags */
 
 .ot-request-rgb-tag {
   --ot-request-tag-rgb: var(--ot-list-muted-rgb);
@@ -1454,9 +1628,7 @@ onBeforeUnmount(() => {
   --ot-request-tag-rgb: var(--ot-list-purple-rgb);
 }
 
-/* =========================
-   Expanded child table
-   ========================= */
+/* Expanded child table */
 
 .ot-expanded-box {
   max-width: 100%;
@@ -1467,37 +1639,6 @@ onBeforeUnmount(() => {
     linear-gradient(135deg, rgb(var(--ot-list-blue-rgb) / 0.035), transparent 35%),
     var(--surface-ground);
   padding: 0.72rem;
-}
-
-.ot-expanded-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  margin-bottom: 0.55rem;
-}
-
-.ot-expanded-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  color: var(--text-color);
-  font-size: 0.78rem;
-  font-weight: 700;
-  line-height: 1.2;
-}
-
-.ot-expanded-title i {
-  color: rgb(var(--ot-list-blue-rgb));
-  font-size: 0.82rem;
-}
-
-.ot-expanded-summary {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.35rem;
 }
 
 .ot-expanded-table-scroll {
@@ -1597,9 +1738,7 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 
-/* =========================
-   Bottom state
-   ========================= */
+/* Bottom state */
 
 .ot-list-bottom-bar {
   display: flex;
@@ -1617,9 +1756,7 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
-/* =========================
-   Empty state
-   ========================= */
+/* Empty state */
 
 .ot-empty-state {
   display: flex;
@@ -1656,9 +1793,7 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 
-/* =========================
-   Dark mode
-   ========================= */
+/* Dark mode */
 
 :global(.dark) .ot-request-list-page {
   --ot-list-text-rgb: 226 232 240;
@@ -1678,20 +1813,23 @@ onBeforeUnmount(() => {
     var(--surface-ground);
 }
 
-/* =========================
-   Responsive
-   ========================= */
+/* Responsive */
 
 @media (max-width: 1100px) {
-  .ot-request-filter-bar,
-  .ot-request-filter-bar.is-filter-stacked {
+  .ot-request-filter-primary {
+    grid-template-columns: 1fr;
+  }
+
+  .ot-request-filter-actions {
+    justify-content: flex-start;
+  }
+
+  .ot-request-filter-panel {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .ot-request-filter-actions,
-  .ot-request-filter-bar.is-filter-stacked .ot-request-filter-actions {
+  .ot-request-filter-panel-actions {
     grid-column: 1 / -1;
-    flex-wrap: wrap;
     justify-content: flex-start;
   }
 
@@ -1707,39 +1845,104 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 768px) {
-  .ot-request-filter-bar,
-  .ot-request-filter-bar.is-filter-stacked {
-    grid-template-columns: 1fr;
-    padding: 0.75rem;
+  .ot-request-list-page {
+    touch-action: manipulation;
   }
 
-  .ot-request-filter-actions,
-  .ot-request-filter-bar.is-filter-stacked .ot-request-filter-actions {
-    align-items: stretch;
+  .ot-request-filter-bar {
+    gap: 0.55rem;
+    padding: 0.65rem;
+  }
+
+  .ot-request-filter-primary {
+    grid-template-columns: 1fr;
+    gap: 0.55rem;
+  }
+
+  .ot-search-field .ot-field-label {
+    display: none;
+  }
+
+  .ot-request-list-page :deep(input),
+  .ot-request-list-page :deep(textarea),
+  .ot-request-list-page :deep(select),
+  .ot-request-list-page :deep(.p-inputtext),
+  .ot-request-list-page :deep(.p-select),
+  .ot-request-list-page :deep(.p-select-label),
+  .ot-request-list-page :deep(.p-datepicker input),
+  .ot-request-list-page :deep(.p-calendar input),
+  .ot-request-list-page :deep(.p-inputwrapper input) {
+    font-size: 16px !important;
+  }
+
+  .ot-search-field :deep(.ot-request-search-input.p-inputtext) {
+    min-height: 2.35rem;
+    font-size: 16px !important;
+    line-height: 1.2;
+  }
+
+  .ot-date-filter-field :deep(.p-inputtext),
+  .ot-date-filter-field :deep(input) {
+    min-height: 2.35rem;
+    font-size: 16px !important;
+    line-height: 1.2;
+  }
+
+  .ot-request-filter-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.4rem;
     justify-content: stretch;
   }
 
   .ot-request-filter-actions > * {
-    flex: 1 1 100%;
+    min-width: 0;
   }
 
-  .ot-loaded-badge,
+  .ot-loaded-badge {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-height: 1.72rem;
+    padding: 0.22rem 0.5rem;
+  }
+
   .ot-request-action-button {
     width: 100%;
     justify-content: center;
+    min-height: 2.2rem;
+  }
+
+  .ot-request-action-button :deep(.p-button-label) {
+    font-size: 0.78rem;
+  }
+
+  .ot-request-filter-panel {
+    z-index: 5100;
+    grid-template-columns: 1fr;
+    gap: 0.58rem;
+    overflow: visible;
+    padding-top: 0.6rem;
+  }
+
+  .ot-request-filter-panel > .ot-field {
+    z-index: 1;
+  }
+
+  .ot-request-filter-panel > .ot-field.is-date-open {
+    z-index: 20000;
+  }
+
+  .ot-request-filter-panel-actions {
+    justify-content: stretch;
+  }
+
+  .ot-filter-panel-enter-to,
+  .ot-filter-panel-leave-from {
+    max-height: 18rem;
   }
 
   .ot-request-table-scroll {
     max-height: 64vh;
-  }
-
-  .ot-expanded-top {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .ot-expanded-summary {
-    justify-content: flex-start;
   }
 
   .ot-list-bottom-bar {

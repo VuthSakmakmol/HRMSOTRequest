@@ -237,6 +237,15 @@ export default {
       },
     },
   },
+  profile: {
+    unknownUser: 'User',
+    accountInformation: 'Account Information',
+    displayName: 'Display Name',
+    loginId: 'Login ID',
+    employee: 'Employee',
+    department: 'Department',
+    position: 'Position',
+  },
 
   nav: {
     workspace: 'Workspace',

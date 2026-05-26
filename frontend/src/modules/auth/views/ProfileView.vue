@@ -15,68 +15,194 @@ const { t, te } = useI18n()
 
 const user = computed(() => auth.user || {})
 
-const displayName = computed(() => {
+const employee = computed(() => {
   return (
-    user.value.displayName ||
-    user.value.fullName ||
-    user.value.name ||
-    user.value.employeeName ||
-    user.value.loginId ||
-    'User'
+    user.value.employee ||
+    user.value.employeeProfile ||
+    user.value.profile ||
+    user.value.employeeSnapshot ||
+    {}
   )
 })
 
-const loginId = computed(() => user.value.loginId || user.value.username || '-')
+const department = computed(() => {
+  return (
+    employee.value.department ||
+    employee.value.departmentSnapshot ||
+    user.value.department ||
+    user.value.departmentSnapshot ||
+    {}
+  )
+})
+
+const position = computed(() => {
+  return (
+    employee.value.position ||
+    employee.value.positionSnapshot ||
+    user.value.position ||
+    user.value.positionSnapshot ||
+    {}
+  )
+})
+
+function cleanText(value) {
+  return String(value ?? '').trim()
+}
+
+function firstValidText(values = []) {
+  return values.map(cleanText).find(Boolean) || ''
+}
+
+function combineName(source = {}) {
+  return [source.firstName, source.lastName]
+    .map(cleanText)
+    .filter(Boolean)
+    .join(' ')
+}
+
+function tr(key, fallback) {
+  return te(key) ? t(key) : fallback
+}
+
+const displayName = computed(() => {
+  return (
+    firstValidText([
+      user.value.displayName,
+      user.value.fullName,
+      user.value.name,
+      user.value.employeeName,
+      user.value.englishName,
+      user.value.localName,
+      combineName(user.value),
+
+      employee.value.displayName,
+      employee.value.fullName,
+      employee.value.name,
+      employee.value.employeeName,
+      employee.value.englishName,
+      employee.value.localName,
+      combineName(employee.value),
+
+      user.value.loginId,
+      user.value.username,
+      employee.value.employeeCode,
+      employee.value.employeeNo,
+    ]) || tr('profile.unknownUser', 'User')
+  )
+})
+
+const loginId = computed(() => {
+  return firstValidText([user.value.loginId, user.value.username]) || '-'
+})
 
 const employeeLabel = computed(() => {
-  return (
-    user.value.employeeLabel ||
-    user.value.employeeName ||
-    user.value.employee?.displayName ||
-    user.value.employee?.employeeName ||
-    '-'
-  )
+  const code = firstValidText([
+    employee.value.employeeCode,
+    employee.value.employeeNo,
+    employee.value.code,
+    user.value.employeeCode,
+    user.value.employeeNo,
+  ])
+
+  const name = firstValidText([
+    employee.value.displayName,
+    employee.value.fullName,
+    employee.value.name,
+    employee.value.employeeName,
+    employee.value.englishName,
+    employee.value.localName,
+    combineName(employee.value),
+    user.value.employeeName,
+    user.value.employeeLabel,
+  ])
+
+  if (code && name && code !== name) return `${code} · ${name}`
+
+  return code || name || '-'
 })
 
 const departmentName = computed(() => {
-  return (
-    user.value.departmentName ||
-    user.value.employee?.departmentName ||
-    user.value.employee?.department?.name ||
-    '-'
-  )
+  const code = firstValidText([
+    user.value.departmentCode,
+    employee.value.departmentCode,
+    department.value.code,
+    department.value.departmentCode,
+  ])
+
+  const name = firstValidText([
+    user.value.departmentName,
+    employee.value.departmentName,
+    department.value.name,
+    department.value.departmentName,
+  ])
+
+  if (code && name && code !== name) return `${code} · ${name}`
+
+  return code || name || '-'
 })
 
 const positionName = computed(() => {
-  return (
-    user.value.positionName ||
-    user.value.employee?.positionName ||
-    user.value.employee?.position?.name ||
-    '-'
-  )
+  const code = firstValidText([
+    user.value.positionCode,
+    employee.value.positionCode,
+    position.value.code,
+    position.value.positionCode,
+  ])
+
+  const name = firstValidText([
+    user.value.positionName,
+    employee.value.positionName,
+    position.value.name,
+    position.value.positionName,
+  ])
+
+  if (code && name && code !== name) return `${code} · ${name}`
+
+  return code || name || '-'
 })
 
 const accountInitial = computed(() => {
   return String(displayName.value || 'U').trim().charAt(0).toUpperCase() || 'U'
 })
 
-const accountStatus = computed(() => {
-  return user.value.isActive === false ? 'Inactive' : 'Active'
+const accountStatusLabel = computed(() => {
+  return user.value.isActive === false
+    ? tr('common.inactive', 'Inactive')
+    : tr('common.active', 'Active')
 })
 
 const accountStatusSeverity = computed(() => {
   return user.value.isActive === false ? 'danger' : 'success'
 })
 
-function tr(key, fallback) {
-  return te(key) ? t(key) : fallback
-}
+const accountRows = computed(() => [
+  {
+    label: tr('profile.displayName', 'Display Name'),
+    value: displayName.value,
+  },
+  {
+    label: tr('profile.loginId', 'Login ID'),
+    value: loginId.value,
+  },
+  {
+    label: tr('profile.employee', 'Employee'),
+    value: employeeLabel.value,
+  },
+  {
+    label: tr('profile.department', 'Department'),
+    value: departmentName.value,
+  },
+  {
+    label: tr('profile.position', 'Position'),
+    value: positionName.value,
+  },
+])
 </script>
 
 <template>
   <main class="profile-page">
     <section class="profile-hero">
-      <div class="profile-hero__left">
+      <div class="profile-hero__identity">
         <Avatar
           :label="accountInitial"
           shape="circle"
@@ -84,25 +210,21 @@ function tr(key, fallback) {
         />
 
         <div class="profile-hero__text">
-          <h1 class="profile-hero__title">
-            {{ tr('auth.profile', 'Profile') }}
+          <h1 class="profile-hero__name">
+            {{ displayName }}
           </h1>
 
-          <p class="profile-hero__subtitle">
-            {{
-              tr(
-                'profile.subtitle',
-                'Manage your account and notification channels.',
-              )
-            }}
-          </p>
+          <div class="profile-hero__meta">
+            <span>{{ tr('profile.loginId', 'Login ID') }}: {{ loginId }}</span>
+          </div>
         </div>
       </div>
 
       <Tag
-        :value="accountStatus"
+        :value="accountStatusLabel"
         :severity="accountStatusSeverity"
         rounded
+        class="profile-status-tag"
       />
     </section>
 
@@ -110,45 +232,25 @@ function tr(key, fallback) {
       <Card class="profile-card">
         <template #title>
           <div class="profile-card-title">
-            {{ tr('profile.accountInfo', 'Account Information') }}
+            <i class="pi pi-user" />
+            <span>{{ tr('profile.accountInformation', 'Account Information') }}</span>
           </div>
         </template>
 
         <template #content>
           <div class="profile-info-list">
-            <div class="profile-info-row">
+            <div
+              v-for="row in accountRows"
+              :key="row.label"
+              class="profile-info-row"
+            >
               <span class="profile-info-label">
-                {{ tr('profile.displayName', 'Display Name') }}
+                {{ row.label }}
               </span>
-              <strong>{{ displayName }}</strong>
-            </div>
 
-            <div class="profile-info-row">
-              <span class="profile-info-label">
-                {{ tr('auth.loginId', 'Login ID') }}
-              </span>
-              <strong>{{ loginId }}</strong>
-            </div>
-
-            <div class="profile-info-row">
-              <span class="profile-info-label">
-                {{ tr('employee.employee', 'Employee') }}
-              </span>
-              <strong>{{ employeeLabel }}</strong>
-            </div>
-
-            <div class="profile-info-row">
-              <span class="profile-info-label">
-                {{ tr('org.department', 'Department') }}
-              </span>
-              <strong>{{ departmentName }}</strong>
-            </div>
-
-            <div class="profile-info-row">
-              <span class="profile-info-label">
-                {{ tr('org.position', 'Position') }}
-              </span>
-              <strong>{{ positionName }}</strong>
+              <strong class="profile-info-value">
+                {{ row.value || '-' }}
+              </strong>
             </div>
           </div>
         </template>
@@ -162,6 +264,8 @@ function tr(key, fallback) {
 <style scoped>
 .profile-page {
   display: flex;
+  width: 100%;
+  min-width: 0;
   flex-direction: column;
   gap: 1rem;
   padding: 1rem;
@@ -169,52 +273,63 @@ function tr(key, fallback) {
 
 .profile-hero {
   display: flex;
+  min-width: 0;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
   border: 1px solid var(--surface-border);
-  border-radius: 22px;
+  border-radius: 1.05rem;
   background:
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--primary-color) 9%, var(--surface-card)),
-      var(--surface-card)
-    );
-  padding: 1rem;
+    linear-gradient(135deg, rgb(59 130 246 / 0.055), transparent 34%),
+    var(--surface-card);
+  box-shadow: 0 12px 34px rgb(15 23 42 / 0.055);
+  padding: 0.9rem 1rem;
 }
 
-.profile-hero__left {
+.profile-hero__identity {
   display: flex;
-  align-items: center;
-  gap: 0.875rem;
   min-width: 0;
+  align-items: center;
+  gap: 0.75rem;
 }
 
 .profile-hero__avatar {
-  width: 3.25rem;
-  height: 3.25rem;
+  width: 2.7rem;
+  height: 2.7rem;
   flex: 0 0 auto;
-  background: var(--primary-color);
-  color: var(--primary-color-text);
-  font-weight: 800;
+  background: color-mix(in srgb, var(--primary-color) 16%, transparent);
+  color: var(--primary-color);
+  font-size: 0.92rem;
+  font-weight: 900;
 }
 
 .profile-hero__text {
   min-width: 0;
 }
 
-.profile-hero__title {
+.profile-hero__name {
+  max-width: min(54vw, 42rem);
   margin: 0;
+  overflow: hidden;
   color: var(--text-color);
-  font-size: 1.25rem;
-  font-weight: 800;
+  font-size: 1.05rem;
+  font-weight: 850;
   line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.profile-hero__subtitle {
-  margin: 0.25rem 0 0;
+.profile-hero__meta {
+  display: flex;
+  min-width: 0;
+  margin-top: 0.2rem;
   color: var(--text-color-secondary);
-  font-size: 0.9rem;
+  font-size: 0.76rem;
+  font-weight: 650;
+}
+
+.profile-status-tag {
+  flex: 0 0 auto;
 }
 
 .profile-grid {
@@ -225,45 +340,68 @@ function tr(key, fallback) {
 }
 
 .profile-card {
-  border-radius: 18px;
+  overflow: hidden;
+  border-radius: 1.05rem;
+  box-shadow: 0 12px 34px rgb(15 23 42 / 0.045);
+}
+
+.profile-card :deep(.p-card-body) {
+  padding: 1rem;
+}
+
+.profile-card :deep(.p-card-title) {
+  margin-bottom: 0.75rem;
 }
 
 .profile-card-title {
-  font-size: 1rem;
-  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--text-color);
+  font-size: 0.94rem;
+  font-weight: 850;
+}
+
+.profile-card-title i {
+  color: var(--primary-color);
+  font-size: 0.86rem;
 }
 
 .profile-info-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.625rem;
+  display: grid;
+  gap: 0.52rem;
 }
 
 .profile-info-row {
-  display: flex;
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(8rem, 0.34fr) minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
   gap: 0.75rem;
   border: 1px solid var(--surface-border);
-  border-radius: 14px;
-  background: var(--surface-ground);
-  padding: 0.75rem 0.875rem;
+  border-radius: 0.82rem;
+  background: color-mix(in srgb, var(--surface-ground) 82%, transparent);
+  padding: 0.64rem 0.75rem;
 }
 
 .profile-info-label {
   color: var(--text-color-secondary);
-  font-size: 0.8rem;
+  font-size: 0.76rem;
+  font-weight: 700;
 }
 
-.profile-info-row strong {
+.profile-info-value {
   min-width: 0;
-  text-align: right;
+  overflow: hidden;
   color: var(--text-color);
-  font-size: 0.9rem;
-  overflow-wrap: anywhere;
+  font-size: 0.82rem;
+  font-weight: 760;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 960px) {
   .profile-grid {
     grid-template-columns: 1fr;
   }
@@ -279,13 +417,18 @@ function tr(key, fallback) {
     flex-direction: column;
   }
 
-  .profile-info-row {
-    align-items: flex-start;
-    flex-direction: column;
+  .profile-hero__name {
+    max-width: 72vw;
   }
 
-  .profile-info-row strong {
+  .profile-info-row {
+    grid-template-columns: 1fr;
+    gap: 0.25rem;
+  }
+
+  .profile-info-value {
     text-align: left;
+    white-space: normal;
   }
 }
 </style>

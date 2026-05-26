@@ -51,6 +51,7 @@ const expandedRows = ref({})
 const bootstrapped = ref(false)
 const backgroundLoading = ref(false)
 const loadingMore = ref(false)
+const filtersPanelOpen = ref(false)
 
 const tableScrollShell = ref(null)
 const filterBarRef = ref(null)
@@ -73,12 +74,18 @@ const statusOptions = computed(() => [
   { label: tr('common.allStatus', 'All Status'), value: '' },
   { label: tr('ot.status.pending', 'Pending Approval'), value: 'PENDING' },
   {
-    label: tr('ot.status.pendingRequesterConfirmation', 'Waiting Requester Confirmation'),
+    label: tr(
+      'ot.status.pendingRequesterConfirmation',
+      'Waiting Requester Confirmation',
+    ),
     value: 'PENDING_REQUESTER_CONFIRMATION',
   },
   { label: tr('ot.status.approved', 'Approved'), value: 'APPROVED' },
   { label: tr('ot.status.rejected', 'Rejected'), value: 'REJECTED' },
-  { label: tr('ot.status.requesterDisagreed', 'Requester Disagreed'), value: 'REQUESTER_DISAGREED' },
+  {
+    label: tr('ot.status.requesterDisagreed', 'Requester Disagreed'),
+    value: 'REQUESTER_DISAGREED',
+  },
   { label: tr('ot.status.cancelled', 'Cancelled'), value: 'CANCELLED' },
 ])
 
@@ -96,6 +103,22 @@ const summaryText = computed(() =>
 
 const firstLoading = computed(() => {
   return backgroundLoading.value && !bootstrapped.value && !hasAnyData.value
+})
+
+const activeAdvancedFilterCount = computed(() => {
+  return [filters.status, filters.otDateFrom, filters.otDateTo].filter((value) =>
+    String(value || '').trim(),
+  ).length
+})
+
+const hasAdvancedFilters = computed(() => activeAdvancedFilterCount.value > 0)
+
+const filterButtonLabel = computed(() => {
+  const label = tr('common.filter', 'Filter')
+
+  return activeAdvancedFilterCount.value
+    ? `${label} (${activeAdvancedFilterCount.value})`
+    : label
 })
 
 function tr(key, fallback, params) {
@@ -218,7 +241,12 @@ function displayApprovalTagClass(row) {
 }
 
 function displayStaffCount(row) {
-  return Number(row?.effectiveEmployeeCount || row?.requestedEmployeeCount || getEmployeeCount(row) || 0)
+  return Number(
+    row?.effectiveEmployeeCount ||
+      row?.requestedEmployeeCount ||
+      getEmployeeCount(row) ||
+      0,
+  )
 }
 
 function displayPaidTime(row) {
@@ -398,7 +426,10 @@ async function fetchPage(page, { replace = false, silent = false, version = quer
     toast.add({
       severity: 'error',
       summary: tr('common.loadFailed', 'Load Failed'),
-      detail: getApiErrorMessage(error, tr('ot.acknowledge.loadFailed', 'Failed to load acknowledge inbox')),
+      detail: getApiErrorMessage(
+        error,
+        tr('ot.acknowledge.loadFailed', 'Failed to load acknowledge inbox'),
+      ),
       life: 3500,
     })
   } finally {
@@ -522,6 +553,10 @@ function onFilterChange() {
   reloadFirstPage({ keepVisible: true })
 }
 
+function toggleFilters() {
+  filtersPanelOpen.value = !filtersPanelOpen.value
+}
+
 function onSort(event) {
   filters.sortBy = event?.sortField || 'createdAt'
   filters.sortOrder = typeof event?.sortOrder === 'number' ? event.sortOrder : -1
@@ -558,74 +593,104 @@ onBeforeUnmount(() => {
       class="ot-filter-bar ot-ack-filter-bar"
       :class="{ 'is-filter-stacked': filterActionsStacked }"
     >
-      <div class="ot-field">
-        <label class="ot-field-label">
-          {{ tr('common.search', 'Search') }}
-        </label>
+      <div class="ot-ack-filter-primary">
+        <div class="ot-field ot-search-field">
+          <label class="ot-field-label">
+            {{ tr('common.search', 'Search') }}
+          </label>
 
-        <IconField>
-          <InputIcon class="pi pi-search" />
+          <IconField class="ot-search-icon-field">
+            <InputIcon class="pi pi-search" />
 
-          <InputText
-            v-model="filters.search"
-            :placeholder="tr('common.search', 'Search')"
-            class="w-full"
+            <InputText
+              v-model="filters.search"
+              :placeholder="tr('common.search', 'Search')"
+              class="w-full ot-ack-search-input"
+              inputmode="search"
+              autocomplete="off"
+              autocapitalize="off"
+              autocorrect="off"
+              size="small"
+              @input="onSearchInput"
+            />
+          </IconField>
+        </div>
+
+        <div class="ot-ack-filter-actions">
+          <span class="ot-loaded-badge">
+            {{ summaryText }}
+          </span>
+
+          <Button
+            :label="filterButtonLabel"
+            icon="pi pi-filter"
+            severity="secondary"
+            outlined
             size="small"
-            @input="onSearchInput"
+            :class="[
+              'ot-ack-action-button',
+              'ot-filter-toggle-button',
+              { 'has-active-filters': hasAdvancedFilters },
+            ]"
+            :aria-expanded="filtersPanelOpen"
+            @click="toggleFilters"
           />
-        </IconField>
+        </div>
       </div>
 
-      <div class="ot-field">
-        <label class="ot-field-label">
-          {{ tr('common.status', 'Status') }}
-        </label>
+      <Transition name="ot-filter-panel">
+        <div
+          v-show="filtersPanelOpen"
+          class="ot-ack-filter-panel"
+        >
+          <div class="ot-field">
+            <label class="ot-field-label">
+              {{ tr('common.status', 'Status') }}
+            </label>
 
-        <Select
-          v-model="filters.status"
-          :options="statusOptions"
-          option-label="label"
-          option-value="value"
-          :placeholder="tr('common.status', 'Status')"
-          class="w-full"
-          size="small"
-          @change="onFilterChange"
-        />
-      </div>
+            <Select
+              v-model="filters.status"
+              :options="statusOptions"
+              option-label="label"
+              option-value="value"
+              :placeholder="tr('common.status', 'Status')"
+              class="w-full"
+              size="small"
+              @change="onFilterChange"
+            />
+          </div>
 
-      <div class="ot-field">
-        <HolidayDatePicker
-          v-model="filters.otDateFrom"
-          :label="tr('ot.requests.otDateFrom', 'OT Date From')"
-          :placeholder="tr('ot.requests.otDateFrom', 'OT Date From')"
-          @change="onFilterChange"
-        />
-      </div>
+          <div class="ot-field">
+            <HolidayDatePicker
+              v-model="filters.otDateFrom"
+              :label="tr('ot.requests.otDateFrom', 'OT Date From')"
+              :placeholder="tr('ot.requests.otDateFrom', 'OT Date From')"
+              @change="onFilterChange"
+            />
+          </div>
 
-      <div class="ot-field">
-        <HolidayDatePicker
-          v-model="filters.otDateTo"
-          :label="tr('ot.requests.otDateTo', 'OT Date To')"
-          :placeholder="tr('ot.requests.otDateTo', 'OT Date To')"
-          @change="onFilterChange"
-        />
-      </div>
+          <div class="ot-field">
+            <HolidayDatePicker
+              v-model="filters.otDateTo"
+              :label="tr('ot.requests.otDateTo', 'OT Date To')"
+              :placeholder="tr('ot.requests.otDateTo', 'OT Date To')"
+              @change="onFilterChange"
+            />
+          </div>
 
-      <div class="ot-ack-filter-actions">
-        <span class="ot-loaded-badge">
-          {{ summaryText }}
-        </span>
-
-        <Button
-          :label="tr('common.clear', 'Clear')"
-          icon="pi pi-filter-slash"
-          severity="secondary"
-          outlined
-          size="small"
-          class="ot-ack-action-button"
-          @click="clearFilters"
-        />
-      </div>
+          <div class="ot-ack-filter-panel-actions">
+            <Button
+              :label="tr('common.clear', 'Clear')"
+              icon="pi pi-filter-slash"
+              severity="secondary"
+              outlined
+              size="small"
+              class="ot-ack-action-button"
+              @click="clearFilters"
+            />
+          </div>
+        </div>
+      </Transition>
     </section>
 
     <section class="ot-table-card">
@@ -767,9 +832,11 @@ onBeforeUnmount(() => {
           >
             <template #body="{ data }">
               <Tag
-                :value="tr('ot.requests.staffCount', `${displayStaffCount(data)} staff`, {
-                  count: displayStaffCount(data),
-                })"
+                :value="
+                  tr('ot.requests.staffCount', `${displayStaffCount(data)} staff`, {
+                    count: displayStaffCount(data),
+                  })
+                "
                 class="ot-ack-rgb-tag ot-ack-tag-info"
               />
             </template>
@@ -940,19 +1007,13 @@ onBeforeUnmount(() => {
    ========================= */
 
 .ot-ack-filter-bar {
-  display: grid;
+  display: flex;
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  grid-template-columns:
-    minmax(220px, 1.25fr)
-    minmax(150px, 0.75fr)
-    minmax(170px, 0.85fr)
-    minmax(170px, 0.85fr)
-    minmax(0, auto);
-  gap: 0.75rem;
-  align-items: end;
-  overflow: hidden;
+  flex-direction: column;
+  gap: 0.65rem;
+  overflow: visible;
   border: 1px solid var(--surface-border);
   border-radius: 1.05rem;
   background:
@@ -962,12 +1023,13 @@ onBeforeUnmount(() => {
   padding: 0.85rem;
 }
 
-.ot-ack-filter-bar.is-filter-stacked {
-  grid-template-columns:
-    minmax(220px, 1.25fr)
-    minmax(150px, 0.75fr)
-    minmax(170px, 0.85fr)
-    minmax(170px, 0.85fr);
+.ot-ack-filter-primary {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: minmax(260px, 1fr) minmax(0, auto);
+  gap: 0.75rem;
+  align-items: end;
 }
 
 .ot-field {
@@ -977,6 +1039,10 @@ onBeforeUnmount(() => {
   gap: 0.35rem;
 }
 
+.ot-search-field {
+  min-width: 0;
+}
+
 .ot-field-label {
   color: var(--text-color-secondary);
   font-size: 0.74rem;
@@ -984,21 +1050,70 @@ onBeforeUnmount(() => {
   letter-spacing: 0.01em;
 }
 
+.ot-search-icon-field {
+  width: 100%;
+  min-width: 0;
+}
+
+.ot-search-field :deep(.ot-ack-search-input.p-inputtext) {
+  min-height: 2.1rem;
+  font-size: 0.84rem;
+}
+
 .ot-ack-filter-actions {
   display: flex;
   width: 100%;
   min-width: 0;
   max-width: 100%;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 0.45rem;
 }
 
-.ot-ack-filter-bar.is-filter-stacked .ot-ack-filter-actions {
-  grid-column: 1 / -1;
-  flex-wrap: wrap;
-  justify-content: flex-start;
+.ot-ack-filter-panel {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns:
+    minmax(150px, 0.75fr)
+    minmax(170px, 0.85fr)
+    minmax(170px, 0.85fr)
+    minmax(0, auto);
+  gap: 0.75rem;
+  align-items: end;
+  border-top: 1px solid rgb(var(--ot-list-row-border) / 0.12);
+  padding-top: 0.72rem;
+}
+
+.ot-ack-filter-panel-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.ot-filter-panel-enter-active,
+.ot-filter-panel-leave-active {
+  overflow: hidden;
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease,
+    max-height 0.16s ease;
+}
+
+.ot-filter-panel-enter-from,
+.ot-filter-panel-leave-to {
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+.ot-filter-panel-enter-to,
+.ot-filter-panel-leave-from {
+  max-height: 8rem;
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .ot-ack-action-button {
@@ -1016,6 +1131,12 @@ onBeforeUnmount(() => {
 .ot-ack-action-button :deep(.p-button-icon) {
   flex: 0 0 auto;
   font-size: 0.76rem;
+}
+
+.ot-filter-toggle-button.has-active-filters {
+  border-color: rgb(var(--ot-list-blue-rgb) / 0.36) !important;
+  background: rgb(var(--ot-list-blue-rgb) / 0.1) !important;
+  color: rgb(var(--ot-list-blue-rgb)) !important;
 }
 
 .ot-loaded-badge {
@@ -1540,15 +1661,20 @@ onBeforeUnmount(() => {
    ========================= */
 
 @media (max-width: 1100px) {
-  .ot-ack-filter-bar,
-  .ot-ack-filter-bar.is-filter-stacked {
+  .ot-ack-filter-primary {
+    grid-template-columns: 1fr;
+  }
+
+  .ot-ack-filter-actions {
+    justify-content: flex-start;
+  }
+
+  .ot-ack-filter-panel {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .ot-ack-filter-actions,
-  .ot-ack-filter-bar.is-filter-stacked .ot-ack-filter-actions {
+  .ot-ack-filter-panel-actions {
     grid-column: 1 / -1;
-    flex-wrap: wrap;
     justify-content: flex-start;
   }
 
@@ -1564,26 +1690,67 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 768px) {
-  .ot-ack-filter-bar,
-  .ot-ack-filter-bar.is-filter-stacked {
-    grid-template-columns: 1fr;
-    padding: 0.75rem;
+  .ot-ack-filter-bar {
+    gap: 0.55rem;
+    padding: 0.65rem;
   }
 
-  .ot-ack-filter-actions,
-  .ot-ack-filter-bar.is-filter-stacked .ot-ack-filter-actions {
-    align-items: stretch;
+  .ot-ack-filter-primary {
+    grid-template-columns: 1fr;
+    gap: 0.55rem;
+  }
+
+  .ot-search-field .ot-field-label {
+    display: none;
+  }
+
+  .ot-search-field :deep(.ot-ack-search-input.p-inputtext) {
+    min-height: 2.35rem;
+    font-size: 16px !important;
+    line-height: 1.2;
+  }
+
+  .ot-ack-filter-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.4rem;
     justify-content: stretch;
   }
 
   .ot-ack-filter-actions > * {
-    flex: 1 1 100%;
+    min-width: 0;
   }
 
-  .ot-loaded-badge,
+  .ot-loaded-badge {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-height: 1.72rem;
+    padding: 0.22rem 0.5rem;
+  }
+
   .ot-ack-action-button {
     width: 100%;
     justify-content: center;
+    min-height: 2.2rem;
+  }
+
+  .ot-ack-action-button :deep(.p-button-label) {
+    font-size: 0.78rem;
+  }
+
+  .ot-ack-filter-panel {
+    grid-template-columns: 1fr;
+    gap: 0.58rem;
+    padding-top: 0.6rem;
+  }
+
+  .ot-ack-filter-panel-actions {
+    justify-content: stretch;
+  }
+
+  .ot-filter-panel-enter-to,
+  .ot-filter-panel-leave-from {
+    max-height: 16rem;
   }
 
   .ot-ack-table-scroll {

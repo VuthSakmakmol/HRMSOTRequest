@@ -139,6 +139,16 @@ export default {
     },
   },
 
+  profile: {
+    unknownUser: 'ผู้ใช้',
+    accountInformation: 'ข้อมูลบัญชี',
+    displayName: 'ชื่อแสดง',
+    loginId: 'Login ID',
+    employee: 'พนักงาน',
+    department: 'แผนก',
+    position: 'ตำแหน่ง',
+  },
+
   auth: {
     login: 'เข้าสู่ระบบ',
     logout: 'ออกจากระบบ',

@@ -6,6 +6,7 @@ import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 
+import Avatar from 'primevue/avatar'
 import Button from 'primevue/button'
 import Drawer from 'primevue/drawer'
 import ScrollPanel from 'primevue/scrollpanel'
@@ -31,6 +32,73 @@ const auth = useAuthStore()
 const { t } = useI18n()
 
 const openGroups = ref({})
+
+function cleanText(value) {
+  return String(value ?? '').trim()
+}
+
+function firstValidText(values = []) {
+  return values.map(cleanText).find(Boolean) || ''
+}
+
+const displayName = computed(() => {
+  const user = auth.user || {}
+  const employee = user.employee || user.employeeProfile || user.profile || {}
+
+  const combinedName = [user.firstName, user.lastName]
+    .map(cleanText)
+    .filter(Boolean)
+    .join(' ')
+
+  const employeeCombinedName = [employee.firstName, employee.lastName]
+    .map(cleanText)
+    .filter(Boolean)
+    .join(' ')
+
+  return (
+    firstValidText([
+      user.displayName,
+      user.fullName,
+      user.name,
+      user.employeeName,
+      user.englishName,
+      user.localName,
+      combinedName,
+
+      employee.displayName,
+      employee.fullName,
+      employee.name,
+      employee.employeeName,
+      employee.englishName,
+      employee.localName,
+      employeeCombinedName,
+
+      user.loginId,
+      user.username,
+      user.employeeNo,
+    ]) || 'User'
+  )
+})
+
+const accountSubtitle = computed(() => {
+  const user = auth.user || {}
+  const employee = user.employee || user.employeeProfile || user.profile || {}
+
+  return (
+    firstValidText([
+      user.loginId,
+      user.username,
+      user.employeeNo,
+      employee.employeeNo,
+      t('auth.profile'),
+    ]) || t('auth.profile')
+  )
+})
+
+const accountInitial = computed(() => {
+  const name = displayName.value || 'U'
+  return String(name).trim().charAt(0).toUpperCase() || 'U'
+})
 
 function hasAccess(requiredPermissions = []) {
   if (!requiredPermissions?.length) return true
@@ -60,6 +128,10 @@ async function go(to, closeAfter = false) {
   await router.push(to)
 
   if (closeAfter) closeMobile()
+}
+
+async function goProfile(closeAfter = false) {
+  await go('/profile', closeAfter)
 }
 
 async function logout() {
@@ -428,15 +500,49 @@ function sidebarItemClass(to, collapsed = false) {
       </ScrollPanel>
     </div>
 
-    <div class="app-sidebar__footer">
+    <div
+      class="app-sidebar__footer"
+      :class="{ 'app-sidebar__footer--collapsed': desktopCollapsed }"
+    >
+      <button
+        type="button"
+        class="app-sidebar__profile-card"
+        :class="{
+          'app-sidebar__profile-card--collapsed': desktopCollapsed,
+          'app-sidebar__profile-card--active': isActivePath('/profile'),
+        }"
+        :title="displayName"
+        :aria-label="displayName"
+        @click="goProfile()"
+      >
+        <Avatar
+          :label="accountInitial"
+          shape="circle"
+          class="app-sidebar__profile-avatar"
+        />
+
+        <template v-if="!desktopCollapsed">
+          <div class="app-sidebar__profile-text">
+            <span class="app-sidebar__profile-name">
+              {{ displayName }}
+            </span>
+            <span class="app-sidebar__profile-subtitle">
+              {{ accountSubtitle }}
+            </span>
+          </div>
+
+          <i class="pi pi-angle-right app-sidebar__profile-arrow" />
+        </template>
+      </button>
+
       <Button
         v-if="!desktopCollapsed"
         :label="t('auth.logout')"
         icon="pi pi-sign-out"
         text
-        severity="secondary"
+        severity="danger"
         size="small"
-        class="w-full !justify-start"
+        class="app-sidebar__logout-btn w-full !justify-start"
         @click="logout"
       />
 
@@ -445,9 +551,9 @@ function sidebarItemClass(to, collapsed = false) {
         icon="pi pi-sign-out"
         text
         rounded
-        severity="secondary"
+        severity="danger"
         size="small"
-        class="w-full"
+        class="app-sidebar__logout-btn app-sidebar__logout-btn--icon w-full"
         :aria-label="t('auth.logout')"
         @click="logout"
       />
@@ -535,13 +641,39 @@ function sidebarItemClass(to, collapsed = false) {
       </div>
 
       <div class="app-sidebar__mobile-footer">
+        <button
+          type="button"
+          class="app-sidebar__profile-card"
+          :class="{ 'app-sidebar__profile-card--active': isActivePath('/profile') }"
+          :title="displayName"
+          :aria-label="displayName"
+          @click="goProfile(true)"
+        >
+          <Avatar
+            :label="accountInitial"
+            shape="circle"
+            class="app-sidebar__profile-avatar"
+          />
+
+          <div class="app-sidebar__profile-text">
+            <span class="app-sidebar__profile-name">
+              {{ displayName }}
+            </span>
+            <span class="app-sidebar__profile-subtitle">
+              {{ accountSubtitle }}
+            </span>
+          </div>
+
+          <i class="pi pi-angle-right app-sidebar__profile-arrow" />
+        </button>
+
         <Button
           :label="t('auth.logout')"
           icon="pi pi-sign-out"
           text
-          severity="secondary"
+          severity="danger"
           size="small"
-          class="w-full !justify-start"
+          class="app-sidebar__logout-btn w-full !justify-start"
           @click="logout"
         />
       </div>
@@ -637,8 +769,130 @@ function sidebarItemClass(to, collapsed = false) {
 }
 
 .app-sidebar__footer {
+  display: grid;
+  gap: 0.45rem;
   border-top: 1px solid var(--ot-border);
-  padding: 0.5rem;
+  padding: 0.55rem;
+}
+
+.app-sidebar__footer--collapsed {
+  justify-items: center;
+  padding-inline: 0.65rem;
+}
+
+.app-sidebar__profile-card {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 0.58rem;
+  border: 1px solid color-mix(in srgb, var(--ot-border) 86%, transparent);
+  border-radius: 0.95rem;
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--ot-surface) 94%, white 6%),
+      color-mix(in srgb, var(--ot-surface-2) 92%, white 8%)
+    );
+  padding: 0.48rem 0.55rem;
+  color: var(--ot-text);
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.05);
+  transition:
+    background-color 0.16s ease,
+    border-color 0.16s ease,
+    box-shadow 0.16s ease,
+    transform 0.16s ease;
+}
+
+.app-sidebar__profile-card:hover {
+  border-color: color-mix(in srgb, var(--ot-blue) 35%, transparent);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--ot-blue) 10%, transparent),
+      color-mix(in srgb, var(--ot-sky) 8%, transparent)
+    );
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.08);
+}
+
+.app-sidebar__profile-card--active {
+  border-color: color-mix(in srgb, var(--ot-blue) 42%, transparent);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--ot-blue) 16%, transparent),
+      color-mix(in srgb, var(--ot-sky) 12%, transparent)
+    );
+}
+
+.app-sidebar__profile-card--collapsed {
+  justify-content: center;
+  padding: 0.42rem;
+}
+
+.app-sidebar__profile-avatar {
+  width: 2rem;
+  height: 2rem;
+  flex: 0 0 auto;
+  background: color-mix(in srgb, var(--ot-blue) 16%, transparent);
+  color: var(--ot-blue);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.app-sidebar__profile-text {
+  display: grid;
+  min-width: 0;
+  gap: 0.06rem;
+}
+
+.app-sidebar__profile-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ot-text);
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-sidebar__profile-subtitle {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ot-text-muted);
+  font-size: 0.68rem;
+  font-weight: 650;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-sidebar__profile-arrow {
+  margin-left: auto;
+  flex: 0 0 auto;
+  color: var(--ot-muted);
+  font-size: 0.72rem;
+}
+
+.app-sidebar__logout-btn {
+  color: #dc2626 !important;
+}
+
+.app-sidebar__logout-btn:hover {
+  background: rgba(220, 38, 38, 0.1) !important;
+  color: #b91c1c !important;
+}
+
+.app-sidebar__logout-btn--icon {
+  justify-content: center !important;
+}
+
+:deep(.app-sidebar__logout-btn .p-button-icon),
+:deep(.app-sidebar__logout-btn .p-button-label) {
+  color: inherit !important;
 }
 
 .app-sidebar__mobile-brand {
@@ -662,6 +916,8 @@ function sidebarItemClass(to, collapsed = false) {
 }
 
 .app-sidebar__mobile-footer {
+  display: grid;
+  gap: 0.5rem;
   border-top: 1px solid var(--ot-border);
   padding-top: 0.75rem;
 }
@@ -789,6 +1045,35 @@ function sidebarItemClass(to, collapsed = false) {
       color-mix(in srgb, var(--ot-surface) 94%, #020617 6%),
       color-mix(in srgb, var(--ot-surface-2) 88%, #020617 12%)
     );
+}
+
+:global(.dark) .app-sidebar__profile-card {
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--ot-surface) 92%, #020617 8%),
+      color-mix(in srgb, var(--ot-surface-2) 88%, #020617 12%)
+    );
+  box-shadow: none;
+}
+
+:global(.dark) .app-sidebar__profile-card:hover,
+:global(.dark) .app-sidebar__profile-card--active {
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--ot-blue) 18%, transparent),
+      color-mix(in srgb, var(--ot-sky) 12%, transparent)
+    );
+}
+
+:global(.dark) .app-sidebar__logout-btn {
+  color: #f87171 !important;
+}
+
+:global(.dark) .app-sidebar__logout-btn:hover {
+  background: rgba(248, 113, 113, 0.13) !important;
+  color: #fecaca !important;
 }
 
 @media (min-width: 1024px) {

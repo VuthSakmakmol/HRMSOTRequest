@@ -9,13 +9,24 @@ function s(value) {
 }
 
 function getSocketBaseUrl() {
+  const socketBase = s(import.meta.env.VITE_SOCKET_BASE_URL)
+
+  if (socketBase) {
+    return socketBase
+  }
+
   const apiBase = s(import.meta.env.VITE_API_BASE_URL)
 
   if (apiBase) {
     return apiBase.replace(/\/api\/v1\/?$/, '')
   }
 
-  return 'http://localhost:4112'
+  // Local development:
+  // http://localhost:4112
+  //
+  // Production on droplet with Nginx port 8081:
+  // /
+  return import.meta.env.DEV ? 'http://localhost:4112' : '/'
 }
 
 function getAccessToken() {
