@@ -48,15 +48,24 @@ const toast = useToast()
 
 const PAGE_SIZE = 10
 const SEARCH_DEBOUNCE_MS = 250
+const SCROLL_LOAD_DISTANCE = 180
+const FILTER_STACK_WIDTH = 1380
 
 const rows = ref([])
 const totalRecords = ref(0)
 const loadedPages = ref(new Set())
+const loadingPages = ref(new Set())
 const expandedRows = ref({})
 const selectedRequestIds = ref([])
+
 const bootstrapped = ref(false)
 const backgroundLoading = ref(false)
+const loadingMore = ref(false)
 const exporting = ref(false)
+
+const tableScrollShell = ref(null)
+const filterBarRef = ref(null)
+const filterActionsStacked = ref(false)
 
 const filters = reactive({
   search: '',
@@ -83,7 +92,8 @@ const bulkDialog = reactive({
 })
 
 let searchTimer = null
-let currentRequestId = 0
+let queryVersion = 0
+let filterResizeObserver = null
 
 const statusOptions = computed(() => [
   { label: tr('common.allStatus', 'All Status'), value: '' },
@@ -99,9 +109,9 @@ const statusOptions = computed(() => [
 ])
 
 const totalInbox = computed(() => Number(totalRecords.value || 0))
-const loadedCount = computed(() => rows.value.filter(Boolean).length)
-const hasAnyData = computed(() => rows.value.some(Boolean))
-const useVirtualScroll = computed(() => totalInbox.value > PAGE_SIZE)
+const loadedCount = computed(() => rows.value.length)
+const hasAnyData = computed(() => rows.value.length > 0)
+const hasMorePages = computed(() => loadedCount.value < totalInbox.value)
 
 const summaryText = computed(() =>
   tr('common.loaded', 'Loaded {loaded} of {total}', {
@@ -304,13 +314,37 @@ function employeePositionOf(employee) {
   ).trim() || '-'
 }
 
-function employeeDepartmentOf(employee) {
-  return String(
-    employee?.departmentName ||
-      employee?.department?.name ||
-      employee?.departmentSnapshot?.name ||
-      '-',
-  ).trim() || '-'
+function employeeLineOf(employee) {
+  const line =
+    employee?.line ||
+    employee?.productionLine ||
+    employee?.lineSnapshot ||
+    employee?.productionLineSnapshot ||
+    employee?.lineId ||
+    employee?.productionLineId ||
+    {}
+
+  const code = String(
+    employee?.lineCode ||
+      employee?.productionLineCode ||
+      line?.code ||
+      line?.lineCode ||
+      line?.productionLineCode ||
+      '',
+  ).trim()
+
+  const name = String(
+    employee?.lineName ||
+      employee?.productionLineName ||
+      line?.name ||
+      line?.lineName ||
+      line?.productionLineName ||
+      '',
+  ).trim()
+
+  if (code && name && code !== name) return `${code} · ${name}`
+
+  return code || name || '-'
 }
 
 function employeePaidTimeOf(employee, row) {
@@ -385,10 +419,43 @@ function buildExportQuery() {
   }
 }
 
-async function fetchPage(page, { replace = false, silent = false } = {}) {
-  if (!replace && loadedPages.value.has(page)) return
+function setLoadingPage(page, value) {
+  const next = new Set(loadingPages.value)
 
-  const requestId = ++currentRequestId
+  if (value) {
+    next.add(page)
+  } else {
+    next.delete(page)
+  }
+
+  loadingPages.value = next
+}
+
+function mergeRows(existingRows, incomingRows) {
+  const existingIds = new Set(
+    existingRows.map((row) => String(row?.id || '').trim()).filter(Boolean),
+  )
+
+  const nextRows = [...existingRows]
+
+  for (const item of incomingRows) {
+    const id = String(item?.id || '').trim()
+
+    if (id && existingIds.has(id)) continue
+
+    nextRows.push(item)
+
+    if (id) existingIds.add(id)
+  }
+
+  return nextRows
+}
+
+async function fetchPage(page, { replace = false, silent = false, version = queryVersion } = {}) {
+  if (!replace && loadedPages.value.has(page)) return
+  if (!replace && loadingPages.value.has(page)) return
+
+  setLoadingPage(page, true)
 
   if (silent) {
     backgroundLoading.value = true
@@ -397,39 +464,25 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
   try {
     const res = await getOTApprovalInbox(buildQuery(page))
 
-    if (requestId !== currentRequestId) return
+    if (version !== queryVersion) return
 
     const payload = normalizePayload(res)
-    const items = normalizeItems(payload).map(normalizeRow)
+    const items = normalizeItems(payload).map(normalizeRow).filter((row) => row?.id)
     const total = normalizeTotal(payload)
-    const startIndex = (page - 1) * PAGE_SIZE
 
     totalRecords.value = total
 
     if (replace) {
-      const nextRows = total > 0 ? Array.from({ length: total }, () => null) : []
-
-      for (let index = 0; index < items.length; index += 1) {
-        nextRows[startIndex + index] = items[index]
-      }
-
-      rows.value = total === 0 ? [] : nextRows
+      rows.value = items
       loadedPages.value = new Set([page])
       expandedRows.value = {}
       selectedRequestIds.value = []
     } else {
-      if (!rows.value.length && total > 0) {
-        rows.value = Array.from({ length: total }, () => null)
-      }
+      rows.value = mergeRows(rows.value, items)
 
-      const nextRows = [...rows.value]
-
-      for (let index = 0; index < items.length; index += 1) {
-        nextRows[startIndex + index] = items[index]
-      }
-
-      rows.value = nextRows
-      loadedPages.value.add(page)
+      const nextLoadedPages = new Set(loadedPages.value)
+      nextLoadedPages.add(page)
+      loadedPages.value = nextLoadedPages
     }
 
     bootstrapped.value = true
@@ -443,15 +496,20 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
       life: 3500,
     })
   } finally {
+    setLoadingPage(page, false)
     backgroundLoading.value = false
   }
 }
 
 async function reloadFirstPage({ keepVisible = true } = {}) {
+  queryVersion += 1
+
+  loadedPages.value = new Set()
+  loadingPages.value = new Set()
+
   if (!keepVisible) {
     rows.value = []
     totalRecords.value = 0
-    loadedPages.value = new Set()
     expandedRows.value = {}
     selectedRequestIds.value = []
     bootstrapped.value = false
@@ -460,7 +518,76 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
   await fetchPage(1, {
     replace: true,
     silent: true,
+    version: queryVersion,
   })
+
+  if (tableScrollShell.value && !keepVisible) {
+    tableScrollShell.value.scrollTop = 0
+  }
+}
+
+async function loadNextPage() {
+  if (loadingMore.value) return
+  if (backgroundLoading.value) return
+  if (!hasMorePages.value) return
+
+  const loaded = [...loadedPages.value]
+  const nextPage = loaded.length ? Math.max(...loaded) + 1 : 1
+
+  loadingMore.value = true
+
+  try {
+    await fetchPage(nextPage, {
+      replace: false,
+      silent: false,
+      version: queryVersion,
+    })
+  } finally {
+    loadingMore.value = false
+  }
+}
+
+function onTableScroll(event) {
+  const element = event?.target
+  if (!element) return
+  if (!hasMorePages.value) return
+  if (loadingMore.value || backgroundLoading.value) return
+
+  const distanceToBottom =
+    element.scrollHeight - element.scrollTop - element.clientHeight
+
+  if (distanceToBottom <= SCROLL_LOAD_DISTANCE) {
+    loadNextPage()
+  }
+}
+
+function updateFilterLayout() {
+  const width = Number(filterBarRef.value?.getBoundingClientRect?.().width || 0)
+
+  filterActionsStacked.value = width > 0 && width < FILTER_STACK_WIDTH
+}
+
+function setupFilterObserver() {
+  updateFilterLayout()
+
+  window.addEventListener('resize', updateFilterLayout)
+
+  if (typeof ResizeObserver === 'undefined' || !filterBarRef.value) return
+
+  filterResizeObserver = new ResizeObserver(() => {
+    updateFilterLayout()
+  })
+
+  filterResizeObserver.observe(filterBarRef.value)
+}
+
+function cleanupFilterObserver() {
+  window.removeEventListener('resize', updateFilterLayout)
+
+  if (filterResizeObserver) {
+    filterResizeObserver.disconnect()
+    filterResizeObserver = null
+  }
 }
 
 useOTRealtimeRefresh(
@@ -491,26 +618,10 @@ function onFilterChange() {
 }
 
 function onSort(event) {
-  filters.sortBy = event.sortField || 'createdAt'
-  filters.sortOrder = typeof event.sortOrder === 'number' ? event.sortOrder : -1
+  filters.sortBy = event?.sortField || 'createdAt'
+  filters.sortOrder = typeof event?.sortOrder === 'number' ? event.sortOrder : -1
 
   reloadFirstPage({ keepVisible: true })
-}
-
-async function onVirtualLazyLoad(event) {
-  if (!useVirtualScroll.value) return
-
-  const first = Number(event?.first || 0)
-  const last = Number(event?.last || first + PAGE_SIZE)
-
-  const startPage = Math.floor(first / PAGE_SIZE) + 1
-  const endPage = Math.floor(Math.max(last - 1, first) / PAGE_SIZE) + 1
-
-  for (let page = startPage; page <= endPage; page += 1) {
-    if (!loadedPages.value.has(page)) {
-      await fetchPage(page, { silent: true })
-    }
-  }
 }
 
 async function clearFilters() {
@@ -783,17 +894,23 @@ async function submitBulkApproval() {
 }
 
 onMounted(() => {
+  setupFilterObserver()
   reloadFirstPage({ keepVisible: false })
 })
 
 onBeforeUnmount(() => {
   window.clearTimeout(searchTimer)
+  cleanupFilterObserver()
 })
 </script>
 
 <template>
   <div class="ot-page-shell ot-approval-page">
-    <section class="ot-filter-bar ot-approval-filter-bar">
+    <section
+      ref="filterBarRef"
+      class="ot-filter-bar ot-approval-filter-bar"
+      :class="{ 'is-filter-stacked': filterActionsStacked }"
+    >
       <div class="ot-field">
         <label class="ot-field-label">
           {{ tr('common.search', 'Search') }}
@@ -922,260 +1039,225 @@ onBeforeUnmount(() => {
         :message="tr('ot.approval.fetchingRecords', 'Fetching approval records')"
         :rows="8"
         :columns="9"
+        icon="pi pi-inbox"
       />
 
-      <DataTable
+      <div
         v-else
-        v-model:expandedRows="expandedRows"
-        :value="rows"
-        data-key="id"
-        lazy
-        removable-sort
-        scrollable
-        scroll-height="500px"
-        :sort-field="filters.sortBy"
-        :sort-order="filters.sortOrder"
-        table-style="width: max-content; min-width: 100%; table-layout: auto;"
-        class="ot-approval-table ot-data-table ot-data-table-compact"
-        :virtual-scroller-options="
-          useVirtualScroll
-            ? {
-                lazy: true,
-                onLazyLoad: onVirtualLazyLoad,
-                itemSize: 76,
-                delay: 0,
-                showLoader: false,
-                loading: false,
-                numToleratedItems: 12,
-              }
-            : null
-        "
-        @sort="onSort"
+        ref="tableScrollShell"
+        class="ot-approval-table-scroll"
+        @scroll.passive="onTableScroll"
       >
-        <template #empty>
-          <div
-            v-if="bootstrapped"
-            class="ot-empty-state"
+        <DataTable
+          v-model:expandedRows="expandedRows"
+          :value="rows"
+          data-key="id"
+          lazy
+          removable-sort
+          row-hover
+          :sort-field="filters.sortBy"
+          :sort-order="filters.sortOrder"
+          table-style="width: max-content; min-width: 100%; table-layout: auto;"
+          class="ot-approval-table ot-data-table ot-data-table-compact"
+          @sort="onSort"
+        >
+          <template #empty>
+            <div
+              v-if="bootstrapped"
+              class="ot-empty-state"
+            >
+              <div class="ot-empty-icon">
+                <i class="pi pi-inbox" />
+              </div>
+
+              <div class="ot-empty-title">
+                {{ tr('common.noData', 'No Data') }}
+              </div>
+
+              <div class="ot-empty-text">
+                {{ tr('ot.approval.noData', 'No approval requests found') }}
+              </div>
+            </div>
+          </template>
+
+          <Column style="width: 3.25rem; min-width: 3.25rem">
+            <template #header>
+              <Checkbox
+                :model-value="allLoadedActionableSelected"
+                binary
+                :disabled="!actionableLoadedRows.length"
+                @update:model-value="toggleAllLoadedSelection"
+              />
+            </template>
+
+            <template #body="{ data }">
+              <Checkbox
+                v-if="data && canSelectForBulk(data)"
+                :model-value="isRequestSelected(data)"
+                binary
+                @update:model-value="(checked) => toggleRequestSelection(data, checked)"
+              />
+            </template>
+          </Column>
+
+          <Column
+            expander
+            style="width: 3.2rem; min-width: 3.2rem"
+          />
+
+          <Column
+            field="requestNo"
+            :header="tr('ot.requests.requestNo', 'Request No')"
+            sortable
+            style="width: 10rem; min-width: 10rem"
           >
-            <div class="ot-empty-icon">
-              <i class="pi pi-inbox" />
-            </div>
-
-            <div class="ot-empty-title">
-              {{ tr('common.noData', 'No Data') }}
-            </div>
-
-            <div class="ot-empty-text">
-              {{ tr('ot.approval.noData', 'No approval requests found') }}
-            </div>
-          </div>
-        </template>
-
-        <Column
-          style="width: 3.25rem; min-width: 3.25rem"
-        >
-          <template #header>
-            <Checkbox
-              :model-value="allLoadedActionableSelected"
-              binary
-              :disabled="!actionableLoadedRows.length"
-              @update:model-value="toggleAllLoadedSelection"
-            />
-          </template>
-
-          <template #body="{ data }">
-            <Checkbox
-              v-if="data && canSelectForBulk(data)"
-              :model-value="isRequestSelected(data)"
-              binary
-              @update:model-value="(checked) => toggleRequestSelection(data, checked)"
-            />
-          </template>
-        </Column>
-
-        <Column
-          expander
-          style="width: 3rem; min-width: 3rem"
-        />
-
-        <Column
-          field="requestNo"
-          :header="tr('ot.requests.requestNo', 'Request No')"
-          sortable
-          style="width: 10rem; min-width: 10rem"
-        >
-          <template #body="{ data }">
-            <span
-              v-if="data"
-              class="ot-request-no-text"
-            >
-              {{ data.requestNo || data.otRequestNo || '-' }}
-            </span>
-          </template>
-        </Column>
-
-        <Column
-          :header="tr('ot.requests.requester', 'Requester')"
-          style="width: 13rem; min-width: 13rem"
-        >
-          <template #body="{ data }">
-            <div
-              v-if="data"
-              class="requester-cell"
-            >
-              <div class="ot-main-text">
-                {{ displayRequester(data).name }}
-              </div>
-
-              <div class="ot-sub-text">
-                {{ displayRequester(data).employeeNo }}
-              </div>
-            </div>
-          </template>
-        </Column>
-
-        <Column
-          field="status"
-          :header="tr('ot.requests.approvalStatus', 'Approval Status')"
-          style="width: 15rem; min-width: 15rem"
-        >
-          <template #body="{ data }">
-            <Tag
-              v-if="data"
-              :value="displayApproval(data).label"
-              :class="displayApprovalTagClass(data)"
-            />
-          </template>
-        </Column>
-
-        <Column
-          :header="tr('ot.approval.requestedStaff', 'Staff')"
-          style="width: 8rem; min-width: 8rem"
-        >
-          <template #body="{ data }">
-            <Tag
-              v-if="data"
-              :value="tr('ot.requests.staffCount', `${displayStaffCount(data)} staff`, {
-                count: displayStaffCount(data),
-              })"
-              :class="['ot-approval-rgb-tag', 'ot-approval-tag-info']"
-            />
-          </template>
-        </Column>
-
-        <Column
-          field="otDate"
-          :header="tr('ot.requests.otDate', 'OT Date')"
-          sortable
-          style="width: 9rem; min-width: 9rem"
-        >
-          <template #body="{ data }">
-            <span
-              v-if="data"
-              class="ot-meta-text"
-            >
-              {{ formatDateDMY(data.otDate) }}
-            </span>
-          </template>
-        </Column>
-
-        <Column
-          :header="tr('ot.requests.otTime', 'OT Time')"
-          style="width: 8rem; min-width: 8rem"
-        >
-          <template #body="{ data }">
-            <Tag
-              v-if="data"
-              :value="displayPaidTime(data)"
-              :class="['ot-approval-rgb-tag', 'ot-approval-tag-info']"
-            />
-          </template>
-        </Column>
-
-        <Column
-          field="createdAt"
-          :header="tr('common.createdAt', 'Created At')"
-          sortable
-          style="width: 12rem; min-width: 12rem"
-        >
-          <template #body="{ data }">
-            <span
-              v-if="data"
-              class="ot-meta-text"
-            >
-              {{ formatDateTimeDMY(data.createdAt) }}
-            </span>
-          </template>
-        </Column>
-
-        <Column
-          :header="tr('common.action', 'Action')"
-          frozen
-          align-frozen="right"
-          style="width: 13rem; min-width: 13rem"
-        >
-          <template #body="{ data }">
-            <div
-              v-if="data"
-              class="ot-row-actions"
-            >
-              <Button
-                v-if="canApprove(data)"
-                :label="tr('ot.approval.approve', 'Approve')"
-                icon="pi pi-check"
-                size="small"
-                class="ot-action-mini ot-approve-button"
-                @click="openDecision(data, 'APPROVE')"
-              />
-
-              <Button
-                v-if="canReject(data)"
-                :label="tr('ot.approval.reject', 'Reject')"
-                icon="pi pi-times"
-                severity="danger"
-                outlined
-                size="small"
-                class="ot-action-mini"
-                @click="openDecision(data, 'REJECT')"
-              />
-
-              <span
-                v-if="!canDecide(data)"
-                class="ot-muted-action"
-              >
-                {{ tr('ot.approval.notYourTurn', 'Not your turn') }}
+            <template #body="{ data }">
+              <span class="ot-request-no-text">
+                {{ data.requestNo || data.otRequestNo || '-' }}
               </span>
-            </div>
-          </template>
-        </Column>
+            </template>
+          </Column>
 
-        <template #expansion="{ data }">
-          <div class="ot-expanded-box">
-            <div
-              v-if="displayEmployees(data).length"
-              class="ot-expanded-content"
-            >
-              <div class="ot-expanded-summary">
-                <span>
-                  {{ tr('ot.approval.employeeCount', `${displayEmployees(data).length} employees`, {
-                    count: displayEmployees(data).length,
-                  }) }}
-                </span>
+          <Column
+            :header="tr('ot.requests.requester', 'Requester')"
+            style="width: 14rem; min-width: 14rem"
+          >
+            <template #body="{ data }">
+              <div class="requester-cell">
+                <div class="ot-main-text">
+                  {{ displayRequester(data).name }}
+                </div>
 
-                <span>
-                  {{ tr('ot.requests.otTime', 'OT Time') }}:
-                  <strong>{{ displayPaidTime(data) }}</strong>
+                <div class="ot-sub-text">
+                  {{ displayRequester(data).employeeNo }}
+                </div>
+              </div>
+            </template>
+          </Column>
+
+          <Column
+            field="status"
+            :header="tr('ot.requests.approvalStatus', 'Approval Status')"
+            sortable
+            style="width: 16rem; min-width: 16rem"
+          >
+            <template #body="{ data }">
+              <div class="approval-status-cell">
+                <Tag
+                  :value="displayApproval(data).label"
+                  :class="[
+                    'ot-approval-rgb-tag',
+                    'approval-display-tag',
+                    displayApprovalTagClass(data),
+                  ]"
+                />
+              </div>
+            </template>
+          </Column>
+
+          <Column
+            :header="tr('ot.approval.requestedStaff', 'Staff')"
+            style="width: 9rem; min-width: 9rem"
+          >
+            <template #body="{ data }">
+              <Tag
+                :value="tr('ot.requests.staffCount', `${displayStaffCount(data)} staff`, {
+                  count: displayStaffCount(data),
+                })"
+                class="ot-approval-rgb-tag ot-approval-tag-info"
+              />
+            </template>
+          </Column>
+
+          <Column
+            field="otDate"
+            :header="tr('ot.requests.otDate', 'OT Date')"
+            sortable
+            style="width: 9rem; min-width: 9rem"
+          >
+            <template #body="{ data }">
+              <span class="ot-meta-text">
+                {{ formatDateDMY(data.otDate) }}
+              </span>
+            </template>
+          </Column>
+
+          <Column
+            :header="tr('ot.requests.otTime', 'OT Time')"
+            style="width: 9rem; min-width: 9rem"
+          >
+            <template #body="{ data }">
+              <Tag
+                :value="displayPaidTime(data)"
+                class="ot-approval-rgb-tag ot-approval-tag-info"
+              />
+            </template>
+          </Column>
+
+          <Column
+            field="createdAt"
+            :header="tr('common.createdAt', 'Created At')"
+            sortable
+            style="width: 12.5rem; min-width: 12.5rem"
+          >
+            <template #body="{ data }">
+              <span class="ot-meta-text">
+                {{ formatDateTimeDMY(data.createdAt) }}
+              </span>
+            </template>
+          </Column>
+
+          <Column
+            :header="tr('common.action', 'Action')"
+            frozen
+            align-frozen="right"
+            style="width: 13rem; min-width: 13rem"
+          >
+            <template #body="{ data }">
+              <div class="ot-row-actions">
+                <Button
+                  v-if="canApprove(data)"
+                  :label="tr('ot.approval.approve', 'Approve')"
+                  icon="pi pi-check"
+                  size="small"
+                  class="ot-action-mini ot-approve-button"
+                  @click="openDecision(data, 'APPROVE')"
+                />
+
+                <Button
+                  v-if="canReject(data)"
+                  :label="tr('ot.approval.reject', 'Reject')"
+                  icon="pi pi-times"
+                  severity="danger"
+                  outlined
+                  size="small"
+                  class="ot-action-mini"
+                  @click="openDecision(data, 'REJECT')"
+                />
+
+                <span
+                  v-if="!canDecide(data)"
+                  class="ot-muted-action"
+                >
+                  {{ tr('ot.approval.notYourTurn', 'Not your turn') }}
                 </span>
               </div>
+            </template>
+          </Column>
 
-              <div class="ot-expanded-responsive-table">
+          <template #expansion="{ data }">
+            <div class="ot-expanded-box">
+              <div
+                v-if="displayEmployees(data).length"
+                class="ot-expanded-table-scroll"
+              >
                 <div class="ot-expanded-grid-row is-head">
                   <div>{{ tr('common.no', 'No') }}</div>
                   <div>{{ tr('ot.requests.employeeId', 'Employee ID') }}</div>
                   <div>{{ tr('common.name', 'Name') }}</div>
                   <div>{{ tr('nav.positions', 'Position') }}</div>
                   <div>{{ tr('ot.requests.otTime', 'OT Time') }}</div>
-                  <div>{{ tr('nav.departments', 'Department') }}</div>
+                  <div>Line</div>
                 </div>
 
                 <div
@@ -1187,7 +1269,7 @@ onBeforeUnmount(() => {
                     {{ index + 1 }}
                   </div>
 
-                  <div class="cell-center cell-mono cell-wrap">
+                  <div class="cell-center cell-code">
                     {{ employeeCodeOf(employee) }}
                   </div>
 
@@ -1199,26 +1281,57 @@ onBeforeUnmount(() => {
                     {{ employeePositionOf(employee) }}
                   </div>
 
-                  <div class="cell-center cell-mono">
-                    {{ employeePaidTimeOf(employee, data) }}
+                  <div class="cell-center">
+                    <Tag
+                      :value="employeePaidTimeOf(employee, data)"
+                      class="ot-approval-rgb-tag ot-approval-tag-info"
+                    />
                   </div>
 
                   <div class="cell-center cell-wrap">
-                    {{ employeeDepartmentOf(employee) }}
+                    {{ employeeLineOf(employee) }}
                   </div>
                 </div>
               </div>
-            </div>
 
-            <div
-              v-else
-              class="ot-expanded-empty"
-            >
-              {{ tr('ot.requests.noEmployeeData', 'No employee data') }}
+              <div
+                v-else
+                class="ot-expanded-empty"
+              >
+                {{ tr('ot.requests.noEmployeeData', 'No employee data') }}
+              </div>
             </div>
-          </div>
-        </template>
-      </DataTable>
+          </template>
+        </DataTable>
+
+        <div
+          v-if="bootstrapped && hasAnyData"
+          class="ot-list-bottom-bar"
+        >
+          <span class="ot-loaded-badge">
+            {{ summaryText }}
+          </span>
+
+          <Button
+            v-if="hasMorePages"
+            :label="loadingMore ? 'Loading more...' : 'Load more'"
+            icon="pi pi-angle-down"
+            severity="secondary"
+            outlined
+            size="small"
+            class="ot-approval-action-button"
+            :loading="loadingMore"
+            @click="loadNextPage"
+          />
+
+          <span
+            v-else
+            class="ot-all-loaded-text"
+          >
+            All matched requests loaded
+          </span>
+        </div>
+      </div>
     </section>
 
     <Dialog
@@ -1232,7 +1345,10 @@ onBeforeUnmount(() => {
     >
       <template #header>
         <div class="ot-dialog-header">
-          <span class="ot-dialog-icon">
+          <span
+            class="ot-dialog-icon"
+            :class="{ 'is-danger': decisionIsReject }"
+          >
             <i :class="decisionIsApprove ? 'pi pi-check' : 'pi pi-times'" />
           </span>
 
@@ -1292,26 +1408,53 @@ onBeforeUnmount(() => {
       </div>
 
       <template #footer>
-        <Button
-          :label="tr('common.cancel', 'Cancel')"
-          severity="secondary"
-          outlined
-          :disabled="decisionDialog.loading"
-          @click="closeDecision"
-        />
+        <div class="ot-dialog-footer">
+          <button
+            type="button"
+            class="ot-native-dialog-button is-cancel"
+            :disabled="decisionDialog.loading"
+            @click="closeDecision"
+          >
+            {{ tr('common.cancel', 'Cancel') }}
+          </button>
 
-        <Button
-          :label="
-            decisionIsApprove
-              ? tr('ot.approval.approve', 'Approve')
-              : tr('ot.approval.reject', 'Reject')
-          "
-          :icon="decisionIsApprove ? 'pi pi-check' : 'pi pi-times'"
-          :severity="decisionIsApprove ? undefined : 'danger'"
-          :loading="decisionDialog.loading"
-          :class="decisionIsApprove ? 'ot-approve-button' : ''"
-          @click="submitDecision"
-        />
+          <button
+            type="button"
+            class="ot-native-dialog-button"
+            :class="decisionIsApprove ? 'is-approve' : 'is-reject'"
+            :disabled="decisionDialog.loading"
+            :style="
+              decisionIsApprove
+                ? {
+                    backgroundColor: 'rgb(34, 197, 94)',
+                    borderColor: 'rgb(34, 197, 94)',
+                    color: '#ffffff',
+                  }
+                : {
+                    backgroundColor: 'rgb(239, 68, 68)',
+                    borderColor: 'rgb(239, 68, 68)',
+                    color: '#ffffff',
+                  }
+            "
+            @click="submitDecision"
+          >
+            <i
+              v-if="decisionDialog.loading"
+              class="pi pi-spin pi-spinner"
+            />
+            <i
+              v-else
+              :class="decisionIsApprove ? 'pi pi-check' : 'pi pi-times'"
+            />
+            <span>
+              {{
+                decisionIsApprove
+                  ? tr('ot.approval.approve', 'Approve')
+                  : tr('ot.approval.reject', 'Reject')
+              }}
+            </span>
+          </button>
+        </div>
       </template>
     </Dialog>
 
@@ -1374,95 +1517,179 @@ onBeforeUnmount(() => {
       </div>
 
       <template #footer>
-        <Button
-          :label="tr('common.cancel', 'Cancel')"
-          severity="secondary"
-          outlined
-          :disabled="bulkDialog.loading"
-          @click="closeBulkDialog"
-        />
+        <div class="ot-dialog-footer">
+          <button
+            type="button"
+            class="ot-native-dialog-button is-cancel"
+            :disabled="bulkDialog.loading"
+            @click="closeBulkDialog"
+          >
+            {{ tr('common.cancel', 'Cancel') }}
+          </button>
 
-        <Button
-          :label="tr('ot.approval.approve', 'Approve')"
-          icon="pi pi-check"
-          :loading="bulkDialog.loading"
-          class="ot-approve-button"
-          @click="submitBulkApproval"
-        />
+          <button
+            type="button"
+            class="ot-native-dialog-button is-approve"
+            :disabled="bulkDialog.loading"
+            :style="{
+              backgroundColor: 'rgb(34, 197, 94)',
+              borderColor: 'rgb(34, 197, 94)',
+              color: '#ffffff',
+            }"
+            @click="submitBulkApproval"
+          >
+            <i
+              v-if="bulkDialog.loading"
+              class="pi pi-spin pi-spinner"
+            />
+            <i
+              v-else
+              class="pi pi-check"
+            />
+            <span>{{ tr('ot.approval.approve', 'Approve') }}</span>
+          </button>
+        </div>
       </template>
     </Dialog>
   </div>
 </template>
 
 <style scoped>
-.ot-page-shell {
+.ot-approval-page {
+  --ot-list-code-rgb: 37 99 235;
+  --ot-list-text-rgb: 15 23 42;
+  --ot-list-muted-rgb: 100 116 139;
+  --ot-list-soft-rgb: 148 163 184;
+  --ot-list-green-rgb: 34 197 94;
+  --ot-list-amber-rgb: 245 158 11;
+  --ot-list-red-rgb: 239 68 68;
+  --ot-list-blue-rgb: 59 130 246;
+  --ot-list-purple-rgb: 168 85 247;
+  --ot-list-row-border: 148 163 184;
+
   display: flex;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   flex-direction: column;
   gap: 1rem;
+  overflow-x: hidden;
 }
 
-.ot-filter-bar {
+.ot-approval-page,
+.ot-approval-page :deep(.p-component),
+.ot-approval-page :deep(.p-inputtext),
+.ot-approval-page :deep(.p-button),
+.ot-approval-page :deep(.p-select),
+.ot-approval-page :deep(.p-select-label) {
+  font-family: inherit;
+}
+
+.ot-approval-filter-bar {
   display: grid;
-  grid-template-columns: minmax(14rem, 1.4fr) minmax(11rem, 0.9fr) minmax(11rem, 0.9fr) minmax(11rem, 0.9fr) auto;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  grid-template-columns:
+    minmax(220px, 1.25fr)
+    minmax(150px, 0.75fr)
+    minmax(170px, 0.85fr)
+    minmax(170px, 0.85fr)
+    minmax(0, auto);
   gap: 0.75rem;
   align-items: end;
-  padding: 0.85rem;
+  overflow: hidden;
   border: 1px solid var(--surface-border);
-  border-radius: 18px;
+  border-radius: 1.05rem;
   background:
-    linear-gradient(135deg, rgba(34, 197, 94, 0.05), transparent 34%),
+    linear-gradient(135deg, rgb(var(--ot-list-blue-rgb) / 0.055), transparent 34%),
     var(--surface-card);
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+  box-shadow: 0 12px 34px rgb(15 23 42 / 0.055);
+  padding: 0.85rem;
+}
+
+.ot-approval-filter-bar.is-filter-stacked {
+  grid-template-columns:
+    minmax(220px, 1.25fr)
+    minmax(150px, 0.75fr)
+    minmax(170px, 0.85fr)
+    minmax(170px, 0.85fr);
 }
 
 .ot-field {
   display: flex;
+  min-width: 0;
   flex-direction: column;
   gap: 0.35rem;
-  min-width: 0;
 }
 
 .ot-field-label {
+  color: var(--text-color-secondary);
   font-size: 0.74rem;
   font-weight: 700;
-  color: var(--text-color-secondary);
   letter-spacing: 0.01em;
 }
 
 .ot-approval-filter-actions {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: nowrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 0.45rem;
-  min-width: 18rem;
+}
+
+.ot-approval-filter-bar.is-filter-stacked .ot-approval-filter-actions {
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  justify-content: flex-start;
 }
 
 .ot-approval-action-button {
+  max-width: 100%;
   white-space: nowrap;
+}
+
+.ot-approval-action-button :deep(.p-button-label) {
+  overflow: hidden;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ot-approval-action-button :deep(.p-button-icon) {
+  flex: 0 0 auto;
+  font-size: 0.76rem;
 }
 
 .ot-loaded-badge {
   display: inline-flex;
+  min-height: 1.9rem;
   align-items: center;
+  justify-content: center;
   gap: 0.35rem;
-  min-height: 2rem;
-  padding: 0.34rem 0.65rem;
+  border: 1px solid rgb(var(--ot-list-blue-rgb) / 0.22);
   border-radius: 999px;
-  border: 1px solid rgba(59, 130, 246, 0.18);
-  background: rgba(59, 130, 246, 0.08);
-  color: #2563eb;
-  font-size: 0.76rem;
-  font-weight: 700;
+  background: rgb(var(--ot-list-blue-rgb) / 0.09);
+  color: rgb(var(--ot-list-blue-rgb));
+  padding: 0.28rem 0.62rem;
+  font-size: 0.74rem;
+  font-weight: 750;
+  line-height: 1;
   white-space: nowrap;
 }
 
 .ot-table-card {
-  border: 1px solid var(--surface-border);
-  border-radius: 20px;
-  background: var(--surface-card);
-  box-shadow: 0 16px 42px rgba(15, 23, 42, 0.07);
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   overflow: hidden;
+  border: 1px solid var(--surface-border);
+  border-radius: 1.15rem;
+  background: var(--surface-card);
+  box-shadow: 0 16px 42px rgb(15 23 42 / 0.07);
 }
 
 .ot-table-toolbar {
@@ -1470,113 +1697,303 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  padding: 0.85rem 1rem;
-  border-bottom: 1px solid var(--surface-border);
+  border-bottom: 1px solid rgb(var(--ot-list-row-border) / 0.14);
   background:
-    linear-gradient(135deg, rgba(16, 185, 129, 0.06), transparent 30%),
+    linear-gradient(135deg, rgb(var(--ot-list-green-rgb) / 0.055), transparent 32%),
     var(--surface-card);
+  padding: 0.82rem 1rem;
 }
 
 .ot-table-title {
   margin: 0;
+  color: var(--text-color);
   font-size: 1rem;
   font-weight: 800;
-  color: var(--text-color);
+  line-height: 1.25;
 }
 
 .ot-table-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
-  gap: 0.5rem;
-  flex-wrap: wrap;
+  gap: 0.45rem;
 }
 
-.ot-approval-table {
+.ot-approval-table-scroll {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  max-height: min(66vh, 660px);
+  min-height: 22rem;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scroll-behavior: smooth;
+  scrollbar-gutter: stable;
 }
 
-.ot-approval-table :deep(.p-datatable-thead > tr > th) {
-  padding: 0.68rem 0.75rem;
-  font-size: 0.76rem;
-  font-weight: 800;
-  color: var(--text-color-secondary);
-  background: var(--surface-ground);
-  border-color: var(--surface-border);
-  white-space: nowrap;
+:deep(.ot-approval-table.p-datatable) {
+  max-width: 100% !important;
+  min-width: 0 !important;
 }
 
-.ot-approval-table :deep(.p-datatable-tbody > tr > td) {
-  padding: 0.6rem 0.75rem;
-  vertical-align: middle;
-  border-color: var(--surface-border);
+:deep(.ot-approval-table.p-datatable .p-datatable-wrapper) {
+  max-width: 100% !important;
+  min-width: 0 !important;
+  overflow: visible !important;
 }
 
-.ot-approval-table :deep(.p-datatable-tbody > tr:hover) {
-  background: rgba(34, 197, 94, 0.035);
+:deep(.ot-approval-table.p-datatable .p-datatable-table) {
+  width: max-content !important;
+  min-width: 100% !important;
+  table-layout: auto !important;
+}
+
+:deep(.ot-approval-table.p-datatable .p-datatable-thead > tr > th) {
+  position: sticky !important;
+  top: 0;
+  z-index: 5;
+  width: auto !important;
+  min-width: auto !important;
+  max-width: none !important;
+  border-color: rgb(var(--ot-list-row-border) / 0.14) !important;
+  background: var(--surface-ground) !important;
+  color: var(--text-color-secondary) !important;
+  padding: 0.58rem 0.68rem !important;
+  font-size: 0.76rem !important;
+  font-weight: 750 !important;
+  text-align: center !important;
+  vertical-align: middle !important;
+  white-space: nowrap !important;
+}
+
+:deep(.ot-approval-table.p-datatable .p-datatable-tbody > tr > td) {
+  width: auto !important;
+  min-width: auto !important;
+  max-width: none !important;
+  height: 64px !important;
+  border-color: rgb(var(--ot-list-row-border) / 0.08) !important;
+  padding: 0.44rem 0.68rem !important;
+  color: var(--text-color) !important;
+  font-size: 0.8rem !important;
+  text-align: center !important;
+  vertical-align: middle !important;
+  white-space: nowrap !important;
+}
+
+:deep(.ot-approval-table.p-datatable .p-datatable-tbody > tr.p-datatable-row-expansion > td) {
+  height: auto !important;
+  border-color: transparent !important;
+  padding: 0.45rem 0.75rem 0.75rem !important;
+  background: transparent !important;
+}
+
+:deep(.ot-approval-table.p-datatable .p-datatable-tbody > tr:hover) {
+  background: rgb(var(--ot-list-blue-rgb) / 0.03) !important;
+}
+
+:deep(.ot-approval-table.p-datatable .p-datatable-tbody > tr.p-row-expanded) {
+  background: rgb(var(--ot-list-blue-rgb) / 0.035) !important;
+}
+
+:deep(.ot-approval-table.p-datatable .p-datatable-column-header-content),
+:deep(.ot-approval-table.p-datatable .p-column-header-content) {
+  display: flex !important;
+  width: 100% !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 0.25rem !important;
+  text-align: center !important;
+}
+
+:deep(.ot-approval-table.p-datatable .p-datatable-column-title),
+:deep(.ot-approval-table.p-datatable .p-column-title) {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+}
+
+:deep(.ot-approval-table.p-datatable .p-sortable-column-icon),
+:deep(.ot-approval-table.p-datatable .p-datatable-sort-icon) {
+  margin-inline-start: 0.25rem !important;
+  margin-inline-end: 0 !important;
+}
+
+:deep(.ot-approval-table.p-datatable .p-datatable-tbody > tr > td > *) {
+  margin-inline: auto !important;
+}
+
+:deep(.ot-approval-table.p-datatable .p-row-toggler) {
+  display: inline-flex !important;
+  width: 1.85rem !important;
+  height: 1.85rem !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 999px !important;
+  color: rgb(var(--ot-list-blue-rgb)) !important;
+}
+
+:deep(.ot-approval-table.p-datatable .p-row-toggler:hover) {
+  background: rgb(var(--ot-list-blue-rgb) / 0.1) !important;
+}
+
+:deep(.ot-approval-table.p-datatable .p-checkbox) {
+  display: inline-flex !important;
+  margin-inline: auto !important;
+}
+
+:deep(.ot-approval-table.p-datatable .p-tag),
+:deep(.ot-approval-table.p-datatable .p-button) {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin-inline: auto !important;
+  text-align: center !important;
+}
+
+:deep(.ot-approval-table.p-datatable .p-tag-value) {
+  max-width: 100%;
+  overflow: hidden;
+  text-align: center !important;
+  text-overflow: ellipsis;
 }
 
 .ot-request-no-text {
-  font-family:
-    ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    Monaco,
-    Consolas,
-    'Liberation Mono',
-    'Courier New',
-    monospace;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgb(var(--ot-list-code-rgb));
   font-size: 0.82rem;
-  font-weight: 800;
-  color: #16a34a;
+  font-weight: 760;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.005em;
+  text-align: center;
   white-space: nowrap;
 }
 
-.requester-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 0.12rem;
+.requester-cell,
+.approval-status-cell {
+  display: inline-flex;
+  max-width: 100%;
   min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.15rem;
+  text-align: center;
 }
 
 .ot-main-text {
-  font-size: 0.83rem;
-  font-weight: 800;
-  color: var(--text-color);
+  max-width: 13rem;
+  overflow: hidden;
+  color: rgb(var(--ot-list-text-rgb));
+  font-size: 0.82rem;
+  font-weight: 660;
   line-height: 1.25;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ot-sub-text {
-  font-size: 0.74rem;
-  font-weight: 650;
+  max-width: 12rem;
+  overflow: hidden;
   color: var(--text-color-secondary);
+  font-size: 0.71rem;
+  font-weight: 520;
   line-height: 1.2;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ot-meta-text {
-  font-size: 0.8rem;
-  font-weight: 700;
-  color: var(--text-color-secondary);
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  color: rgb(var(--ot-list-muted-rgb));
+  font-size: 0.78rem;
+  font-weight: 560;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  text-align: center;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.ot-approval-rgb-tag {
+  --ot-approval-tag-rgb: var(--ot-list-muted-rgb);
+
+  display: inline-flex !important;
+  min-height: 1.42rem;
+  max-width: 100%;
+  align-items: center !important;
+  justify-content: center !important;
+  border: 1px solid rgb(var(--ot-approval-tag-rgb) / 0.28) !important;
+  border-radius: 999px !important;
+  background: rgb(var(--ot-approval-tag-rgb) / 0.11) !important;
+  color: rgb(var(--ot-approval-tag-rgb)) !important;
+  padding: 0.12rem 0.5rem !important;
+  font-size: 0.7rem !important;
+  font-weight: 730 !important;
+  line-height: 1 !important;
+  text-align: center !important;
+  white-space: nowrap !important;
+}
+
+.approval-display-tag {
+  max-width: 13.5rem;
+}
+
+.ot-approval-tag-approved {
+  --ot-approval-tag-rgb: var(--ot-list-green-rgb);
+}
+
+.ot-approval-tag-rejected {
+  --ot-approval-tag-rgb: var(--ot-list-red-rgb);
+}
+
+.ot-approval-tag-pending {
+  --ot-approval-tag-rgb: var(--ot-list-amber-rgb);
+}
+
+.ot-approval-tag-info {
+  --ot-approval-tag-rgb: var(--ot-list-blue-rgb);
+}
+
+.ot-approval-tag-muted {
+  --ot-approval-tag-rgb: var(--ot-list-muted-rgb);
 }
 
 .ot-row-actions {
-  display: flex;
+  display: inline-flex;
+  max-width: 100%;
   align-items: center;
-  justify-content: flex-end;
-  gap: 0.4rem;
-  min-width: 0;
+  justify-content: center;
+  gap: 0.36rem;
 }
 
 .ot-action-mini {
-  min-height: 2rem;
-  padding-inline: 0.65rem;
+  min-height: 1.9rem;
+  padding-inline: 0.62rem;
   white-space: nowrap;
 }
 
+.ot-action-mini :deep(.p-button-label) {
+  font-size: 0.73rem;
+  font-weight: 620;
+}
+
+.ot-action-mini :deep(.p-button-icon) {
+  font-size: 0.72rem;
+}
+
 .ot-approve-button {
-  border-color: #16a34a !important;
-  background: #16a34a !important;
+  border-color: rgb(var(--ot-list-green-rgb)) !important;
+  background: rgb(var(--ot-list-green-rgb)) !important;
   color: #ffffff !important;
 }
 
@@ -1588,102 +2005,47 @@ onBeforeUnmount(() => {
 
 .ot-muted-action {
   color: var(--text-color-secondary);
-  font-size: 0.74rem;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.ot-approval-rgb-tag {
-  border: 1px solid transparent;
-  box-shadow: none;
   font-size: 0.72rem;
-  font-weight: 800;
-  line-height: 1;
+  font-weight: 620;
   white-space: nowrap;
-}
-
-.approval-display-tag {
-  max-width: 13rem;
-}
-
-.approval-display-tag :deep(.p-tag-value) {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ot-approval-tag-approved {
-  border-color: rgba(34, 197, 94, 0.28) !important;
-  background: rgba(34, 197, 94, 0.12) !important;
-  color: #15803d !important;
-}
-
-.ot-approval-tag-rejected {
-  border-color: rgba(239, 68, 68, 0.28) !important;
-  background: rgba(239, 68, 68, 0.12) !important;
-  color: #b91c1c !important;
-}
-
-.ot-approval-tag-pending {
-  border-color: rgba(245, 158, 11, 0.3) !important;
-  background: rgba(245, 158, 11, 0.14) !important;
-  color: #b45309 !important;
-}
-
-.ot-approval-tag-info {
-  border-color: rgba(59, 130, 246, 0.25) !important;
-  background: rgba(59, 130, 246, 0.11) !important;
-  color: #1d4ed8 !important;
-}
-
-.ot-approval-tag-muted {
-  border-color: rgba(100, 116, 139, 0.24) !important;
-  background: rgba(100, 116, 139, 0.1) !important;
-  color: #475569 !important;
 }
 
 .ot-expanded-box {
-  padding: 0.75rem;
+  max-width: 100%;
+  min-width: 0;
+  border: 1px solid rgb(var(--ot-list-blue-rgb) / 0.12);
+  border-radius: 0.95rem;
   background:
-    linear-gradient(135deg, rgba(34, 197, 94, 0.04), transparent 34%),
+    linear-gradient(135deg, rgb(var(--ot-list-blue-rgb) / 0.035), transparent 35%),
     var(--surface-ground);
-  border-radius: 14px;
+  padding: 0.72rem;
 }
 
-.ot-expanded-content {
-  overflow-x: auto;
-}
-
-.ot-expanded-summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 1rem;
-  margin-bottom: 0.6rem;
-  font-size: 0.78rem;
-  font-weight: 700;
-  color: var(--text-color-secondary);
-}
-
-.ot-expanded-summary strong {
-  color: var(--text-color);
-}
-
-.ot-expanded-responsive-table {
-  display: flex;
-  flex-direction: column;
-  min-width: 720px;
-  border: 1px solid var(--surface-border);
-  border-radius: 14px;
-  overflow: hidden;
+.ot-expanded-table-scroll {
+  max-width: 100%;
+  min-width: 740px;
+  max-height: 19rem;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid rgb(var(--ot-list-row-border) / 0.12);
+  border-radius: 0.85rem;
   background: var(--surface-card);
+  scroll-behavior: smooth;
+  scrollbar-gutter: stable;
 }
 
 .ot-expanded-grid-row {
   display: grid;
-  grid-template-columns: 4rem 9rem minmax(12rem, 1.2fr) minmax(10rem, 1fr) 8rem minmax(10rem, 1fr);
+  grid-template-columns:
+    4rem
+    9rem
+    minmax(12rem, 1.2fr)
+    minmax(10rem, 1fr)
+    8rem
+    minmax(10rem, 1fr);
+  min-height: 2.55rem;
   align-items: center;
-  min-height: 2.65rem;
-  border-bottom: 1px solid var(--surface-border);
+  border-bottom: 1px solid rgb(var(--ot-list-row-border) / 0.075);
 }
 
 .ot-expanded-grid-row:last-child {
@@ -1691,9 +2053,18 @@ onBeforeUnmount(() => {
 }
 
 .ot-expanded-grid-row > div {
-  padding: 0.55rem 0.65rem;
-  font-size: 0.78rem;
-  border-right: 1px solid var(--surface-border);
+  display: flex;
+  min-width: 0;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  border-right: 1px solid rgb(var(--ot-list-row-border) / 0.07);
+  padding: 0.48rem 0.62rem;
+  color: var(--text-color-secondary);
+  font-size: 0.76rem;
+  font-weight: 500;
+  line-height: 1.28;
+  text-align: center;
 }
 
 .ot-expanded-grid-row > div:last-child {
@@ -1701,52 +2072,66 @@ onBeforeUnmount(() => {
 }
 
 .ot-expanded-grid-row.is-head {
-  min-height: 2.4rem;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  min-height: 2.35rem;
   background: var(--surface-ground);
 }
 
 .ot-expanded-grid-row.is-head > div {
-  font-size: 0.72rem;
-  font-weight: 850;
   color: var(--text-color-secondary);
-  text-transform: uppercase;
+  font-size: 0.7rem;
+  font-weight: 740;
   letter-spacing: 0.02em;
+  text-transform: uppercase;
 }
 
 .cell-center {
   text-align: center;
 }
 
-.cell-mono {
-  font-family:
-    ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    Monaco,
-    Consolas,
-    'Liberation Mono',
-    'Courier New',
-    monospace;
-  font-weight: 800;
+.cell-code {
+  color: rgb(var(--ot-list-blue-rgb)) !important;
+  font-weight: 700 !important;
+  font-variant-numeric: tabular-nums;
 }
 
 .cell-strong {
-  font-weight: 800;
-  color: var(--text-color);
+  color: var(--text-color) !important;
+  font-weight: 650 !important;
 }
 
 .cell-wrap {
   overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .ot-expanded-empty {
-  padding: 0.9rem;
-  border: 1px dashed var(--surface-border);
-  border-radius: 14px;
-  color: var(--text-color-secondary);
-  font-size: 0.82rem;
-  text-align: center;
+  border: 1px dashed rgb(var(--ot-list-row-border) / 0.18);
+  border-radius: 0.85rem;
   background: var(--surface-card);
+  color: var(--text-color-secondary);
+  padding: 0.85rem;
+  font-size: 0.8rem;
+  font-weight: 520;
+  text-align: center;
+}
+
+.ot-list-bottom-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  border-top: 1px solid rgb(var(--ot-list-row-border) / 0.1);
+  background: var(--surface-card);
+  padding: 0.65rem;
+}
+
+.ot-all-loaded-text {
+  color: var(--text-color-secondary);
+  font-size: 0.74rem;
+  font-weight: 600;
 }
 
 .ot-empty-state {
@@ -1766,21 +2151,27 @@ onBeforeUnmount(() => {
   height: 3rem;
   place-items: center;
   border-radius: 999px;
-  background: rgba(34, 197, 94, 0.1);
-  color: #16a34a;
+  background: rgb(var(--ot-list-blue-rgb) / 0.1);
+  color: rgb(var(--ot-list-blue-rgb));
   font-size: 1.25rem;
 }
 
 .ot-empty-title {
-  font-size: 0.95rem;
-  font-weight: 850;
   color: var(--text-color);
+  font-size: 0.95rem;
+  font-weight: 800;
 }
 
 .ot-empty-text {
+  max-width: 26rem;
   font-size: 0.82rem;
+  line-height: 1.4;
   text-align: center;
 }
+
+/* =========================
+   Dialogs
+   ========================= */
 
 .ot-dialog-header {
   display: flex;
@@ -1790,26 +2181,34 @@ onBeforeUnmount(() => {
 
 .ot-dialog-icon {
   display: grid;
-  width: 2.4rem;
-  height: 2.4rem;
+  width: 2.35rem;
+  height: 2.35rem;
   place-items: center;
+  border: 1px solid rgb(var(--ot-list-green-rgb) / 0.3);
   border-radius: 999px;
-  background: rgba(34, 197, 94, 0.12);
-  color: #16a34a;
-  font-size: 1rem;
+  background: rgb(var(--ot-list-green-rgb) / 0.12);
+  color: rgb(var(--ot-list-green-rgb));
+  font-size: 0.95rem;
+}
+
+.ot-dialog-icon.is-danger {
+  border-color: rgb(var(--ot-list-red-rgb) / 0.3);
+  background: rgb(var(--ot-list-red-rgb) / 0.12);
+  color: rgb(var(--ot-list-red-rgb));
 }
 
 .ot-dialog-title {
-  font-size: 1rem;
-  font-weight: 850;
   color: var(--text-color);
+  font-size: 1rem;
+  font-weight: 800;
+  line-height: 1.25;
 }
 
 .ot-dialog-subtitle {
   margin-top: 0.1rem;
-  font-size: 0.78rem;
-  font-weight: 700;
   color: var(--text-color-secondary);
+  font-size: 0.76rem;
+  font-weight: 650;
 }
 
 .ot-dialog-body {
@@ -1826,84 +2225,148 @@ onBeforeUnmount(() => {
 
 .ot-dialog-summary > div {
   display: flex;
+  min-width: 0;
   flex-direction: column;
-  gap: 0.2rem;
-  padding: 0.65rem;
-  border: 1px solid var(--surface-border);
-  border-radius: 14px;
+  gap: 0.18rem;
+  border: 1px solid rgb(var(--ot-list-row-border) / 0.12);
+  border-radius: 0.85rem;
   background: var(--surface-ground);
+  padding: 0.64rem;
 }
 
 .ot-dialog-summary span {
-  font-size: 0.7rem;
-  font-weight: 800;
   color: var(--text-color-secondary);
-  text-transform: uppercase;
+  font-size: 0.68rem;
+  font-weight: 760;
   letter-spacing: 0.02em;
+  text-transform: uppercase;
 }
 
 .ot-dialog-summary strong {
-  font-size: 0.82rem;
-  font-weight: 850;
-  color: var(--text-color);
   overflow-wrap: anywhere;
+  color: var(--text-color);
+  font-size: 0.8rem;
+  font-weight: 760;
 }
 
 .ot-dialog-label {
-  font-size: 0.78rem;
-  font-weight: 800;
+  color: var(--text-color-secondary);
+  font-size: 0.76rem;
+  font-weight: 750;
+}
+
+.ot-dialog-footer {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.55rem;
+}
+
+.ot-native-dialog-button {
+  appearance: none;
+  display: inline-flex;
+  min-width: 6.6rem;
+  min-height: 2.35rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.38rem;
+  border-radius: 0.75rem;
+  border: 1px solid transparent;
+  padding: 0.52rem 0.9rem;
+  font-size: 0.84rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background-color 0.14s ease,
+    border-color 0.14s ease,
+    color 0.14s ease,
+    opacity 0.14s ease;
+}
+
+.ot-native-dialog-button i {
+  font-size: 0.8rem;
+}
+
+.ot-native-dialog-button.is-cancel {
+  min-width: 6.2rem;
+  border-color: var(--surface-border);
+  background: var(--surface-card);
   color: var(--text-color-secondary);
 }
 
+.ot-native-dialog-button.is-cancel:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-color);
+}
+
+.ot-native-dialog-button.is-approve {
+  border-color: rgb(var(--ot-list-green-rgb));
+  background: rgb(var(--ot-list-green-rgb));
+  color: #ffffff;
+}
+
+.ot-native-dialog-button.is-approve:hover:not(:disabled) {
+  border-color: #15803d !important;
+  background: #15803d !important;
+  color: #ffffff !important;
+}
+
+.ot-native-dialog-button.is-reject {
+  border-color: rgb(var(--ot-list-red-rgb));
+  background: rgb(var(--ot-list-red-rgb));
+  color: #ffffff;
+}
+
+.ot-native-dialog-button.is-reject:hover:not(:disabled) {
+  border-color: #dc2626 !important;
+  background: #dc2626 !important;
+  color: #ffffff !important;
+}
+
+.ot-native-dialog-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+/* =========================
+   Dark mode
+   ========================= */
+
+:global(.dark) .ot-approval-page {
+  --ot-list-text-rgb: 226 232 240;
+  --ot-list-muted-rgb: 203 213 225;
+  --ot-list-row-border: 71 85 105;
+}
+
+:global(.dark) .ot-approval-rgb-tag {
+  border-color: rgb(var(--ot-approval-tag-rgb) / 0.42) !important;
+  background: rgb(var(--ot-approval-tag-rgb) / 0.18) !important;
+}
+
+:global(.dark) .ot-expanded-box {
+  border-color: rgb(var(--ot-list-blue-rgb) / 0.22);
+  background:
+    linear-gradient(135deg, rgb(var(--ot-list-blue-rgb) / 0.075), transparent 35%),
+    var(--surface-ground);
+}
+
+/* =========================
+   Responsive
+   ========================= */
+
 @media (max-width: 1100px) {
-  .ot-filter-bar {
+  .ot-approval-filter-bar,
+  .ot-approval-filter-bar.is-filter-stacked {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .ot-approval-filter-actions {
+  .ot-approval-filter-actions,
+  .ot-approval-filter-bar.is-filter-stacked .ot-approval-filter-actions {
     grid-column: 1 / -1;
+    flex-wrap: wrap;
     justify-content: flex-start;
-    min-width: 0;
-  }
-}
-
-@media (max-width: 760px) {
-  .ot-table-toolbar {
-    position: sticky;
-    top: 0;
-    z-index: 5;
-  }
-
-  .ot-row-actions {
-    position: sticky;
-    right: 0;
-    z-index: 2;
-    padding: 0.25rem;
-    border-radius: 12px;
-    background: var(--surface-card);
-    box-shadow: -8px 0 18px rgba(15, 23, 42, 0.08);
-  }
-
-  .ot-dialog-summary {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 640px) {
-  .ot-filter-bar {
-    grid-template-columns: 1fr;
-    padding: 0.75rem;
-  }
-
-  .ot-approval-filter-actions {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .ot-approval-action-button,
-  .ot-loaded-badge {
-    width: 100%;
-    justify-content: center;
   }
 
   .ot-table-toolbar {
@@ -1915,9 +2378,53 @@ onBeforeUnmount(() => {
     width: 100%;
     justify-content: flex-start;
   }
+}
 
-  .ot-expanded-box {
-    padding: 0.5rem;
+@media (max-width: 768px) {
+  .ot-approval-filter-bar,
+  .ot-approval-filter-bar.is-filter-stacked {
+    grid-template-columns: 1fr;
+    padding: 0.75rem;
+  }
+
+  .ot-approval-filter-actions,
+  .ot-approval-filter-bar.is-filter-stacked .ot-approval-filter-actions {
+    align-items: stretch;
+    justify-content: stretch;
+  }
+
+  .ot-approval-filter-actions > * {
+    flex: 1 1 100%;
+  }
+
+  .ot-loaded-badge,
+  .ot-approval-action-button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .ot-approval-table-scroll {
+    max-height: 64vh;
+  }
+
+  .ot-list-bottom-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ot-dialog-summary {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .ot-dialog-footer {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+
+  .ot-native-dialog-button {
+    width: 100%;
   }
 }
 </style>
