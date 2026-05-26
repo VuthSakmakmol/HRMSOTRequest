@@ -33,6 +33,7 @@ const { t } = useI18n()
 
 const PAGE_SIZE = 10
 const SEARCH_DEBOUNCE_MS = 250
+const DEFAULT_CASH_DENOMINATIONS = [50000, 20000, 10000, 5000, 1000, 500, 100]
 
 const rows = ref([])
 const totalRecords = ref(0)
@@ -60,6 +61,13 @@ const statusOptions = computed(() => [
   { label: t('common.inactive'), value: false },
 ])
 
+const cashRoundingModeOptions = computed(() => [
+  { label: 'Round nearest', value: 'ROUND' },
+  { label: 'Round up', value: 'CEIL' },
+  { label: 'Round down', value: 'FLOOR' },
+  { label: 'No cash rounding', value: 'NONE' },
+])
+
 const totalItems = computed(() => Number(totalRecords.value || 0))
 const loadedCount = computed(() => rows.value.filter(Boolean).length)
 const hasAnyData = computed(() => rows.value.some(Boolean))
@@ -73,6 +81,20 @@ const loadedLabel = computed(() =>
     total: totalItems.value,
   }),
 )
+
+const formCashDenominations = computed(() => {
+  return parseDenominations(form.cashDenominationsText)
+})
+
+const cashPolicyPreview = computed(() => {
+  const mode = upper(form.cashRoundingMode || 'ROUND')
+  const unit = Number(form.cashRoundingUnit || 100)
+  const denominations = formCashDenominations.value
+
+  return `${mode} / ${formatNumber(unit, 0)} · ${denominations
+    .map((item) => formatNumber(item, 0))
+    .join(', ')}`
+})
 
 let searchTimer = null
 let currentRequestId = 0
@@ -92,6 +114,10 @@ function defaultForm() {
     },
     roundingDecimals: 2,
     currency: 'USD',
+    payoutCurrency: 'KHR',
+    cashRoundingUnit: 100,
+    cashRoundingMode: 'ROUND',
+    cashDenominationsText: DEFAULT_CASH_DENOMINATIONS.join(', '),
     isActive: true,
   }
 }
@@ -127,13 +153,61 @@ function normalizeTotal(payload) {
   )
 }
 
+function normalizeDenominations(value) {
+  const source =
+    Array.isArray(value) && value.length
+      ? value
+      : DEFAULT_CASH_DENOMINATIONS
+
+  const normalized = [
+    ...new Set(
+      source
+        .map((item) => Math.round(Number(item || 0)))
+        .filter((item) => item > 0),
+    ),
+  ].sort((a, b) => b - a)
+
+  return normalized.length ? normalized : DEFAULT_CASH_DENOMINATIONS
+}
+
+function parseDenominations(value) {
+  if (Array.isArray(value)) return normalizeDenominations(value)
+
+  const raw = s(value)
+
+  if (!raw) return DEFAULT_CASH_DENOMINATIONS
+
+  return normalizeDenominations(
+    raw
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean),
+  )
+}
+
 function normalizeRow(row) {
   if (!row) return row
 
   return {
     ...row,
     id: s(row.id || row._id),
+    currency: upper(row.currency || 'USD'),
+    payoutCurrency: upper(row.payoutCurrency || 'KHR'),
+    cashRoundingUnit: Number(row.cashRoundingUnit || 100),
+    cashRoundingMode: upper(row.cashRoundingMode || 'ROUND'),
+    cashDenominations: normalizeDenominations(row.cashDenominations),
   }
+}
+
+function formatNumber(value, decimals = 2) {
+  const number = Number(value)
+
+  if (!Number.isFinite(number)) return '0'
+
+  return new Intl.NumberFormat(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: decimals,
+  }).format(number)
 }
 
 function formatMultiplier(value) {
@@ -161,6 +235,26 @@ function dayMultiplierTagClass(type) {
   if (value === 'HOLIDAY') return 'payment-day-holiday'
 
   return 'payment-day-default'
+}
+
+function formatCurrencyPair(row = {}) {
+  const from = upper(row.currency || 'USD')
+  const to = upper(row.payoutCurrency || 'KHR')
+
+  return `${from} → ${to}`
+}
+
+function formatCashPolicy(row = {}) {
+  const mode = upper(row.cashRoundingMode || 'ROUND')
+  const unit = Number(row.cashRoundingUnit || 100)
+
+  return `${mode} / ${formatNumber(unit, 0)}`
+}
+
+function formatDenominations(row = {}) {
+  return normalizeDenominations(row.cashDenominations)
+    .map((item) => formatNumber(item, 0))
+    .join(', ')
 }
 
 function buildQuery(page) {
@@ -321,6 +415,8 @@ function openEditDialog(row) {
 
   editingId.value = s(row.id || row._id)
 
+  const denominations = normalizeDenominations(row.cashDenominations)
+
   Object.assign(form, {
     code: s(row.code),
     name: s(row.name),
@@ -334,7 +430,11 @@ function openEditDialog(row) {
       HOLIDAY: Number(row.multipliers?.HOLIDAY ?? 3),
     },
     roundingDecimals: Number(row.roundingDecimals ?? 2),
-    currency: s(row.currency || 'USD'),
+    currency: upper(row.currency || 'USD'),
+    payoutCurrency: upper(row.payoutCurrency || 'KHR'),
+    cashRoundingUnit: Number(row.cashRoundingUnit || 100),
+    cashRoundingMode: upper(row.cashRoundingMode || 'ROUND'),
+    cashDenominationsText: denominations.join(', '),
     isActive: row.isActive !== false,
   })
 
@@ -356,12 +456,43 @@ function normalizeSavePayload() {
     },
     roundingDecimals: Number(form.roundingDecimals ?? 2),
     currency: upper(form.currency || 'USD'),
+    payoutCurrency: upper(form.payoutCurrency || 'KHR'),
+    cashRoundingUnit: Number(form.cashRoundingUnit || 100),
+    cashRoundingMode: upper(form.cashRoundingMode || 'ROUND'),
+    cashDenominations: formCashDenominations.value,
     isActive: Boolean(form.isActive),
   }
 }
 
+function validateBeforeSave(payload = {}) {
+  if (!payload.code) return 'Code is required'
+  if (!payload.name) return 'Name is required'
+  if (!payload.monthlyWorkingDays || payload.monthlyWorkingDays <= 0) {
+    return 'Monthly working days must be greater than 0'
+  }
+  if (!payload.hoursPerDay || payload.hoursPerDay <= 0) {
+    return 'Hours per day must be greater than 0'
+  }
+  if (!payload.currency) return 'Base currency is required'
+  if (!payload.payoutCurrency) return 'Payout currency is required'
+  if (!payload.cashRoundingUnit || payload.cashRoundingUnit <= 0) {
+    return 'Cash rounding unit must be greater than 0'
+  }
+  if (!payload.cashDenominations.length) {
+    return 'At least one cash denomination is required'
+  }
+
+  return ''
+}
+
 async function saveFormula() {
   const payload = normalizeSavePayload()
+  const validationMessage = validateBeforeSave(payload)
+
+  if (validationMessage) {
+    showToast('warn', 'Check form', validationMessage)
+    return
+  }
 
   saving.value = true
 
@@ -514,7 +645,7 @@ onBeforeUnmount(() => {
           :title="t('common.loadingData')"
           :message="t('common.fetchingRecords')"
           :rows="7"
-          :columns="8"
+          :columns="10"
           icon="pi pi-calculator"
         />
 
@@ -670,15 +801,47 @@ onBeforeUnmount(() => {
           </Column>
 
           <Column
+            field="currency"
             :header="t('payment.formulas.currency')"
-            style="width: 8rem; min-width: 8rem"
+            sortable
+            style="width: 10rem; min-width: 10rem"
           >
             <template #body="{ data }">
               <Tag
                 v-if="data"
-                :value="data.currency || 'USD'"
+                :value="formatCurrencyPair(data)"
                 class="payment-rgb-tag payment-currency-tag"
               />
+            </template>
+          </Column>
+
+          <Column
+            field="cashRoundingMode"
+            header="Cash rounding"
+            sortable
+            style="width: 13rem; min-width: 13rem"
+          >
+            <template #body="{ data }">
+              <Tag
+                v-if="data"
+                :value="formatCashPolicy(data)"
+                class="payment-rgb-tag payment-tag-purple"
+              />
+            </template>
+          </Column>
+
+          <Column
+            header="Cash denominations"
+            style="width: 19rem; min-width: 19rem"
+          >
+            <template #body="{ data }">
+              <span
+                v-if="data"
+                class="payment-denomination-text"
+                :title="formatDenominations(data)"
+              >
+                {{ formatDenominations(data) }}
+              </span>
             </template>
           </Column>
 
@@ -742,17 +905,10 @@ onBeforeUnmount(() => {
       v-model:visible="dialogVisible"
       modal
       :draggable="false"
-      :style="{ width: '96vw', maxWidth: '920px' }"
+      :style="{ width: '96vw', maxWidth: '980px' }"
       :header="isEditMode ? t('payment.formulas.editTitle') : t('payment.formulas.createTitle')"
     >
       <div class="ot-dialog-form">
-        <div class="payment-formula-note">
-          <i class="pi pi-info-circle" />
-
-          <div>
-            {{ t('payment.formulas.dialogNote') }}
-          </div>
-        </div>
 
         <div class="grid gap-3 md:grid-cols-2">
           <div class="ot-field">
@@ -849,7 +1005,7 @@ onBeforeUnmount(() => {
 
           <div class="ot-field">
             <label class="ot-field-label">
-              {{ t('payment.formulas.currency') }}
+              Base currency
             </label>
 
             <InputText
@@ -862,7 +1018,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="ot-panel">
-          <div class="mb-3 text-sm text-[color:var(--ot-text)]">
+          <div class="payment-panel-title">
             {{ t('payment.formulas.dayTypeMultipliers') }}
           </div>
 
@@ -915,18 +1071,76 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="ot-panel">
-          <div class="mb-3 text-sm text-[color:var(--ot-text)]">
-            {{ t('payment.formulas.previewTitle') }}
+          <div class="payment-panel-title">
+            Cash payout policy
           </div>
 
-          <div class="payment-formula-preview">
-            <div>
-              {{ t('payment.formulas.hourlyRatePreview') }}
+          <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div class="ot-field">
+              <label class="ot-field-label">
+                Payout currency
+              </label>
+
+              <InputText
+                v-model="form.payoutCurrency"
+                class="w-full"
+                placeholder="KHR"
+                :disabled="saving"
+              />
             </div>
 
-            <div>
-              {{ t('payment.formulas.otAmountPreview') }}
+            <div class="ot-field">
+              <label class="ot-field-label">
+                Cash rounding mode
+              </label>
+
+              <Select
+                v-model="form.cashRoundingMode"
+                :options="cashRoundingModeOptions"
+                option-label="label"
+                option-value="value"
+                class="w-full"
+                :disabled="saving"
+              />
             </div>
+
+            <div class="ot-field">
+              <label class="ot-field-label">
+                Cash rounding unit
+              </label>
+
+              <InputNumber
+                v-model="form.cashRoundingUnit"
+                class="w-full"
+                input-class="w-full"
+                :min="1"
+                :max-fraction-digits="0"
+                :disabled="saving"
+              />
+            </div>
+
+            <div class="ot-field">
+              <label class="ot-field-label">
+                Currency flow
+              </label>
+
+              <div class="payment-currency-preview">
+                {{ upper(form.currency || 'USD') }} → {{ upper(form.payoutCurrency || 'KHR') }}
+              </div>
+            </div>
+          </div>
+
+          <div class="ot-field mt-3">
+            <label class="ot-field-label">
+              Cash denominations
+            </label>
+
+            <InputText
+              v-model="form.cashDenominationsText"
+              class="w-full"
+              placeholder="50000, 20000, 10000, 5000, 1000, 500, 100"
+              :disabled="saving"
+            />
           </div>
         </div>
 
@@ -934,10 +1148,6 @@ onBeforeUnmount(() => {
           <div>
             <div class="payment-active-title">
               {{ t('common.active') }}
-            </div>
-
-            <div class="payment-active-help">
-              {{ t('payment.formulas.dialogNote') }}
             </div>
           </div>
 
@@ -1056,7 +1266,8 @@ onBeforeUnmount(() => {
 }
 
 .payment-rule-line,
-.payment-meta-text {
+.payment-meta-text,
+.payment-denomination-text {
   display: inline-flex;
   max-width: 100%;
   min-width: 0;
@@ -1076,6 +1287,14 @@ onBeforeUnmount(() => {
   font-variant-numeric: tabular-nums;
 }
 
+.payment-denomination-text {
+  max-width: 18rem;
+  color: rgb(var(--payment-info-rgb));
+  font-size: 0.74rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
 .payment-multiplier-list {
   display: inline-flex;
   max-width: 100%;
@@ -1084,6 +1303,56 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: 0.35rem;
   text-align: center;
+}
+
+.payment-panel-title {
+  margin-bottom: 0.75rem;
+  color: var(--ot-text);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.payment-field-help {
+  margin-top: 0.25rem;
+  color: var(--ot-text-muted);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.payment-currency-preview {
+  display: flex;
+  min-height: 2.35rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgb(var(--payment-info-rgb) / 0.28);
+  border-radius: 0.7rem;
+  background: rgb(var(--payment-info-rgb) / 0.08);
+  color: rgb(var(--payment-info-rgb));
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.payment-cash-preview {
+  margin-top: 0.75rem;
+  border: 1px dashed rgb(var(--payment-purple-rgb) / 0.35);
+  border-radius: 0.85rem;
+  background: rgb(var(--payment-purple-rgb) / 0.07);
+  padding: 0.65rem 0.75rem;
+  text-align: center;
+}
+
+.payment-cash-preview-label {
+  color: var(--ot-text-muted);
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+
+.payment-cash-preview-value {
+  margin-top: 0.18rem;
+  color: rgb(var(--payment-purple-rgb));
+  font-size: 0.82rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
 }
 
 .payment-active-box {
@@ -1165,6 +1434,10 @@ onBeforeUnmount(() => {
 
 .payment-day-default {
   --payment-tag-rgb: var(--payment-muted-rgb);
+}
+
+.payment-tag-purple {
+  --payment-tag-rgb: var(--payment-purple-rgb);
 }
 
 /* =========================
@@ -1314,6 +1587,14 @@ onBeforeUnmount(() => {
 :global(.dark) .payment-formula-note {
   border-color: rgb(var(--payment-warning-rgb) / 0.42);
   background: rgb(var(--payment-warning-rgb) / 0.14);
+}
+
+:global(.dark) .payment-currency-preview {
+  background: rgb(var(--payment-info-rgb) / 0.15);
+}
+
+:global(.dark) .payment-cash-preview {
+  background: rgb(var(--payment-purple-rgb) / 0.14);
 }
 
 /* =========================

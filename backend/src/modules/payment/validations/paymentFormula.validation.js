@@ -4,6 +4,8 @@ const { z } = require('zod')
 
 const SALARY_BASIS = ['MONTHLY_SALARY']
 const DAY_TYPES = ['WORKING_DAY', 'SUNDAY', 'HOLIDAY']
+const CASH_ROUNDING_MODES = ['CEIL', 'FLOOR', 'ROUND', 'NONE']
+const DEFAULT_CASH_DENOMINATIONS = [50000, 20000, 10000, 5000, 1000, 500, 100]
 
 const FORMULA_SORT_FIELDS = [
   'code',
@@ -14,6 +16,9 @@ const FORMULA_SORT_FIELDS = [
   'hoursPerDay',
   'roundingDecimals',
   'currency',
+  'payoutCurrency',
+  'cashRoundingUnit',
+  'cashRoundingMode',
   'isActive',
 ]
 
@@ -121,6 +126,36 @@ function optionalBoolean() {
   )
 }
 
+function roundingModeField() {
+  return z.preprocess(
+    (value) => s(value).toUpperCase(),
+    z.enum(CASH_ROUNDING_MODES),
+  )
+}
+
+function optionalRoundingModeField() {
+  return z.preprocess(
+    (value) => {
+      const raw = s(value)
+      return raw ? raw.toUpperCase() : undefined
+    },
+    z.enum(CASH_ROUNDING_MODES).optional(),
+  )
+}
+
+const denominationsSchema = z.preprocess((value) => {
+  if (Array.isArray(value)) return value
+
+  if (typeof value === 'string') {
+    return value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean)
+  }
+
+  return value
+}, z.array(z.coerce.number().int().positive()).min(1, 'At least one cash denomination is required'))
+
 const objectIdSchema = z
   .string()
   .trim()
@@ -154,6 +189,12 @@ const createPaymentFormulaSchema = z.object({
 
   roundingDecimals: z.coerce.number().int().min(0).max(6).default(2),
   currency: optionalUpperString(10).default('USD'),
+
+  payoutCurrency: optionalUpperString(10).default('KHR'),
+  cashRoundingUnit: z.coerce.number().int().positive().default(100),
+  cashRoundingMode: roundingModeField().default('ROUND'),
+  cashDenominations: denominationsSchema.default(DEFAULT_CASH_DENOMINATIONS),
+
   isActive: z.boolean().optional().default(true),
 })
 
@@ -172,6 +213,12 @@ const updatePaymentFormulaSchema = z
 
     roundingDecimals: z.coerce.number().int().min(0).max(6).optional(),
     currency: optionalUpperString(10),
+
+    payoutCurrency: optionalUpperString(10),
+    cashRoundingUnit: z.coerce.number().int().positive().optional(),
+    cashRoundingMode: optionalRoundingModeField(),
+    cashDenominations: denominationsSchema.optional(),
+
     isActive: z.boolean().optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {
@@ -215,5 +262,7 @@ module.exports = {
 
   SALARY_BASIS,
   DAY_TYPES,
+  CASH_ROUNDING_MODES,
+  DEFAULT_CASH_DENOMINATIONS,
   FORMULA_SORT_FIELDS,
 }

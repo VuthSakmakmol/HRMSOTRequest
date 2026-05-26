@@ -30,8 +30,9 @@ function buildPaymentProcessFormData(input = {}) {
     formData.append('formulaId', input.formulaId)
   }
 
-  if (hasValue(input.exchangeRateId)) {
-    formData.append('exchangeRateId', input.exchangeRateId)
+  // Manual daily exchange rate. This is NOT saved.
+  if (hasValue(input.exchangeRate)) {
+    formData.append('exchangeRate', input.exchangeRate)
   }
 
   return formData
@@ -61,30 +62,6 @@ export function updatePaymentFormula(id, payload) {
 }
 
 // =========================
-// Payment Exchange Rates
-// =========================
-export function getPaymentExchangeRates(params = {}) {
-  return api.get('/payment/exchange-rates', { params })
-}
-
-export function getPaymentExchangeRateLookupOptions(params = {}) {
-  return api.get('/payment/exchange-rates/lookup', { params })
-}
-
-export function getPaymentExchangeRateById(id) {
-  return api.get(`/payment/exchange-rates/${id}`)
-}
-
-export function createPaymentExchangeRate(payload) {
-  return api.post('/payment/exchange-rates', payload)
-}
-
-export function updatePaymentExchangeRate(id, payload) {
-  return api.patch(`/payment/exchange-rates/${id}`, payload)
-}
-
-
-// =========================
 // Payment Allowance Policies
 // =========================
 export function getPaymentAllowancePolicies(params = {}) {
@@ -106,7 +83,6 @@ export function createPaymentAllowancePolicy(payload) {
 export function updatePaymentAllowancePolicy(id, payload) {
   return api.patch(`/payment/allowance-policies/${id}`, payload)
 }
-
 
 // =========================
 // Payment Process
@@ -140,5 +116,5 @@ export function calculateAndExportPayment(input = {}, options = {}) {
   })
 }
 
-// Keep old PaymentProcessView import working
+// Keep old PaymentProcessView import name working.
 export const calculatePaymentExport = calculateAndExportPayment

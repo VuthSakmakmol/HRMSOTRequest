@@ -16,12 +16,25 @@ const ymdSchema = z
   .trim()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format')
 
+const manualExchangeRateSchema = z.preprocess(
+  (value) => {
+    if (value === '' || value === null || value === undefined) return undefined
+    return Number(value)
+  },
+  z
+    .number({
+      required_error: 'Manual exchange rate is required',
+      invalid_type_error: 'Manual exchange rate must be a number',
+    })
+    .positive('Manual exchange rate must be greater than 0'),
+)
+
 const paymentExportBodySchema = z
   .object({
     fromDate: ymdSchema,
     toDate: ymdSchema,
     formulaId: objectIdSchema,
-    exchangeRateId: objectIdSchema,
+    exchangeRate: manualExchangeRateSchema,
   })
   .superRefine((data, ctx) => {
     if (data.fromDate && data.toDate && data.fromDate > data.toDate) {

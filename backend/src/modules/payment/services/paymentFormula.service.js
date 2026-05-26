@@ -8,6 +8,15 @@ const {
   formatDateTimeToDmyHm,
 } = require('../../../shared/utils/dateFormat')
 
+const DEFAULT_MULTIPLIERS = {
+  WORKING_DAY: 1.5,
+  SUNDAY: 2,
+  HOLIDAY: 3,
+}
+
+const DEFAULT_CASH_DENOMINATIONS = [50000, 20000, 10000, 5000, 1000, 500, 100]
+const CASH_ROUNDING_MODES = ['CEIL', 'FLOOR', 'ROUND', 'NONE']
+
 function s(value) {
   return String(value ?? '').trim()
 }
@@ -43,6 +52,35 @@ function normalizeLimit(value) {
   return Math.min(Math.max(Math.floor(limit), 1), 200)
 }
 
+function safeNumber(value, fallback = 0) {
+  const num = Number(value)
+  return Number.isFinite(num) ? num : fallback
+}
+
+function safePositiveNumber(value, fallback = 1) {
+  const num = safeNumber(value, fallback)
+  return num > 0 ? num : fallback
+}
+
+function normalizeRoundingMode(value, fallback = 'ROUND') {
+  const mode = upper(value || fallback)
+  return CASH_ROUNDING_MODES.includes(mode) ? mode : fallback
+}
+
+function normalizeDenominations(value) {
+  const source = Array.isArray(value) && value.length ? value : DEFAULT_CASH_DENOMINATIONS
+
+  const normalized = [
+    ...new Set(
+      source
+        .map((item) => Math.round(safeNumber(item, 0)))
+        .filter((item) => item > 0),
+    ),
+  ].sort((a, b) => b - a)
+
+  return normalized.length ? normalized : DEFAULT_CASH_DENOMINATIONS
+}
+
 function normalizeFormulaPayload(payload = {}) {
   const data = { ...payload }
 
@@ -66,6 +104,22 @@ function normalizeFormulaPayload(payload = {}) {
     data.currency = upper(data.currency || 'USD')
   }
 
+  if (Object.prototype.hasOwnProperty.call(data, 'payoutCurrency')) {
+    data.payoutCurrency = upper(data.payoutCurrency || 'KHR')
+  }
+
+  if (Object.prototype.hasOwnProperty.call(data, 'cashRoundingUnit')) {
+    data.cashRoundingUnit = Math.round(safePositiveNumber(data.cashRoundingUnit, 100))
+  }
+
+  if (Object.prototype.hasOwnProperty.call(data, 'cashRoundingMode')) {
+    data.cashRoundingMode = normalizeRoundingMode(data.cashRoundingMode)
+  }
+
+  if (Object.prototype.hasOwnProperty.call(data, 'cashDenominations')) {
+    data.cashDenominations = normalizeDenominations(data.cashDenominations)
+  }
+
   if (Object.prototype.hasOwnProperty.call(data, 'multipliers')) {
     data.multipliers = {
       ...(data.multipliers || {}),
@@ -73,6 +127,14 @@ function normalizeFormulaPayload(payload = {}) {
   }
 
   return data
+}
+
+function normalizeMultipliers(value = {}) {
+  return {
+    WORKING_DAY: safeNumber(value.WORKING_DAY, DEFAULT_MULTIPLIERS.WORKING_DAY),
+    SUNDAY: safeNumber(value.SUNDAY, DEFAULT_MULTIPLIERS.SUNDAY),
+    HOLIDAY: safeNumber(value.HOLIDAY, DEFAULT_MULTIPLIERS.HOLIDAY),
+  }
 }
 
 function buildSearchFilter(search) {
@@ -87,7 +149,9 @@ function buildSearchFilter(search) {
       { name: regex },
       { description: regex },
       { currency: regex },
+      { payoutCurrency: regex },
       { salaryBasis: regex },
+      { cashRoundingMode: regex },
     ],
   }
 }
@@ -122,6 +186,9 @@ function buildFormulaSort(query = {}) {
       hoursPerDay: 'hoursPerDay',
       roundingDecimals: 'roundingDecimals',
       currency: 'currency',
+      payoutCurrency: 'payoutCurrency',
+      cashRoundingUnit: 'cashRoundingUnit',
+      cashRoundingMode: 'cashRoundingMode',
       isActive: 'isActive',
     }[query.sortBy] || 'createdAt'
 
@@ -133,6 +200,9 @@ function buildFormulaSort(query = {}) {
 }
 
 function mapFormulaItem(doc = {}) {
+  const multipliers = normalizeMultipliers(doc.multipliers || {})
+  const cashDenominations = normalizeDenominations(doc.cashDenominations)
+
   return {
     id: doc._id ? String(doc._id) : null,
 
@@ -142,17 +212,18 @@ function mapFormulaItem(doc = {}) {
 
     salaryBasis: upper(doc.salaryBasis || 'MONTHLY_SALARY'),
 
-    monthlyWorkingDays: Number(doc.monthlyWorkingDays || 0),
-    hoursPerDay: Number(doc.hoursPerDay || 0),
+    monthlyWorkingDays: safeNumber(doc.monthlyWorkingDays, 26),
+    hoursPerDay: safeNumber(doc.hoursPerDay, 8),
 
-    multipliers: {
-      WORKING_DAY: Number(doc.multipliers?.WORKING_DAY || 0),
-      SUNDAY: Number(doc.multipliers?.SUNDAY || 0),
-      HOLIDAY: Number(doc.multipliers?.HOLIDAY || 0),
-    },
+    multipliers,
 
-    roundingDecimals: Number(doc.roundingDecimals || 0),
+    roundingDecimals: safeNumber(doc.roundingDecimals, 2),
     currency: upper(doc.currency || 'USD'),
+
+    payoutCurrency: upper(doc.payoutCurrency || 'KHR'),
+    cashRoundingUnit: Math.round(safePositiveNumber(doc.cashRoundingUnit, 100)),
+    cashRoundingMode: normalizeRoundingMode(doc.cashRoundingMode),
+    cashDenominations,
 
     isActive: doc.isActive === true,
 
@@ -186,6 +257,12 @@ function mapFormulaLookupItem(doc = {}) {
     multipliers: item.multipliers,
     roundingDecimals: item.roundingDecimals,
     currency: item.currency,
+
+    payoutCurrency: item.payoutCurrency,
+    cashRoundingUnit: item.cashRoundingUnit,
+    cashRoundingMode: item.cashRoundingMode,
+    cashDenominations: item.cashDenominations,
+
     isActive: item.isActive,
   }
 }
@@ -318,6 +395,23 @@ async function updatePaymentFormula(id, payload = {}, actor = '') {
 
   if (Object.prototype.hasOwnProperty.call(data, 'code')) {
     await ensureFormulaCodeAvailable(data.code, id)
+  }
+
+  if (Object.prototype.hasOwnProperty.call(data, 'multipliers')) {
+    const existing = await PaymentFormula.findById(id).select({ multipliers: 1 }).lean()
+
+    if (!existing) {
+      throw createHttpError(
+        'Payment formula not found',
+        404,
+        'payment.formula.not_found',
+      )
+    }
+
+    data.multipliers = normalizeMultipliers({
+      ...(existing.multipliers || DEFAULT_MULTIPLIERS),
+      ...(data.multipliers || {}),
+    })
   }
 
   data.updatedBy = s(actor)

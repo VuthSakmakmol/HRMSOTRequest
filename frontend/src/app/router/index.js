@@ -37,7 +37,6 @@ import AttendanceImportView from '@/modules/attendance/views/AttendanceImportVie
 import AttendanceRecordsView from '@/modules/attendance/views/AttendanceRecordsView.vue'
 import OTAttendanceVerificationView from '@/modules/attendance/views/OTAttendanceVerificationView.vue'
 
-import PaymentExchangeRateView from '@/modules/payment/views/PaymentExchangeRateView.vue'
 import PaymentAllowancePolicyView from '@/modules/payment/views/PaymentAllowancePolicyView.vue'
 
 import ForbiddenView from '@/modules/errors/views/ForbiddenView.vue'
@@ -460,17 +459,6 @@ const routes = [
           title: 'Payment Formulas',
           titleKey: 'nav.paymentFormulas',
           requiredAnyPermissions: ['PAYMENT_FORMULA_VIEW'],
-        },
-      },
-      {
-        path: 'payment/exchange-rates',
-        name: 'payment-exchange-rates',
-        component: PaymentExchangeRateView,
-        meta: {
-          requiresAuth: true,
-          title: 'Payment Exchange Rates',
-          titleKey: 'nav.paymentExchangeRates',
-          requiredAnyPermissions: ['PAYMENT_EXCHANGE_RATE_VIEW'],
         },
       },
       {

@@ -5,7 +5,6 @@ const express = require('express')
 const requireAuth = require('../../../middlewares/requireAuth')
 
 const formulaRoutes = require('./paymentFormula.routes')
-const exchangeRateRoutes = require('./paymentExchangeRate.routes')
 const processRoutes = require('./paymentProcess.routes')
 const allowancePolicyRoutes = require('../../allowance/routes/allowancePolicy.routes')
 
@@ -18,12 +17,6 @@ router.use(requireAuth)
 // Base: /api/v1/payment/formulas
 // =========================
 router.use('/formulas', formulaRoutes)
-
-// =========================
-// Payment Exchange Rate Routes
-// Base: /api/v1/payment/exchange-rates
-// =========================
-router.use('/exchange-rates', exchangeRateRoutes)
 
 // =========================
 // Payment Allowance Policy Routes

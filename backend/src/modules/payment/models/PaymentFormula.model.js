@@ -6,6 +6,8 @@ const { Schema } = mongoose
 
 const SALARY_BASIS = ['MONTHLY_SALARY']
 const DAY_TYPES = ['WORKING_DAY', 'SUNDAY', 'HOLIDAY']
+const CASH_ROUNDING_MODES = ['CEIL', 'FLOOR', 'ROUND', 'NONE']
+const DEFAULT_CASH_DENOMINATIONS = [50000, 20000, 10000, 5000, 1000, 500, 100]
 
 function s(value) {
   return String(value ?? '').trim()
@@ -28,6 +30,25 @@ function safePositiveNumber(value, fallback = 1) {
 function safeNonNegativeNumber(value, fallback = 0) {
   const num = safeNumber(value, fallback)
   return num >= 0 ? num : fallback
+}
+
+function normalizeCashRoundingMode(value) {
+  const mode = upper(value)
+  return CASH_ROUNDING_MODES.includes(mode) ? mode : 'ROUND'
+}
+
+function normalizeCashDenominations(value) {
+  const source = Array.isArray(value) && value.length ? value : DEFAULT_CASH_DENOMINATIONS
+
+  const normalized = [
+    ...new Set(
+      source
+        .map((item) => Math.round(safeNumber(item, 0)))
+        .filter((item) => item > 0),
+    ),
+  ].sort((a, b) => b - a)
+
+  return normalized.length ? normalized : DEFAULT_CASH_DENOMINATIONS
 }
 
 const DayTypeMultiplierSchema = new Schema(
@@ -113,6 +134,7 @@ const PaymentFormulaSchema = new Schema(
       }),
     },
 
+    // USD/base-currency rounding before exchange.
     roundingDecimals: {
       type: Number,
       min: 0,
@@ -120,11 +142,52 @@ const PaymentFormulaSchema = new Schema(
       default: 2,
     },
 
+    // Base salary currency, normally USD.
     currency: {
       type: String,
       default: 'USD',
       trim: true,
       maxlength: 10,
+    },
+
+    // Final payout currency after manual exchange rate is applied.
+    payoutCurrency: {
+      type: String,
+      default: 'KHR',
+      trim: true,
+      maxlength: 10,
+    },
+
+    // Cash rounding policy belongs to formula, not daily exchange rate.
+    cashRoundingUnit: {
+      type: Number,
+      required: true,
+      min: 1,
+      default: 100,
+    },
+
+    cashRoundingMode: {
+      type: String,
+      enum: CASH_ROUNDING_MODES,
+      required: true,
+      trim: true,
+      default: 'ROUND',
+    },
+
+    // Cash payout denomination policy belongs to formula.
+    cashDenominations: {
+      type: [Number],
+      default: () => DEFAULT_CASH_DENOMINATIONS,
+      validate: {
+        validator(value) {
+          return (
+            Array.isArray(value) &&
+            value.length > 0 &&
+            value.every((item) => Number(item) > 0)
+          )
+        },
+        message: 'At least one active cash denomination is required',
+      },
     },
 
     isActive: {
@@ -167,6 +230,12 @@ PaymentFormulaSchema.pre('validate', function preValidate(next) {
   )
 
   this.currency = upper(this.currency || 'USD')
+  this.payoutCurrency = upper(this.payoutCurrency || 'KHR')
+
+  this.cashRoundingUnit = Math.round(safePositiveNumber(this.cashRoundingUnit, 100))
+  this.cashRoundingMode = normalizeCashRoundingMode(this.cashRoundingMode || 'ROUND')
+  this.cashDenominations = normalizeCashDenominations(this.cashDenominations)
+
   this.createdBy = s(this.createdBy)
   this.updatedBy = s(this.updatedBy)
 
@@ -188,7 +257,12 @@ PaymentFormulaSchema.pre('validate', function preValidate(next) {
 PaymentFormulaSchema.index({ code: 1 }, { unique: true })
 PaymentFormulaSchema.index({ name: 1 })
 PaymentFormulaSchema.index({ isActive: 1, name: 1 })
+PaymentFormulaSchema.index({ currency: 1, payoutCurrency: 1 })
 PaymentFormulaSchema.index({ createdAt: -1 })
 PaymentFormulaSchema.index({ updatedAt: -1 })
 
 module.exports = mongoose.model('PaymentFormula', PaymentFormulaSchema)
+module.exports.SALARY_BASIS = SALARY_BASIS
+module.exports.DAY_TYPES = DAY_TYPES
+module.exports.CASH_ROUNDING_MODES = CASH_ROUNDING_MODES
+module.exports.DEFAULT_CASH_DENOMINATIONS = DEFAULT_CASH_DENOMINATIONS

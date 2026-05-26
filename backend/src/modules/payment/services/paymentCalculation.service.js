@@ -3,7 +3,6 @@
 const mongoose = require('mongoose')
 
 const PaymentFormula = require('../models/PaymentFormula.model')
-const PaymentExchangeRate = require('../models/PaymentExchangeRate.model')
 
 const OTRequest = require('../../ot/models/OTRequest')
 const OTCalculationPolicy = require('../../ot/models/OTCalculationPolicy')
@@ -159,9 +158,10 @@ function validateSalaryFile(file) {
 }
 
 function normalizeDenominations(value) {
-  const source = Array.isArray(value) && value.length
-    ? value
-    : [50000, 20000, 10000, 5000, 1000, 500, 100]
+  const source =
+    Array.isArray(value) && value.length
+      ? value
+      : [50000, 20000, 10000, 5000, 1000, 500, 100]
 
   return [
     ...new Set(
@@ -191,26 +191,44 @@ function mapFormula(doc = {}) {
 
     roundingDecimals: Math.min(Math.max(Number(doc.roundingDecimals || 2), 0), 6),
     currency: upper(doc.currency || 'USD'),
+
+    payoutCurrency: upper(doc.payoutCurrency || 'KHR'),
+    cashRoundingUnit: Math.round(safePositiveNumber(doc.cashRoundingUnit, 100)),
+    cashRoundingMode: normalizeRoundingMode(doc.cashRoundingMode || 'ROUND'),
+    cashDenominations: normalizeDenominations(doc.cashDenominations),
+
     isActive: doc.isActive === true,
   }
 }
 
-function mapExchangeRate(doc = {}) {
+function buildManualExchangeRate(rate, formula = {}) {
+  const manualRate = safePositiveNumber(rate, 0)
+
+  if (manualRate <= 0) {
+    throw createHttpError(
+      'Manual exchange rate is required',
+      400,
+      'payment.exchange_rate.manual_rate_required',
+    )
+  }
+
   return {
-    id: doc._id ? String(doc._id) : null,
-    code: upper(doc.code),
-    name: s(doc.name),
-    description: s(doc.description),
+    id: null,
+    code: 'MANUAL',
+    name: 'Manual rate',
+    description: 'Manual exchange rate entered during payment calculation',
 
-    fromCurrency: upper(doc.fromCurrency || 'USD'),
-    toCurrency: upper(doc.toCurrency || 'KHR'),
-    rate: safePositiveNumber(doc.rate, 1),
+    fromCurrency: upper(formula.currency || 'USD'),
+    toCurrency: upper(formula.payoutCurrency || 'KHR'),
+    rate: manualRate,
 
-    roundingUnit: Math.round(safePositiveNumber(doc.roundingUnit, 100)),
-    roundingMode: normalizeRoundingMode(doc.roundingMode),
-    denominations: normalizeDenominations(doc.denominations),
+    roundingUnit: Math.round(safePositiveNumber(formula.cashRoundingUnit, 100)),
+    roundingMode: normalizeRoundingMode(formula.cashRoundingMode || 'ROUND'),
+    denominations: normalizeDenominations(formula.cashDenominations),
 
-    isActive: doc.isActive === true,
+    source: 'MANUAL_INPUT',
+    isManual: true,
+    isActive: true,
   }
 }
 
@@ -242,54 +260,6 @@ async function getFormulaOrThrow(formulaId) {
   }
 
   return mapFormula(doc)
-}
-
-async function getExchangeRateOrThrow(exchangeRateId, formula) {
-  if (!mongoose.isValidObjectId(exchangeRateId)) {
-    throw createHttpError(
-      'Invalid payment exchange rate id',
-      400,
-      'payment.exchange_rate.invalid_id',
-    )
-  }
-
-  const doc = await PaymentExchangeRate.findById(exchangeRateId).lean()
-
-  if (!doc) {
-    throw createHttpError(
-      'Payment exchange rate not found',
-      404,
-      'payment.exchange_rate.not_found',
-    )
-  }
-
-  if (doc.isActive !== true) {
-    throw createHttpError(
-      'Payment exchange rate is inactive',
-      400,
-      'payment.exchange_rate.inactive',
-    )
-  }
-
-  const exchangeRate = mapExchangeRate(doc)
-
-  if (upper(formula.currency) !== exchangeRate.fromCurrency) {
-    throw createHttpError(
-      'Payment formula currency does not match exchange rate source currency',
-      400,
-      'payment.exchange_rate.currency_mismatch',
-    )
-  }
-
-  if (exchangeRate.toCurrency !== 'KHR') {
-    throw createHttpError(
-      'Payment exchange rate target currency must be KHR',
-      400,
-      'payment.exchange_rate.target_must_be_khr',
-    )
-  }
-
-  return exchangeRate
 }
 
 function buildApprovedOTFilter(fromDate, toDate) {
@@ -532,7 +502,6 @@ function buildVerificationOTRequestPayload(otRequest, approvedEmployees = [], op
     otDate: s(otRequest.otDate),
     otDateDisplay: formatYmdToDmy(otRequest.otDate),
 
-    // Payment verification uses calendar service day type.
     dayType: internalCalendarDayType,
     storedDayType,
     internalCalendarDayType,
@@ -813,23 +782,22 @@ async function buildLivePaymentVerification(otRequest = {}) {
   const originalMap = buildEmployeeOriginalMap(sourceEmployees)
   const verificationMap = buildVerificationPaymentMap(verification)
 
-  const verifiedEmployees = sourceEmployees
-    .map((employee) => {
-      const key = employeePaymentKey(employee)
-      const original = originalMap.get(key) || employee
-      const verificationRow = verificationMap.get(key)
+  const verifiedEmployees = sourceEmployees.map((employee) => {
+    const key = employeePaymentKey(employee)
+    const original = originalMap.get(key) || employee
+    const verificationRow = verificationMap.get(key)
 
-      if (!verificationRow) {
-        return mergeEmployeeWithVerification(original, {
-          otResult: 'MISMATCH',
-          otResultReason: 'No attendance verification result found',
-          messageKey: 'payment.attendance.no_verification_result',
-          roundedOtMinutes: 0,
-        })
-      }
+    if (!verificationRow) {
+      return mergeEmployeeWithVerification(original, {
+        otResult: 'MISMATCH',
+        otResultReason: 'No attendance verification result found',
+        messageKey: 'payment.attendance.no_verification_result',
+        roundedOtMinutes: 0,
+      })
+    }
 
-      return mergeEmployeeWithVerification(original, verificationRow)
-    })
+    return mergeEmployeeWithVerification(original, verificationRow)
+  })
 
   return {
     otRequest: verificationOtRequest,
@@ -1293,17 +1261,12 @@ function buildPaymentItem({ otRequest, employee, formula, salaryInfo, exchangeRa
   const monthlySalary = safeNonNegativeNumber(salaryInfo.monthlySalary, 0)
   const hourlyRate = getHourlyRate(monthlySalary, formula)
 
-  // Important:
-  // Use employee-level OT time first.
-  // This fixes the case: request option = 2h, but one employee custom = 1h.
   const requestStartTime = resolveEmployeeRequestStartTime(employee, otRequest)
   const requestEndTime = resolveEmployeeRequestEndTime(employee, otRequest)
   const requestedMinutes = resolveEmployeeRequestedMinutes(employee, otRequest)
   const breakMinutes = resolveEmployeeBreakMinutes(employee, otRequest)
   const requestPaidMinutes = requestedMinutes || resolveRequestPaidMinutes(otRequest)
 
-  // Important:
-  // Payable minutes must be capped by the employee's custom requested minutes.
   const payableMinutes = resolveEmployeePaidMinutes(employee, otRequest)
   const hasAttendancePolicyPayable = payableMinutes > 0
 
@@ -1404,9 +1367,10 @@ function buildPaymentItem({ otRequest, employee, formula, salaryInfo, exchangeRa
     amount,
 
     amountUsd: exchange.amountUsd,
-    exchangeRateId: exchangeRate.id,
+    exchangeRateId: null,
     exchangeRateCode: exchangeRate.code,
     exchangeRateName: exchangeRate.name,
+    exchangeRateSource: exchangeRate.source || 'MANUAL_INPUT',
     exchangeRate: exchange.exchangeRate,
     amountKhrRaw: exchange.amountKhrRaw,
     amountKhrRounded: exchange.amountKhrRounded,
@@ -1466,12 +1430,12 @@ function buildPayableWarningIssue(otRequest = {}, employee = {}) {
 }
 
 async function buildPaymentItems({
-    otRequests,
-    salaryMap,
-    formula,
-    exchangeRate,
-    allowancePolicies = [],
-  }) {
+  otRequests,
+  salaryMap,
+  formula,
+  exchangeRate,
+  allowancePolicies = [],
+}) {
   const items = []
   const missingSalaryEmployeesMap = new Map()
   const missingPayableEmployeesMap = new Map()
@@ -1829,32 +1793,32 @@ async function buildPaymentPreview({
   fromDate,
   toDate,
   formulaId,
-  exchangeRateId,
+  exchangeRate,
 }) {
   validateSalaryFile(salaryFile)
 
   const formula = await getFormulaOrThrow(formulaId)
-  const exchangeRate = await getExchangeRateOrThrow(exchangeRateId, formula)
+  const manualExchangeRate = buildManualExchangeRate(exchangeRate, formula)
   const allowancePolicies = await getActiveAllowancePoliciesForCalculation()
 
   const parsedSalary = parseSalaryExcel(salaryFile.buffer)
   const otRequests = await fetchApprovedOTRequests(fromDate, toDate)
 
   const {
-  items,
-  missingSalaryEmployees,
-  missingPayableEmployees,
-  payableWarningEmployees,
-  verificationSummaries,
+    items,
+    missingSalaryEmployees,
+    missingPayableEmployees,
+    payableWarningEmployees,
+    verificationSummaries,
   } = await buildPaymentItems({
     otRequests,
     salaryMap: parsedSalary.salaryMap,
     formula,
-    exchangeRate,
+    exchangeRate: manualExchangeRate,
     allowancePolicies,
   })
 
-  const summary = summarizePaymentItems(items, exchangeRate)
+  const summary = summarizePaymentItems(items, manualExchangeRate)
   const generatedAt = new Date()
 
   return {
@@ -1869,7 +1833,7 @@ async function buildPaymentPreview({
     generatedAtDisplayHm: formatDateTimeToDmyHm(generatedAt),
 
     formula,
-    exchangeRate,
+    exchangeRate: manualExchangeRate,
     allowancePolicies,
 
     salaryFile: {

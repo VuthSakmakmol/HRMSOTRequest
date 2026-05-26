@@ -29,13 +29,13 @@ async function downloadSalaryTemplate() {
   }
 }
 
-async function previewPayment({ salaryFile, fromDate, toDate, formulaId, exchangeRateId }) {
+async function previewPayment({ salaryFile, fromDate, toDate, formulaId, exchangeRate }) {
   return buildPaymentPreview({
     salaryFile,
     fromDate,
     toDate,
     formulaId,
-    exchangeRateId,
+    exchangeRate,
   })
 }
 
@@ -44,7 +44,7 @@ async function calculateAndExportPayment({
   fromDate,
   toDate,
   formulaId,
-  exchangeRateId,
+  exchangeRate,
   actor,
 }) {
   const data = await buildPaymentPreview({
@@ -52,7 +52,7 @@ async function calculateAndExportPayment({
     fromDate,
     toDate,
     formulaId,
-    exchangeRateId,
+    exchangeRate,
   })
 
   const safeFrom = s(fromDate).replace(/[^\d-]/g, '')

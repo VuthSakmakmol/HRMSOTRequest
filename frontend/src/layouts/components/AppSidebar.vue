@@ -273,13 +273,6 @@ const navGroups = computed(() => {
           permissions: ['PAYMENT_FORMULA_VIEW'],
         },
         {
-          key: 'payment-exchange-rates',
-          label: t('nav.paymentExchangeRates'),
-          icon: 'pi pi-money-bill',
-          to: '/payment/exchange-rates',
-          permissions: ['PAYMENT_EXCHANGE_RATE_VIEW'],
-        },
-        {
           key: 'payment-allowance-policies',
           label: t('nav.paymentAllowancePolicies'),
           icon: 'pi pi-gift',

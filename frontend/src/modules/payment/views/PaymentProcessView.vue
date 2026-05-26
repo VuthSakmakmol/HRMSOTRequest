@@ -3,12 +3,12 @@
 // frontend/src/modules/payment/views/PaymentProcessView.vue
 
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
 import Column from 'primevue/column'
 import DataTable from 'primevue/datatable'
+import InputNumber from 'primevue/inputnumber'
 import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 
@@ -17,7 +17,6 @@ import { getHolidays } from '@/modules/calendar/holiday.api'
 import {
   calculatePaymentExport,
   downloadSalaryTemplate,
-  getPaymentExchangeRateLookupOptions,
   getPaymentFormulaLookupOptions,
   previewPayment,
 } from '@/modules/payment/payment.api'
@@ -25,16 +24,12 @@ import { getApiErrorMessage } from '@/shared/utils/apiError'
 import { formatDate } from '@/shared/utils/dateFormat'
 
 const toast = useToast()
-const { t } = useI18n()
 
-const DETAIL_PAGE_SIZE = 10
+const DETAIL_PAGE_SIZE = 20
 const DEFAULT_DENOMINATIONS = [50000, 20000, 10000, 5000, 1000, 500, 100]
 
 const formulaOptions = ref([])
-const exchangeRateOptions = ref([])
-
 const loadingFormulas = ref(false)
-const loadingExchangeRates = ref(false)
 
 const downloadingTemplate = ref(false)
 const previewing = ref(false)
@@ -54,7 +49,7 @@ const form = reactive({
   fromDate: '',
   toDate: '',
   formulaId: '',
-  exchangeRateId: '',
+  exchangeRate: 4000,
 })
 
 let calendarTimer = null
@@ -68,29 +63,13 @@ const selectedFormula = computed(() => {
   )
 })
 
-const selectedExchangeRate = computed(() => {
-  const id = s(form.exchangeRateId)
-
-  return (
-    exchangeRateOptions.value.find(
-      (item) => s(item.id || item._id || item.value) === id,
-    ) || null
-  )
+const manualExchangeRate = computed(() => {
+  const rate = Number(form.exchangeRate || 0)
+  return Number.isFinite(rate) && rate > 0 ? rate : 0
 })
 
-const canPreview = computed(() => {
-  return Boolean(
-    form.fromDate &&
-      form.toDate &&
-      form.formulaId &&
-      form.exchangeRateId &&
-      salaryFile.value,
-  )
-})
-
-const canGenerate = computed(() => {
-  return canPreview.value && previewDone.value && previewResult.value
-})
+const periodStartYMD = computed(() => normalizeYMD(form.fromDate))
+const periodEndYMD = computed(() => normalizeYMD(form.toDate))
 
 const fileName = computed(() => salaryFile.value?.name || '')
 
@@ -109,12 +88,9 @@ const hasMorePaymentDetailRows = computed(() => {
   return visiblePaymentDetailRows.value.length < paymentDetailRows.value.length
 })
 
-const paymentDetailLoadedLabel = computed(() =>
-  t('common.loaded', {
-    loaded: visiblePaymentDetailRows.value.length,
-    total: paymentDetailRows.value.length,
-  }),
-)
+const paymentDetailLoadedLabel = computed(() => {
+  return `Loaded ${visiblePaymentDetailRows.value.length} of ${paymentDetailRows.value.length}`
+})
 
 const missingSalaryRows = computed(() => {
   const rows = previewResult.value?.issues?.missingSalaryEmployees || []
@@ -122,46 +98,52 @@ const missingSalaryRows = computed(() => {
 })
 
 const warningRows = computed(() => {
-  const invalidRows = previewResult.value?.issues?.invalidSalaryRows || []
-  const duplicateRows = previewResult.value?.issues?.duplicateSalaryRows || []
-  const missingPayableRows = previewResult.value?.issues?.missingPayableEmployees || []
+  const invalidRows = asArray(previewResult.value?.issues?.invalidSalaryRows)
+  const duplicateRows = asArray(previewResult.value?.issues?.duplicateSalaryRows)
+  const missingPayableRows = asArray(
+    previewResult.value?.issues?.missingPayableEmployees,
+  )
+  const payableWarningRows = asArray(
+    previewResult.value?.issues?.payableWarningEmployees,
+  )
 
   return [
-    ...asArray(invalidRows).map((row) => ({
-      type: t('payment.process.warning.invalidSalaryRow'),
+    ...invalidRows.map((row) => ({
+      type: 'Invalid salary row',
       rowNo: row.rowNo || row.excelRowNo || '',
       employeeNo: row.employeeNo || '',
       employeeName: row.name || row.employeeName || '',
-      reason: row.reason || t('payment.process.warning.invalidSalaryRow'),
+      reason: row.reason || 'Invalid salary row',
     })),
 
-    ...asArray(duplicateRows).map((row) => ({
-      type: t('payment.process.warning.duplicateSalaryRow'),
+    ...duplicateRows.map((row) => ({
+      type: 'Duplicate salary row',
       rowNo: row.rowNo || row.excelRowNo || '',
       employeeNo: row.employeeNo || '',
       employeeName: row.name || row.employeeName || '',
-      reason: row.reason || t('payment.process.warning.duplicateSalaryRow'),
+      reason: row.reason || 'Duplicate salary row',
     })),
 
-    ...asArray(missingPayableRows).map((row) => ({
-      type: t('payment.process.warning.noPayableMinutes'),
+    ...missingPayableRows.map((row) => ({
+      type: 'No payable minutes',
       rowNo: '',
       employeeNo: row.employeeNo || '',
       employeeName: row.employeeName || '',
-      reason: row.reason || t('payment.process.warning.noPayableMinutes'),
+      reason: row.reason || 'No attendance/policy payable minutes found',
+    })),
+
+    ...payableWarningRows.map((row) => ({
+      type: 'Payable warning',
+      rowNo: '',
+      employeeNo: row.employeeNo || '',
+      employeeName: row.employeeName || '',
+      reason: row.reason || 'Payable minutes calculated with warning',
     })),
   ]
 })
 
-const periodStartYMD = computed(() => normalizeYMD(form.fromDate))
-const periodEndYMD = computed(() => normalizeYMD(form.toDate))
-
 const holidayDateSet = computed(() => {
-  return new Set(
-    periodHolidayRows.value
-      .map((item) => s(item?.date))
-      .filter(Boolean),
-  )
+  return new Set(periodHolidayRows.value.map((item) => s(item?.date)).filter(Boolean))
 })
 
 const periodCalendarRows = computed(() => {
@@ -204,10 +186,46 @@ const periodCalendarSummary = computed(() => {
 const denominationColumns = computed(() => {
   const source =
     previewResult.value?.exchangeRate?.denominations ||
-    selectedExchangeRate.value?.denominations ||
+    selectedFormula.value?.cashDenominations ||
     DEFAULT_DENOMINATIONS
 
   return normalizeDenominations(source)
+})
+
+const formulaCurrencyLabel = computed(() => {
+  const formula = selectedFormula.value || {}
+  const fromCurrency = upper(formula.currency || 'USD')
+  const toCurrency = upper(formula.payoutCurrency || 'KHR')
+
+  return `${fromCurrency} → ${toCurrency}`
+})
+
+const formulaCashPolicyLabel = computed(() => {
+  const formula = selectedFormula.value || {}
+
+  const mode = upper(formula.cashRoundingMode || 'ROUND')
+  const unit = Number(formula.cashRoundingUnit || 100)
+  const denominations = normalizeDenominations(
+    formula.cashDenominations || DEFAULT_DENOMINATIONS,
+  )
+
+  return `${mode} / ${formatNumber(unit, 0)} · ${denominations
+    .map((item) => formatNumber(item, 0))
+    .join(', ')}`
+})
+
+const canPreview = computed(() => {
+  return Boolean(
+    periodStartYMD.value &&
+      periodEndYMD.value &&
+      form.formulaId &&
+      manualExchangeRate.value > 0 &&
+      salaryFile.value,
+  )
+})
+
+const canGenerate = computed(() => {
+  return Boolean(canPreview.value && previewDone.value && previewResult.value)
 })
 
 const summaryCards = computed(() => {
@@ -216,19 +234,19 @@ const summaryCards = computed(() => {
 
   return [
     {
-      label: t('payment.process.summary.payableEmployees'),
+      label: 'Payable employees',
       value: summary ? Number(summary.summaryByEmployee?.length || 0) : '—',
       icon: 'pi pi-users',
       className: 'card-blue',
     },
     {
-      label: t('payment.process.summary.totalOtHours'),
+      label: 'Total OT hours',
       value: summary ? formatNumber(summary.totalPayableHours, 4) : '—',
       icon: 'pi pi-clock',
       className: 'card-green',
     },
     {
-      label: t('payment.process.summary.totalUsd'),
+      label: 'Total OT USD',
       value: summary
         ? formatMoney(summary.totalAmountUsd ?? summary.totalAmount, formula.currency || 'USD')
         : '—',
@@ -236,19 +254,19 @@ const summaryCards = computed(() => {
       className: 'card-purple',
     },
     {
-      label: t('payment.process.summary.totalOtKhr'),
+      label: 'Total OT KHR',
       value: summary ? `${formatNumber(summary.totalAmountKhrRounded, 0)} KHR` : '—',
       icon: 'pi pi-money-bill',
       className: 'card-green',
     },
     {
-      label: t('payment.process.summary.totalAllowanceKhr'),
+      label: 'Allowance KHR',
       value: summary ? `${formatNumber(summary.totalAllowanceKhrRounded, 0)} KHR` : '—',
       icon: 'pi pi-gift',
       className: 'card-orange',
     },
     {
-      label: t('payment.process.summary.totalPayableKhr'),
+      label: 'Total payable KHR',
       value: summary
         ? `${formatNumber(summary.totalPayableKhrRounded || summary.totalAmountKhrRounded, 0)} KHR`
         : '—',
@@ -256,13 +274,13 @@ const summaryCards = computed(() => {
       className: 'card-purple',
     },
     {
-      label: t('payment.process.summary.missingSalary'),
+      label: 'Missing salary',
       value: summary ? Number(summary.missingSalaryItemCount || 0) : '—',
       icon: 'pi pi-exclamation-triangle',
       className: 'card-orange',
     },
     {
-      label: t('payment.process.summary.warnings'),
+      label: 'Warnings',
       value: warningRows.value.length,
       icon: 'pi pi-info-circle',
       className: 'card-red',
@@ -279,17 +297,9 @@ watch(
 )
 
 watch(
-  () => [form.formulaId, form.exchangeRateId],
+  () => [form.formulaId, form.exchangeRate],
   () => {
     resetPreview()
-  },
-)
-
-watch(
-  () => form.formulaId,
-  async () => {
-    form.exchangeRateId = ''
-    await loadExchangeRateOptions()
   },
 )
 
@@ -318,33 +328,26 @@ function normalizeItems(payload) {
   return Array.isArray(payload?.items) ? payload.items : []
 }
 
-function normalizeFormulaOption(item) {
+function normalizeFormulaOption(item = {}) {
   const id = s(item.id || item._id || item.value)
+  const code = upper(item.code)
+  const name = s(item.name)
+  const currency = upper(item.currency || 'USD')
+  const payoutCurrency = upper(item.payoutCurrency || 'KHR')
 
   return {
     ...item,
     id,
-    label: item.label || item.name || item.code || id,
-    currency: upper(item.currency || 'USD'),
-  }
-}
-
-function normalizeExchangeRateOption(item) {
-  const id = s(item.id || item._id || item.value)
-  const fromCurrency = upper(item.fromCurrency || 'USD')
-  const toCurrency = upper(item.toCurrency || 'KHR')
-  const rate = Number(item.rate || 0)
-
-  return {
-    ...item,
-    id,
-    fromCurrency,
-    toCurrency,
-    rate,
-    denominations: normalizeDenominations(item.denominations || DEFAULT_DENOMINATIONS),
-    label:
-      item.label ||
-      `${item.code || item.name || id} · ${fromCurrency} 1 = ${formatNumber(rate, 6)} ${toCurrency}`,
+    code,
+    name,
+    label: item.label || [code, name].filter(Boolean).join(' - ') || id,
+    currency,
+    payoutCurrency,
+    cashRoundingUnit: Number(item.cashRoundingUnit || 100),
+    cashRoundingMode: upper(item.cashRoundingMode || 'ROUND'),
+    cashDenominations: normalizeDenominations(
+      item.cashDenominations || DEFAULT_DENOMINATIONS,
+    ),
   }
 }
 
@@ -365,7 +368,9 @@ function normalizeYMD(value) {
 
   if (value instanceof Date) {
     if (Number.isNaN(value.getTime())) return ''
-    return `${value.getFullYear()}-${pad2(value.getMonth() + 1)}-${pad2(value.getDate())}`
+    return `${value.getFullYear()}-${pad2(value.getMonth() + 1)}-${pad2(
+      value.getDate(),
+    )}`
   }
 
   const raw = s(value)
@@ -374,7 +379,9 @@ function normalizeYMD(value) {
   const date = new Date(raw)
   if (Number.isNaN(date.getTime())) return ''
 
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(
+    date.getDate(),
+  )}`
 }
 
 function parseYMD(value) {
@@ -394,12 +401,17 @@ function formatDateDMY(value) {
 function formatNumber(value, decimals = 2) {
   const number = Number(value)
 
-  if (!Number.isFinite(number)) return decimals === 0 ? '0' : '0'
+  if (!Number.isFinite(number)) return '0'
 
   return new Intl.NumberFormat(undefined, {
     minimumFractionDigits: 0,
     maximumFractionDigits: decimals,
   }).format(number)
+}
+
+function formatMoney(value, currency = '') {
+  const amount = formatNumber(value, 2)
+  return currency ? `${amount} ${currency}` : amount
 }
 
 function formatMinutesLabel(value) {
@@ -424,9 +436,7 @@ function actualOtTimeMinutes(row = {}) {
       row.attendanceActualOtMinutes,
   )
 
-  if (Number.isFinite(direct) && direct > 0) {
-    return direct
-  }
+  if (Number.isFinite(direct) && direct > 0) return direct
 
   return Number(row.payableMinutes || 0)
 }
@@ -440,11 +450,6 @@ function formatRequestTime(row) {
   if (end) return end
 
   return '—'
-}
-
-function formatMoney(value, currency = '') {
-  const amount = formatNumber(value, 2)
-  return currency ? `${amount} ${currency}` : amount
 }
 
 function khrPaper(row, denomination) {
@@ -504,7 +509,7 @@ function buildProcessPayload() {
     fromDate: periodStartYMD.value,
     toDate: periodEndYMD.value,
     formulaId: form.formulaId,
-    exchangeRateId: form.exchangeRateId,
+    exchangeRate: manualExchangeRate.value,
     salaryFile: salaryFile.value,
   }
 }
@@ -534,9 +539,7 @@ function getMonthKeysBetween(fromYMD, toYMD) {
 function getDisplayDayType(ymd) {
   if (!ymd) return ''
 
-  if (holidayDateSet.value.has(ymd)) {
-    return 'HOLIDAY'
-  }
+  if (holidayDateSet.value.has(ymd)) return 'HOLIDAY'
 
   const date = parseYMD(ymd)
   if (!date) return ''
@@ -548,9 +551,9 @@ function dayTypeLabel(value) {
   const normalized = upper(value)
 
   const labels = {
-    HOLIDAY: t('payment.dayTypes.holiday'),
-    SUNDAY: t('payment.dayTypes.sunday'),
-    WORKING_DAY: t('payment.dayTypes.workingDay'),
+    HOLIDAY: 'Holiday',
+    SUNDAY: 'Sunday',
+    WORKING_DAY: 'Working day',
   }
 
   return labels[normalized] || normalized || '—'
@@ -567,7 +570,7 @@ function dayTypeTagClass(value) {
 }
 
 function salaryStatusLabel(value) {
-  return value ? t('common.yes') : t('common.no')
+  return value ? 'Yes' : 'No'
 }
 
 function salaryStatusTagClass(value) {
@@ -595,44 +598,11 @@ async function loadFormulaOptions() {
   } catch (error) {
     showToast(
       'error',
-      t('common.loadFailed'),
-      getApiErrorMessage(error, t('payment.process.message.loadFormulasFailed')),
+      'Load failed',
+      getApiErrorMessage(error, 'Failed to load payment formulas'),
     )
   } finally {
     loadingFormulas.value = false
-  }
-}
-
-async function loadExchangeRateOptions() {
-  if (!form.formulaId) {
-    exchangeRateOptions.value = []
-    return
-  }
-
-  loadingExchangeRates.value = true
-
-  try {
-    const res = await getPaymentExchangeRateLookupOptions({
-      isActive: true,
-      limit: 100,
-    })
-
-    const payload = normalizePayload(res)
-    const formulaCurrency = upper(selectedFormula.value?.currency || 'USD')
-
-    exchangeRateOptions.value = normalizeItems(payload)
-      .map(normalizeExchangeRateOption)
-      .filter((item) => {
-        return item.fromCurrency === formulaCurrency && item.toCurrency === 'KHR'
-      })
-  } catch (error) {
-    showToast(
-      'error',
-      t('common.loadFailed'),
-      getApiErrorMessage(error, t('payment.process.message.loadExchangeRatesFailed')),
-    )
-  } finally {
-    loadingExchangeRates.value = false
   }
 }
 
@@ -706,8 +676,8 @@ async function loadInternalCalendarForPeriod() {
 
     showToast(
       'error',
-      t('payment.process.message.calendarFailedTitle'),
-      getApiErrorMessage(error, t('payment.process.message.calendarFailed')),
+      'Calendar failed',
+      getApiErrorMessage(error, 'Failed to load holidays for this period'),
       3500,
     )
   } finally {
@@ -739,11 +709,7 @@ function onFileChange(event) {
       salaryFileInput.value.value = ''
     }
 
-    showToast(
-      'warn',
-      t('payment.process.message.invalidFileTitle'),
-      t('payment.process.message.invalidFile'),
-    )
+    showToast('warn', 'Invalid file', 'Please upload an Excel file only')
 
     return
   }
@@ -765,8 +731,7 @@ function clearForm() {
   form.fromDate = ''
   form.toDate = ''
   form.formulaId = ''
-  form.exchangeRateId = ''
-  exchangeRateOptions.value = []
+  form.exchangeRate = 4000
   periodHolidayRows.value = []
 
   clearFile()
@@ -780,17 +745,12 @@ async function handleDownloadTemplate() {
     const res = await downloadSalaryTemplate()
     downloadBlob(res, 'salary_template.xlsx')
 
-    showToast(
-      'success',
-      t('payment.process.message.downloadedTitle'),
-      t('payment.process.message.templateDownloaded'),
-      2500,
-    )
+    showToast('success', 'Downloaded', 'Salary template downloaded', 2500)
   } catch (error) {
     showToast(
       'error',
-      t('payment.process.message.downloadFailedTitle'),
-      getApiErrorMessage(error, t('payment.process.message.templateDownloadFailed')),
+      'Download failed',
+      getApiErrorMessage(error, 'Failed to download salary template'),
       3500,
     )
   } finally {
@@ -799,14 +759,14 @@ async function handleDownloadTemplate() {
 }
 
 function validateBeforeProcess() {
-  if (!form.fromDate) return t('payment.process.validation.fromDateRequired')
-  if (!form.toDate) return t('payment.process.validation.toDateRequired')
-  if (!form.formulaId) return t('payment.process.validation.formulaRequired')
-  if (!form.exchangeRateId) return t('payment.process.validation.exchangeRateRequired')
-  if (!salaryFile.value) return t('payment.process.validation.salaryRequired')
+  if (!periodStartYMD.value) return 'From date is required'
+  if (!periodEndYMD.value) return 'To date is required'
+  if (!form.formulaId) return 'Payment formula is required'
+  if (manualExchangeRate.value <= 0) return 'Manual exchange rate is required'
+  if (!salaryFile.value) return 'Salary Excel file is required'
 
   if (periodStartYMD.value > periodEndYMD.value) {
-    return t('payment.process.validation.invalidDateRange')
+    return 'To date must be greater than or equal to from date'
   }
 
   return ''
@@ -816,11 +776,7 @@ async function handlePreview() {
   const validationMessage = validateBeforeProcess()
 
   if (validationMessage) {
-    showToast(
-      'warn',
-      t('payment.process.message.checkFormTitle'),
-      validationMessage,
-    )
+    showToast('warn', 'Check form', validationMessage)
     return
   }
 
@@ -835,17 +791,12 @@ async function handlePreview() {
     previewDone.value = true
     detailLoadedCount.value = DETAIL_PAGE_SIZE
 
-    showToast(
-      'success',
-      t('payment.process.message.previewReadyTitle'),
-      t('payment.process.message.previewReady'),
-      2500,
-    )
+    showToast('success', 'Preview ready', 'Payment preview is ready', 2500)
   } catch (error) {
     showToast(
       'error',
-      t('payment.process.message.previewFailedTitle'),
-      getApiErrorMessage(error, t('payment.process.message.previewFailed')),
+      'Preview failed',
+      getApiErrorMessage(error, 'Failed to preview payment'),
       4000,
     )
   } finally {
@@ -857,20 +808,12 @@ async function handleGenerate() {
   const validationMessage = validateBeforeProcess()
 
   if (validationMessage) {
-    showToast(
-      'warn',
-      t('payment.process.message.checkFormTitle'),
-      validationMessage,
-    )
+    showToast('warn', 'Check form', validationMessage)
     return
   }
 
   if (!previewDone.value) {
-    showToast(
-      'warn',
-      t('payment.process.message.previewRequiredTitle'),
-      t('payment.process.message.previewRequired'),
-    )
+    showToast('warn', 'Preview required', 'Please preview before generating Excel')
     return
   }
 
@@ -880,16 +823,12 @@ async function handleGenerate() {
     const res = await calculatePaymentExport(buildProcessPayload())
     downloadBlob(res, `payment_${periodStartYMD.value}_to_${periodEndYMD.value}.xlsx`)
 
-    showToast(
-      'success',
-      t('payment.process.message.generatedTitle'),
-      t('payment.process.message.generated'),
-    )
+    showToast('success', 'Generated', 'Payment Excel generated')
   } catch (error) {
     showToast(
       'error',
-      t('payment.process.message.generateFailedTitle'),
-      getApiErrorMessage(error, t('payment.process.message.generateFailed')),
+      'Generate failed',
+      getApiErrorMessage(error, 'Failed to generate payment Excel'),
       4000,
     )
   } finally {
@@ -913,22 +852,22 @@ onBeforeUnmount(() => {
       <div class="ot-field">
         <HolidayDatePicker
           v-model="form.fromDate"
-          :label="t('common.fromDate')"
-          :placeholder="t('common.fromDate')"
+          label="From date"
+          placeholder="From date"
         />
       </div>
 
       <div class="ot-field">
         <HolidayDatePicker
           v-model="form.toDate"
-          :label="t('common.toDate')"
-          :placeholder="t('common.toDate')"
+          label="To date"
+          placeholder="To date"
         />
       </div>
 
       <div class="ot-field">
         <label class="ot-field-label">
-          {{ t('payment.process.field.paymentFormula') }}
+          Payment formula
         </label>
 
         <Select
@@ -937,7 +876,7 @@ onBeforeUnmount(() => {
           option-label="label"
           option-value="id"
           :loading="loadingFormulas"
-          :placeholder="t('payment.process.field.paymentFormula')"
+          placeholder="Payment formula"
           class="w-full"
           size="small"
         />
@@ -945,29 +884,25 @@ onBeforeUnmount(() => {
 
       <div class="ot-field">
         <label class="ot-field-label">
-          {{ t('payment.process.field.exchangeRate') }}
+          Manual rate
         </label>
 
-        <Select
-          v-model="form.exchangeRateId"
-          :options="exchangeRateOptions"
-          option-label="label"
-          option-value="id"
-          :loading="loadingExchangeRates"
-          :disabled="!form.formulaId"
-          :placeholder="
-            form.formulaId
-              ? t('payment.process.field.exchangeRate')
-              : t('payment.process.empty.selectFormulaFirst')
-          "
+        <InputNumber
+          v-model="form.exchangeRate"
+          :min="1"
+          :min-fraction-digits="0"
+          :max-fraction-digits="6"
+          :use-grouping="false"
+          input-class="payment-rate-input"
           class="w-full"
           size="small"
+          placeholder="Example: 4000"
         />
       </div>
 
       <div class="ot-field">
         <label class="ot-field-label">
-          {{ t('payment.process.field.salaryExcel') }}
+          Salary Excel
         </label>
 
         <input
@@ -979,7 +914,7 @@ onBeforeUnmount(() => {
         >
 
         <Button
-          :label="fileName ? t('payment.process.action.changeFile') : t('payment.process.action.uploadSalary')"
+          :label="fileName ? 'Change file' : 'Upload salary'"
           icon="pi pi-upload"
           severity="secondary"
           outlined
@@ -991,7 +926,7 @@ onBeforeUnmount(() => {
 
       <div class="ot-filter-actions payment-process-filter-actions">
         <Button
-          :label="t('payment.process.action.template')"
+          label="Template"
           icon="pi pi-download"
           severity="secondary"
           outlined
@@ -1002,7 +937,7 @@ onBeforeUnmount(() => {
         />
 
         <Button
-          :label="t('common.clear')"
+          label="Clear"
           icon="pi pi-filter-slash"
           severity="secondary"
           outlined
@@ -1013,7 +948,7 @@ onBeforeUnmount(() => {
         />
 
         <Button
-          :label="t('payment.process.action.preview')"
+          label="Preview"
           icon="pi pi-eye"
           severity="info"
           size="small"
@@ -1024,7 +959,7 @@ onBeforeUnmount(() => {
         />
 
         <Button
-          :label="t('payment.process.action.generate')"
+          label="Generate"
           icon="pi pi-file-excel"
           size="small"
           class="payment-action-button"
@@ -1035,17 +970,19 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
+    
+
     <section class="ot-table-card">
       <div class="ot-table-toolbar">
         <div>
           <h2 class="ot-table-title">
-            {{ t('payment.process.calendar.title') }}
+            Period calendar
           </h2>
         </div>
 
         <div class="ot-table-actions">
           <Tag
-            :value="loadingCalendar ? t('payment.process.calendar.loading') : t('payment.process.calendar.holidayCount', { count: periodHolidayRows.length })"
+            :value="loadingCalendar ? 'Loading calendar...' : `${periodHolidayRows.length} holidays`"
             class="payment-rgb-tag"
             :class="loadingCalendar ? 'payment-tag-info' : 'payment-tag-muted'"
           />
@@ -1060,7 +997,7 @@ onBeforeUnmount(() => {
 
           <div class="summary-content">
             <div class="summary-label">
-              {{ t('common.fromDate') }}
+              From date
             </div>
 
             <div class="summary-value">
@@ -1076,7 +1013,7 @@ onBeforeUnmount(() => {
 
           <div class="summary-content">
             <div class="summary-label">
-              {{ t('common.toDate') }}
+              To date
             </div>
 
             <div class="summary-value">
@@ -1092,7 +1029,7 @@ onBeforeUnmount(() => {
 
           <div class="summary-content">
             <div class="summary-label">
-              {{ t('payment.process.calendar.workingDays') }}
+              Working days
             </div>
 
             <div class="summary-value">
@@ -1108,7 +1045,7 @@ onBeforeUnmount(() => {
 
           <div class="summary-content">
             <div class="summary-label">
-              {{ t('payment.dayTypes.sunday') }}
+              Sunday
             </div>
 
             <div class="summary-value">
@@ -1124,7 +1061,7 @@ onBeforeUnmount(() => {
 
           <div class="summary-content">
             <div class="summary-label">
-              {{ t('payment.dayTypes.holiday') }}
+              Holiday
             </div>
 
             <div class="summary-value">
@@ -1166,7 +1103,7 @@ onBeforeUnmount(() => {
         <div class="ot-table-toolbar">
           <div>
             <h2 class="ot-table-title">
-              {{ t('payment.process.table.detail') }}
+              Payment detail
             </h2>
           </div>
 
@@ -1192,17 +1129,17 @@ onBeforeUnmount(() => {
                 </div>
 
                 <div class="ot-empty-title">
-                  {{ t('common.noData') }}
+                  No data
                 </div>
 
                 <div class="ot-empty-text">
-                  {{ t('payment.process.empty.noPaymentDetail') }}
+                  Preview payment first.
                 </div>
               </div>
             </template>
 
             <Column
-              :header="t('common.date')"
+              header="Date"
               style="width: 8rem; min-width: 8rem"
             >
               <template #body="{ data }">
@@ -1214,7 +1151,7 @@ onBeforeUnmount(() => {
 
             <Column
               field="requestNo"
-              :header="t('payment.process.column.requestNo')"
+              header="Request No"
               style="width: 11rem; min-width: 11rem"
             >
               <template #body="{ data }">
@@ -1225,9 +1162,8 @@ onBeforeUnmount(() => {
             </Column>
 
             <Column
-              field="shiftOtOptionLabel"
-              :header="t('payment.process.column.otOption')"
-              style="width: 15rem; min-width: 15rem"
+              header="OT option"
+              style="width: 14rem; min-width: 14rem"
             >
               <template #body="{ data }">
                 <span
@@ -1240,7 +1176,7 @@ onBeforeUnmount(() => {
             </Column>
 
             <Column
-              :header="t('payment.process.column.otTime')"
+              header="OT time"
               style="width: 10rem; min-width: 10rem"
             >
               <template #body="{ data }">
@@ -1251,8 +1187,8 @@ onBeforeUnmount(() => {
             </Column>
 
             <Column
-              :header="t('payment.process.column.paymentDayType')"
-              style="width: 11rem; min-width: 11rem"
+              header="Day type"
+              style="width: 10rem; min-width: 10rem"
             >
               <template #body="{ data }">
                 <Tag
@@ -1265,7 +1201,7 @@ onBeforeUnmount(() => {
 
             <Column
               field="employeeNo"
-              :header="t('payment.process.column.employeeId')"
+              header="Employee ID"
               style="width: 8rem; min-width: 8rem"
             >
               <template #body="{ data }">
@@ -1277,7 +1213,7 @@ onBeforeUnmount(() => {
 
             <Column
               field="employeeName"
-              :header="t('payment.process.column.employeeName')"
+              header="Employee name"
               style="width: 14rem; min-width: 14rem"
             >
               <template #body="{ data }">
@@ -1292,7 +1228,7 @@ onBeforeUnmount(() => {
 
             <Column
               field="departmentName"
-              :header="t('nav.departments')"
+              header="Department"
               style="width: 12rem; min-width: 12rem"
             >
               <template #body="{ data }">
@@ -1307,7 +1243,7 @@ onBeforeUnmount(() => {
 
             <Column
               field="positionName"
-              :header="t('nav.positions')"
+              header="Position"
               style="width: 12rem; min-width: 12rem"
             >
               <template #body="{ data }">
@@ -1322,7 +1258,7 @@ onBeforeUnmount(() => {
 
             <Column
               field="lineName"
-              :header="t('nav.lines')"
+              header="Line"
               style="width: 10rem; min-width: 10rem"
             >
               <template #body="{ data }">
@@ -1336,7 +1272,7 @@ onBeforeUnmount(() => {
             </Column>
 
             <Column
-              :header="t('payment.process.column.requested')"
+              header="Requested"
               style="width: 9rem; min-width: 9rem"
             >
               <template #body="{ data }">
@@ -1348,7 +1284,7 @@ onBeforeUnmount(() => {
             </Column>
 
             <Column
-              :header="t('payment.process.column.break')"
+              header="Break"
               style="width: 8rem; min-width: 8rem"
             >
               <template #body="{ data }">
@@ -1359,7 +1295,7 @@ onBeforeUnmount(() => {
             </Column>
 
             <Column
-              :header="t('payment.process.column.payable')"
+              header="Payable"
               style="width: 9rem; min-width: 9rem"
             >
               <template #body="{ data }">
@@ -1371,7 +1307,7 @@ onBeforeUnmount(() => {
             </Column>
 
             <Column
-              :header="t('payment.process.column.otHours')"
+              header="OT hours"
               style="width: 9rem; min-width: 9rem"
             >
               <template #body="{ data }">
@@ -1382,7 +1318,7 @@ onBeforeUnmount(() => {
             </Column>
 
             <Column
-              :header="t('payment.process.column.salary')"
+              header="Salary"
               style="width: 10rem; min-width: 10rem"
             >
               <template #body="{ data }">
@@ -1393,7 +1329,7 @@ onBeforeUnmount(() => {
             </Column>
 
             <Column
-              :header="t('payment.process.column.hourlyRate')"
+              header="Hourly rate"
               style="width: 10rem; min-width: 10rem"
             >
               <template #body="{ data }">
@@ -1404,7 +1340,7 @@ onBeforeUnmount(() => {
             </Column>
 
             <Column
-              :header="t('payment.process.column.multiplier')"
+              header="Multiplier"
               style="width: 8rem; min-width: 8rem"
             >
               <template #body="{ data }">
@@ -1416,7 +1352,7 @@ onBeforeUnmount(() => {
             </Column>
 
             <Column
-              :header="t('payment.process.column.amountUsd')"
+              header="Amount USD"
               style="width: 10rem; min-width: 10rem"
             >
               <template #body="{ data }">
@@ -1427,18 +1363,19 @@ onBeforeUnmount(() => {
             </Column>
 
             <Column
-              :header="t('payment.process.column.exchangeRate')"
+              header="Rate"
               style="width: 8rem; min-width: 8rem"
             >
               <template #body="{ data }">
-                <span class="payment-money-text">
-                  {{ formatNumber(data.exchangeRate, 6) }}
-                </span>
+                <Tag
+                  :value="formatNumber(data.exchangeRate, 6)"
+                  class="payment-rgb-tag payment-tag-info"
+                />
               </template>
             </Column>
 
             <Column
-              :header="t('payment.process.column.rawKhr')"
+              header="Raw KHR"
               style="width: 10rem; min-width: 10rem"
             >
               <template #body="{ data }">
@@ -1449,7 +1386,7 @@ onBeforeUnmount(() => {
             </Column>
 
             <Column
-              :header="t('payment.process.column.roundedKhr')"
+              header="Rounded KHR"
               style="width: 11rem; min-width: 11rem"
             >
               <template #body="{ data }">
@@ -1461,7 +1398,7 @@ onBeforeUnmount(() => {
             </Column>
 
             <Column
-              :header="t('payment.process.column.allowanceKhr')"
+              header="Allowance KHR"
               style="width: 11rem; min-width: 11rem"
             >
               <template #body="{ data }">
@@ -1473,7 +1410,7 @@ onBeforeUnmount(() => {
             </Column>
 
             <Column
-              :header="t('payment.process.column.totalPayableKhr')"
+              header="Total KHR"
               style="width: 12rem; min-width: 12rem"
             >
               <template #body="{ data }">
@@ -1485,8 +1422,8 @@ onBeforeUnmount(() => {
             </Column>
 
             <Column
-              :header="t('payment.process.column.roundDiffKhr')"
-              style="width: 10rem; min-width: 10rem"
+              header="Diff"
+              style="width: 8rem; min-width: 8rem"
             >
               <template #body="{ data }">
                 <span class="payment-khr-text">
@@ -1509,7 +1446,7 @@ onBeforeUnmount(() => {
             </Column>
 
             <Column
-              :header="t('payment.process.column.salaryFound')"
+              header="Salary found"
               style="width: 9rem; min-width: 9rem"
             >
               <template #body="{ data }">
@@ -1532,7 +1469,7 @@ onBeforeUnmount(() => {
           </span>
 
           <Button
-            :label="t('payment.process.action.loadMore')"
+            label="Load more"
             icon="pi pi-angle-down"
             severity="secondary"
             outlined
@@ -1548,7 +1485,7 @@ onBeforeUnmount(() => {
           <div class="ot-table-toolbar">
             <div>
               <h2 class="ot-table-title">
-                {{ t('payment.process.table.missingSalary') }}
+                Missing salary
               </h2>
             </div>
           </div>
@@ -1568,14 +1505,14 @@ onBeforeUnmount(() => {
                   </div>
 
                   <div class="ot-empty-title">
-                    {{ t('payment.process.empty.noMissingSalary') }}
+                    No missing salary
                   </div>
                 </div>
               </template>
 
               <Column
                 field="employeeNo"
-                :header="t('payment.process.column.employeeId')"
+                header="Employee ID"
                 style="width: 8rem; min-width: 8rem"
               >
                 <template #body="{ data }">
@@ -1587,7 +1524,7 @@ onBeforeUnmount(() => {
 
               <Column
                 field="employeeName"
-                :header="t('payment.process.column.employeeName')"
+                header="Employee name"
                 style="width: 14rem; min-width: 14rem"
               >
                 <template #body="{ data }">
@@ -1599,7 +1536,7 @@ onBeforeUnmount(() => {
 
               <Column
                 field="departmentName"
-                :header="t('nav.departments')"
+                header="Department"
                 style="width: 12rem; min-width: 12rem"
               >
                 <template #body="{ data }">
@@ -1611,7 +1548,7 @@ onBeforeUnmount(() => {
 
               <Column
                 field="positionName"
-                :header="t('nav.positions')"
+                header="Position"
                 style="width: 12rem; min-width: 12rem"
               >
                 <template #body="{ data }">
@@ -1622,20 +1559,8 @@ onBeforeUnmount(() => {
               </Column>
 
               <Column
-                field="lineName"
-                :header="t('nav.lines')"
-                style="width: 10rem; min-width: 10rem"
-              >
-                <template #body="{ data }">
-                  <span class="payment-line-text">
-                    {{ data.lineName || '—' }}
-                  </span>
-                </template>
-              </Column>
-
-              <Column
                 field="reason"
-                :header="t('payment.process.column.reason')"
+                header="Reason"
                 style="width: 18rem; min-width: 18rem"
               >
                 <template #body="{ data }">
@@ -1655,7 +1580,7 @@ onBeforeUnmount(() => {
           <div class="ot-table-toolbar">
             <div>
               <h2 class="ot-table-title">
-                {{ t('payment.process.table.warnings') }}
+                Warnings
               </h2>
             </div>
           </div>
@@ -1675,14 +1600,14 @@ onBeforeUnmount(() => {
                   </div>
 
                   <div class="ot-empty-title">
-                    {{ t('payment.process.empty.noWarnings') }}
+                    No warnings
                   </div>
                 </div>
               </template>
 
               <Column
                 field="type"
-                :header="t('payment.process.column.type')"
+                header="Type"
                 style="width: 14rem; min-width: 14rem"
               >
                 <template #body="{ data }">
@@ -1695,7 +1620,7 @@ onBeforeUnmount(() => {
 
               <Column
                 field="rowNo"
-                :header="t('payment.process.column.row')"
+                header="Row"
                 style="width: 7rem; min-width: 7rem"
               >
                 <template #body="{ data }">
@@ -1707,7 +1632,7 @@ onBeforeUnmount(() => {
 
               <Column
                 field="employeeNo"
-                :header="t('payment.process.column.employeeId')"
+                header="Employee ID"
                 style="width: 8rem; min-width: 8rem"
               >
                 <template #body="{ data }">
@@ -1719,7 +1644,7 @@ onBeforeUnmount(() => {
 
               <Column
                 field="employeeName"
-                :header="t('payment.process.column.employeeName')"
+                header="Employee name"
                 style="width: 14rem; min-width: 14rem"
               >
                 <template #body="{ data }">
@@ -1731,7 +1656,7 @@ onBeforeUnmount(() => {
 
               <Column
                 field="reason"
-                :header="t('payment.process.column.reason')"
+                header="Reason"
                 style="width: 18rem; min-width: 18rem"
               >
                 <template #body="{ data }">
@@ -1759,11 +1684,11 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="ot-empty-title">
-          {{ t('payment.process.empty.previewTitle') }}
+          Payment preview
         </div>
 
         <div class="ot-empty-text">
-          {{ t('payment.process.empty.previewHint') }}
+          Select period, formula, input manual rate, upload salary Excel, then preview.
         </div>
       </div>
     </section>
@@ -1804,6 +1729,22 @@ onBeforeUnmount(() => {
 
 .payment-process-filter-actions > * {
   flex: 0 0 auto;
+}
+
+.payment-rate-hint {
+  margin-top: 0.25rem;
+  color: var(--ot-text-muted);
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+:deep(.payment-rate-input) {
+  width: 100%;
+  text-align: center;
+  font-size: 0.78rem !important;
+  font-weight: 750 !important;
+  font-variant-numeric: tabular-nums;
 }
 
 /* =========================
@@ -2190,8 +2131,8 @@ onBeforeUnmount(() => {
       minmax(170px, 1fr)
       minmax(170px, 1fr)
       minmax(240px, 1.2fr)
-      minmax(260px, 1.3fr)
-      minmax(220px, 1.1fr);
+      minmax(260px, 1.1fr)
+      minmax(220px, 1fr);
   }
 
   .payment-process-filter-actions {
