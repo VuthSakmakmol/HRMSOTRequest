@@ -17,10 +17,16 @@ const Shift = require('../../shift/models/Shift')
 const employeeScopeService = require('../../org/services/employeeScope.service')
 const otTimingService = require('./otTiming.service')
 
+// One employee can only appear in one OT request per date.
+// Keep this broad so Create, Edit, and the employee picker all treat any existing
+// request record for the selected date as unavailable.
 const OT_DUPLICATE_BLOCKING_STATUSES = [
   'PENDING',
   'PENDING_REQUESTER_CONFIRMATION',
   'APPROVED',
+  'REJECTED',
+  'REQUESTER_DISAGREED',
+  'CANCELLED',
 ]
 
 function s(value) {

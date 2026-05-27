@@ -37,6 +37,16 @@ const props = defineProps({
     default: 0,
   },
 
+  requesterEmployee: {
+    type: Object,
+    default: null,
+  },
+
+  loadingShifts: {
+    type: Boolean,
+    default: false,
+  },
+
   selectedShiftState: {
     type: Object,
     default: () => ({
@@ -154,12 +164,7 @@ const otOptionDropdownOptions = computed(() => {
       return {
         ...normalized,
         id: String(normalized?.id || normalized?._id || '').trim(),
-        optionLabel: String(
-          normalized?.optionLabel ||
-            normalized?.label ||
-            normalized?.name ||
-            '',
-        ).trim(),
+        optionLabel: formatOTOptionShortLabel(normalized),
         isCustomOption: false,
       }
     })
@@ -464,6 +469,28 @@ function handleOtOptionDropdownChange(value) {
   props.form.customDurationHours = null
 }
 
+function formatOTOptionShortLabel(option = {}) {
+  const minutes = Number(
+    option?.requestedMinutes ||
+      option?.paidMinutes ||
+      option?.totalRequestPaidMinutes ||
+      option?.totalMinutes ||
+      0,
+  )
+
+  if (!Number.isFinite(minutes) || minutes <= 0) {
+    return String(option?.label || option?.name || option?.optionLabel || '').trim()
+  }
+
+  const hours = minutes / 60
+
+  if (Number.isInteger(hours)) {
+    return `${hours}h`
+  }
+
+  return `${Number(hours.toFixed(2))}h`
+}
+
 function formatOptionMeta(option = {}) {
   if (option?.isCustomOption) {
     return labelOr(
@@ -745,7 +772,7 @@ onMounted(() => {
               class="w-full"
               :placeholder="t('ot.requests.create.selectOtOption')"
               :loading="loadingShiftOptions"
-              :disabled="selectedShiftState?.mode !== 'ready' || loadingShiftOptions"
+              :disabled="selectedShiftState?.mode !== 'ready' || loadingShiftOptions || loadingShifts"
             >
               <template #option="{ option }">
                 <div
@@ -761,19 +788,11 @@ onMounted(() => {
           </div>
 
           <Message
-            v-if="selectedShiftState?.message"
+            v-if="selectedShiftState?.mode !== 'ready' && !loadingShifts"
             severity="warn"
             :closable="false"
           >
-            {{ selectedShiftState.message }}
-          </Message>
-
-          <Message
-            v-else-if="selectedShiftState?.mode === 'none'"
-            severity="info"
-            :closable="false"
-          >
-            {{ t('ot.requests.create.selectAtLeastOneEmployee') }}
+            {{ selectedShiftState?.message || labelOr('ot.requests.create.requesterShiftMissing', 'Requester shift is not assigned. Please update the employee shift before creating OT.') }}
           </Message>
 
           <Message
@@ -1232,4 +1251,76 @@ onMounted(() => {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
+
+@media (max-width: 768px) {
+  :deep(.ot-setup-card .p-card-body) {
+    padding: 0.65rem !important;
+  }
+
+  .ot-setup-head {
+    margin-bottom: 0.55rem;
+  }
+
+  .ot-setup-tags {
+    justify-content: flex-start;
+  }
+
+  .ot-setup-grid {
+    gap: 0.65rem;
+    margin-top: 0.55rem;
+  }
+
+  .ot-date-panel,
+  .ot-detail-panel {
+    border-radius: 0.95rem;
+    padding: 0.65rem;
+  }
+
+  .ot-section-head {
+    align-items: center;
+    margin-bottom: 0.55rem;
+  }
+
+  .ot-field-label {
+    font-size: 0.8rem;
+  }
+
+  .ot-calendar-box {
+    border-radius: 0.85rem;
+    padding: 0.58rem;
+  }
+
+  .ot-calendar-header {
+    margin-bottom: 0.58rem;
+  }
+
+  .ot-calendar-title {
+    font-size: 0.92rem;
+  }
+
+  .calendar-nav-btn {
+    width: 1.95rem;
+    height: 1.95rem;
+  }
+
+  .ot-calendar-grid {
+    gap: 0.22rem;
+  }
+
+  .calendar-cell {
+    height: 2.05rem;
+  }
+
+  .calendar-number {
+    font-size: 0.78rem;
+  }
+
+  :deep(.p-inputtext),
+  :deep(.p-select-label),
+  :deep(.p-textarea),
+  :deep(.p-inputnumber-input) {
+    font-size: 16px !important;
+  }
+}
+
 </style>

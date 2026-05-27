@@ -4,6 +4,7 @@ const { verifyAccessToken } = require('../shared/utils/jwt')
 const AppError = require('../shared/errors/AppError')
 const Account = require('../modules/auth/models/Account')
 const { resolveEffectiveAccess } = require('../modules/auth/utils/resolveEffectiveAccess')
+const { AUTH_EMPLOYEE_POPULATE, buildAuthUser } = require('../modules/auth/utils/buildAuthUser')
 
 function unauthorizedError(message = 'Unauthorized') {
   return new AppError({
@@ -48,7 +49,9 @@ async function requireAuth(req, res, next) {
       return next(invalidTokenError())
     }
 
-    const account = await Account.findById(payload.sub).lean()
+    const account = await Account.findById(payload.sub)
+      .populate(AUTH_EMPLOYEE_POPULATE)
+      .lean()
 
     if (!account || !account.isActive) {
       return next(unauthorizedError())
@@ -63,26 +66,13 @@ async function requireAuth(req, res, next) {
 
     const effectiveAccess = await resolveEffectiveAccess(account)
 
-    req.user = {
-      accountId: String(account._id),
-      id: String(account._id),
-      loginId: account.loginId,
-      displayName: account.displayName,
-      employeeId: account.employeeId ? String(account.employeeId) : null,
-      roleIds: Array.isArray(account.roleIds) ? account.roleIds.map(String) : [],
-      roleCodes: Array.isArray(effectiveAccess.roleCodes) ? effectiveAccess.roleCodes : [],
-      roles: Array.isArray(effectiveAccess.roleCodes) ? effectiveAccess.roleCodes : [],
-      directPermissionCodes: Array.isArray(account.directPermissionCodes)
-        ? account.directPermissionCodes
-        : [],
-      effectivePermissionCodes: Array.isArray(effectiveAccess.permissionCodes)
-        ? effectiveAccess.permissionCodes
-        : [],
-      passwordVersion: currentPasswordVersion,
-      mustChangePassword: !!account.mustChangePassword,
-      isRootAdmin: !!effectiveAccess.isRootAdmin,
-      isActive: !!account.isActive,
-    }
+    req.user = await buildAuthUser(
+      {
+        ...account,
+        passwordVersion: currentPasswordVersion,
+      },
+      { effectiveAccess },
+    )
 
     return next()
   } catch (error) {

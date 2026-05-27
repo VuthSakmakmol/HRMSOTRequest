@@ -1,11 +1,12 @@
 <!-- frontend/src/modules/ot/views/OTRequestCreateView.vue -->
 <script setup>
-// frontend/src/modules/ot/views/OTRequestCreateView.vue
-
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
+
+import Button from 'primevue/button'
+import Dialog from 'primevue/dialog'
 
 import OTDetailView from '@/modules/ot/components/OTDetailView.vue'
 import OTEmployeeMultiPicker from '@/modules/ot/components/OTEmployeeMultiPicker.vue'
@@ -17,25 +18,18 @@ import {
   getShiftOTOptionsByShift,
 } from '@/modules/ot/ot.api'
 
-import {
-  buildCreateRequestPreview,
-  buildDefaultTimingFromPreview,
-  buildOTCreatePayload,
-  buildPickerRequestPreview,
-  getEmployeeId,
-  getSelectedOTOption,
-  normalizeCreateShiftOptionsResponse,
-  validateOTCreatePayload,
-} from '@/modules/ot/otCreatePayload'
-
 const router = useRouter()
 const toast = useToast()
 const { t } = useI18n()
 
 const submitting = ref(false)
+const confirmVisible = ref(false)
+const confirmPayload = ref(null)
+
 const loadingRequester = ref(false)
 const loadingShiftOptions = ref(false)
 const loadingUnavailableEmployees = ref(false)
+const employeePickerLoading = ref(false)
 
 const selectedEmployees = ref([])
 const requesterEmployee = ref(null)
@@ -43,12 +37,12 @@ const shiftOptions = ref([])
 const unavailableEmployees = ref([])
 const selectedOptionDayType = ref('')
 const lastLoadedShiftKey = ref('')
-const employeePickerLoading = ref(false)
 
 let unavailableRequestSeq = 0
 
 const form = reactive({
   otDate: null,
+  shiftId: '',
   otTimingSource: 'SHIFT_OPTION',
   shiftOtOptionId: '',
   customStartTime: '',
@@ -60,40 +54,179 @@ const form = reactive({
 
 const selectedDateYMD = computed(() => formatYMD(form.otDate))
 
-const selectedEmployeeIds = computed(() =>
-  selectedEmployees.value
-    .map((item) => getEmployeeId(item))
-    .filter(Boolean),
-)
+const selectedEmployeeIds = computed(() => {
+  return [
+    ...new Set(
+      selectedEmployees.value
+        .map((item) => getEmployeeId(item))
+        .filter(Boolean),
+    ),
+  ]
+})
 
-const selectedEmployeePreviewRows = computed(() => selectedEmployees.value.slice(0, 5))
+const selectedShift = computed(() => {
+  const requesterShift = buildRequesterShiftOption(requesterEmployee.value)
+  const selectedId = s(form.shiftId)
 
-const selectedEmployeeMoreCount = computed(() =>
-  Math.max(0, selectedEmployees.value.length - selectedEmployeePreviewRows.value.length),
-)
+  if (!requesterShift?.id) return null
+  if (!selectedId) return requesterShift
 
-const selectedOTOption = computed(() =>
-  getSelectedOTOption(shiftOptions.value, form.shiftOtOptionId),
-)
+  return requesterShift.id === selectedId ? requesterShift : null
+})
+
+const selectedShiftState = computed(() => {
+  if (!selectedShift.value?.id) {
+    return {
+      mode: 'missing',
+      shift: null,
+      message: labelOr(
+        'ot.requests.create.requesterShiftMissing',
+        'Requester shift is not assigned. Please update the employee shift before creating OT.',
+      ),
+    }
+  }
+
+  return {
+    mode: 'ready',
+    shift: {
+      shiftId: selectedShift.value.id,
+      code: selectedShift.value.code,
+      name: selectedShift.value.name,
+      label: selectedShift.value.label,
+    },
+    message: '',
+  }
+})
+
+const selectedOTOption = computed(() => {
+  const selectedId = s(form.shiftOtOptionId)
+
+  if (!selectedId) return null
+
+  return (
+    shiftOptions.value.find((item) => {
+      return s(item.id || item._id) === selectedId
+    }) || null
+  )
+})
 
 const isCustomFixedTime = computed(() => {
-  return String(form.otTimingSource || 'SHIFT_OPTION').trim().toUpperCase() === 'CUSTOM_FIXED'
+  return upper(form.otTimingSource || 'SHIFT_OPTION') === 'CUSTOM_FIXED'
 })
 
 const unavailableEmployeeMap = computed(() => {
   const map = {}
 
   for (const item of unavailableEmployees.value) {
-    const employeeId = String(item?.employeeId || '').trim()
+    const employeeId = s(item?.employeeId)
     if (!employeeId) continue
+
     map[employeeId] = item
   }
 
   return map
 })
 
-const canAutoSelectEmployees = computed(() => {
-  return Boolean(selectedDateYMD.value) && !loadingUnavailableEmployees.value
+const backendTimingPreview = computed(() => {
+  const option = selectedOTOption.value
+
+  if (!option) return null
+
+  const backendPaidMinutes = positiveNumber(
+    option.totalRequestPaidMinutes,
+    option.totalMinutes,
+    option.requestedMinutes,
+  )
+
+  return {
+    source: 'BACKEND_SHIFT_OPTION_LOOKUP',
+
+    timingMode: upper(option.timingMode || 'AFTER_SHIFT_END'),
+
+    requestStartTime: s(option.requestStartTime || option.startTime),
+    requestEndTime: s(option.requestEndTime || option.endTime),
+    startTime: s(option.requestStartTime || option.startTime),
+    endTime: s(option.requestEndTime || option.endTime),
+
+    breakMinutes: n(option.breakMinutes),
+    requestedMinutes: n(option.requestedMinutes),
+    totalRequestPaidMinutes: backendPaidMinutes,
+    totalMinutes: backendPaidMinutes,
+    totalHours: round2(backendPaidMinutes / 60),
+
+    paidMinutes: backendPaidMinutes,
+    paidHours: round2(backendPaidMinutes / 60),
+    paidHoursLabel: formatDurationMinutes(backendPaidMinutes),
+    requestedHoursLabel: formatDurationMinutes(option.requestedMinutes),
+    breakLabel: formatDurationMinutes(option.breakMinutes),
+  }
+})
+
+const requestPreview = computed(() => {
+  if (selectedShiftState.value.mode !== 'ready') return null
+  if (!selectedOTOption.value) return null
+
+  return backendTimingPreview.value
+})
+
+const pickerRequestPreview = computed(() => requestPreview.value)
+
+const confirmOptionLabel = computed(() => {
+  const option = selectedOTOption.value || {}
+
+  return s(
+    option.optionLabel ||
+      option.label ||
+      option.name ||
+      form.shiftOtOptionId,
+  )
+})
+
+const confirmTimeLabel = computed(() => {
+  if (isCustomFixedTime.value && Number(form.customDurationHours || 0) > 0) {
+    return formatDurationMinutes(Number(form.customDurationHours || 0) * 60)
+  }
+
+  return formatDurationMinutes(
+    backendTimingPreview.value?.totalRequestPaidMinutes ||
+      selectedOTOption.value?.totalRequestPaidMinutes ||
+      selectedOTOption.value?.requestedMinutes ||
+      0,
+  )
+})
+
+const employeePickerReady = computed(() => {
+  return Boolean(
+    selectedDateYMD.value &&
+      selectedShiftState.value.mode === 'ready' &&
+      form.shiftOtOptionId &&
+      selectedOTOption.value &&
+      backendTimingPreview.value?.totalRequestPaidMinutes > 0,
+  )
+})
+
+const autoSelectEmployeesReady = computed(() => {
+  return Boolean(
+    employeePickerReady.value &&
+      !loadingUnavailableEmployees.value &&
+      !loadingShiftOptions.value,
+  )
+})
+
+const sharedShiftIdForPicker = computed(() => {
+  return selectedShiftState.value.mode === 'ready'
+    ? s(selectedShiftState.value.shift?.shiftId)
+    : ''
+})
+
+const sharedShiftLabelForPicker = computed(() => {
+  if (selectedShiftState.value.mode !== 'ready') return ''
+
+  return s(
+    selectedShiftState.value.shift?.code ||
+      selectedShiftState.value.shift?.label ||
+      selectedShiftState.value.shift?.name,
+  )
 })
 
 const submitDisabled = computed(() => {
@@ -101,22 +234,34 @@ const submitDisabled = computed(() => {
     loadingRequester.value ||
     loadingShiftOptions.value ||
     loadingUnavailableEmployees.value ||
+    employeePickerLoading.value ||
     submitting.value ||
+    !selectedDateYMD.value ||
+    selectedShiftState.value.mode !== 'ready' ||
+    !form.shiftOtOptionId ||
+    !selectedOTOption.value ||
     !selectedEmployeeIds.value.length
   )
 })
 
-const requestPreview = computed(() => {
-  if (!sharedShift.value || !selectedOTOption.value) return null
+function s(value) {
+  return String(value ?? '').trim()
+}
 
-  return buildCreateRequestPreview({
-    form,
-    shiftOptions: shiftOptions.value,
-    selectedOption: selectedOTOption.value,
-  })
-})
+function upper(value) {
+  return s(value).toUpperCase()
+}
 
-function firstPositiveNumber(...values) {
+function n(value, fallback = 0) {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : fallback
+}
+
+function round2(value) {
+  return Math.round(n(value) * 100) / 100
+}
+
+function positiveNumber(...values) {
   for (const value of values) {
     const number = Number(value)
 
@@ -128,65 +273,10 @@ function firstPositiveNumber(...values) {
   return 0
 }
 
-const defaultTiming = computed(() => {
-  return buildDefaultTimingFromPreview(requestPreview.value || {})
-})
-
-
-const pickerRequestPreview = computed(() =>
-  buildPickerRequestPreview(defaultTiming.value),
-)
-
-const selectedShiftState = computed(() => {
-  if (!selectedEmployees.value.length) {
-    return {
-      mode: 'none',
-      shift: null,
-      message: '',
-    }
-  }
-
-  const shiftInfos = selectedEmployees.value.map(extractShiftInfo)
-  const missingShiftCount = shiftInfos.filter((item) => !item?.shiftId).length
-
-  if (missingShiftCount > 0) {
-    return {
-      mode: 'missing',
-      shift: null,
-      message: t('ot.requests.create.missingShift'),
-    }
-  }
-
-  const uniqueShiftIds = Array.from(new Set(shiftInfos.map((item) => item.shiftId)))
-
-  if (uniqueShiftIds.length > 1) {
-    return {
-      mode: 'mixed',
-      shift: null,
-      message: t('ot.requests.create.mixedShift'),
-    }
-  }
-
-  return {
-    mode: 'ready',
-    shift: shiftInfos[0],
-    message: '',
-  }
-})
-
-const sharedShift = computed(() => selectedShiftState.value.shift || null)
-
-const sharedShiftIdForPicker = computed(() => {
-  return selectedShiftState.value.mode === 'ready'
-    ? String(sharedShift.value?.shiftId || '').trim()
-    : ''
-})
-
-const sharedShiftLabelForPicker = computed(() => {
-  if (selectedShiftState.value.mode !== 'ready') return ''
-
-  return String(sharedShift.value?.code || '').trim()
-})
+function labelOr(key, fallback) {
+  const value = t(key)
+  return value === key ? fallback : value
+}
 
 function showToast(severity, summary, detail, life = 3000) {
   toast.add({
@@ -195,112 +285,6 @@ function showToast(severity, summary, detail, life = 3000) {
     detail,
     life,
   })
-}
-
-
-
-function formatSelectedEmployeePreviewLabel(employee = {}) {
-  return (
-    employee.employeeLabel ||
-    [employee.employeeNo, employee.displayName].filter(Boolean).join(' - ') ||
-    employee.employeeName ||
-    employee.employeeCode ||
-    getEmployeeId(employee) ||
-    t('common.unknown')
-  )
-}
-
-function extractShiftInfo(employee) {
-  const shift =
-    employee?.shift ||
-    employee?.shiftInfo ||
-    employee?.assignedShift ||
-    {}
-
-  const shiftId = String(
-    employee?.shiftId ||
-      shift?._id ||
-      shift?.id ||
-      '',
-  ).trim()
-
-  if (!shiftId) return null
-
-  return {
-    shiftId,
-    code: String(employee?.shiftCode || shift?.code || '').trim(),
-    name: String(employee?.shiftName || shift?.name || '').trim(),
-  }
-}
-
-function normalizeMeResponse(res) {
-  const root =
-    res?.data?.data?.user ||
-    res?.data?.data ||
-    res?.data?.user ||
-    res?.data ||
-    {}
-
-  const employee =
-    root?.employee ||
-    root?.employeeProfile ||
-    root?.employeeInfo ||
-    {}
-
-  const _id = String(
-    employee?._id ||
-      employee?.id ||
-      root?.employeeId ||
-      root?.employee?._id ||
-      '',
-  ).trim()
-
-  const displayName = String(
-    employee?.displayName ||
-      employee?.name ||
-      root?.displayName ||
-      root?.name ||
-      root?.loginId ||
-      '',
-  ).trim()
-
-  const employeeNo = String(
-    employee?.employeeNo || root?.employeeNo || '',
-  ).trim()
-
-  if (!_id || !displayName) return null
-
-  return {
-    _id,
-    displayName,
-    employeeNo,
-  }
-}
-
-function normalizeUnavailableEmployeesResponse(res) {
-  const payload = res?.data?.data || res?.data || {}
-  const rows = Array.isArray(payload?.items) ? payload.items : []
-
-  return rows
-    .map((item) => ({
-      employeeId: String(item?.employeeId || '').trim(),
-      employeeCode: String(item?.employeeCode || '').trim(),
-      employeeName: String(item?.employeeName || '').trim(),
-      employeeLabel: String(item?.employeeLabel || '').trim(),
-      requestNo: String(item?.requestNo || '').trim(),
-      status: String(item?.status || '').trim(),
-      statusLabel: String(item?.statusLabel || '').trim(),
-      otDate: String(item?.otDate || '').trim(),
-    }))
-    .filter((item) => item.employeeId)
-}
-
-function normalizeShiftOptionsResponse(res) {
-  const normalized = normalizeCreateShiftOptionsResponse(res)
-
-  selectedOptionDayType.value = normalized.dayType
-
-  return normalized.items
 }
 
 function pad2(value) {
@@ -316,59 +300,214 @@ function formatYMD(value) {
   return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
 }
 
-function isHHmm(value) {
-  return /^([01]\d|2[0-3]):([0-5]\d)$/.test(String(value || '').trim())
-}
+function formatDurationMinutes(value) {
+  const minutes = Math.round(Number(value || 0))
 
-function timeToMinutes(value) {
-  if (!isHHmm(value)) return 0
+  if (!Number.isFinite(minutes) || minutes <= 0) return '-'
 
-  const [hh, mm] = String(value).split(':').map(Number)
-  return hh * 60 + mm
-}
+  const hours = Math.floor(minutes / 60)
+  const restMinutes = minutes % 60
 
-function calculateRawTimeWindowMinutes(startTime, endTime) {
-  if (!isHHmm(startTime) || !isHHmm(endTime)) return 0
-
-  const start = timeToMinutes(startTime)
-  const end = timeToMinutes(endTime)
-
-  let minutes = end - start
-
-  if (minutes <= 0) {
-    minutes += 1440
+  if (hours > 0 && restMinutes === 0) {
+    return `${hours} h`
   }
 
-  return minutes
+  if (hours > 0 && restMinutes > 0) {
+    return `${hours} h ${restMinutes} min`
+  }
+
+  return `${minutes} min`
 }
 
-function calculateTimeWindowMinutes(startTime, endTime, breakMinutes = 0) {
-  if (!isHHmm(startTime) || !isHHmm(endTime)) return 0
-
-  const rawMinutes = calculateRawTimeWindowMinutes(startTime, endTime)
-  const safeBreak = Number(breakMinutes || 0)
-
-  return Math.max(0, rawMinutes - safeBreak)
+function isObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-function addMinutesToHHmm(startTime, minutesToAdd = 0) {
-  if (!isHHmm(startTime)) return ''
-
-  const start = timeToMinutes(startTime)
-  const safeMinutes = Math.max(0, Number(minutesToAdd || 0))
-  const total = (start + safeMinutes) % 1440
-  const hours = Math.floor(total / 60)
-  const minutes = total % 60
-
-  return `${pad2(hours)}:${pad2(minutes)}`
+function getEmployeeId(employee = {}) {
+  return s(employee?._id || employee?.id || employee?.employeeId)
 }
 
-function durationHoursToMinutes(value) {
-  const hours = Number(value || 0)
+function normalizePayload(res) {
+  return res?.data?.data || res?.data || {}
+}
 
-  if (!Number.isFinite(hours) || hours <= 0) return 0
+function normalizeAuthUser(res) {
+  const payload =
+    res?.data?.item ||
+    res?.data?.data?.item ||
+    res?.data?.data?.user ||
+    res?.data?.user ||
+    res?.data ||
+    {}
 
-  return Math.round(hours * 60)
+  return payload?.item || payload
+}
+
+function normalizeShiftRecord(source = {}) {
+  const shiftObject =
+    (isObject(source?.shift) && source.shift) ||
+    (isObject(source?.shiftId) && source.shiftId) ||
+    source ||
+    {}
+
+  const rawId =
+    source?.id ||
+    source?._id ||
+    (!isObject(source?.shiftId) ? source?.shiftId : '') ||
+    shiftObject?.id ||
+    shiftObject?._id ||
+    ''
+
+  const id = s(rawId)
+  if (!id) return null
+
+  const code = s(source?.code || source?.shiftCode || shiftObject?.code)
+  const name = s(source?.name || source?.shiftName || shiftObject?.name)
+
+  return {
+    id,
+    _id: id,
+    code,
+    name,
+    label: s(
+      source?.label ||
+        source?.shiftLabel ||
+        [code, name].filter(Boolean).join(' - ') ||
+        code ||
+        name ||
+        id,
+    ),
+    type: s(source?.type || source?.shiftType || shiftObject?.type),
+    startTime: s(source?.startTime || source?.shiftStartTime || shiftObject?.startTime),
+    endTime: s(source?.endTime || source?.shiftEndTime || shiftObject?.endTime),
+    breakStartTime: s(source?.breakStartTime || shiftObject?.breakStartTime),
+    breakEndTime: s(source?.breakEndTime || shiftObject?.breakEndTime),
+    crossMidnight: source?.crossMidnight === true || shiftObject?.crossMidnight === true,
+  }
+}
+
+function buildRequesterShiftOption(employee = {}) {
+  if (!employee) return null
+
+  return normalizeShiftRecord({
+    shiftId: employee.shiftId,
+    shiftCode: employee.shiftCode,
+    shiftName: employee.shiftName,
+    shiftType: employee.shiftType,
+    shiftStartTime: employee.shiftStartTime,
+    shiftEndTime: employee.shiftEndTime,
+    shift: employee.shift,
+  })
+}
+
+function normalizeEmployeeProfile(source = {}) {
+  const root = source?.employee || source?.employeeProfile || source?.employeeInfo || source || {}
+
+  const employeeId = s(root?._id || root?.id || root?.employeeId || source?.employeeId)
+  const displayName = s(
+    root?.displayName ||
+      root?.name ||
+      source?.displayName ||
+      source?.name ||
+      source?.loginId,
+  )
+
+  const employeeNo = s(
+    root?.employeeNo ||
+      root?.employeeCode ||
+      source?.employeeNo ||
+      source?.employeeCode,
+  )
+
+  if (!employeeId && !displayName) return null
+
+  const shift = normalizeShiftRecord({
+    shiftId: root?.shiftId || source?.shiftId,
+    shiftCode: root?.shiftCode || source?.shiftCode,
+    shiftName: root?.shiftName || source?.shiftName,
+    shiftType: root?.shiftType || source?.shiftType,
+    shiftStartTime: root?.shiftStartTime || source?.shiftStartTime,
+    shiftEndTime: root?.shiftEndTime || source?.shiftEndTime,
+    shift: root?.shift || source?.shift,
+  })
+
+  return {
+    _id: employeeId,
+    id: employeeId,
+    employeeId,
+    displayName,
+    employeeNo,
+    employeeCode: employeeNo,
+    employeeLabel: [employeeNo, displayName].filter(Boolean).join(' - ') || displayName || employeeId,
+    shiftId: shift?.id || '',
+    shiftCode: shift?.code || '',
+    shiftName: shift?.name || '',
+    shiftType: shift?.type || '',
+    shiftStartTime: shift?.startTime || '',
+    shiftEndTime: shift?.endTime || '',
+    shift: shift || null,
+  }
+}
+
+function normalizeUnavailableEmployeesResponse(res) {
+  const payload = normalizePayload(res)
+  const rows = Array.isArray(payload?.items) ? payload.items : []
+
+  return rows
+    .map((item) => ({
+      employeeId: s(item?.employeeId),
+      employeeCode: s(item?.employeeCode),
+      employeeName: s(item?.employeeName),
+      employeeLabel: s(item?.employeeLabel),
+      requestNo: s(item?.requestNo),
+      status: s(item?.status),
+      statusLabel: s(item?.statusLabel),
+      otDate: s(item?.otDate),
+    }))
+    .filter((item) => item.employeeId)
+}
+
+function normalizeShiftOptionsResponse(res) {
+  const payload = normalizePayload(res)
+  const rows = Array.isArray(payload?.items) ? payload.items : []
+
+  selectedOptionDayType.value = upper(payload?.dayType || payload?.meta?.dayType)
+
+  return rows
+    .map((item) => {
+      const id = s(item?.id || item?._id)
+
+      if (!id) return null
+
+      const totalRequestPaidMinutes = positiveNumber(
+        item?.totalRequestPaidMinutes,
+        item?.totalMinutes,
+        item?.requestedMinutes,
+      )
+
+      return {
+        ...item,
+        id,
+        _id: id,
+
+        label: s(item?.label || item?.name || item?.optionLabel),
+        optionLabel: s(item?.optionLabel || item?.label || item?.name),
+
+        timingMode: upper(item?.timingMode || 'AFTER_SHIFT_END'),
+
+        requestStartTime: s(item?.requestStartTime || item?.startTime),
+        requestEndTime: s(item?.requestEndTime || item?.endTime),
+        startTime: s(item?.requestStartTime || item?.startTime),
+        endTime: s(item?.requestEndTime || item?.endTime),
+
+        requestedMinutes: n(item?.requestedMinutes),
+        breakMinutes: n(item?.breakMinutes),
+        totalRequestPaidMinutes,
+        totalMinutes: totalRequestPaidMinutes,
+        totalHours: round2(totalRequestPaidMinutes / 60),
+      }
+    })
+    .filter((item) => item?.id && item?.optionLabel)
 }
 
 function clearShiftOptions() {
@@ -376,6 +515,15 @@ function clearShiftOptions() {
   form.shiftOtOptionId = ''
   selectedOptionDayType.value = ''
   lastLoadedShiftKey.value = ''
+  resetCustomTiming()
+}
+
+function resetCustomTiming() {
+  form.otTimingSource = 'SHIFT_OPTION'
+  form.customStartTime = ''
+  form.customEndTime = ''
+  form.customBreakMinutes = 0
+  form.customDurationHours = null
 }
 
 function removeUnavailableSelectedEmployees() {
@@ -404,7 +552,14 @@ async function loadRequesterEmployee() {
 
   try {
     const res = await api.get('/auth/me')
-    requesterEmployee.value = normalizeMeResponse(res)
+    const authUser = normalizeAuthUser(res)
+    const profile = normalizeEmployeeProfile(authUser)
+
+    requesterEmployee.value = profile
+
+    if (!form.shiftId && profile?.shiftId) {
+      form.shiftId = profile.shiftId
+    }
   } catch (error) {
     requesterEmployee.value = null
 
@@ -454,29 +609,25 @@ async function loadUnavailableEmployeesForDate() {
   }
 }
 
-async function loadShiftOptionsForSharedShift() {
-  const state = selectedShiftState.value
+async function loadShiftOptionsForSelectedShift() {
+  const shiftId = s(form.shiftId)
   const otDate = selectedDateYMD.value
 
-  if (!otDate) {
+  if (!otDate || !shiftId) {
     clearShiftOptions()
     return
   }
 
-  if (state.mode !== 'ready' || !state.shift?.shiftId) {
-    clearShiftOptions()
-    return
-  }
-
-  const loadKey = `${state.shift.shiftId}|${otDate}`
+  const loadKey = `${shiftId}|${otDate}`
 
   if (lastLoadedShiftKey.value === loadKey) return
 
   loadingShiftOptions.value = true
   form.shiftOtOptionId = ''
+  resetCustomTiming()
 
   try {
-    const res = await getShiftOTOptionsByShift(state.shift.shiftId, {
+    const res = await getShiftOTOptionsByShift(shiftId, {
       otDate,
     })
 
@@ -515,131 +666,90 @@ async function loadShiftOptionsForSharedShift() {
   }
 }
 
-function getEmployeeTiming(employee = {}) {
-  const employeeMode = String(employee?.otTimeMode || 'DEFAULT').trim().toUpperCase()
-  const useEmployeeCustomTime = employeeMode === 'CUSTOM'
-
-  const startTime = String(
-    useEmployeeCustomTime
-      ? employee?.requestStartTime || employee?.startTime || defaultTiming.value.startTime || ''
-      : defaultTiming.value.startTime || employee?.requestStartTime || employee?.startTime || '',
-  ).trim()
-
-  const endTime = String(
-    useEmployeeCustomTime
-      ? employee?.requestEndTime || employee?.endTime || defaultTiming.value.endTime || ''
-      : defaultTiming.value.endTime || employee?.requestEndTime || employee?.endTime || '',
-  ).trim()
-
-  const breakMinutes = Number(
-    useEmployeeCustomTime
-      ? employee?.breakMinutes ?? defaultTiming.value.breakMinutes ?? 0
-      : defaultTiming.value.breakMinutes ?? employee?.breakMinutes ?? 0,
-  )
-
-  const requestedMinutes =
-    (useEmployeeCustomTime ? Number(employee?.requestedMinutes || 0) : 0) ||
-    Number(defaultTiming.value.requestedMinutes || 0) ||
-    calculateTimeWindowMinutes(startTime, endTime, breakMinutes)
-
-  return {
-    startTime,
-    endTime,
-    breakMinutes,
-    requestedMinutes,
-  }
-}
-
-function buildEmployeePayloadRows() {
+function buildEmployeeTimeOverridesPayload() {
   return selectedEmployees.value
     .map((employee) => {
       const employeeId = getEmployeeId(employee)
+
       if (!employeeId) return null
 
-      const timing = getEmployeeTiming(employee)
+      if (upper(employee?.otTimeMode || 'DEFAULT') !== 'CUSTOM') {
+        return null
+      }
+
+      const startTime = s(employee?.requestStartTime || employee?.startTime)
+      const endTime = s(employee?.requestEndTime || employee?.endTime)
+
+      if (!startTime || !endTime) return null
 
       return {
         employeeId,
-        requestStartTime: timing.startTime,
-        requestEndTime: timing.endTime,
-        breakMinutes: timing.breakMinutes,
-        requestedMinutes: timing.requestedMinutes,
-        otTimeMode: String(employee?.otTimeMode || 'DEFAULT').trim().toUpperCase(),
+        startTime,
+        endTime,
+        breakMinutes: n(employee?.breakMinutes),
       }
     })
     .filter(Boolean)
 }
 
-function buildEmployeeTimeOverridesPayload() {
-  return buildEmployeePayloadRows()
-    .filter((item) => item.otTimeMode === 'CUSTOM')
-    .map((item) => ({
-      employeeId: item.employeeId,
-      startTime: item.requestStartTime,
-      endTime: item.requestEndTime,
-      breakMinutes: item.breakMinutes,
-    }))
-}
-
 function buildPayload() {
-  return buildOTCreatePayload({
-    form,
-    selectedEmployees: selectedEmployees.value,
-    selectedEmployeeIds: selectedEmployeeIds.value,
-    requestPreview: requestPreview.value || {},
-    defaultTiming: defaultTiming.value || {},
-    selectedDateYMD: selectedDateYMD.value,
-  })
+  const payload = {
+    employeeIds: selectedEmployeeIds.value,
+    employeeTimeOverrides: buildEmployeeTimeOverridesPayload(),
+
+    otDate: selectedDateYMD.value,
+
+    otTimingSource: isCustomFixedTime.value ? 'CUSTOM_FIXED' : 'SHIFT_OPTION',
+    shiftOtOptionId: s(form.shiftOtOptionId),
+
+    reason: s(form.reason),
+  }
+
+  if (isCustomFixedTime.value) {
+    payload.customStartTime = s(form.customStartTime)
+    payload.customEndTime = s(form.customEndTime)
+    payload.customBreakMinutes = n(form.customBreakMinutes)
+  }
+
+  return payload
 }
 
-function validateEmployeeTimingRows(employeeRows = []) {
-  for (const row of employeeRows) {
-    const employeeLabel = findSelectedEmployeeLabel(row.employeeId)
+function validateBeforeSubmit(payload) {
+  if (loadingUnavailableEmployees.value) {
+    return t('ot.requests.create.waitAvailability')
+  }
 
-    if (!row.requestStartTime) {
-      return t('ot.requests.create.missingEmployeeStart', { employee: employeeLabel })
-    }
+  if (!payload.otDate) {
+    return t('ot.requests.create.selectDateFirst')
+  }
 
-    if (!row.requestEndTime) {
-      return t('ot.requests.create.missingEmployeeEnd', { employee: employeeLabel })
-    }
+  if (selectedShiftState.value.mode === 'missing') {
+    return t('ot.requests.create.missingShift')
+  }
 
-    if (!isHHmm(row.requestStartTime)) {
-      return t('ot.requests.create.employeeStartInvalid', { employee: employeeLabel })
-    }
+  if (!payload.shiftOtOptionId || !selectedOTOption.value) {
+    return t('ot.requests.create.selectOtOption')
+  }
 
-    if (!isHHmm(row.requestEndTime)) {
-      return t('ot.requests.create.employeeEndInvalid', { employee: employeeLabel })
-    }
+  if (!Array.isArray(payload.employeeIds) || !payload.employeeIds.length) {
+    return t('ot.requests.create.selectAtLeastOneEmployee')
+  }
 
-    if (row.requestStartTime === row.requestEndTime) {
-      return t('ot.requests.create.employeeTimeSame', { employee: employeeLabel })
-    }
+  const blockedSelected = payload.employeeIds
+    .map((employeeId) => unavailableEmployeeMap.value[employeeId])
+    .filter(Boolean)
 
-    const rawMinutes = calculateRawTimeWindowMinutes(
-      row.requestStartTime,
-      row.requestEndTime,
-    )
+  if (blockedSelected.length) {
+    return buildDuplicateToastMessage(blockedSelected)
+  }
 
-    if (Number(row.breakMinutes || 0) >= rawMinutes) {
-      return t('ot.requests.create.employeeBreakTooLong', { employee: employeeLabel })
+  if (payload.otTimingSource === 'CUSTOM_FIXED') {
+    if (!payload.customStartTime || !payload.customEndTime) {
+      return t('ot.requests.create.selectValidTiming')
     }
   }
 
   return ''
-}
-
-function validateBeforeSubmit(payload) {
-  return validateOTCreatePayload({
-    payload,
-    form,
-    selectedShiftState: selectedShiftState.value,
-    selectedOptionDayType: selectedOptionDayType.value,
-    loadingUnavailableEmployees: loadingUnavailableEmployees.value,
-    defaultTiming: defaultTiming.value || {},
-    findEmployeeLabel: findSelectedEmployeeLabel,
-    t,
-  })
 }
 
 function getErrorPayload(error) {
@@ -675,25 +785,23 @@ function getErrorCode(error) {
   const payload = getErrorPayload(error)
   const errorObject = getErrorObject(error)
 
-  return String(
+  return upper(
     payload?.code ||
       payload?.data?.code ||
-      errorObject?.code ||
-      '',
-  ).trim().toUpperCase()
+      errorObject?.code,
+  )
 }
 
 function getErrorMessageText(error) {
   const payload = getErrorPayload(error)
   const errorObject = getErrorObject(error)
 
-  return String(
+  return s(
     payload?.message ||
       payload?.data?.message ||
       errorObject?.message ||
-      error?.message ||
-      '',
-  ).trim()
+      error?.message,
+  )
 }
 
 function normalizeDuplicateEmployees(error) {
@@ -716,13 +824,13 @@ function normalizeDuplicateEmployees(error) {
 
   return duplicates
     .map((item) => ({
-      employeeId: String(item?.employeeId || '').trim(),
-      employeeCode: String(item?.employeeCode || '').trim(),
-      employeeName: String(item?.employeeName || '').trim(),
-      employeeLabel: String(item?.employeeLabel || '').trim(),
-      requestNo: String(item?.requestNo || '').trim(),
-      status: String(item?.status || '').trim(),
-      otDate: String(item?.otDate || '').trim(),
+      employeeId: s(item?.employeeId),
+      employeeCode: s(item?.employeeCode),
+      employeeName: s(item?.employeeName),
+      employeeLabel: s(item?.employeeLabel),
+      requestNo: s(item?.requestNo),
+      status: s(item?.status),
+      otDate: s(item?.otDate),
     }))
     .filter((item) => item.employeeId)
 }
@@ -747,11 +855,11 @@ function normalizeMissingClockInEmployees(error) {
 
   return rows
     .map((item) => ({
-      employeeId: String(item?.employeeId || '').trim(),
-      employeeNo: String(item?.employeeNo || item?.employeeCode || '').trim(),
-      employeeCode: String(item?.employeeCode || item?.employeeNo || '').trim(),
-      employeeName: String(item?.employeeName || '').trim(),
-      employeeLabel: String(item?.employeeLabel || '').trim(),
+      employeeId: s(item?.employeeId),
+      employeeNo: s(item?.employeeNo || item?.employeeCode),
+      employeeCode: s(item?.employeeCode || item?.employeeNo),
+      employeeName: s(item?.employeeName),
+      employeeLabel: s(item?.employeeLabel),
     }))
     .filter((item) => item.employeeId)
 }
@@ -806,21 +914,30 @@ function buildApiErrorMessage(error, fallback = '') {
   return message || fallback || t('ot.requests.create.createFailedDetail')
 }
 
-function findSelectedEmployeeLabel(employeeId) {
-  const targetId = String(employeeId || '').trim()
-  const employee = selectedEmployees.value.find((item) => getEmployeeId(item) === targetId)
-
-  if (!employee) return targetId || t('common.unknown')
-
-  return (
-    employee.employeeLabel ||
-    [employee.employeeNo, employee.displayName].filter(Boolean).join(' - ') ||
-    targetId
+function formatEmployeeOTTime(employee = {}) {
+  const minutes = positiveNumber(
+    employee?.totalRequestPaidMinutes,
+    employee?.totalMinutes,
+    employee?.requestedMinutes,
+    backendTimingPreview.value?.totalRequestPaidMinutes,
   )
+
+  return formatDurationMinutes(minutes)
+}
+
+function formatEmployeeLine(employee = {}) {
+  return s(
+    employee?.lineName ||
+      employee?.productionLineName ||
+      employee?.line?.name ||
+      employee?.productionLine?.name ||
+      employee?.lineLabel ||
+      employee?.productionLineLabel,
+  ) || '-'
 }
 
 function removeEmployeesFromSelectionByIds(employeeIds = []) {
-  const idSet = new Set(employeeIds.map((id) => String(id || '').trim()).filter(Boolean))
+  const idSet = new Set(employeeIds.map((id) => s(id)).filter(Boolean))
   if (!idSet.size) return 0
 
   const beforeCount = selectedEmployees.value.length
@@ -875,7 +992,7 @@ function buildMissingClockInToastMessage(missing = []) {
       })
 }
 
-async function submit() {
+function openSubmitConfirm() {
   const payload = buildPayload()
   const message = validateBeforeSubmit(payload)
 
@@ -889,6 +1006,27 @@ async function submit() {
     return
   }
 
+  confirmPayload.value = payload
+  confirmVisible.value = true
+}
+
+async function submitConfirmed() {
+  const payload = confirmPayload.value || buildPayload()
+  const message = validateBeforeSubmit(payload)
+
+  if (message) {
+    confirmVisible.value = false
+
+    showToast(
+      'warn',
+      t('ot.requests.create.validationTitle'),
+      message,
+      3500,
+    )
+    return
+  }
+
+  confirmVisible.value = false
   submitting.value = true
 
   try {
@@ -952,6 +1090,7 @@ async function submit() {
     )
   } finally {
     submitting.value = false
+    confirmPayload.value = null
   }
 }
 
@@ -960,22 +1099,23 @@ function goBack() {
 }
 
 watch(
-  () =>
-    selectedShiftState.value.mode === 'ready'
-      ? `${selectedShiftState.value.shift?.shiftId || ''}|${selectedDateYMD.value}`
-      : '',
-  async () => {
-    await loadShiftOptionsForSharedShift()
-  },
-  { immediate: true },
-)
-
-watch(
   () => selectedDateYMD.value,
   async () => {
     selectedEmployees.value = []
     clearShiftOptions()
+
     await loadUnavailableEmployeesForDate()
+    await loadShiftOptionsForSelectedShift()
+  },
+)
+
+watch(
+  () => form.shiftId,
+  async () => {
+    selectedEmployees.value = []
+    clearShiftOptions()
+
+    await loadShiftOptionsForSelectedShift()
   },
 )
 
@@ -999,6 +1139,8 @@ watch(
 
 onMounted(async () => {
   await loadRequesterEmployee()
+  await loadUnavailableEmployeesForDate()
+  await loadShiftOptionsForSelectedShift()
 })
 </script>
 
@@ -1006,8 +1148,10 @@ onMounted(async () => {
   <div class="ot-create-page">
     <OTDetailView
       :form="form"
+      :requester-employee="requesterEmployee"
       :selected-employee-count="selectedEmployeeIds.length"
       :selected-shift-state="selectedShiftState"
+      :loading-shifts="loadingRequester"
       :shift-options="shiftOptions"
       :loading-shift-options="loadingShiftOptions"
       :selected-ot-option="selectedOTOption"
@@ -1015,12 +1159,13 @@ onMounted(async () => {
     />
 
     <OTEmployeeMultiPicker
+      v-if="employeePickerReady"
       v-model="selectedEmployees"
       :ot-date="selectedDateYMD"
       :selected-shift-id="sharedShiftIdForPicker"
       :selected-shift-label="sharedShiftLabelForPicker"
       :auto-select-all="true"
-      :auto-select-ready="canAutoSelectEmployees"
+      :auto-select-ready="autoSelectEmployeesReady"
       :blocked-employee-map="unavailableEmployeeMap"
       :blocked-loading="loadingUnavailableEmployees"
       :request-preview="pickerRequestPreview"
@@ -1028,54 +1173,102 @@ onMounted(async () => {
     />
 
     <div class="ot-create-bottom-grid">
-      <section class="ot-selected-preview-card">
-        <div class="ot-selected-preview-head">
-          <div>
-            <strong>{{ t('ot.requests.create.selectedPreviewTitle') }}</strong>
-
-            <span>
-              {{ t('ot.requests.create.selectedCount', { count: selectedEmployeeIds.length }) }}
-            </span>
-          </div>
-
-          <i class="pi pi-users" />
-        </div>
-
-        <div
-          v-if="selectedEmployeePreviewRows.length"
-          class="ot-selected-preview-list"
-        >
-          <span
-            v-for="employee in selectedEmployeePreviewRows"
-            :key="getEmployeeId(employee)"
-            class="ot-selected-preview-chip"
-          >
-            {{ formatSelectedEmployeePreviewLabel(employee) }}
-          </span>
-
-          <span
-            v-if="selectedEmployeeMoreCount"
-            class="ot-selected-preview-more"
-          >
-            {{ t('ot.requests.create.selectedPreviewMore', { count: selectedEmployeeMoreCount }) }}
-          </span>
-        </div>
-
-        <p
-          v-else
-          class="ot-selected-preview-empty"
-        >
-          {{ t('ot.requests.create.selectedPreviewEmpty') }}
-        </p>
-      </section>
-
       <OTSubmitBar
         :submitting="submitting"
         :disabled="submitDisabled"
-        @submit="submit"
+        @submit="openSubmitConfirm"
         @back="goBack"
       />
     </div>
+
+    <Dialog
+      v-model:visible="confirmVisible"
+      modal
+      class="ot-confirm-dialog"
+      :header="labelOr('ot.requests.create.confirmSubmitTitle', 'Confirm OT request')"
+      :style="{ width: 'min(96vw, 760px)' }"
+    >
+      <div class="ot-confirm-body">
+        <div class="ot-confirm-summary">
+          <div class="ot-confirm-item">
+            <span>{{ labelOr('ot.requests.create.confirmDate', 'Date') }}</span>
+            <strong>{{ selectedDateYMD || '-' }}</strong>
+          </div>
+
+          <div class="ot-confirm-item">
+            <span>{{ labelOr('ot.requests.create.confirmTime', 'OT time') }}</span>
+            <strong>{{ confirmTimeLabel }}</strong>
+          </div>
+
+          <div class="ot-confirm-item">
+            <span>{{ labelOr('ot.requests.create.confirmEmployees', 'Employees') }}</span>
+            <strong>{{ selectedEmployeeIds.length }}</strong>
+          </div>
+        </div>
+
+        <div class="ot-confirm-employee-box">
+          <div class="ot-confirm-employee-head">
+            <strong>{{ labelOr('ot.requests.create.selectedPreviewTitle', 'Selected employees') }}</strong>
+          </div>
+
+          <div class="ot-confirm-employee-table-wrap">
+            <table class="ot-confirm-employee-table">
+              <thead>
+                <tr>
+                  <th>No</th>
+                  <th>Employee ID</th>
+                  <th>Name</th>
+                  <th>Line</th>
+                  <th>OT Time</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                <tr
+                  v-for="(employee, index) in selectedEmployees"
+                  :key="getEmployeeId(employee) || index"
+                >
+                  <td>{{ index + 1 }}</td>
+
+                  <td>
+                    {{ employee.employeeNo || employee.employeeCode || getEmployeeId(employee) || '-' }}
+                  </td>
+
+                  <td>
+                    {{ employee.displayName || employee.employeeName || employee.name || '-' }}
+                  </td>
+
+                  <td>
+                    {{ formatEmployeeLine(employee) }}
+                  </td>
+
+                  <td>{{ formatEmployeeOTTime(employee) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <template #footer>
+        <Button
+          :label="labelOr('common.cancel', 'Cancel')"
+          severity="secondary"
+          outlined
+          size="small"
+          :disabled="submitting"
+          @click="confirmVisible = false"
+        />
+
+        <Button
+          :label="labelOr('ot.requests.create.submitRequest', 'Submit request')"
+          icon="pi pi-check"
+          size="small"
+          :loading="submitting"
+          @click="submitConfirmed"
+        />
+      </template>
+    </Dialog>
   </div>
 </template>
 
@@ -1087,86 +1280,189 @@ onMounted(async () => {
 }
 
 .ot-create-bottom-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 1rem;
+  display: flex;
+  justify-content: flex-end;
 }
 
-.ot-selected-preview-card {
+.ot-confirm-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.ot-confirm-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.ot-confirm-item {
   min-width: 0;
   border: 1px solid var(--ot-border);
-  border-radius: 1rem;
-  background:
-    linear-gradient(135deg, rgba(59, 130, 246, 0.06), transparent),
-    var(--ot-surface);
-  padding: 0.75rem;
+  border-radius: 0.85rem;
+  background: var(--ot-bg);
+  padding: 0.62rem 0.7rem;
 }
 
-.ot-selected-preview-head {
+.ot-confirm-item span {
+  display: block;
+  margin-bottom: 0.12rem;
+  color: var(--ot-text-muted);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ot-confirm-item strong {
+  display: block;
+  overflow: hidden;
+  color: var(--ot-text);
+  font-size: 0.82rem;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ot-confirm-employee-box {
+  border: 1px solid var(--ot-border);
+  border-radius: 0.9rem;
+  background: var(--ot-surface);
+  padding: 0.72rem;
+}
+
+.ot-confirm-employee-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: 0.65rem;
+  margin-bottom: 0.55rem;
 }
 
-.ot-selected-preview-head strong {
-  display: block;
+.ot-confirm-employee-head strong {
   color: var(--ot-text);
-  font-size: 0.86rem;
+  font-size: 0.84rem;
   font-weight: 650;
 }
 
-.ot-selected-preview-head span {
-  display: block;
-  margin-top: 0.12rem;
+.ot-confirm-employee-head span {
   color: var(--ot-text-muted);
-  font-size: 0.74rem;
-  font-weight: 500;
-}
-
-.ot-selected-preview-head i {
-  color: var(--p-primary-500);
-  font-size: 1.05rem;
-}
-
-.ot-selected-preview-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-  margin-top: 0.65rem;
-}
-
-.ot-selected-preview-chip,
-.ot-selected-preview-more {
-  display: inline-flex;
-  max-width: 100%;
-  align-items: center;
-  border: 1px solid var(--ot-border);
-  border-radius: 999px;
-  background: var(--ot-bg);
-  padding: 0.22rem 0.5rem;
-  color: var(--ot-text);
   font-size: 0.72rem;
   font-weight: 500;
-  line-height: 1.2;
 }
 
-.ot-selected-preview-more {
-  color: var(--p-primary-600);
-  font-weight: 650;
+.ot-confirm-employee-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  max-height: 10rem;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border: 1px solid var(--ot-border);
+  border-radius: 0.75rem;
 }
 
-.ot-selected-preview-empty {
-  margin-top: 0.65rem;
+.ot-confirm-employee-table {
+  width: 100%;
+  max-width: 100%;
+  table-layout: auto;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.ot-confirm-employee-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--ot-bg);
+  border-bottom: 1px solid var(--ot-border);
   color: var(--ot-text-muted);
-  font-size: 0.76rem;
-  line-height: 1.4;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.035em;
+  padding: 0.45rem 0.5rem;
+  text-align: left;
+  text-transform: uppercase;
+  vertical-align: middle;
 }
 
-@media (min-width: 1024px) {
+.ot-confirm-employee-table td {
+  border-bottom: 1px solid var(--ot-border);
+  color: var(--ot-text);
+  font-size: 0.74rem;
+  font-weight: 500;
+  padding: 0.45rem 0.5rem;
+  vertical-align: middle;
+}
+
+.ot-confirm-employee-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.ot-confirm-employee-table th:first-child,
+.ot-confirm-employee-table td:first-child {
+  width: 1%;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.ot-confirm-employee-table th:nth-child(2),
+.ot-confirm-employee-table td:nth-child(2) {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.ot-confirm-employee-table th:nth-child(3),
+.ot-confirm-employee-table td:nth-child(3) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.ot-confirm-employee-table th:nth-child(4),
+.ot-confirm-employee-table td:nth-child(4) {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.ot-confirm-employee-table th:nth-child(5),
+.ot-confirm-employee-table td:nth-child(5) {
+  width: 1%;
+  text-align: center;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
   .ot-create-bottom-grid {
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: start;
+    justify-content: stretch;
+  }
+
+  .ot-confirm-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ot-confirm-employee-head {
+    flex-direction: column;
+    gap: 0.18rem;
+  }
+
+  .ot-confirm-employee-table-wrap {
+    max-height: 48vh;
+  }
+
+  .ot-confirm-employee-table th,
+  .ot-confirm-employee-table td {
+    padding: 0.42rem 0.42rem;
+    font-size: 0.7rem;
+  }
+
+  .ot-confirm-employee-table th {
+    font-size: 0.62rem;
+    letter-spacing: 0.02em;
+  }
+
+  :deep(.ot-confirm-dialog .p-dialog-content),
+  :deep(.ot-confirm-dialog .p-dialog-footer) {
+    padding-inline: 0.85rem !important;
   }
 }
 </style>

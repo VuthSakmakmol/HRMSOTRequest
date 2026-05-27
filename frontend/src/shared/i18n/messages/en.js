@@ -2098,7 +2098,7 @@ export default {
         timingType: '3. Timing Type',
         presetOption: 'Preset option',
         customFixedTime: 'Custom fixed time',
-        otOptionPolicy: '4. OT Option / Policy',
+        otOptionPolicy: '2. OT Time',
         selectTimingType: 'Select timing type',
         selectOtOption: 'Select OT option',
 
@@ -2116,7 +2116,7 @@ export default {
         total: 'Total',
         submitRequest: 'Submit OT Request',
 
-        reason: '5. Reason',
+        reason: 'Reason',
         optional: 'Optional',
         reasonPlaceholder:
           'Example: urgent production order, shipment deadline...',
@@ -2208,7 +2208,7 @@ export default {
         },
 
         employeePicker: {
-          title: '2. Choose employees',
+          title: '3. Choose employees',
           searchPlaceholder: 'Search ID, name, line, position, or shift...',
           scopePlaceholder: 'Employee scope',
 

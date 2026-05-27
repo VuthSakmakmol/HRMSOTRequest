@@ -4,7 +4,7 @@ const Account = require('../models/Account')
 const AppError = require('../../../shared/errors/AppError')
 const { signAccessToken } = require('../../../shared/utils/jwt')
 const { resolveEffectiveAccess } = require('../utils/resolveEffectiveAccess')
-const { buildAuthUser } = require('../utils/buildAuthUser')
+const { AUTH_EMPLOYEE_POPULATE, buildAuthUser } = require('../utils/buildAuthUser')
 
 function invalidCredentialsError() {
   return new AppError({
@@ -32,6 +32,8 @@ async function login({ loginId, password }) {
   if (!passwordOk) {
     throw invalidCredentialsError()
   }
+
+  await account.populate(AUTH_EMPLOYEE_POPULATE)
 
   const effectiveAccess = await resolveEffectiveAccess(account)
 

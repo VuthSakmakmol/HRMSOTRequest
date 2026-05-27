@@ -1147,9 +1147,15 @@ function toggleLineExpanded(group) {
 }
 
 function syncLineState() {
-  const shouldOpenForSearch = Boolean(
+  const hasSearchOrLineFilter = Boolean(
     toTrimmedString(search.value) ||
       toTrimmedString(selectedLineId.value),
+  )
+
+  const shouldOpenNewLineGroups = Boolean(
+    props.otDate ||
+      props.autoSelectReady ||
+      hasSearchOrLineFilter,
   )
 
   const nextExpanded = {
@@ -1157,10 +1163,10 @@ function syncLineState() {
   }
 
   for (const group of lineGroups.value) {
-    if (shouldOpenForSearch) {
+    if (hasSearchOrLineFilter) {
       nextExpanded[group.id] = true
     } else if (nextExpanded[group.id] === undefined) {
-      nextExpanded[group.id] = false
+      nextExpanded[group.id] = shouldOpenNewLineGroups
     }
 
     if (!lineVisibleCountMap[group.id]) {
@@ -1236,7 +1242,7 @@ function buildBulkManagedParams(targetPage) {
     search: '',
     q: '',
     lineId: '',
-    shiftId: '',
+    shiftId: toTrimmedString(props.selectedShiftId),
     isActive: true,
     scope: 'MANAGED',
   }
@@ -1381,13 +1387,6 @@ async function fetchEmployeePage(targetPage = 1, { replace = false, silent = fal
     return
   }
 
-  // No search/line filter = never load all employees.
-  // Default table shows selected employees only.
-  if (!hasActiveTableFilter.value) {
-    showSelectedOnlyTable()
-    return
-  }
-
   if (!replace && loadedPages.value.has(targetPage)) return
   if (!replace && !hasMoreEmployees.value && loadedPages.value.size > 0) return
 
@@ -1440,11 +1439,6 @@ async function fetchEmployeePage(targetPage = 1, { replace = false, silent = fal
 async function resetAndLoadEmployees() {
   resetEmployeeListState()
 
-  if (!hasActiveTableFilter.value) {
-    showSelectedOnlyTable()
-    return
-  }
-
   await fetchEmployeePage(1, {
     replace: true,
   })
@@ -1454,7 +1448,6 @@ async function onLazyScroll(event) {
   const target = event?.target
   if (!target) return
 
-  if (!hasActiveTableFilter.value) return
   if (loading.value || loadingMore.value || backgroundFetchingAll.value) return
   if (!hasMoreEmployees.value) return
 
@@ -1480,7 +1473,12 @@ async function autoSelectManagedEmployees() {
   // After user manually changes/unselects employee, do not auto-select again.
   if (manualSelectionTouched.value) return
 
-  const nextKey = `${props.otDate}|${blockedStamp.value}`
+  const nextKey = [
+    props.otDate,
+    toTrimmedString(props.selectedShiftId),
+    defaultTimeKey.value,
+    blockedStamp.value,
+  ].join('|')
 
   if (autoSelectKey === nextKey) return
 
@@ -1505,13 +1503,13 @@ async function autoSelectManagedEmployees() {
       if (currentPage > MAX_BULK_PAGES) keepLoading = false
     }
 
-    const selectableRows = rows.filter((row) => {
-      return hasLine(row) && !getEmployeeBlockInfo(row).blocked
-    })
+    const selectableRows = rows.filter((row) => !getEmployeeBlockInfo(row).blocked)
 
     emitSelected(mergeUniqueRows([...selectedRows.value, ...selectableRows]))
-    employees.value = mergeLoadedEmployees(selectableRows, [])
+    employees.value = mergeLoadedEmployees(rows, [])
     total.value = employees.value.length
+    loadedPages.value = new Set()
+    clearLineUiState()
     syncLineState()
   } catch (error) {
     toast.add({
@@ -1560,7 +1558,7 @@ async function searchEmployeeSuggestions(event = {}) {
       search: keyword,
       q: keyword,
       lineId: '',
-      shiftId: '',
+      shiftId: toTrimmedString(props.selectedShiftId),
       isActive: true,
       scope: suggestionScope,
       all: suggestionScope === 'ALL',
@@ -1629,18 +1627,11 @@ function onEmployeeAutocompleteSelect(event = {}) {
 }
 
 function onFilterChange() {
-  if (!toTrimmedString(selectedLineId.value)) {
-    showSelectedOnlyTable()
-    return
-  }
-
   resetAndLoadEmployees()
 }
 
 watch(employeeScope, () => {
-  // Switching My Employees / All Employees should not load all rows.
-  // It only changes autocomplete/search scope.
-  showSelectedOnlyTable()
+  resetAndLoadEmployees()
 })
 
 watch(
@@ -1682,7 +1673,12 @@ watch(
     if (!props.otDate) return
 
     await autoSelectManagedEmployees()
-    showSelectedOnlyTable()
+
+    if (!employees.value.length) {
+      await resetAndLoadEmployees()
+    } else {
+      syncLineState()
+    }
   },
 )
 
@@ -1691,16 +1687,17 @@ watch(
   async () => {
     removeInvalidSelectedRows()
     await autoSelectManagedEmployees()
-    showSelectedOnlyTable()
+
+    if (!employees.value.length) {
+      await resetAndLoadEmployees()
+    } else {
+      syncLineState()
+    }
   },
 )
 
 watch(selectedRowsKey, () => {
-  // When user selects/removes employee, do not reload all lines.
-  // Keep table simple.
-  if (!hasActiveTableFilter.value || manualSelectionTouched.value) {
-    showSelectedOnlyTable()
-  }
+  syncLineState()
 })
 
 onMounted(async () => {
@@ -1712,7 +1709,12 @@ onMounted(async () => {
   lastWatchedOtDate = toTrimmedString(props.otDate)
 
   await autoSelectManagedEmployees()
-  showSelectedOnlyTable()
+
+  if (!employees.value.length) {
+    await resetAndLoadEmployees()
+  } else {
+    syncLineState()
+  }
 })
 
 onBeforeUnmount(() => {
@@ -1919,7 +1921,6 @@ onBeforeUnmount(() => {
                     <th>{{ t('common.name') }}</th>
                     <th>{{ t('nav.positions') }}</th>
                     <th>{{ t('ot.requests.create.otTime') }}</th>
-                    <th>{{ t('nav.shift') }}</th>
                   </tr>
                 </thead>
 
@@ -1927,6 +1928,7 @@ onBeforeUnmount(() => {
                   <tr
                     v-for="(employee, index) in getVisibleRowsForGroup(group)"
                     :key="getEmployeeId(employee)"
+                    :class="{ 'is-blocked-row': getEmployeeBlockInfo(employee).blocked && !isSelected(employee) }"
                   >
                     <td class="cell-center">
                       {{ index + 1 }}
@@ -1954,7 +1956,16 @@ onBeforeUnmount(() => {
                     </td>
 
                     <td>
-                      {{ employee.positionName || '-' }}
+                      <div class="cell-stack">
+                        <span>{{ employee.positionName || '-' }}</span>
+
+                        <Tag
+                          v-if="getEmployeeBlockInfo(employee).blocked && !isSelected(employee)"
+                          :value="getEmployeeBlockInfo(employee).reason"
+                          severity="danger"
+                          class="ot-status-tag"
+                        />
+                      </div>
                     </td>
 
                     <td>
@@ -1990,9 +2001,6 @@ onBeforeUnmount(() => {
                       </div>
                     </td>
 
-                    <td>
-                      {{ buildShiftLabel(employee) }}
-                    </td>
                   </tr>
                 </tbody>
               </table>
@@ -2223,6 +2231,11 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--ot-bg) 70%, transparent);
 }
 
+.ot-employee-table tbody tr.is-blocked-row td {
+  background: color-mix(in srgb, #ef4444 5%, var(--ot-surface));
+  color: var(--ot-text-muted);
+}
+
 .cell-center {
   text-align: center;
 }
@@ -2236,6 +2249,14 @@ onBeforeUnmount(() => {
 .cell-strong {
   font-weight: 600;
   color: var(--ot-text);
+}
+
+.cell-stack {
+  display: inline-flex;
+  max-width: 18rem;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.32rem;
 }
 
 .ot-duration-input {
@@ -2355,9 +2376,15 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 768px) {
+  .ot-employee-picker {
+    border-radius: 1rem;
+  }
+
   .ot-compact-header {
     align-items: stretch;
     flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.65rem;
   }
 
   .ot-title-block,
@@ -2366,24 +2393,76 @@ onBeforeUnmount(() => {
   .ot-line-filter {
     width: 100%;
     flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .ot-picker-title {
+    font-size: 0.92rem;
+  }
+
+  .ot-table-shell {
+    min-height: 240px;
+  }
+
+  .ot-lazy-scroll-shell {
+    max-height: 62vh;
   }
 
   .ot-line-sticky-head {
-    align-items: flex-start;
+    align-items: stretch;
     flex-direction: column;
+    gap: 0.45rem;
+    padding: 0.5rem 0.6rem;
   }
 
   .ot-line-head-right {
     flex-wrap: wrap;
     justify-content: flex-start;
+    gap: 0.32rem;
+  }
+
+  .ot-line-body {
+    padding: 0.5rem;
   }
 
   .ot-line-employee-scroll {
-    max-height: 432px;
+    max-height: 58vh;
+    -webkit-overflow-scrolling: touch;
   }
 
   .ot-employee-table {
-    min-width: 860px;
+    min-width: 780px;
+  }
+
+  .ot-employee-table th {
+    padding: 0.46rem 0.5rem;
+    font-size: 0.68rem;
+  }
+
+  .ot-employee-table td {
+    padding: 0.34rem 0.5rem;
+    font-size: 0.74rem;
+  }
+
+  .ot-duration-input {
+    width: 8rem;
+  }
+
+  .ot-time-total-cell {
+    min-width: 8.6rem;
+  }
+
+  :deep(.p-inputtext),
+  :deep(.p-select-label),
+  :deep(.p-inputnumber-input) {
+    font-size: 16px !important;
+  }
+
+  :deep(.ot-duration-input .p-inputnumber-input),
+  :deep(.ot-duration-input-field) {
+    width: 3.4rem !important;
+    min-width: 3.4rem !important;
+    font-size: 16px !important;
   }
 }
 </style>
