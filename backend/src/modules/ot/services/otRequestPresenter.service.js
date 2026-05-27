@@ -372,6 +372,30 @@ function hasApprovedStep(doc = {}) {
   return steps.some((step) => upper(step.status) === 'APPROVED')
 }
 
+function permissionCodesOf(authUser = {}) {
+  return Array.isArray(authUser.effectivePermissionCodes)
+    ? authUser.effectivePermissionCodes.map((item) => upper(item)).filter(Boolean)
+    : []
+}
+
+function hasPermission(authUser = {}, permissionCode) {
+  if (authUser?.isRootAdmin === true) return true
+
+  const target = upper(permissionCode)
+  if (!target) return false
+
+  return permissionCodesOf(authUser).includes(target)
+}
+
+function canModifyOTRequestBeforeApproval(doc = {}, authUser = {}) {
+  const status = upper(doc.status)
+
+  if (status !== 'PENDING') return false
+  if (hasApprovedStep(doc)) return false
+
+  return hasPermission(authUser, 'OT_REQUEST_UPDATE')
+}
+
 function effectiveEmployeesForDoc(doc = {}) {
   if (Array.isArray(doc.effectiveEmployees) && doc.effectiveEmployees.length) {
     return doc.effectiveEmployees
@@ -403,16 +427,11 @@ function effectiveEmployeesForDoc(doc = {}) {
 }
 
 function canEditOTRequest(doc = {}, authUser = {}) {
-  const actorEmployeeId = s(authUser.employeeId)
-  const ownerEmployeeId = s(doc.requesterEmployeeId)
-  const status = upper(doc.status)
+  return canModifyOTRequestBeforeApproval(doc, authUser)
+}
 
-  if (!actorEmployeeId || !ownerEmployeeId) return false
-  if (actorEmployeeId !== ownerEmployeeId) return false
-  if (status !== 'PENDING') return false
-  if (hasApprovedStep(doc)) return false
-
-  return true
+function canCancelOTRequest(doc = {}, authUser = {}) {
+  return canModifyOTRequestBeforeApproval(doc, authUser)
 }
 
 function canRequesterConfirm(doc = {}, authUser = {}) {
@@ -654,7 +673,7 @@ function buildPermissionOutput(doc = {}, authUser = {}) {
     canAdjustEmployees: approvalContext.canDecide,
     canRequesterConfirm: canRequesterConfirm(doc, authUser),
     canAcknowledge: false,
-    canCancel: false,
+    canCancel: canCancelOTRequest(doc, authUser),
   }
 }
 

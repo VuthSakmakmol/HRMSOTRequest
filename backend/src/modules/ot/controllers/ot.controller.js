@@ -161,6 +161,24 @@ async function updateOTRequest(req, res, next) {
   }
 }
 
+
+async function cancelOTRequest(req, res, next) {
+  try {
+    const params = parse(otRequestIdParamSchema, req.params || {})
+
+    const cancelledItem = await otService.cancel(params.id, req.user)
+    const item = await normalizeSavedOTRequestTiming(cancelledItem)
+
+    await safeRealtime(() => emitOTChanged(item, req.user, 'CANCELLED'))
+
+    return successResponse(res, {
+      item: presentItem(item, req.user),
+    })
+  } catch (error) {
+    return next(error)
+  }
+}
+
 async function listUnavailableOTEmployees(req, res, next) {
   try {
     const query = parse(unavailableOTEmployeesQuerySchema, req.query || {})
@@ -314,6 +332,7 @@ async function requesterConfirmOTRequest(req, res, next) {
 module.exports = {
   createOTRequest,
   updateOTRequest,
+  cancelOTRequest,
   listUnavailableOTEmployees,
   listOTRequests,
   exportOTRequestsExcel,

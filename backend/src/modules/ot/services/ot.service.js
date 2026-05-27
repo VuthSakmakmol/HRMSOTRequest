@@ -888,17 +888,36 @@ function hasApprovedStep(doc = {}) {
   return steps.some((step) => upper(step.status) === 'APPROVED')
 }
 
-function canEditOTRequest(doc = {}, authUser = {}) {
-  const actorEmployeeId = s(authUser.employeeId)
-  const ownerEmployeeId = s(doc.requesterEmployeeId)
+function permissionCodesOf(authUser = {}) {
+  return Array.isArray(authUser.effectivePermissionCodes)
+    ? authUser.effectivePermissionCodes.map((item) => upper(item)).filter(Boolean)
+    : []
+}
+
+function hasPermission(authUser = {}, permissionCode) {
+  if (authUser?.isRootAdmin === true) return true
+
+  const target = upper(permissionCode)
+  if (!target) return false
+
+  return permissionCodesOf(authUser).includes(target)
+}
+
+function canModifyOTRequestBeforeApproval(doc = {}, authUser = {}) {
   const status = upper(doc.status)
 
-  if (!actorEmployeeId || !ownerEmployeeId) return false
-  if (actorEmployeeId !== ownerEmployeeId) return false
   if (status !== 'PENDING') return false
   if (hasApprovedStep(doc)) return false
 
-  return true
+  return hasPermission(authUser, 'OT_REQUEST_UPDATE')
+}
+
+function canEditOTRequest(doc = {}, authUser = {}) {
+  return canModifyOTRequestBeforeApproval(doc, authUser)
+}
+
+function canCancelOTRequest(doc = {}, authUser = {}) {
+  return canModifyOTRequestBeforeApproval(doc, authUser)
 }
 
 function canRequesterConfirm(doc = {}, authUser = {}) {
@@ -922,6 +941,17 @@ function assertCanEditOTRequest(doc = {}, authUser = {}) {
       code: 'OT_REQUEST_EDIT_NOT_ALLOWED',
       messageKey: 'ot.request.error.editNotAllowed',
       message: 'This OT request cannot be edited',
+    })
+  }
+}
+
+function assertCanCancelOTRequest(doc = {}, authUser = {}) {
+  if (!canCancelOTRequest(doc, authUser)) {
+    throw appError({
+      statusCode: 403,
+      code: 'OT_REQUEST_CANCEL_NOT_ALLOWED',
+      messageKey: 'ot.request.error.cancelNotAllowed',
+      message: 'This OT request cannot be cancelled',
     })
   }
 }
@@ -1238,6 +1268,7 @@ function mapListItem(doc = {}, authUser = {}) {
 
     hasApprovedStep: hasApprovedStep(doc),
     canEdit: canEditOTRequest(doc, authUser),
+    canCancel: canCancelOTRequest(doc, authUser),
     canRequesterConfirm: canRequesterConfirm(doc, authUser),
 
     employees: effectiveEmployees.map(mapEmployeeOutput),
@@ -1931,6 +1962,51 @@ async function update(requestId, payload, authUser) {
   return getById(doc._id, authUser)
 }
 
+async function cancel(requestId, authUser) {
+  if (!isObjectId(requestId)) {
+    throw appError({
+      statusCode: 400,
+      code: 'INVALID_OT_REQUEST_ID',
+      messageKey: 'common.error.invalidId',
+      message: 'Invalid OT request id',
+      field: 'id',
+    })
+  }
+
+  const doc = await OTRequest.findById(requestId)
+
+  if (!doc) {
+    throw appError({
+      statusCode: 404,
+      code: 'OT_REQUEST_NOT_FOUND',
+      messageKey: 'ot.request.error.notFound',
+      message: 'OT request not found',
+    })
+  }
+
+  assertCanCancelOTRequest(doc, authUser)
+
+  doc.status = 'CANCELLED'
+  doc.currentApproverEmployeeId = null
+  doc.updatedBy = actorAccountId(authUser)
+
+  if (Array.isArray(doc.approvalSteps)) {
+    doc.approvalSteps = doc.approvalSteps.map((step) => {
+      const stepStatus = upper(step.status)
+
+      if (stepStatus === 'PENDING') {
+        step.status = 'WAITING'
+      }
+
+      return step
+    })
+  }
+
+  await doc.save()
+
+  return getById(doc._id, authUser)
+}
+
 async function list(query = {}, authUser = {}) {
   const page = Number(query.page || 1)
   const limit = Number(query.limit || 10)
@@ -2374,6 +2450,7 @@ async function getShiftOTOptionsByShift(shiftId, query = {}) {
 module.exports = {
   create,
   update,
+  cancel,
   list,
   listApprovalInbox,
   exportRequestsExcel,

@@ -62,6 +62,12 @@ router.patch(
 )
 
 router.post(
+  '/requests/:id/cancel',
+  requirePermission('OT_REQUEST_UPDATE'),
+  otController.cancelOTRequest,
+)
+
+router.post(
   '/requests/:id/requester-confirmation',
   requirePermission('OT_REQUEST_CREATE'),
   otController.requesterConfirmOTRequest,

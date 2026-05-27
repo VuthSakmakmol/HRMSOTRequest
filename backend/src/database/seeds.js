@@ -154,13 +154,25 @@ const PERMISSIONS = [
   // Calendar / Holidays
   // =========================
   permission('HOLIDAY_VIEW', 'View Holidays', 'CALENDAR', 'Allow viewing holiday records'),
-  permission('HOLIDAY_CREATE', 'Create Holidays', 'CALENDAR', 'Allow creating holiday records'),
-  permission('HOLIDAY_UPDATE', 'Update Holidays', 'CALENDAR', 'Allow updating holiday records'),
   permission(
     'HOLIDAY_LOOKUP',
     'Lookup Holidays',
     'CALENDAR',
-    'Allow reading holiday options for selectors and dropdowns only',
+    'Allow reading active holiday records for date pickers, OT, attendance, and payment lookup',
+  ),
+  permission('HOLIDAY_CREATE', 'Create Holidays', 'CALENDAR', 'Allow creating holiday records'),
+  permission('HOLIDAY_UPDATE', 'Update Holidays', 'CALENDAR', 'Allow updating holiday records'),
+  permission(
+    'HOLIDAY_IMPORT',
+    'Import Holidays',
+    'CALENDAR',
+    'Allow importing holiday records from Excel',
+  ),
+  permission(
+    'HOLIDAY_EXPORT',
+    'Export Holidays',
+    'CALENDAR',
+    'Allow exporting holiday records to Excel',
   ),
 
   // =========================
@@ -257,8 +269,8 @@ const PERMISSIONS = [
     'Allow updating shift OT options',
   ),
 
-    // =========================
-  // Payment
+  // =========================
+  // Payment / Formula
   // =========================
   permission(
     'PAYMENT_FORMULA_VIEW',
@@ -279,13 +291,20 @@ const PERMISSIONS = [
     'Allow updating payment formulas',
   ),
 
+  // =========================
+  // Payment / Process
+  // =========================
   permission(
     'PAYMENT_PROCESS',
     'Process Payment',
     'PAYMENT',
     'Allow uploading salary Excel, previewing payment, and exporting payment calculation files',
   ),
-    permission(
+
+  // =========================
+  // Payment / Allowance Policy
+  // =========================
+  permission(
     'PAYMENT_ALLOWANCE_POLICY_VIEW',
     'View Payment Allowance Policies',
     'PAYMENT',

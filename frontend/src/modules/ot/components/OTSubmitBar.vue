@@ -6,7 +6,12 @@ import { useI18n } from 'vue-i18n'
 
 import Button from 'primevue/button'
 
-defineProps({
+const props = defineProps({
+  submitLabel: {
+    type: String,
+    default: '',
+  },
+
   submitting: {
     type: Boolean,
     default: false,
@@ -25,7 +30,7 @@ const { t } = useI18n()
 <template>
   <div class="ot-submit-bar">
     <Button
-      :label="t('ot.requests.create.submitRequest')"
+      :label="props.submitLabel || t('ot.requests.create.submitRequest')"
       icon="pi pi-check"
       size="small"
       :loading="submitting"

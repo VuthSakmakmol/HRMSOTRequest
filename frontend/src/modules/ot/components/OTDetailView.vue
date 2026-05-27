@@ -13,7 +13,7 @@ import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 import Textarea from 'primevue/textarea'
 
-import { getHolidays } from '@/modules/calendar/holiday.api'
+import { getHolidayLookupOptions } from '@/modules/calendar/holiday.api'
 
 import {
   buildOTCreatePreview,
@@ -576,7 +576,7 @@ async function fetchMonthHolidays() {
   loadingCalendar.value = true
 
   try {
-    const res = await getHolidays({
+    const res = await getHolidayLookupOptions({
       page: 1,
       limit: 100,
       search: '',

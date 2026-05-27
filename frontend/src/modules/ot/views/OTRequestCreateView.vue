@@ -1,12 +1,13 @@
 <!-- frontend/src/modules/ot/views/OTRequestCreateView.vue -->
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
+import Message from 'primevue/message'
 
 import OTDetailView from '@/modules/ot/components/OTDetailView.vue'
 import OTEmployeeMultiPicker from '@/modules/ot/components/OTEmployeeMultiPicker.vue'
@@ -15,9 +16,12 @@ import api from '@/shared/services/api'
 
 import {
   createOTRequest,
+  getOTRequestById,
   getShiftOTOptionsByShift,
+  updateOTRequest,
 } from '@/modules/ot/ot.api'
 
+const route = useRoute()
 const router = useRouter()
 const toast = useToast()
 const { t } = useI18n()
@@ -27,18 +31,21 @@ const confirmVisible = ref(false)
 const confirmPayload = ref(null)
 
 const loadingRequester = ref(false)
+const loadingEditRequest = ref(false)
 const loadingShiftOptions = ref(false)
 const loadingUnavailableEmployees = ref(false)
 const employeePickerLoading = ref(false)
 
 const selectedEmployees = ref([])
 const requesterEmployee = ref(null)
+const editRequestDetail = ref(null)
 const shiftOptions = ref([])
 const unavailableEmployees = ref([])
 const selectedOptionDayType = ref('')
 const lastLoadedShiftKey = ref('')
 
 let unavailableRequestSeq = 0
+const hydratingEditRequest = ref(false)
 
 const form = reactive({
   otDate: null,
@@ -51,6 +58,10 @@ const form = reactive({
   customDurationHours: null,
   reason: '',
 })
+
+const editRequestId = computed(() => s(route.params.id))
+const isEditMode = computed(() => Boolean(editRequestId.value))
+const pageLoading = computed(() => loadingRequester.value || loadingEditRequest.value)
 
 const selectedDateYMD = computed(() => formatYMD(form.otDate))
 
@@ -116,10 +127,21 @@ const isCustomFixedTime = computed(() => {
 
 const unavailableEmployeeMap = computed(() => {
   const map = {}
+  const currentRequestId = editRequestId.value
+  const currentRequestNo = s(editRequestDetail.value?.requestNo)
 
   for (const item of unavailableEmployees.value) {
     const employeeId = s(item?.employeeId)
     if (!employeeId) continue
+
+    const sameRequest =
+      currentRequestId &&
+      (s(item?.requestId) === currentRequestId ||
+        s(item?.otRequestId) === currentRequestId ||
+        s(item?.id) === currentRequestId ||
+        (currentRequestNo && s(item?.requestNo) === currentRequestNo))
+
+    if (sameRequest) continue
 
     map[employeeId] = item
   }
@@ -191,6 +213,8 @@ const confirmTimeLabel = computed(() => {
     backendTimingPreview.value?.totalRequestPaidMinutes ||
       selectedOTOption.value?.totalRequestPaidMinutes ||
       selectedOTOption.value?.requestedMinutes ||
+      editRequestDetail.value?.totalRequestPaidMinutes ||
+      editRequestDetail.value?.requestedMinutes ||
       0,
   )
 })
@@ -207,7 +231,8 @@ const employeePickerReady = computed(() => {
 
 const autoSelectEmployeesReady = computed(() => {
   return Boolean(
-    employeePickerReady.value &&
+    !isEditMode.value &&
+      employeePickerReady.value &&
       !loadingUnavailableEmployees.value &&
       !loadingShiftOptions.value,
   )
@@ -229,19 +254,43 @@ const sharedShiftLabelForPicker = computed(() => {
   )
 })
 
+const canSubmitEditRequest = computed(() => {
+  if (!isEditMode.value) return true
+  return editRequestDetail.value?.canEdit === true
+})
+
 const submitDisabled = computed(() => {
   return (
-    loadingRequester.value ||
+    pageLoading.value ||
     loadingShiftOptions.value ||
     loadingUnavailableEmployees.value ||
     employeePickerLoading.value ||
     submitting.value ||
+    !canSubmitEditRequest.value ||
     !selectedDateYMD.value ||
     selectedShiftState.value.mode !== 'ready' ||
     !form.shiftOtOptionId ||
     !selectedOTOption.value ||
     !selectedEmployeeIds.value.length
   )
+})
+
+const submitLabel = computed(() => {
+  return isEditMode.value
+    ? labelOr('common.update', 'Update')
+    : labelOr('ot.requests.create.submitRequest', 'Submit request')
+})
+
+const confirmDialogTitle = computed(() => {
+  return isEditMode.value
+    ? labelOr('ot.requests.edit.confirmUpdateTitle', 'Confirm OT request update')
+    : labelOr('ot.requests.create.confirmSubmitTitle', 'Confirm OT request')
+})
+
+const confirmSubmitLabel = computed(() => {
+  return isEditMode.value
+    ? labelOr('common.update', 'Update')
+    : labelOr('ot.requests.create.submitRequest', 'Submit request')
 })
 
 function s(value) {
@@ -291,6 +340,17 @@ function pad2(value) {
   return String(value).padStart(2, '0')
 }
 
+function parseYMDToDate(value) {
+  const raw = s(value)
+  if (!raw) return null
+
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!match) return null
+
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
 function formatYMD(value) {
   if (!value) return ''
 
@@ -328,7 +388,8 @@ function getEmployeeId(employee = {}) {
 }
 
 function normalizePayload(res) {
-  return res?.data?.data || res?.data || {}
+  const payload = res?.data?.data || res?.data || {}
+  return payload?.item || payload
 }
 
 function normalizeAuthUser(res) {
@@ -450,11 +511,13 @@ function normalizeEmployeeProfile(source = {}) {
 }
 
 function normalizeUnavailableEmployeesResponse(res) {
-  const payload = normalizePayload(res)
+  const payload = res?.data?.data || res?.data || {}
   const rows = Array.isArray(payload?.items) ? payload.items : []
 
   return rows
     .map((item) => ({
+      id: s(item?.id || item?._id),
+      requestId: s(item?.requestId || item?.otRequestId),
       employeeId: s(item?.employeeId),
       employeeCode: s(item?.employeeCode),
       employeeName: s(item?.employeeName),
@@ -468,7 +531,7 @@ function normalizeUnavailableEmployeesResponse(res) {
 }
 
 function normalizeShiftOptionsResponse(res) {
-  const payload = normalizePayload(res)
+  const payload = res?.data?.data || res?.data || {}
   const rows = Array.isArray(payload?.items) ? payload.items : []
 
   selectedOptionDayType.value = upper(payload?.dayType || payload?.meta?.dayType)
@@ -510,6 +573,46 @@ function normalizeShiftOptionsResponse(res) {
     .filter((item) => item?.id && item?.optionLabel)
 }
 
+function normalizeSelectedEmployee(source = {}) {
+  const employeeId = s(source?.employeeId || source?._id || source?.id)
+  const employeeNo = s(source?.employeeNo || source?.employeeCode)
+  const displayName = s(source?.displayName || source?.employeeName || source?.name)
+
+  return {
+    ...source,
+    _id: employeeId,
+    id: employeeId,
+    employeeId,
+    employeeNo,
+    employeeCode: employeeNo,
+    displayName,
+    employeeName: displayName,
+    employeeLabel: [employeeNo, displayName].filter(Boolean).join(' - ') || displayName || employeeId,
+    lineName: s(
+      source?.lineName ||
+        source?.productionLineName ||
+        source?.line?.name ||
+        source?.productionLine?.name,
+    ),
+    lineLabel: s(source?.lineName || source?.productionLineName || source?.lineLabel || source?.productionLineLabel),
+    requestedMinutes: n(source?.requestedMinutes),
+    totalRequestPaidMinutes: positiveNumber(
+      source?.totalRequestPaidMinutes,
+      source?.totalMinutes,
+      source?.requestedMinutes,
+      editRequestDetail.value?.totalRequestPaidMinutes,
+      editRequestDetail.value?.requestedMinutes,
+    ),
+    totalMinutes: positiveNumber(
+      source?.totalRequestPaidMinutes,
+      source?.totalMinutes,
+      source?.requestedMinutes,
+      editRequestDetail.value?.totalRequestPaidMinutes,
+      editRequestDetail.value?.requestedMinutes,
+    ),
+  }
+}
+
 function clearShiftOptions() {
   shiftOptions.value = []
   form.shiftOtOptionId = ''
@@ -547,6 +650,66 @@ function removeUnavailableSelectedEmployees() {
   }
 }
 
+function hydrateRequesterFromEditRequest(data = {}) {
+  const shift = normalizeShiftRecord({
+    shiftId: data?.shiftId,
+    shiftCode: data?.shiftCode,
+    shiftName: data?.shiftName,
+    shiftType: data?.shiftType,
+    shiftStartTime: data?.shiftStartTime,
+    shiftEndTime: data?.shiftEndTime,
+  })
+
+  return {
+    _id: s(data?.requesterEmployeeId),
+    id: s(data?.requesterEmployeeId),
+    employeeId: s(data?.requesterEmployeeId),
+    employeeNo: s(data?.requesterEmployeeCode),
+    employeeCode: s(data?.requesterEmployeeCode),
+    displayName: s(data?.requesterName),
+    name: s(data?.requesterName),
+    shiftId: shift?.id || '',
+    shiftCode: shift?.code || '',
+    shiftName: shift?.name || '',
+    shiftType: shift?.type || '',
+    shiftStartTime: shift?.startTime || '',
+    shiftEndTime: shift?.endTime || '',
+    shift: shift || null,
+  }
+}
+
+function hydrateFormFromEditRequest(data = {}) {
+  hydratingEditRequest.value = true
+
+  editRequestDetail.value = data
+
+  form.otDate = parseYMDToDate(data?.otDate) || new Date()
+  form.shiftId = s(data?.shiftId)
+  form.otTimingSource = upper(data?.otTimingSource || 'SHIFT_OPTION')
+  form.shiftOtOptionId = s(data?.shiftOtOptionId)
+  form.customStartTime = s(data?.customStartTime || data?.requestStartTime || data?.startTime)
+  form.customEndTime = s(data?.customEndTime || data?.requestEndTime || data?.endTime)
+  form.customBreakMinutes = n(data?.customBreakMinutes ?? data?.breakMinutes)
+  form.customDurationHours = null
+  form.reason = s(data?.reason)
+
+  requesterEmployee.value = hydrateRequesterFromEditRequest(data)
+
+  const sourceEmployees = Array.isArray(data?.requestedEmployees) && data.requestedEmployees.length
+    ? data.requestedEmployees
+    : Array.isArray(data?.employees)
+      ? data.employees
+      : []
+
+  selectedEmployees.value = sourceEmployees
+    .map(normalizeSelectedEmployee)
+    .filter((item) => getEmployeeId(item))
+
+  window.setTimeout(() => {
+    hydratingEditRequest.value = false
+  }, 0)
+}
+
 async function loadRequesterEmployee() {
   loadingRequester.value = true
 
@@ -571,6 +734,52 @@ async function loadRequesterEmployee() {
     )
   } finally {
     loadingRequester.value = false
+  }
+}
+
+async function loadEditRequest() {
+  const id = editRequestId.value
+  if (!id) return
+
+  loadingEditRequest.value = true
+
+  try {
+    const res = await getOTRequestById(id)
+    const data = normalizePayload(res)
+
+    if (!data?.id && !data?._id) {
+      throw new Error('OT request not found')
+    }
+
+    if (data.canEdit !== true) {
+      showToast(
+        'warn',
+        labelOr('ot.requests.edit.editUnavailableTitle', 'Edit unavailable'),
+        labelOr(
+          'ot.requests.edit.editUnavailableDetail',
+          'This request cannot be edited because it is already approved, rejected, cancelled, or not allowed.',
+        ),
+        4500,
+      )
+
+      router.push('/ot/requests')
+      return
+    }
+
+    hydrateFormFromEditRequest(data)
+    await loadUnavailableEmployeesForDate()
+    await loadShiftOptionsForSelectedShift({ keepSelectedOption: true })
+  } catch (error) {
+    showToast(
+      'error',
+      t('common.loadFailed'),
+      buildApiErrorMessage(error, labelOr('ot.requests.edit.loadFailedDetail', 'Failed to load OT request.')),
+      4000,
+    )
+
+    router.push('/ot/requests')
+  } finally {
+    loadingEditRequest.value = false
   }
 }
 
@@ -609,22 +818,27 @@ async function loadUnavailableEmployeesForDate() {
   }
 }
 
-async function loadShiftOptionsForSelectedShift() {
+async function loadShiftOptionsForSelectedShift(options = {}) {
+  const keepSelectedOption = options.keepSelectedOption === true
   const shiftId = s(form.shiftId)
   const otDate = selectedDateYMD.value
+  const currentOptionId = s(form.shiftOtOptionId)
 
   if (!otDate || !shiftId) {
-    clearShiftOptions()
+    if (!keepSelectedOption) clearShiftOptions()
     return
   }
 
   const loadKey = `${shiftId}|${otDate}`
 
-  if (lastLoadedShiftKey.value === loadKey) return
+  if (lastLoadedShiftKey.value === loadKey && shiftOptions.value.length) return
 
   loadingShiftOptions.value = true
-  form.shiftOtOptionId = ''
-  resetCustomTiming()
+
+  if (!keepSelectedOption) {
+    form.shiftOtOptionId = ''
+    resetCustomTiming()
+  }
 
   try {
     const res = await getShiftOTOptionsByShift(shiftId, {
@@ -636,7 +850,17 @@ async function loadShiftOptionsForSelectedShift() {
     shiftOptions.value = rows
     lastLoadedShiftKey.value = loadKey
 
-    if (rows.length === 1) {
+    if (keepSelectedOption && currentOptionId) {
+      const exists = rows.some((item) => s(item.id || item._id) === currentOptionId)
+
+      if (exists) {
+        form.shiftOtOptionId = currentOptionId
+      } else if (rows.length === 1) {
+        form.shiftOtOptionId = rows[0].id
+      } else {
+        form.shiftOtOptionId = ''
+      }
+    } else if (rows.length === 1) {
       form.shiftOtOptionId = rows[0].id
     }
 
@@ -717,6 +941,10 @@ function buildPayload() {
 function validateBeforeSubmit(payload) {
   if (loadingUnavailableEmployees.value) {
     return t('ot.requests.create.waitAvailability')
+  }
+
+  if (isEditMode.value && editRequestDetail.value?.canEdit !== true) {
+    return labelOr('ot.requests.edit.editUnavailableDetail', 'This OT request cannot be edited.')
   }
 
   if (!payload.otDate) {
@@ -911,6 +1139,10 @@ function buildApiErrorMessage(error, fallback = '') {
     return t('ot.requests.create.duplicateGeneric')
   }
 
+  if (code === 'OT_REQUEST_EDIT_NOT_ALLOWED') {
+    return labelOr('ot.requests.edit.editUnavailableDetail', 'This OT request cannot be edited.')
+  }
+
   return message || fallback || t('ot.requests.create.createFailedDetail')
 }
 
@@ -1030,14 +1262,25 @@ async function submitConfirmed() {
   submitting.value = true
 
   try {
-    await createOTRequest(payload)
+    if (isEditMode.value) {
+      await updateOTRequest(editRequestId.value, payload)
 
-    showToast(
-      'success',
-      t('ot.requests.create.successTitle'),
-      t('ot.requests.create.successMessage'),
-      2500,
-    )
+      showToast(
+        'success',
+        t('common.updated'),
+        labelOr('ot.requests.edit.updatedSuccess', 'OT request updated successfully.'),
+        2500,
+      )
+    } else {
+      await createOTRequest(payload)
+
+      showToast(
+        'success',
+        t('ot.requests.create.successTitle'),
+        t('ot.requests.create.successMessage'),
+        2500,
+      )
+    }
 
     router.push('/ot/requests')
   } catch (error) {
@@ -1080,12 +1323,17 @@ async function submitConfirmed() {
       return
     }
 
-    console.error('[OTRequestCreateView] create failed:', error?.response?.data || error)
+    console.error('[OTRequestCreateView] save failed:', error?.response?.data || error)
 
     showToast(
       'error',
-      t('common.createFailed'),
-      buildApiErrorMessage(error, t('ot.requests.create.createFailedDetail')),
+      isEditMode.value ? t('common.updateFailed') : t('common.createFailed'),
+      buildApiErrorMessage(
+        error,
+        isEditMode.value
+          ? labelOr('ot.requests.edit.updateFailedDetail', 'Failed to update OT request.')
+          : t('ot.requests.create.createFailedDetail'),
+      ),
       8000,
     )
   } finally {
@@ -1101,7 +1349,12 @@ function goBack() {
 watch(
   () => selectedDateYMD.value,
   async () => {
-    selectedEmployees.value = []
+    if (hydratingEditRequest.value) return
+
+    if (!isEditMode.value) {
+      selectedEmployees.value = []
+    }
+
     clearShiftOptions()
 
     await loadUnavailableEmployeesForDate()
@@ -1112,7 +1365,12 @@ watch(
 watch(
   () => form.shiftId,
   async () => {
-    selectedEmployees.value = []
+    if (hydratingEditRequest.value) return
+
+    if (!isEditMode.value) {
+      selectedEmployees.value = []
+    }
+
     clearShiftOptions()
 
     await loadShiftOptionsForSelectedShift()
@@ -1138,6 +1396,11 @@ watch(
 )
 
 onMounted(async () => {
+  if (isEditMode.value) {
+    await loadEditRequest()
+    return
+  }
+
   await loadRequesterEmployee()
   await loadUnavailableEmployeesForDate()
   await loadShiftOptionsForSelectedShift()
@@ -1146,46 +1409,66 @@ onMounted(async () => {
 
 <template>
   <div class="ot-create-page">
-    <OTDetailView
-      :form="form"
-      :requester-employee="requesterEmployee"
-      :selected-employee-count="selectedEmployeeIds.length"
-      :selected-shift-state="selectedShiftState"
-      :loading-shifts="loadingRequester"
-      :shift-options="shiftOptions"
-      :loading-shift-options="loadingShiftOptions"
-      :selected-ot-option="selectedOTOption"
-      :request-preview="requestPreview"
-    />
+    <Message
+      v-if="isEditMode"
+      severity="info"
+      :closable="false"
+      class="ot-edit-mode-message"
+    >
+      {{ labelOr('ot.requests.edit.editModeMessage', 'Editing pending OT request. Changes are allowed only before any approval step is approved.') }}
+    </Message>
 
-    <OTEmployeeMultiPicker
-      v-if="employeePickerReady"
-      v-model="selectedEmployees"
-      :ot-date="selectedDateYMD"
-      :selected-shift-id="sharedShiftIdForPicker"
-      :selected-shift-label="sharedShiftLabelForPicker"
-      :auto-select-all="true"
-      :auto-select-ready="autoSelectEmployeesReady"
-      :blocked-employee-map="unavailableEmployeeMap"
-      :blocked-loading="loadingUnavailableEmployees"
-      :request-preview="pickerRequestPreview"
-      @loading-change="employeePickerLoading = $event"
-    />
-
-    <div class="ot-create-bottom-grid">
-      <OTSubmitBar
-        :submitting="submitting"
-        :disabled="submitDisabled"
-        @submit="openSubmitConfirm"
-        @back="goBack"
-      />
+    <div
+      v-if="pageLoading"
+      class="ot-loading-panel"
+    >
+      <i class="pi pi-spin pi-spinner" />
+      <span>{{ labelOr('common.loading', 'Loading') }}</span>
     </div>
+
+    <template v-else>
+      <OTDetailView
+        :form="form"
+        :requester-employee="requesterEmployee"
+        :selected-employee-count="selectedEmployeeIds.length"
+        :selected-shift-state="selectedShiftState"
+        :loading-shifts="loadingRequester"
+        :shift-options="shiftOptions"
+        :loading-shift-options="loadingShiftOptions"
+        :selected-ot-option="selectedOTOption"
+        :request-preview="requestPreview"
+      />
+
+      <OTEmployeeMultiPicker
+        v-if="employeePickerReady"
+        v-model="selectedEmployees"
+        :ot-date="selectedDateYMD"
+        :selected-shift-id="sharedShiftIdForPicker"
+        :selected-shift-label="sharedShiftLabelForPicker"
+        :auto-select-all="!isEditMode"
+        :auto-select-ready="autoSelectEmployeesReady"
+        :blocked-employee-map="unavailableEmployeeMap"
+        :blocked-loading="loadingUnavailableEmployees"
+        :request-preview="pickerRequestPreview"
+        @loading-change="employeePickerLoading = $event"
+      />
+
+      <div class="ot-create-bottom-grid">
+        <OTSubmitBar
+          :submit-label="submitLabel"
+          :submitting="submitting"
+          :disabled="submitDisabled"
+          @submit="openSubmitConfirm"
+          @back="goBack"
+        />
+      </div>
+    </template>
 
     <Dialog
       v-model:visible="confirmVisible"
       modal
       class="ot-confirm-dialog"
-      :header="labelOr('ot.requests.create.confirmSubmitTitle', 'Confirm OT request')"
+      :header="confirmDialogTitle"
       :style="{ width: 'min(96vw, 760px)' }"
     >
       <div class="ot-confirm-body">
@@ -1261,7 +1544,7 @@ onMounted(async () => {
         />
 
         <Button
-          :label="labelOr('ot.requests.create.submitRequest', 'Submit request')"
+          :label="confirmSubmitLabel"
           icon="pi pi-check"
           size="small"
           :loading="submitting"
@@ -1277,6 +1560,24 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+}
+
+.ot-loading-panel,
+.ot-edit-mode-message {
+  border-radius: 1rem;
+}
+
+.ot-loading-panel {
+  display: inline-flex;
+  min-height: 7rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  border: 1px solid var(--ot-border);
+  background: var(--ot-surface);
+  color: var(--ot-text-muted);
+  font-size: 0.84rem;
+  font-weight: 600;
 }
 
 .ot-create-bottom-grid {

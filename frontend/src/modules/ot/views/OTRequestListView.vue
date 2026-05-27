@@ -8,6 +8,7 @@ import { useToast } from 'primevue/usetoast'
 import Button from 'primevue/button'
 import Column from 'primevue/column'
 import DataTable from 'primevue/datatable'
+import Dialog from 'primevue/dialog'
 import IconField from 'primevue/iconfield'
 import InputIcon from 'primevue/inputicon'
 import InputText from 'primevue/inputtext'
@@ -22,6 +23,7 @@ import { getApiErrorMessage } from '@/shared/utils/apiError'
 import { useOTRealtimeRefresh } from '@/modules/ot/otRealtimeRefresh'
 
 import {
+  cancelOTRequest,
   exportOTRequestsExcel,
   getOTRequests,
 } from '@/modules/ot/ot.api'
@@ -58,6 +60,9 @@ const bootstrapped = ref(false)
 const backgroundLoading = ref(false)
 const loadingMore = ref(false)
 const exporting = ref(false)
+const cancellingIds = ref(new Set())
+const cancelConfirmVisible = ref(false)
+const cancelTargetRow = ref(null)
 const filtersPanelOpen = ref(false)
 const activeDatePicker = ref('')
 
@@ -91,6 +96,27 @@ const hasMorePages = computed(() => loadedCount.value < totalRequests.value)
 
 const firstLoading = computed(() => {
   return backgroundLoading.value && !bootstrapped.value && !hasAnyData.value
+})
+
+const cancelTargetRequestNo = computed(() => {
+  const row = cancelTargetRow.value || {}
+
+  return String(row.requestNo || row.otRequestNo || row.id || '').trim()
+})
+
+const cancelTargetStatusLabel = computed(() => {
+  const row = cancelTargetRow.value || {}
+  const approval = displayApproval(row)
+
+  return String(approval?.label || row.statusLabel || row.status || '-').trim()
+})
+
+const cancelTargetEmployeeCount = computed(() => {
+  return displayStaffCount(cancelTargetRow.value || {})
+})
+
+const cancelTargetIsLoading = computed(() => {
+  return cancelTargetRow.value ? isCancellingRow(cancelTargetRow.value) : false
 })
 
 function tr(key, fallback) {
@@ -636,6 +662,299 @@ async function handleExport() {
   }
 }
 
+function rowIdOf(row = {}) {
+  return String(row?.id || row?._id || row?.requestId || row?.otRequestId || '').trim()
+}
+
+function toBooleanOrNull(value) {
+  if (value === true) return true
+  if (value === false) return false
+  if (value === 1) return true
+  if (value === 0) return false
+
+  const normalized = String(value ?? '').trim().toLowerCase()
+
+  if (['true', '1', 'yes', 'y'].includes(normalized)) return true
+  if (['false', '0', 'no', 'n'].includes(normalized)) return false
+
+  return null
+}
+
+function rowPermissionsOf(row = {}) {
+  const candidates = [
+    row?.permissions,
+    row?.permission,
+    row?.actions,
+    row?.availableActions,
+    row?.allowedActions,
+    row?.actionPermissions,
+    row?.uiPermissions,
+    row?.ui,
+  ]
+
+  return candidates.find((item) => item && typeof item === 'object' && !Array.isArray(item)) || {}
+}
+
+function readRowAction(row = {}, key, aliases = []) {
+  const names = [key, ...aliases]
+
+  const containers = [
+    row,
+    row?.permissions,
+    row?.permission,
+    row?.actions,
+    row?.availableActions,
+    row?.allowedActions,
+    row?.actionPermissions,
+    row?.uiPermissions,
+    row?.ui,
+  ]
+
+  for (const container of containers) {
+    if (!container) continue
+
+    if (Array.isArray(container)) {
+      const normalizedActions = container.map((item) =>
+        String(item || '').trim().toLowerCase(),
+      )
+
+      for (const name of names) {
+        const normalizedName = String(name || '').trim().toLowerCase()
+        const simpleName = normalizedName.replace(/^can/, '')
+
+        if (
+          normalizedActions.includes(normalizedName) ||
+          normalizedActions.includes(simpleName)
+        ) {
+          return true
+        }
+      }
+
+      continue
+    }
+
+    if (typeof container !== 'object') continue
+
+    for (const name of names) {
+      const value = toBooleanOrNull(container?.[name])
+
+      if (value !== null) return value
+    }
+  }
+
+  return null
+}
+
+function normalizedRowStatus(row = {}) {
+  const approval = displayApproval(row)
+
+  return String(
+    row?.status ||
+      row?.requestStatus ||
+      row?.approvalStatus ||
+      row?.workflowStatus ||
+      row?.approval?.status ||
+      approval?.type ||
+      approval?.status ||
+      '',
+  )
+    .trim()
+    .toUpperCase()
+}
+
+function normalizedApprovalLabel(row = {}) {
+  const approval = displayApproval(row)
+
+  return String(approval?.label || row?.statusLabel || '').trim().toUpperCase()
+}
+
+function isClosedOTRequest(row = {}) {
+  const status = normalizedRowStatus(row)
+  const label = normalizedApprovalLabel(row)
+
+  if (
+    [
+      'APPROVED',
+      'REJECTED',
+      'CANCELLED',
+      'CANCELED',
+      'REQUESTER_DISAGREED',
+    ].includes(status)
+  ) {
+    return true
+  }
+
+  return (
+    label.includes('APPROVED') ||
+    label.includes('REJECTED') ||
+    label.includes('CANCELLED') ||
+    label.includes('CANCELED') ||
+    label.includes('DISAGREED')
+  )
+}
+
+function hasApprovedStep(row = {}) {
+  const directFlags = [
+    row?.hasApprovedStep,
+    row?.hasAnyApprovedStep,
+    row?.approval?.hasApprovedStep,
+    row?.approvalSummary?.hasApprovedStep,
+  ]
+
+  for (const value of directFlags) {
+    const parsed = toBooleanOrNull(value)
+    if (parsed === true) return true
+  }
+
+  const approvedCounts = [
+    row?.approvedStepCount,
+    row?.approvalApprovedCount,
+    row?.approvedCount,
+    row?.approval?.approvedStepCount,
+    row?.approvalSummary?.approvedStepCount,
+  ]
+
+  if (approvedCounts.some((value) => Number(value || 0) > 0)) {
+    return true
+  }
+
+  const stepSources = [
+    row?.approvalSteps,
+    row?.approvalChain,
+    row?.approvals,
+    row?.steps,
+    row?.approval?.steps,
+    row?.approvalFlow?.steps,
+  ]
+
+  const steps = stepSources.find((item) => Array.isArray(item)) || []
+
+  return steps.some((step) => {
+    const status = String(
+      step?.status ||
+        step?.decision ||
+        step?.approvalStatus ||
+        step?.action ||
+        '',
+    )
+      .trim()
+      .toUpperCase()
+
+    return (
+      status === 'APPROVED' ||
+      status === 'APPROVE' ||
+      Boolean(step?.approvedAt) ||
+      Boolean(step?.approvedBy)
+    )
+  })
+}
+
+function isBeforeApprovalStarted(row = {}) {
+  return !isClosedOTRequest(row) && !hasApprovedStep(row)
+}
+
+function hasOTUpdatePermission() {
+  return auth?.hasPermission?.('OT_REQUEST_UPDATE') === true
+}
+
+function canEditRow(row = {}) {
+  const explicit = readRowAction(row, 'canEdit', ['edit', 'editable'])
+
+  if (explicit === true) return true
+
+  return hasOTUpdatePermission() && isBeforeApprovalStarted(row)
+}
+
+function canCancelRow(row = {}) {
+  const explicit = readRowAction(row, 'canCancel', ['cancel', 'cancellable'])
+
+  if (explicit === true) return true
+
+  return hasOTUpdatePermission() && isBeforeApprovalStarted(row)
+}
+
+function hasRowActions(row = {}) {
+  return canEditRow(row) || canCancelRow(row)
+}
+
+
+function isCancellingRow(row = {}) {
+  return cancellingIds.value.has(rowIdOf(row))
+}
+
+function setCancellingRow(row = {}, value) {
+  const id = rowIdOf(row)
+  if (!id) return
+
+  const next = new Set(cancellingIds.value)
+
+  if (value) {
+    next.add(id)
+  } else {
+    next.delete(id)
+  }
+
+  cancellingIds.value = next
+}
+
+function editRequest(row = {}) {
+  const id = rowIdOf(row)
+  if (!id || !canEditRow(row)) return
+
+  router.push(`/ot/requests/${id}/edit`)
+}
+
+function openCancelDialog(row = {}) {
+  if (!rowIdOf(row) || !canCancelRow(row)) return
+
+  cancelTargetRow.value = row
+  cancelConfirmVisible.value = true
+}
+
+function closeCancelDialog() {
+  if (cancelTargetIsLoading.value) return
+
+  cancelConfirmVisible.value = false
+  cancelTargetRow.value = null
+}
+
+async function confirmCancelRequest() {
+  const row = cancelTargetRow.value || {}
+  const id = rowIdOf(row)
+
+  if (!id || !canCancelRow(row)) {
+    closeCancelDialog()
+    return
+  }
+
+  setCancellingRow(row, true)
+
+  try {
+    await cancelOTRequest(id)
+
+    toast.add({
+      severity: 'success',
+      summary: tr('common.updated', 'Updated'),
+      detail: tr('ot.requests.cancelledSuccess', 'OT request cancelled successfully.'),
+      life: 2500,
+    })
+
+    cancelConfirmVisible.value = false
+    cancelTargetRow.value = null
+
+    await reloadFirstPage({ keepVisible: true })
+  } catch (error) {
+    toast.add({
+      severity: 'error',
+      summary: tr('common.updateFailed', 'Update failed'),
+      detail: getApiErrorMessage(error, tr('ot.requests.cancelFailed', 'Cancel failed.')),
+      life: 4000,
+    })
+  } finally {
+    setCancellingRow(row, false)
+  }
+}
+
 function openCreateRequest() {
   router.push('/ot/requests/create')
 }
@@ -821,7 +1140,7 @@ onBeforeUnmount(() => {
         :title="t('ot.requests.loading')"
         :message="t('ot.requests.fetchingRecords')"
         :rows="8"
-        :columns="8"
+        :columns="9"
         icon="pi pi-clock"
       />
 
@@ -970,6 +1289,51 @@ onBeforeUnmount(() => {
             </template>
           </Column>
 
+          <Column
+            :header="tr('common.action', 'Action')"
+            header-class="ot-action-column-header"
+            body-class="ot-action-column-body"
+            style="width: 7.5rem; min-width: 7.5rem"
+          >
+            <template #body="{ data }">
+              <div
+                v-if="hasRowActions(data)"
+                class="ot-row-actions"
+              >
+                <Button
+                  v-if="canEditRow(data)"
+                  :label="tr('common.edit', 'Edit')"
+                  icon="pi pi-pencil"
+                  severity="info"
+                  outlined
+                  size="small"
+                  class="ot-row-action-button"
+                  @click="editRequest(data)"
+                />
+
+                <Button
+                  v-if="canCancelRow(data)"
+                  :label="tr('common.cancel', 'Cancel')"
+                  icon="pi pi-times"
+                  severity="danger"
+                  outlined
+                  size="small"
+                  class="ot-row-action-button"
+                  :loading="isCancellingRow(data)"
+                  :disabled="isCancellingRow(data)"
+                  @click="openCancelDialog(data)"
+                />
+              </div>
+
+              <span
+                v-else
+                class="ot-action-empty"
+              >
+                -
+              </span>
+            </template>
+          </Column>
+
           <template #expansion="{ data }">
             <div class="ot-expanded-box">
               <div
@@ -1058,6 +1422,70 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </section>
+
+    <Dialog
+      v-model:visible="cancelConfirmVisible"
+      modal
+      class="ot-cancel-dialog"
+      :header="tr('ot.requests.cancelConfirmTitle', 'Cancel OT request')"
+      :style="{ width: 'min(92vw, 440px)' }"
+      @hide="closeCancelDialog"
+    >
+      <div class="ot-cancel-dialog-body">
+        <div class="ot-cancel-icon">
+          <i class="pi pi-exclamation-triangle" />
+        </div>
+
+        <div class="ot-cancel-message">
+          <strong>
+            {{ tr('ot.requests.cancelConfirmHeading', 'Cancel this OT request?') }}
+          </strong>
+
+          <span>
+            {{ tr('ot.requests.cancelConfirmHelp', 'This request has no approved step yet. After cancel, it will no longer continue approval.') }}
+          </span>
+        </div>
+
+        <div class="ot-cancel-summary">
+          <div>
+            <span>{{ t('ot.requests.requestNo') }}</span>
+            <strong>{{ cancelTargetRequestNo || '-' }}</strong>
+          </div>
+
+          <div>
+            <span>{{ t('ot.requests.approvalStatus') }}</span>
+            <strong>{{ cancelTargetStatusLabel }}</strong>
+          </div>
+
+          <div>
+            <span>{{ t('ot.approval.requestedStaff') }}</span>
+            <strong>{{ cancelTargetEmployeeCount }}</strong>
+          </div>
+        </div>
+      </div>
+
+      <template #footer>
+        <Button
+          :label="tr('common.keep', 'Keep')"
+          severity="secondary"
+          outlined
+          size="small"
+          class="ot-dialog-button"
+          :disabled="cancelTargetIsLoading"
+          @click="closeCancelDialog"
+        />
+
+        <Button
+          :label="tr('common.cancelRequest', 'Cancel request')"
+          icon="pi pi-times"
+          severity="danger"
+          size="small"
+          class="ot-dialog-button"
+          :loading="cancelTargetIsLoading"
+          @click="confirmCancelRequest"
+        />
+      </template>
+    </Dialog>
   </div>
 </template>
 
@@ -1510,6 +1938,145 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
 }
 
+/* Row actions */
+
+:deep(.ot-request-table.p-datatable .ot-action-column-header),
+:deep(.ot-request-table.p-datatable .ot-action-column-body) {
+  position: sticky !important;
+  right: 0 !important;
+  z-index: 70 !important;
+  background: var(--surface-card) !important;
+  box-shadow: -1px 0 0 rgb(var(--ot-list-row-border) / 0.12);
+}
+
+:deep(.ot-request-table.p-datatable .ot-action-column-header) {
+  z-index: 90 !important;
+  background: var(--surface-ground) !important;
+}
+
+.ot-row-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+}
+
+.ot-row-action-button {
+  min-width: 0;
+}
+
+.ot-row-action-button :deep(.p-button-label) {
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+
+.ot-row-action-button :deep(.p-button-icon) {
+  font-size: 0.72rem;
+}
+
+.ot-action-empty {
+  color: var(--text-color-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.ot-cancel-dialog-body {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: start;
+}
+
+.ot-cancel-icon {
+  display: grid;
+  width: 2.45rem;
+  height: 2.45rem;
+  place-items: center;
+  border: 1px solid rgb(var(--ot-list-red-rgb) / 0.25);
+  border-radius: 999px;
+  background: rgb(var(--ot-list-red-rgb) / 0.1);
+  color: rgb(var(--ot-list-red-rgb));
+  font-size: 1rem;
+}
+
+.ot-cancel-message {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.ot-cancel-message strong {
+  color: var(--text-color);
+  font-size: 0.95rem;
+  font-weight: 750;
+  line-height: 1.25;
+}
+
+.ot-cancel-message span {
+  color: var(--text-color-secondary);
+  font-size: 0.78rem;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.ot-cancel-summary {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem;
+  margin-top: 0.2rem;
+}
+
+.ot-cancel-summary div {
+  min-width: 0;
+  border: 1px solid rgb(var(--ot-list-row-border) / 0.14);
+  border-radius: 0.75rem;
+  background: var(--surface-ground);
+  padding: 0.52rem 0.6rem;
+}
+
+.ot-cancel-summary span {
+  display: block;
+  overflow: hidden;
+  color: var(--text-color-secondary);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.035em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.ot-cancel-summary strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 0.12rem;
+  color: var(--text-color);
+  font-size: 0.8rem;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ot-dialog-button {
+  min-width: 6rem;
+}
+
+:deep(.ot-cancel-dialog .p-dialog-header) {
+  padding: 0.85rem 1rem 0.5rem !important;
+}
+
+:deep(.ot-cancel-dialog .p-dialog-content) {
+  padding: 0.55rem 1rem 0.8rem !important;
+}
+
+:deep(.ot-cancel-dialog .p-dialog-footer) {
+  gap: 0.45rem;
+  border-top: 1px solid rgb(var(--ot-list-row-border) / 0.1);
+  padding: 0.65rem 1rem 0.85rem !important;
+}
+
 /* Table text */
 
 .ot-request-no-text {
@@ -1942,12 +2509,93 @@ onBeforeUnmount(() => {
   }
 
   .ot-request-table-scroll {
+    width: 100%;
+    max-width: 100%;
     max-height: 64vh;
+    overflow-x: auto !important;
+    overflow-y: auto !important;
+    overscroll-behavior-x: contain;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x pan-y;
+  }
+
+  :deep(.ot-request-table.p-datatable) {
+    width: max-content !important;
+    min-width: 100% !important;
+    max-width: none !important;
+  }
+
+  :deep(.ot-request-table.p-datatable .p-datatable-wrapper),
+  :deep(.ot-request-table.p-datatable .p-datatable-table-container) {
+    width: max-content !important;
+    min-width: 100% !important;
+    max-width: none !important;
+    overflow: visible !important;
+  }
+
+  :deep(.ot-request-table.p-datatable .p-datatable-table) {
+    width: max-content !important;
+    min-width: 1120px !important;
+    table-layout: auto !important;
+  }
+
+  /* Phone size: keep normal horizontal scroll and do not freeze action column */
+  :deep(.ot-request-table.p-datatable .ot-action-column-header),
+  :deep(.ot-request-table.p-datatable .ot-action-column-body) {
+    position: static !important;
+    right: auto !important;
+    left: auto !important;
+    z-index: auto !important;
+    background: inherit !important;
+    box-shadow: none !important;
+  }
+
+  /* Phone size: header stays frozen vertically only */
+  :deep(.ot-request-table.p-datatable .p-datatable-thead > tr > th.ot-action-column-header) {
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 82 !important;
+    background: var(--surface-ground) !important;
+    box-shadow:
+      0 1px 0 rgb(var(--ot-list-row-border) / 0.16),
+      0 8px 14px rgb(15 23 42 / 0.045) !important;
+  }
+
+  :deep(.ot-request-table.p-datatable .p-datatable-tbody > tr > td.ot-action-column-body) {
+    background: transparent !important;
   }
 
   .ot-list-bottom-bar {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .ot-row-actions {
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .ot-row-action-button {
+    width: 100%;
+    min-height: 1.85rem;
+  }
+
+  .ot-cancel-dialog-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ot-cancel-icon {
+    width: 2.25rem;
+    height: 2.25rem;
+  }
+
+  .ot-cancel-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ot-dialog-button {
+    width: 100%;
   }
 }
 </style>

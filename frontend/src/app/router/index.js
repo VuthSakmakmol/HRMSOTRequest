@@ -26,7 +26,6 @@ import OTRequestListView from '@/modules/ot/views/OTRequestListView.vue'
 import OTRequestCreateView from '@/modules/ot/views/OTRequestCreateView.vue'
 import OTApprovalInboxView from '@/modules/ot/views/OTApprovalInboxView.vue'
 import OTAcknowledgeInboxView from '@/modules/ot/views/OTAcknowledgeInboxView.vue'
-import OTRequestEditView from '@/modules/ot/views/OTRequestEditView.vue'
 import OTCalculationPolicyListView from '@/modules/ot/views/OTCalculationPolicyListView.vue'
 import ShiftOTOptionListView from '@/modules/ot/views/ShiftOTOptionListView.vue'
 
@@ -367,7 +366,7 @@ const routes = [
       {
         path: 'ot/requests/:id/edit',
         name: 'ot-request-edit',
-        component: OTRequestEditView,
+        component: OTRequestCreateView,
         meta: {
           requiresAuth: true,
           title: 'Edit OT Request',

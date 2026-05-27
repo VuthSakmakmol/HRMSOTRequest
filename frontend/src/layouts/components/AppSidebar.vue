@@ -221,7 +221,7 @@ const navGroups = computed(() => {
           label: t('nav.holidayMaster'),
           icon: 'pi pi-calendar-plus',
           to: '/calendar/holidays',
-          permissions: ['HOLIDAY_VIEW', 'HOLIDAY_CREATE', 'HOLIDAY_UPDATE'],
+          permissions: ['HOLIDAY_VIEW'],
         },
       ],
     },

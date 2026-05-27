@@ -18,7 +18,17 @@ const upload = multer({
 
 router.use(requireAuth)
 
-// Fixed routes must stay before '/:id'
+/**
+ * Fixed routes must stay before "/:id"
+ *
+ * Lookup routes are used by:
+ * - HolidayDatePicker
+ * - OT request date logic
+ * - Approval / Acknowledge filters
+ * - Payment internal calendar check
+ *
+ * These should use HOLIDAY_LOOKUP, not HOLIDAY_VIEW.
+ */
 router.get(
   '/lookup',
   requirePermission('HOLIDAY_LOOKUP'),
@@ -31,25 +41,31 @@ router.get(
   holidayController.resolveDayType,
 )
 
+/**
+ * Excel export/import permissions are separated from normal view/create.
+ */
 router.get(
   '/export',
-  requirePermission('HOLIDAY_VIEW'),
+  requirePermission('HOLIDAY_EXPORT'),
   holidayController.exportExcel,
 )
 
 router.get(
   '/import-sample',
-  requirePermission('HOLIDAY_VIEW'),
+  requirePermission('HOLIDAY_IMPORT'),
   holidayController.downloadImportSample,
 )
 
 router.post(
   '/import',
-  requirePermission('HOLIDAY_CREATE'),
+  requirePermission('HOLIDAY_IMPORT'),
   upload.single('file'),
   holidayController.importExcel,
 )
 
+/**
+ * Full Calendar page routes.
+ */
 router.get(
   '/',
   requirePermission('HOLIDAY_VIEW'),
