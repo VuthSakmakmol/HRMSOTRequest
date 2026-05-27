@@ -1432,8 +1432,32 @@ onMounted(async () => {
 }
 
 @media (max-width: 640px) {
+  .ot-create-page {
+    padding-bottom: calc(5.6rem + env(safe-area-inset-bottom, 0px));
+  }
+
   .ot-create-bottom-grid {
+    position: fixed;
+    left: 0.75rem;
+    right: 0.75rem;
+    bottom: calc(0.65rem + env(safe-area-inset-bottom, 0px));
+    z-index: 1200;
+    display: flex;
     justify-content: stretch;
+    border: 1px solid var(--ot-border);
+    border-radius: 1rem;
+    background: color-mix(in srgb, var(--ot-surface) 94%, transparent);
+    box-shadow: 0 14px 34px rgba(15, 23, 42, 0.18);
+    padding: 0.55rem;
+    backdrop-filter: blur(14px);
+  }
+
+  .ot-create-bottom-grid > * {
+    width: 100%;
+  }
+
+  .ot-create-bottom-grid :deep(.p-button) {
+    min-height: 2.45rem;
   }
 
   .ot-confirm-summary {
