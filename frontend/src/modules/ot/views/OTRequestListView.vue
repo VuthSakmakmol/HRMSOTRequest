@@ -119,8 +119,10 @@ const cancelTargetIsLoading = computed(() => {
   return cancelTargetRow.value ? isCancellingRow(cancelTargetRow.value) : false
 })
 
-function tr(key, fallback) {
-  return te(key) ? t(key) : fallback
+function tr(key, fallback, params) {
+  if (te(key)) return t(key, params || {})
+
+  return fallback
 }
 
 const activeAdvancedFilterCount = computed(() => {
@@ -140,23 +142,29 @@ const filterButtonLabel = computed(() => {
 })
 
 const loadedLabel = computed(() =>
-  t('common.loaded', {
+  tr('common.loaded', 'Loaded {loaded} of {total}', {
     loaded: loadedCount.value,
     total: totalRequests.value,
   }),
 )
 
 const statusOptions = computed(() => [
-  { label: t('common.allStatus'), value: '' },
-  { label: t('ot.status.pending'), value: 'PENDING' },
+  { label: tr('common.allStatus', 'All Status'), value: '' },
+  { label: tr('ot.status.pending', 'Pending'), value: 'PENDING' },
   {
-    label: t('ot.status.pendingRequesterConfirmation'),
+    label: tr(
+      'ot.status.pendingRequesterConfirmation',
+      'Waiting Requester Confirmation',
+    ),
     value: 'PENDING_REQUESTER_CONFIRMATION',
   },
-  { label: t('ot.status.approved'), value: 'APPROVED' },
-  { label: t('ot.status.rejected'), value: 'REJECTED' },
-  { label: t('ot.status.requesterDisagreed'), value: 'REQUESTER_DISAGREED' },
-  { label: t('ot.status.cancelled'), value: 'CANCELLED' },
+  { label: tr('ot.status.approved', 'Approved'), value: 'APPROVED' },
+  { label: tr('ot.status.rejected', 'Rejected'), value: 'REJECTED' },
+  {
+    label: tr('ot.status.requesterDisagreed', 'Requester Disagreed'),
+    value: 'REQUESTER_DISAGREED',
+  },
+  { label: tr('ot.status.cancelled', 'Cancelled'), value: 'CANCELLED' },
 ])
 
 function normalizePayload(res) {
@@ -316,15 +324,6 @@ function employeeLineOf(employee) {
     employee?.productionLineId ||
     {}
 
-  const code = String(
-    employee?.lineCode ||
-      employee?.productionLineCode ||
-      line?.code ||
-      line?.lineCode ||
-      line?.productionLineCode ||
-      '',
-  ).trim()
-
   const name = String(
     employee?.lineName ||
       employee?.productionLineName ||
@@ -334,9 +333,7 @@ function employeeLineOf(employee) {
       '',
   ).trim()
 
-  if (code && name && code !== name) return `${code} · ${name}`
-
-  return code || name || '-'
+  return name || '-'
 }
 
 function employeePaidTimeOf(employee, row) {
@@ -438,8 +435,8 @@ async function fetchPage(page, { replace = false, silent = false, version = quer
 
     toast.add({
       severity: 'error',
-      summary: t('common.loadFailed'),
-      detail: getApiErrorMessage(error, t('ot.requests.loadFailed')),
+      summary: tr('common.loadFailed', 'Load Failed'),
+      detail: getApiErrorMessage(error, tr('ot.requests.loadFailed', 'Failed to load OT requests')),
       life: 3500,
     })
   } finally {
@@ -646,15 +643,15 @@ async function handleExport() {
 
     toast.add({
       severity: 'success',
-      summary: t('ot.requests.exported'),
-      detail: t('ot.requests.exportedSuccess'),
+      summary: tr('ot.requests.exported', 'Exported'),
+      detail: tr('ot.requests.exportedSuccess', 'OT requests exported successfully'),
       life: 2500,
     })
   } catch (error) {
     toast.add({
       severity: 'error',
-      summary: t('ot.requests.exportFailed'),
-      detail: getApiErrorMessage(error, t('ot.requests.exportFailed')),
+      summary: tr('ot.requests.exportFailed', 'Export Failed'),
+      detail: getApiErrorMessage(error, tr('ot.requests.exportFailed', 'Failed to export OT requests')),
       life: 3500,
     })
   } finally {
@@ -678,21 +675,6 @@ function toBooleanOrNull(value) {
   if (['false', '0', 'no', 'n'].includes(normalized)) return false
 
   return null
-}
-
-function rowPermissionsOf(row = {}) {
-  const candidates = [
-    row?.permissions,
-    row?.permission,
-    row?.actions,
-    row?.availableActions,
-    row?.allowedActions,
-    row?.actionPermissions,
-    row?.uiPermissions,
-    row?.ui,
-  ]
-
-  return candidates.find((item) => item && typeof item === 'object' && !Array.isArray(item)) || {}
 }
 
 function readRowAction(row = {}, key, aliases = []) {
@@ -877,7 +859,6 @@ function hasRowActions(row = {}) {
   return canEditRow(row) || canCancelRow(row)
 }
 
-
 function isCancellingRow(row = {}) {
   return cancellingIds.value.has(rowIdOf(row))
 }
@@ -980,7 +961,7 @@ onBeforeUnmount(() => {
       <div class="ot-request-filter-primary">
         <div class="ot-field ot-search-field">
           <label class="ot-field-label">
-            {{ t('common.search') }}
+            {{ tr('common.search', 'Search') }}
           </label>
 
           <IconField class="ot-search-icon-field">
@@ -988,7 +969,7 @@ onBeforeUnmount(() => {
 
             <InputText
               v-model="filters.search"
-              :placeholder="t('common.search')"
+              :placeholder="tr('common.search', 'Search')"
               class="w-full ot-request-search-input"
               inputmode="search"
               autocomplete="off"
@@ -1022,7 +1003,7 @@ onBeforeUnmount(() => {
 
           <Button
             v-if="canExport"
-            :label="t('ot.requests.exportExcel')"
+            :label="tr('ot.requests.exportExcel', 'Export Excel')"
             icon="pi pi-file-excel"
             severity="secondary"
             outlined
@@ -1034,7 +1015,7 @@ onBeforeUnmount(() => {
 
           <Button
             v-if="canCreate"
-            :label="t('ot.requests.newRequest')"
+            :label="tr('ot.requests.newRequest', 'New OT Request')"
             icon="pi pi-plus"
             size="small"
             class="ot-request-action-button"
@@ -1050,7 +1031,7 @@ onBeforeUnmount(() => {
         >
           <div class="ot-field">
             <label class="ot-field-label">
-              {{ t('common.status') }}
+              {{ tr('common.status', 'Status') }}
             </label>
 
             <Select
@@ -1058,7 +1039,7 @@ onBeforeUnmount(() => {
               :options="statusOptions"
               option-label="label"
               option-value="value"
-              :placeholder="t('common.status')"
+              :placeholder="tr('common.status', 'Status')"
               class="w-full"
               size="small"
               @change="onFilterChange"
@@ -1074,8 +1055,8 @@ onBeforeUnmount(() => {
             <HolidayDatePicker
               ref="otDateFromPickerRef"
               v-model="filters.otDateFrom"
-              :label="t('ot.requests.otDateFrom')"
-              :placeholder="t('ot.requests.otDateFrom')"
+              :label="tr('ot.requests.otDateFrom', 'OT Date From')"
+              :placeholder="tr('ot.requests.otDateFrom', 'OT Date From')"
               panel-class="ot-request-date-panel ot-request-date-panel-from"
               @show="onDatePickerShow('from')"
               @hide="onDatePickerHide('from')"
@@ -1092,8 +1073,8 @@ onBeforeUnmount(() => {
             <HolidayDatePicker
               ref="otDateToPickerRef"
               v-model="filters.otDateTo"
-              :label="t('ot.requests.otDateTo')"
-              :placeholder="t('ot.requests.otDateTo')"
+              :label="tr('ot.requests.otDateTo', 'OT Date To')"
+              :placeholder="tr('ot.requests.otDateTo', 'OT Date To')"
               panel-class="ot-request-date-panel ot-request-date-panel-to"
               @show="onDatePickerShow('to')"
               @hide="onDatePickerHide('to')"
@@ -1103,7 +1084,7 @@ onBeforeUnmount(() => {
 
           <div class="ot-request-filter-panel-actions">
             <Button
-              :label="t('common.clear')"
+              :label="tr('common.clear', 'Clear')"
               icon="pi pi-filter-slash"
               severity="secondary"
               outlined
@@ -1116,11 +1097,11 @@ onBeforeUnmount(() => {
       </Transition>
     </section>
 
-    <section class="ot-table-card">
-      <div class="ot-table-toolbar">
+    <section class="ot-table-card ot-request-table-card">
+      <div class="ot-table-toolbar ot-request-table-toolbar">
         <div>
           <h2 class="ot-table-title">
-            {{ t('ot.requests.tableTitle') || t('ot.requests.requestNo') }}
+            {{ tr('ot.requests.tableTitle', 'OT Request List') }}
           </h2>
         </div>
 
@@ -1130,15 +1111,15 @@ onBeforeUnmount(() => {
             class="ot-loaded-badge"
           >
             <i class="pi pi-spin pi-spinner" />
-            {{ t('common.updating') }}
+            {{ tr('common.updating', 'Updating') }}
           </span>
         </div>
       </div>
 
       <AppTableLoading
         v-if="firstLoading"
-        :title="t('ot.requests.loading')"
-        :message="t('ot.requests.fetchingRecords')"
+        :title="tr('ot.requests.loading', 'Loading OT requests')"
+        :message="tr('ot.requests.fetchingRecords', 'Fetching OT request records')"
         :rows="8"
         :columns="9"
         icon="pi pi-clock"
@@ -1159,7 +1140,7 @@ onBeforeUnmount(() => {
           row-hover
           :sort-field="filters.sortBy"
           :sort-order="filters.sortOrder"
-          table-style="width: max-content; min-width: 100%; table-layout: auto;"
+          table-style="min-width: 64rem; table-layout: auto;"
           class="ot-request-table ot-data-table ot-data-table-compact"
           @sort="onSort"
         >
@@ -1173,25 +1154,27 @@ onBeforeUnmount(() => {
               </div>
 
               <div class="ot-empty-title">
-                {{ t('common.noData') }}
+                {{ tr('common.noData', 'No Data') }}
               </div>
 
               <div class="ot-empty-text">
-                {{ t('ot.requests.noData') }}
+                {{ tr('ot.requests.noData', 'No OT requests found') }}
               </div>
             </div>
           </template>
 
           <Column
             expander
-            style="width: 3.2rem; min-width: 3.2rem"
+            header-class="ot-expander-col-header"
+            body-class="ot-expander-col-body"
+            style="width: 2.1rem; min-width: 2.1rem; max-width: 2.1rem"
           />
 
           <Column
             field="requestNo"
-            :header="t('ot.requests.requestNo')"
+            :header="tr('ot.requests.requestNo', 'Request No')"
             sortable
-            style="width: 10rem; min-width: 10rem"
+            style="width: 8.2rem; min-width: 8.2rem"
           >
             <template #body="{ data }">
               <span class="ot-request-no-text">
@@ -1201,8 +1184,8 @@ onBeforeUnmount(() => {
           </Column>
 
           <Column
-            :header="t('ot.requests.requester')"
-            style="width: 14rem; min-width: 14rem"
+            :header="tr('ot.requests.requester', 'Requester')"
+            style="width: 10.2rem; min-width: 10.2rem"
           >
             <template #body="{ data }">
               <div class="requester-cell">
@@ -1219,9 +1202,9 @@ onBeforeUnmount(() => {
 
           <Column
             field="status"
-            :header="t('ot.requests.approvalStatus')"
+            :header="tr('ot.requests.approvalStatus', 'Approval Status')"
             sortable
-            style="width: 16rem; min-width: 16rem"
+            style="width: 11rem; min-width: 11rem"
           >
             <template #body="{ data }">
               <div class="approval-status-cell">
@@ -1238,12 +1221,16 @@ onBeforeUnmount(() => {
           </Column>
 
           <Column
-            :header="t('ot.approval.requestedStaff')"
-            style="width: 9rem; min-width: 9rem"
+            :header="tr('ot.approval.requestedStaff', 'Staff')"
+            style="width: 5.8rem; min-width: 5.8rem"
           >
             <template #body="{ data }">
               <Tag
-                :value="t('ot.requests.staffCount', { count: displayStaffCount(data) })"
+                :value="
+                  tr('ot.requests.staffCount', `${displayStaffCount(data)} staff`, {
+                    count: displayStaffCount(data),
+                  })
+                "
                 class="ot-request-rgb-tag ot-request-tag-info"
               />
             </template>
@@ -1251,9 +1238,9 @@ onBeforeUnmount(() => {
 
           <Column
             field="otDate"
-            :header="t('ot.requests.otDate')"
+            :header="tr('ot.requests.otDate', 'OT Date')"
             sortable
-            style="width: 9rem; min-width: 9rem"
+            style="width: 6.5rem; min-width: 6.5rem"
           >
             <template #body="{ data }">
               <span class="ot-request-meta-text">
@@ -1263,24 +1250,22 @@ onBeforeUnmount(() => {
           </Column>
 
           <Column
-            :header="t('ot.requests.otTime')"
-            style="width: 11rem; min-width: 11rem"
+            :header="tr('ot.requests.otTime', 'OT Time')"
+            style="width: 6.2rem; min-width: 6.2rem"
           >
             <template #body="{ data }">
-              <div class="ot-time-cell">
-                <Tag
-                  :value="displayPaidTime(data)"
-                  class="ot-request-rgb-tag ot-request-tag-info"
-                />
-              </div>
+              <Tag
+                :value="displayPaidTime(data)"
+                class="ot-request-rgb-tag ot-request-tag-info"
+              />
             </template>
           </Column>
 
           <Column
             field="createdAt"
-            :header="t('common.createdAt')"
+            :header="tr('common.createdAt', 'Created At')"
             sortable
-            style="width: 12.5rem; min-width: 12.5rem"
+            style="width: 8.6rem; min-width: 8.6rem"
           >
             <template #body="{ data }">
               <span class="ot-request-meta-text">
@@ -1293,7 +1278,7 @@ onBeforeUnmount(() => {
             :header="tr('common.action', 'Action')"
             header-class="ot-action-column-header"
             body-class="ot-action-column-body"
-            style="width: 7.5rem; min-width: 7.5rem"
+            style="width: 6.8rem; min-width: 6.8rem"
           >
             <template #body="{ data }">
               <div
@@ -1303,22 +1288,26 @@ onBeforeUnmount(() => {
                 <Button
                   v-if="canEditRow(data)"
                   :label="tr('common.edit', 'Edit')"
+                  :aria-label="tr('common.edit', 'Edit')"
+                  :title="tr('common.edit', 'Edit')"
                   icon="pi pi-pencil"
                   severity="info"
                   outlined
                   size="small"
-                  class="ot-row-action-button"
+                  class="ot-row-action-button ot-action-icon-responsive"
                   @click="editRequest(data)"
                 />
 
                 <Button
                   v-if="canCancelRow(data)"
                   :label="tr('common.cancel', 'Cancel')"
+                  :aria-label="tr('common.cancel', 'Cancel')"
+                  :title="tr('common.cancel', 'Cancel')"
                   icon="pi pi-times"
                   severity="danger"
                   outlined
                   size="small"
-                  class="ot-row-action-button"
+                  class="ot-row-action-button ot-action-icon-responsive"
                   :loading="isCancellingRow(data)"
                   :disabled="isCancellingRow(data)"
                   @click="openCancelDialog(data)"
@@ -1341,11 +1330,11 @@ onBeforeUnmount(() => {
                 class="ot-expanded-table-scroll"
               >
                 <div class="ot-expanded-grid-row is-head">
-                  <div>{{ t('common.no') }}</div>
-                  <div>{{ t('ot.requests.employeeId') }}</div>
-                  <div>{{ t('common.name') }}</div>
-                  <div>{{ t('nav.positions') }}</div>
-                  <div>{{ t('ot.requests.otTime') }}</div>
+                  <div>{{ tr('common.no', 'No') }}</div>
+                  <div>{{ tr('ot.requests.employeeId', 'Employee ID') }}</div>
+                  <div>{{ tr('common.name', 'Name') }}</div>
+                  <div>{{ tr('nav.positions', 'Position') }}</div>
+                  <div>{{ tr('ot.requests.otTime', 'OT Time') }}</div>
                   <div>Line</div>
                 </div>
 
@@ -1387,39 +1376,11 @@ onBeforeUnmount(() => {
                 v-else
                 class="ot-expanded-empty"
               >
-                {{ t('ot.requests.noEmployeeData') }}
+                {{ tr('ot.requests.noEmployeeData', 'No employee data') }}
               </div>
             </div>
           </template>
         </DataTable>
-
-        <div
-          v-if="bootstrapped && hasAnyData"
-          class="ot-list-bottom-bar"
-        >
-          <span class="ot-loaded-badge">
-            {{ loadedLabel }}
-          </span>
-
-          <Button
-            v-if="hasMorePages"
-            :label="loadingMore ? 'Loading more...' : 'Load more'"
-            icon="pi pi-angle-down"
-            severity="secondary"
-            outlined
-            size="small"
-            class="ot-request-action-button"
-            :loading="loadingMore"
-            @click="loadNextPage"
-          />
-
-          <span
-            v-else
-            class="ot-all-loaded-text"
-          >
-            All matched requests loaded
-          </span>
-        </div>
       </div>
     </section>
 
@@ -1442,23 +1403,28 @@ onBeforeUnmount(() => {
           </strong>
 
           <span>
-            {{ tr('ot.requests.cancelConfirmHelp', 'This request has no approved step yet. After cancel, it will no longer continue approval.') }}
+            {{
+              tr(
+                'ot.requests.cancelConfirmHelp',
+                'This request has no approved step yet. After cancel, it will no longer continue approval.',
+              )
+            }}
           </span>
         </div>
 
         <div class="ot-cancel-summary">
           <div>
-            <span>{{ t('ot.requests.requestNo') }}</span>
+            <span>{{ tr('ot.requests.requestNo', 'Request No') }}</span>
             <strong>{{ cancelTargetRequestNo || '-' }}</strong>
           </div>
 
           <div>
-            <span>{{ t('ot.requests.approvalStatus') }}</span>
+            <span>{{ tr('ot.requests.approvalStatus', 'Approval Status') }}</span>
             <strong>{{ cancelTargetStatusLabel }}</strong>
           </div>
 
           <div>
-            <span>{{ t('ot.approval.requestedStaff') }}</span>
+            <span>{{ tr('ot.approval.requestedStaff', 'Staff') }}</span>
             <strong>{{ cancelTargetEmployeeCount }}</strong>
           </div>
         </div>
@@ -1492,15 +1458,21 @@ onBeforeUnmount(() => {
 <style scoped>
 .ot-request-list-page {
   --ot-list-code-rgb: 37 99 235;
-  --ot-list-text-rgb: 15 23 42;
-  --ot-list-muted-rgb: 100 116 139;
-  --ot-list-soft-rgb: 148 163 184;
   --ot-list-green-rgb: 34 197 94;
   --ot-list-amber-rgb: 245 158 11;
   --ot-list-red-rgb: 239 68 68;
   --ot-list-blue-rgb: 59 130 246;
   --ot-list-purple-rgb: 168 85 247;
-  --ot-list-row-border: 148 163 184;
+  --ot-list-muted-rgb: 100 116 139;
+
+  --ot-request-body-bg: var(--ot-surface);
+  --ot-request-head-bg: var(--ot-surface-2);
+  --ot-request-head-bg-solid: var(--ot-surface-3);
+  --ot-request-border: var(--ot-border);
+  --ot-request-text: var(--ot-text);
+  --ot-request-text-soft: var(--ot-text-soft);
+  --ot-request-text-muted: var(--ot-text-muted);
+  --ot-request-freeze-shadow: -10px 0 18px -16px rgb(15 23 42 / 0.7);
 
   isolation: isolate;
   display: flex;
@@ -1508,7 +1480,7 @@ onBeforeUnmount(() => {
   max-width: 100%;
   min-width: 0;
   flex-direction: column;
-  gap: 1rem;
+  gap: 0.9rem;
   overflow-x: hidden;
 }
 
@@ -1518,7 +1490,7 @@ onBeforeUnmount(() => {
 .ot-request-list-page :deep(.p-button),
 .ot-request-list-page :deep(.p-select),
 .ot-request-list-page :deep(.p-select-label) {
-  font-family: inherit;
+  font-family: var(--ot-font-main) !important;
 }
 
 /* Overlay safety */
@@ -1545,7 +1517,7 @@ onBeforeUnmount(() => {
   max-width: calc(100vw - 1rem) !important;
 }
 
-/* Filter bar */
+/* Filter */
 
 .ot-request-filter-bar {
   position: relative;
@@ -1557,12 +1529,12 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 0.65rem;
   overflow: visible;
-  border: 1px solid var(--surface-border);
-  border-radius: 1.05rem;
+  border: 1px solid var(--ot-request-border);
+  border-radius: var(--ot-radius-lg);
   background:
-    linear-gradient(135deg, rgb(var(--ot-list-blue-rgb) / 0.055), transparent 34%),
-    var(--surface-card);
-  box-shadow: 0 12px 34px rgb(15 23 42 / 0.055);
+    linear-gradient(135deg, rgba(129, 166, 198, 0.12), transparent 34%),
+    var(--ot-request-body-bg);
+  box-shadow: var(--ot-shadow-sm);
   padding: 0.85rem;
 }
 
@@ -1582,15 +1554,10 @@ onBeforeUnmount(() => {
   gap: 0.35rem;
 }
 
-.ot-search-field {
-  min-width: 0;
-}
-
 .ot-field-label {
-  color: var(--text-color-secondary);
+  color: var(--ot-request-text-soft);
   font-size: 0.74rem;
   font-weight: 700;
-  letter-spacing: 0.01em;
 }
 
 .ot-search-icon-field {
@@ -1629,7 +1596,7 @@ onBeforeUnmount(() => {
   gap: 0.75rem;
   align-items: end;
   overflow: visible;
-  border-top: 1px solid rgb(var(--ot-list-row-border) / 0.12);
+  border-top: 1px solid var(--ot-request-border);
   padding-top: 0.72rem;
 }
 
@@ -1638,17 +1605,14 @@ onBeforeUnmount(() => {
   z-index: 1;
 }
 
-.ot-request-filter-panel > .ot-field.is-date-open {
+.ot-request-filter-panel > .ot-field.is-date-open,
+.ot-date-filter-field.is-date-open {
   z-index: 20000;
 }
 
 .ot-date-filter-field {
   position: relative;
   overflow: visible;
-}
-
-.ot-date-filter-field.is-date-open {
-  z-index: 20000;
 }
 
 .ot-date-filter-field.is-date-open :deep(.holiday-date-picker-field),
@@ -1695,7 +1659,8 @@ onBeforeUnmount(() => {
 
 .ot-request-action-button :deep(.p-button-label) {
   overflow: hidden;
-  font-weight: 550;
+  font-size: 0.76rem;
+  font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1706,13 +1671,9 @@ onBeforeUnmount(() => {
 }
 
 .ot-filter-toggle-button.has-active-filters {
-  border-color: rgb(var(--ot-list-blue-rgb) / 0.36) !important;
-  background: rgb(var(--ot-list-blue-rgb) / 0.1) !important;
-  color: rgb(var(--ot-list-blue-rgb)) !important;
-}
-
-.ot-request-export-button :deep(.p-button-label) {
-  white-space: nowrap;
+  border-color: color-mix(in srgb, var(--ot-info) 35%, transparent) !important;
+  background: var(--ot-info-soft) !important;
+  color: var(--ot-info) !important;
 }
 
 .ot-loaded-badge {
@@ -1721,10 +1682,10 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   gap: 0.35rem;
-  border: 1px solid rgb(var(--ot-list-blue-rgb) / 0.22);
+  border: 1px solid var(--ot-request-border);
   border-radius: 999px;
-  background: rgb(var(--ot-list-blue-rgb) / 0.09);
-  color: rgb(var(--ot-list-blue-rgb));
+  background: var(--ot-surface-2);
+  color: var(--ot-request-text-soft);
   padding: 0.28rem 0.62rem;
   font-size: 0.74rem;
   font-weight: 750;
@@ -1734,34 +1695,34 @@ onBeforeUnmount(() => {
 
 /* Table card */
 
-.ot-table-card {
+.ot-request-table-card {
   position: relative;
   z-index: 1;
   width: 100%;
   max-width: 100%;
   min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--surface-border);
-  border-radius: 1.15rem;
-  background: var(--surface-card);
-  box-shadow: 0 16px 42px rgb(15 23 42 / 0.07);
+  border: 1px solid var(--ot-request-border);
+  border-radius: var(--ot-radius-lg);
+  background: var(--ot-request-body-bg);
+  box-shadow: var(--ot-shadow-sm);
 }
 
-.ot-table-toolbar {
+.ot-request-table-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  border-bottom: 1px solid rgb(var(--ot-list-row-border) / 0.14);
+  border-bottom: 1px solid var(--ot-request-border);
   background:
-    linear-gradient(135deg, rgb(var(--ot-list-green-rgb) / 0.055), transparent 32%),
-    var(--surface-card);
+    linear-gradient(135deg, rgba(34, 197, 94, 0.07), transparent 32%),
+    var(--ot-request-body-bg);
   padding: 0.82rem 1rem;
 }
 
 .ot-table-title {
   margin: 0;
-  color: var(--text-color);
+  color: var(--ot-request-text);
   font-size: 1rem;
   font-weight: 800;
   line-height: 1.25;
@@ -1769,6 +1730,7 @@ onBeforeUnmount(() => {
 
 .ot-table-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 0.45rem;
@@ -1779,7 +1741,7 @@ onBeforeUnmount(() => {
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  max-height: min(66vh, 660px);
+  max-height: calc(100vh - 260px);
   min-height: 22rem;
   overflow: auto;
   overscroll-behavior: contain;
@@ -1787,11 +1749,13 @@ onBeforeUnmount(() => {
   scrollbar-gutter: stable;
 }
 
-/* PrimeVue table center/stability */
+/* Main table */
 
 :deep(.ot-request-table.p-datatable) {
   max-width: 100% !important;
   min-width: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
 }
 
 :deep(.ot-request-table.p-datatable .p-datatable-wrapper),
@@ -1803,14 +1767,11 @@ onBeforeUnmount(() => {
 }
 
 :deep(.ot-request-table.p-datatable .p-datatable-table) {
-  width: max-content !important;
-  min-width: 100% !important;
+  min-width: 64rem !important;
   table-layout: auto !important;
   border-collapse: separate !important;
   border-spacing: 0 !important;
 }
-
-/* Freeze table header when scrolling */
 
 :deep(.ot-request-table.p-datatable .p-datatable-thead) {
   position: sticky !important;
@@ -1818,67 +1779,110 @@ onBeforeUnmount(() => {
   z-index: 80 !important;
 }
 
-:deep(.ot-request-table.p-datatable .p-datatable-thead > tr) {
-  position: sticky !important;
-  top: 0 !important;
-  z-index: 81 !important;
-}
-
 :deep(.ot-request-table.p-datatable .p-datatable-thead > tr > th) {
   position: sticky !important;
   top: 0 !important;
   z-index: 82 !important;
-  width: auto !important;
-  min-width: auto !important;
-  max-width: none !important;
-  border-color: rgb(var(--ot-list-row-border) / 0.14) !important;
-  background: var(--surface-ground) !important;
-  color: var(--text-color-secondary) !important;
-  padding: 0.58rem 0.68rem !important;
-  font-size: 0.76rem !important;
-  font-weight: 750 !important;
+  border-color: var(--ot-request-border) !important;
+  background: var(--ot-request-head-bg-solid) !important;
+  background-color: var(--ot-request-head-bg-solid) !important;
+  background-image: none !important;
+  color: var(--ot-request-text-soft) !important;
+  padding: 0.54rem 0.6rem !important;
+  font-size: 0.74rem !important;
+  font-weight: 800 !important;
   text-align: center !important;
   vertical-align: middle !important;
   white-space: nowrap !important;
+  opacity: 1 !important;
   box-shadow:
-    0 1px 0 rgb(var(--ot-list-row-border) / 0.16),
+    0 1px 0 var(--ot-request-border),
     0 8px 14px rgb(15 23 42 / 0.045);
 }
 
 :deep(.ot-request-table.p-datatable .p-datatable-tbody > tr > td) {
-  width: auto !important;
-  min-width: auto !important;
-  max-width: none !important;
-  height: 64px !important;
-  border-color: rgb(var(--ot-list-row-border) / 0.08) !important;
-  padding: 0.44rem 0.68rem !important;
-  color: var(--text-color) !important;
-  font-size: 0.8rem !important;
+  height: 60px !important;
+  border-color: var(--ot-request-border) !important;
+  background: var(--ot-request-body-bg) !important;
+  background-color: var(--ot-request-body-bg) !important;
+  background-image: none !important;
+  padding: 0.4rem 0.6rem !important;
+  color: var(--ot-request-text) !important;
+  font-size: 0.78rem !important;
   text-align: center !important;
   vertical-align: middle !important;
   white-space: nowrap !important;
+  opacity: 1 !important;
+}
+
+:deep(.ot-request-table.p-datatable .p-datatable-tbody > tr:hover > td) {
+  background: color-mix(in srgb, var(--ot-request-body-bg) 92%, var(--ot-sky) 8%) !important;
+  background-color: color-mix(in srgb, var(--ot-request-body-bg) 92%, var(--ot-sky) 8%) !important;
 }
 
 :deep(.ot-request-table.p-datatable .p-datatable-tbody > tr.p-datatable-row-expansion > td) {
   height: auto !important;
   border-color: transparent !important;
-  padding: 0.45rem 0.75rem 0.75rem !important;
-  background: transparent !important;
+  background: var(--ot-request-body-bg) !important;
+  background-color: var(--ot-request-body-bg) !important;
+  padding: 0.42rem 0.6rem 0.65rem !important;
 }
 
-:deep(.ot-request-table.p-datatable .p-datatable-tbody > tr) {
-  transition:
-    background-color 0.14s ease,
-    box-shadow 0.14s ease;
+/* Small expander column */
+
+:deep(.ot-request-table.p-datatable .ot-expander-col-header),
+:deep(.ot-request-table.p-datatable .ot-expander-col-body) {
+  width: 2.1rem !important;
+  min-width: 2.1rem !important;
+  max-width: 2.1rem !important;
+  padding-inline: 0.16rem !important;
 }
 
-:deep(.ot-request-table.p-datatable .p-datatable-tbody > tr:hover) {
-  background: rgb(var(--ot-list-blue-rgb) / 0.03) !important;
+:deep(.ot-request-table.p-datatable .p-row-toggler) {
+  display: inline-flex !important;
+  width: 1.45rem !important;
+  height: 1.45rem !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 999px !important;
+  color: var(--ot-info) !important;
 }
 
-:deep(.ot-request-table.p-datatable .p-datatable-tbody > tr.p-row-expanded) {
-  background: rgb(var(--ot-list-blue-rgb) / 0.035) !important;
+:deep(.ot-request-table.p-datatable .p-row-toggler:hover) {
+  background: var(--ot-info-soft) !important;
 }
+
+/* Action column */
+
+:deep(.ot-request-table.p-datatable .ot-action-column-header),
+:deep(.ot-request-table.p-datatable .ot-action-column-body) {
+  position: sticky !important;
+  right: 0 !important;
+  z-index: 70 !important;
+  background: var(--ot-request-body-bg) !important;
+  background-color: var(--ot-request-body-bg) !important;
+  background-image: none !important;
+  opacity: 1 !important;
+  isolation: isolate;
+  box-shadow: var(--ot-request-freeze-shadow);
+}
+
+:deep(.ot-request-table.p-datatable .ot-action-column-header) {
+  z-index: 95 !important;
+  background: var(--ot-request-head-bg-solid) !important;
+  background-color: var(--ot-request-head-bg-solid) !important;
+  background-image: none !important;
+}
+
+:deep(.ot-request-table.p-datatable .p-datatable-tbody > tr:hover .ot-action-column-body),
+:deep(.ot-request-table.p-datatable .p-datatable-tbody > tr.p-row-expanded .ot-action-column-body) {
+  background: var(--ot-request-body-bg) !important;
+  background-color: var(--ot-request-body-bg) !important;
+  background-image: none !important;
+  opacity: 1 !important;
+}
+
+/* Alignment */
 
 :deep(.ot-request-table.p-datatable .p-datatable-column-header-content),
 :deep(.ot-request-table.p-datatable .p-column-header-content) {
@@ -1908,20 +1912,6 @@ onBeforeUnmount(() => {
   margin-inline: auto !important;
 }
 
-:deep(.ot-request-table.p-datatable .p-row-toggler) {
-  display: inline-flex !important;
-  width: 1.85rem !important;
-  height: 1.85rem !important;
-  align-items: center !important;
-  justify-content: center !important;
-  border-radius: 999px !important;
-  color: rgb(var(--ot-list-blue-rgb)) !important;
-}
-
-:deep(.ot-request-table.p-datatable .p-row-toggler:hover) {
-  background: rgb(var(--ot-list-blue-rgb) / 0.1) !important;
-}
-
 :deep(.ot-request-table.p-datatable .p-tag),
 :deep(.ot-request-table.p-datatable .p-button) {
   display: inline-flex !important;
@@ -1938,163 +1928,22 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
 }
 
-/* Row actions */
-
-:deep(.ot-request-table.p-datatable .ot-action-column-header),
-:deep(.ot-request-table.p-datatable .ot-action-column-body) {
-  position: sticky !important;
-  right: 0 !important;
-  z-index: 70 !important;
-  background: var(--surface-card) !important;
-  box-shadow: -1px 0 0 rgb(var(--ot-list-row-border) / 0.12);
-}
-
-:deep(.ot-request-table.p-datatable .ot-action-column-header) {
-  z-index: 90 !important;
-  background: var(--surface-ground) !important;
-}
-
-.ot-row-actions {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.35rem;
-}
-
-.ot-row-action-button {
-  min-width: 0;
-}
-
-.ot-row-action-button :deep(.p-button-label) {
-  font-size: 0.72rem;
-  font-weight: 650;
-}
-
-.ot-row-action-button :deep(.p-button-icon) {
-  font-size: 0.72rem;
-}
-
-.ot-action-empty {
-  color: var(--text-color-secondary);
-  font-size: 0.78rem;
-  font-weight: 600;
-}
-
-.ot-cancel-dialog-body {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 0.75rem;
-  align-items: start;
-}
-
-.ot-cancel-icon {
-  display: grid;
-  width: 2.45rem;
-  height: 2.45rem;
-  place-items: center;
-  border: 1px solid rgb(var(--ot-list-red-rgb) / 0.25);
-  border-radius: 999px;
-  background: rgb(var(--ot-list-red-rgb) / 0.1);
-  color: rgb(var(--ot-list-red-rgb));
-  font-size: 1rem;
-}
-
-.ot-cancel-message {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.ot-cancel-message strong {
-  color: var(--text-color);
-  font-size: 0.95rem;
-  font-weight: 750;
-  line-height: 1.25;
-}
-
-.ot-cancel-message span {
-  color: var(--text-color-secondary);
-  font-size: 0.78rem;
-  font-weight: 500;
-  line-height: 1.4;
-}
-
-.ot-cancel-summary {
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.45rem;
-  margin-top: 0.2rem;
-}
-
-.ot-cancel-summary div {
-  min-width: 0;
-  border: 1px solid rgb(var(--ot-list-row-border) / 0.14);
-  border-radius: 0.75rem;
-  background: var(--surface-ground);
-  padding: 0.52rem 0.6rem;
-}
-
-.ot-cancel-summary span {
-  display: block;
-  overflow: hidden;
-  color: var(--text-color-secondary);
-  font-size: 0.64rem;
-  font-weight: 700;
-  letter-spacing: 0.035em;
-  text-overflow: ellipsis;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.ot-cancel-summary strong {
-  display: block;
-  overflow: hidden;
-  margin-top: 0.12rem;
-  color: var(--text-color);
-  font-size: 0.8rem;
-  font-weight: 750;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ot-dialog-button {
-  min-width: 6rem;
-}
-
-:deep(.ot-cancel-dialog .p-dialog-header) {
-  padding: 0.85rem 1rem 0.5rem !important;
-}
-
-:deep(.ot-cancel-dialog .p-dialog-content) {
-  padding: 0.55rem 1rem 0.8rem !important;
-}
-
-:deep(.ot-cancel-dialog .p-dialog-footer) {
-  gap: 0.45rem;
-  border-top: 1px solid rgb(var(--ot-list-row-border) / 0.1);
-  padding: 0.65rem 1rem 0.85rem !important;
-}
-
-/* Table text */
+/* Text */
 
 .ot-request-no-text {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: rgb(var(--ot-list-code-rgb));
-  font-size: 0.82rem;
+  color: var(--ot-info);
+  font-size: 0.8rem;
   font-weight: 760;
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.005em;
   text-align: center;
   white-space: nowrap;
 }
 
 .requester-cell,
-.approval-status-cell,
-.ot-time-cell {
+.approval-status-cell {
   display: inline-flex;
   max-width: 100%;
   min-width: 0;
@@ -2106,10 +1955,11 @@ onBeforeUnmount(() => {
 }
 
 .ot-request-main-text {
-  max-width: 13rem;
+  max-width: 9.2rem;
   overflow: hidden;
-  color: rgb(var(--ot-list-text-rgb));
-  font-size: 0.82rem;
+  color: var(--ot-request-text);
+  font-family: var(--ot-font-km) !important;
+  font-size: 0.8rem;
   font-weight: 660;
   line-height: 1.25;
   text-align: center;
@@ -2118,10 +1968,10 @@ onBeforeUnmount(() => {
 }
 
 .ot-request-sub-text {
-  max-width: 12rem;
+  max-width: 8.8rem;
   overflow: hidden;
-  color: var(--text-color-secondary);
-  font-size: 0.71rem;
+  color: var(--ot-request-text-muted);
+  font-size: 0.7rem;
   font-weight: 520;
   line-height: 1.2;
   text-align: center;
@@ -2135,8 +1985,8 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  color: rgb(var(--ot-list-muted-rgb));
-  font-size: 0.78rem;
+  color: var(--ot-request-text-soft);
+  font-size: 0.76rem;
   font-weight: 560;
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
@@ -2145,13 +1995,13 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-/* RGB tags */
+/* Tags / actions */
 
 .ot-request-rgb-tag {
   --ot-request-tag-rgb: var(--ot-list-muted-rgb);
 
   display: inline-flex !important;
-  min-height: 1.42rem;
+  min-height: 1.36rem;
   max-width: 100%;
   align-items: center !important;
   justify-content: center !important;
@@ -2159,8 +2009,8 @@ onBeforeUnmount(() => {
   border-radius: 999px !important;
   background: rgb(var(--ot-request-tag-rgb) / 0.11) !important;
   color: rgb(var(--ot-request-tag-rgb)) !important;
-  padding: 0.12rem 0.5rem !important;
-  font-size: 0.7rem !important;
+  padding: 0.1rem 0.46rem !important;
+  font-size: 0.68rem !important;
   font-weight: 730 !important;
   line-height: 1 !important;
   text-align: center !important;
@@ -2168,7 +2018,7 @@ onBeforeUnmount(() => {
 }
 
 .approval-display-tag {
-  max-width: 13.5rem;
+  max-width: 12rem;
 }
 
 .ot-request-tag-approved {
@@ -2195,28 +2045,65 @@ onBeforeUnmount(() => {
   --ot-request-tag-rgb: var(--ot-list-purple-rgb);
 }
 
+.ot-row-actions {
+  display: inline-grid;
+  width: 100%;
+  max-width: 100%;
+  grid-template-columns: 1fr;
+  align-items: center;
+  justify-content: center;
+  gap: 0.22rem;
+}
+
+.ot-row-action-button {
+  width: 100%;
+  min-height: 1.66rem;
+  padding-inline: 0.45rem;
+  white-space: nowrap;
+}
+
+.ot-row-action-button :deep(.p-button-label) {
+  font-size: 0.7rem;
+  font-weight: 620;
+}
+
+.ot-row-action-button :deep(.p-button-icon) {
+  font-size: 0.7rem;
+}
+
+.ot-action-empty {
+  color: var(--ot-request-text-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
 /* Expanded child table */
 
 .ot-expanded-box {
+  width: 100%;
   max-width: 100%;
   min-width: 0;
-  border: 1px solid rgb(var(--ot-list-blue-rgb) / 0.12);
-  border-radius: 0.95rem;
-  background:
-    linear-gradient(135deg, rgb(var(--ot-list-blue-rgb) / 0.035), transparent 35%),
-    var(--surface-ground);
-  padding: 0.72rem;
+  border: 1px solid var(--ot-request-border);
+  border-radius: 0.9rem;
+  background: var(--ot-request-body-bg) !important;
+  background-color: var(--ot-request-body-bg) !important;
+  background-image: none !important;
+  padding: 0.55rem;
 }
 
 .ot-expanded-table-scroll {
+  position: relative;
+  width: 100%;
   max-width: 100%;
-  min-width: 740px;
-  max-height: 19rem;
+  min-width: 0;
+  max-height: 18rem;
   overflow: auto;
   overscroll-behavior: contain;
-  border: 1px solid rgb(var(--ot-list-row-border) / 0.12);
-  border-radius: 0.85rem;
-  background: var(--surface-card);
+  border: 1px solid var(--ot-request-border);
+  border-radius: 0.78rem;
+  background: var(--ot-request-body-bg) !important;
+  background-color: var(--ot-request-body-bg) !important;
+  background-image: none !important;
   scroll-behavior: smooth;
   scrollbar-gutter: stable;
 }
@@ -2224,15 +2111,19 @@ onBeforeUnmount(() => {
 .ot-expanded-grid-row {
   display: grid;
   grid-template-columns:
-    4rem
-    9rem
-    minmax(12rem, 1.2fr)
-    minmax(10rem, 1fr)
-    8rem
-    minmax(10rem, 1fr);
-  min-height: 2.55rem;
-  align-items: center;
-  border-bottom: 1px solid rgb(var(--ot-list-row-border) / 0.075);
+    minmax(2.5rem, 0.34fr)
+    minmax(5.8rem, 0.72fr)
+    minmax(9rem, 1.15fr)
+    minmax(8rem, 1fr)
+    minmax(5.8rem, 0.72fr)
+    minmax(7rem, 0.9fr);
+  min-width: 0;
+  min-height: 2.35rem;
+  align-items: stretch;
+  border-bottom: 1px solid var(--ot-request-border);
+  background: var(--ot-request-body-bg) !important;
+  background-color: var(--ot-request-body-bg) !important;
+  background-image: none !important;
 }
 
 .ot-expanded-grid-row:last-child {
@@ -2245,13 +2136,17 @@ onBeforeUnmount(() => {
   height: 100%;
   align-items: center;
   justify-content: center;
-  border-right: 1px solid rgb(var(--ot-list-row-border) / 0.07);
-  padding: 0.48rem 0.62rem;
-  color: var(--text-color-secondary);
-  font-size: 0.76rem;
+  border-right: 1px solid var(--ot-request-border);
+  background: var(--ot-request-body-bg) !important;
+  background-color: var(--ot-request-body-bg) !important;
+  background-image: none !important;
+  padding: 0.4rem 0.48rem;
+  color: var(--ot-request-text-soft);
+  font-size: 0.72rem;
   font-weight: 500;
-  line-height: 1.28;
+  line-height: 1.24;
   text-align: center;
+  background-clip: border-box !important;
 }
 
 .ot-expanded-grid-row > div:last-child {
@@ -2259,19 +2154,37 @@ onBeforeUnmount(() => {
 }
 
 .ot-expanded-grid-row.is-head {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  min-height: 2.35rem;
-  background: var(--surface-ground);
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 60 !important;
+  min-height: 2.15rem;
+  background: var(--ot-request-head-bg-solid) !important;
+  background-color: var(--ot-request-head-bg-solid) !important;
+  background-image: none !important;
+  opacity: 1 !important;
+  box-shadow:
+    0 1px 0 var(--ot-request-border),
+    0 8px 14px rgb(15 23 42 / 0.08);
 }
 
 .ot-expanded-grid-row.is-head > div {
-  color: var(--text-color-secondary);
-  font-size: 0.7rem;
-  font-weight: 740;
+  position: relative;
+  z-index: 61 !important;
+  border-right: 1px solid var(--ot-request-border);
+  background: var(--ot-request-head-bg-solid) !important;
+  background-color: var(--ot-request-head-bg-solid) !important;
+  background-image: none !important;
+  color: var(--ot-request-text-soft);
+  font-size: 0.66rem;
+  font-weight: 800;
   letter-spacing: 0.02em;
   text-transform: uppercase;
+  opacity: 1 !important;
+  background-clip: border-box !important;
+}
+
+.ot-expanded-grid-row.is-head > div:last-child {
+  border-right: 0;
 }
 
 .cell-center {
@@ -2279,13 +2192,14 @@ onBeforeUnmount(() => {
 }
 
 .cell-code {
-  color: rgb(var(--ot-list-blue-rgb)) !important;
+  color: var(--ot-info) !important;
   font-weight: 700 !important;
   font-variant-numeric: tabular-nums;
 }
 
 .cell-strong {
-  color: var(--text-color) !important;
+  color: var(--ot-request-text) !important;
+  font-family: var(--ot-font-km) !important;
   font-weight: 650 !important;
 }
 
@@ -2295,35 +2209,34 @@ onBeforeUnmount(() => {
 }
 
 .ot-expanded-empty {
-  border: 1px dashed rgb(var(--ot-list-row-border) / 0.18);
+  border: 1px dashed var(--ot-request-border);
   border-radius: 0.85rem;
-  background: var(--surface-card);
-  color: var(--text-color-secondary);
+  background: var(--ot-request-body-bg) !important;
+  background-color: var(--ot-request-body-bg) !important;
+  color: var(--ot-request-text-muted);
   padding: 0.85rem;
   font-size: 0.8rem;
   font-weight: 520;
   text-align: center;
 }
 
-/* Bottom state */
+/* Bottom / empty state */
 
 .ot-list-bottom-bar {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 0.55rem;
-  border-top: 1px solid rgb(var(--ot-list-row-border) / 0.1);
-  background: var(--surface-card);
+  border-top: 1px solid var(--ot-request-border);
+  background: var(--ot-request-body-bg);
   padding: 0.65rem;
 }
 
 .ot-all-loaded-text {
-  color: var(--text-color-secondary);
+  color: var(--ot-request-text-muted);
   font-size: 0.74rem;
   font-weight: 600;
 }
-
-/* Empty state */
 
 .ot-empty-state {
   display: flex;
@@ -2333,7 +2246,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: 0.45rem;
   padding: 2rem;
-  color: var(--text-color-secondary);
+  color: var(--ot-request-text-muted);
 }
 
 .ot-empty-icon {
@@ -2342,13 +2255,13 @@ onBeforeUnmount(() => {
   height: 3rem;
   place-items: center;
   border-radius: 999px;
-  background: rgb(var(--ot-list-blue-rgb) / 0.1);
-  color: rgb(var(--ot-list-blue-rgb));
+  background: var(--ot-info-soft);
+  color: var(--ot-info);
   font-size: 1.25rem;
 }
 
 .ot-empty-title {
-  color: var(--text-color);
+  color: var(--ot-request-text);
   font-size: 0.95rem;
   font-weight: 800;
 }
@@ -2360,24 +2273,123 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 
+/* Cancel dialog */
+
+.ot-cancel-dialog-body {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: start;
+}
+
+.ot-cancel-icon {
+  display: grid;
+  width: 2.45rem;
+  height: 2.45rem;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--ot-danger) 35%, transparent);
+  border-radius: 999px;
+  background: var(--ot-danger-soft);
+  color: var(--ot-danger);
+  font-size: 1rem;
+}
+
+.ot-cancel-message {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.ot-cancel-message strong {
+  color: var(--ot-request-text);
+  font-size: 0.95rem;
+  font-weight: 750;
+  line-height: 1.25;
+}
+
+.ot-cancel-message span {
+  color: var(--ot-request-text-muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.ot-cancel-summary {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem;
+  margin-top: 0.2rem;
+}
+
+.ot-cancel-summary div {
+  min-width: 0;
+  border: 1px solid var(--ot-request-border);
+  border-radius: 0.75rem;
+  background: var(--ot-surface-2);
+  padding: 0.52rem 0.6rem;
+}
+
+.ot-cancel-summary span {
+  display: block;
+  overflow: hidden;
+  color: var(--ot-request-text-muted);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.035em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.ot-cancel-summary strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 0.12rem;
+  color: var(--ot-request-text);
+  font-size: 0.8rem;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ot-dialog-button {
+  min-width: 6rem;
+}
+
+:deep(.ot-cancel-dialog .p-dialog-header) {
+  padding: 0.85rem 1rem 0.5rem !important;
+}
+
+:deep(.ot-cancel-dialog .p-dialog-content) {
+  padding: 0.55rem 1rem 0.8rem !important;
+}
+
+:deep(.ot-cancel-dialog .p-dialog-footer) {
+  gap: 0.45rem;
+  border-top: 1px solid var(--ot-request-border);
+  padding: 0.65rem 1rem 0.85rem !important;
+}
+
 /* Dark mode */
 
 :global(.dark) .ot-request-list-page {
-  --ot-list-text-rgb: 226 232 240;
   --ot-list-muted-rgb: 203 213 225;
-  --ot-list-row-border: 71 85 105;
+
+  --ot-request-body-bg: var(--ot-surface);
+  --ot-request-head-bg: var(--ot-surface-2);
+  --ot-request-head-bg-solid: var(--ot-surface-3);
+  --ot-request-border: var(--ot-border);
+  --ot-request-text: var(--ot-text);
+  --ot-request-text-soft: var(--ot-text-soft);
+  --ot-request-text-muted: var(--ot-text-muted);
+  --ot-request-freeze-shadow: -10px 0 18px -16px rgb(0 0 0 / 0.95);
 }
 
 :global(.dark) .ot-request-rgb-tag {
   border-color: rgb(var(--ot-request-tag-rgb) / 0.42) !important;
   background: rgb(var(--ot-request-tag-rgb) / 0.18) !important;
-}
-
-:global(.dark) .ot-expanded-box {
-  border-color: rgb(var(--ot-list-blue-rgb) / 0.22);
-  background:
-    linear-gradient(135deg, rgb(var(--ot-list-blue-rgb) / 0.075), transparent 35%),
-    var(--surface-ground);
 }
 
 /* Responsive */
@@ -2400,7 +2412,7 @@ onBeforeUnmount(() => {
     justify-content: flex-start;
   }
 
-  .ot-table-toolbar {
+  .ot-request-table-toolbar {
     align-items: flex-start;
     flex-direction: column;
   }
@@ -2413,17 +2425,19 @@ onBeforeUnmount(() => {
 
 @media (max-width: 768px) {
   .ot-request-list-page {
+    gap: 0.55rem;
     touch-action: manipulation;
   }
 
   .ot-request-filter-bar {
-    gap: 0.55rem;
-    padding: 0.65rem;
+    gap: 0.5rem;
+    border-radius: var(--ot-radius-md);
+    padding: 0.55rem;
   }
 
   .ot-request-filter-primary {
     grid-template-columns: 1fr;
-    gap: 0.55rem;
+    gap: 0.5rem;
   }
 
   .ot-search-field .ot-field-label {
@@ -2443,14 +2457,14 @@ onBeforeUnmount(() => {
   }
 
   .ot-search-field :deep(.ot-request-search-input.p-inputtext) {
-    min-height: 2.35rem;
+    min-height: 2.25rem;
     font-size: 16px !important;
     line-height: 1.2;
   }
 
   .ot-date-filter-field :deep(.p-inputtext),
   .ot-date-filter-field :deep(input) {
-    min-height: 2.35rem;
+    min-height: 2.25rem;
     font-size: 16px !important;
     line-height: 1.2;
   }
@@ -2458,7 +2472,7 @@ onBeforeUnmount(() => {
   .ot-request-filter-actions {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.4rem;
+    gap: 0.35rem;
     justify-content: stretch;
   }
 
@@ -2469,34 +2483,27 @@ onBeforeUnmount(() => {
   .ot-loaded-badge {
     grid-column: 1 / -1;
     width: 100%;
-    min-height: 1.72rem;
-    padding: 0.22rem 0.5rem;
+    min-height: 1.55rem;
+    padding: 0.18rem 0.45rem;
+    font-size: 0.68rem;
   }
 
   .ot-request-action-button {
     width: 100%;
+    min-height: 2rem;
     justify-content: center;
-    min-height: 2.2rem;
   }
 
   .ot-request-action-button :deep(.p-button-label) {
-    font-size: 0.78rem;
+    font-size: 0.72rem;
   }
 
   .ot-request-filter-panel {
     z-index: 5100;
     grid-template-columns: 1fr;
-    gap: 0.58rem;
+    gap: 0.5rem;
     overflow: visible;
-    padding-top: 0.6rem;
-  }
-
-  .ot-request-filter-panel > .ot-field {
-    z-index: 1;
-  }
-
-  .ot-request-filter-panel > .ot-field.is-date-open {
-    z-index: 20000;
+    padding-top: 0.55rem;
   }
 
   .ot-request-filter-panel-actions {
@@ -2508,10 +2515,29 @@ onBeforeUnmount(() => {
     max-height: 18rem;
   }
 
+  .ot-request-table-card {
+    border-radius: var(--ot-radius-md);
+  }
+
+  .ot-request-table-toolbar {
+    gap: 0.45rem;
+    padding: 0.55rem 0.65rem;
+  }
+
+  .ot-table-title {
+    font-size: 0.88rem;
+  }
+
+  .ot-table-actions {
+    width: 100%;
+    gap: 0.35rem;
+  }
+
   .ot-request-table-scroll {
     width: 100%;
     max-width: 100%;
     max-height: 64vh;
+    min-height: 18rem;
     overflow-x: auto !important;
     overflow-y: auto !important;
     overscroll-behavior-x: contain;
@@ -2520,50 +2546,94 @@ onBeforeUnmount(() => {
     touch-action: pan-x pan-y;
   }
 
-  :deep(.ot-request-table.p-datatable) {
-    width: max-content !important;
-    min-width: 100% !important;
-    max-width: none !important;
-  }
-
-  :deep(.ot-request-table.p-datatable .p-datatable-wrapper),
-  :deep(.ot-request-table.p-datatable .p-datatable-table-container) {
-    width: max-content !important;
-    min-width: 100% !important;
-    max-width: none !important;
-    overflow: visible !important;
-  }
-
   :deep(.ot-request-table.p-datatable .p-datatable-table) {
-    width: max-content !important;
-    min-width: 1120px !important;
+    min-width: 54rem !important;
     table-layout: auto !important;
   }
 
-  /* Phone size: keep normal horizontal scroll and do not freeze action column */
+  :deep(.ot-request-table.p-datatable .p-datatable-thead > tr > th) {
+    padding: 0.34rem 0.38rem !important;
+    font-size: 0.66rem !important;
+  }
+
+  :deep(.ot-request-table.p-datatable .p-datatable-tbody > tr > td) {
+    height: 44px !important;
+    padding: 0.26rem 0.38rem !important;
+    font-size: 0.7rem !important;
+  }
+
+  :deep(.ot-request-table.p-datatable .ot-expander-col-header),
+  :deep(.ot-request-table.p-datatable .ot-expander-col-body) {
+    width: 1.9rem !important;
+    min-width: 1.9rem !important;
+    max-width: 1.9rem !important;
+    padding-inline: 0.12rem !important;
+  }
+
+  :deep(.ot-request-table.p-datatable .p-row-toggler) {
+    width: 1.35rem !important;
+    height: 1.35rem !important;
+  }
+
+  .ot-request-no-text {
+    font-size: 0.7rem;
+  }
+
+  .ot-request-main-text {
+    max-width: 7rem;
+    font-size: 0.7rem;
+  }
+
+  .ot-request-sub-text {
+    max-width: 6.8rem;
+    font-size: 0.6rem;
+  }
+
+  .ot-request-meta-text {
+    font-size: 0.66rem;
+  }
+
+  .ot-request-rgb-tag {
+    min-height: 1.14rem;
+    padding: 0.07rem 0.32rem !important;
+    font-size: 0.6rem !important;
+  }
+
   :deep(.ot-request-table.p-datatable .ot-action-column-header),
   :deep(.ot-request-table.p-datatable .ot-action-column-body) {
-    position: static !important;
-    right: auto !important;
-    left: auto !important;
-    z-index: auto !important;
-    background: inherit !important;
-    box-shadow: none !important;
+    width: 2.45rem !important;
+    min-width: 2.45rem !important;
+    max-width: 2.45rem !important;
+    padding: 0.18rem 0.12rem !important;
   }
 
-  /* Phone size: header stays frozen vertically only */
-  :deep(.ot-request-table.p-datatable .p-datatable-thead > tr > th.ot-action-column-header) {
-    position: sticky !important;
-    top: 0 !important;
-    z-index: 82 !important;
-    background: var(--surface-ground) !important;
-    box-shadow:
-      0 1px 0 rgb(var(--ot-list-row-border) / 0.16),
-      0 8px 14px rgb(15 23 42 / 0.045) !important;
+  :deep(.ot-request-table.p-datatable .ot-action-column-header .p-column-title),
+  :deep(.ot-request-table.p-datatable .ot-action-column-header .p-datatable-column-title) {
+    display: none !important;
   }
 
-  :deep(.ot-request-table.p-datatable .p-datatable-tbody > tr > td.ot-action-column-body) {
-    background: transparent !important;
+  .ot-row-actions {
+    display: inline-grid;
+    grid-template-columns: 1fr;
+    gap: 0.18rem;
+  }
+
+  .ot-action-icon-responsive {
+    width: 1.62rem !important;
+    min-width: 1.62rem !important;
+    height: 1.62rem !important;
+    min-height: 1.62rem !important;
+    border-radius: 999px !important;
+    padding: 0 !important;
+  }
+
+  .ot-action-icon-responsive :deep(.p-button-label) {
+    display: none !important;
+  }
+
+  .ot-action-icon-responsive :deep(.p-button-icon) {
+    margin: 0 !important;
+    font-size: 0.7rem !important;
   }
 
   .ot-list-bottom-bar {
@@ -2571,14 +2641,36 @@ onBeforeUnmount(() => {
     align-items: stretch;
   }
 
-  .ot-row-actions {
-    flex-direction: column;
-    gap: 0.25rem;
+  .ot-expanded-box {
+    border-radius: 0.72rem;
+    padding: 0.38rem;
   }
 
-  .ot-row-action-button {
+  .ot-expanded-table-scroll {
     width: 100%;
-    min-height: 1.85rem;
+    min-width: 0;
+    max-height: 15rem;
+  }
+
+  .ot-expanded-grid-row {
+    min-width: 38rem;
+    min-height: 2.05rem;
+    grid-template-columns:
+      2.6rem
+      5.8rem
+      minmax(7.5rem, 1.05fr)
+      minmax(6.8rem, 0.95fr)
+      5.6rem
+      minmax(6.4rem, 0.85fr);
+  }
+
+  .ot-expanded-grid-row > div {
+    padding: 0.3rem 0.36rem;
+    font-size: 0.66rem;
+  }
+
+  .ot-expanded-grid-row.is-head > div {
+    font-size: 0.58rem;
   }
 
   .ot-cancel-dialog-body {
@@ -2596,6 +2688,14 @@ onBeforeUnmount(() => {
 
   .ot-dialog-button {
     width: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  :deep(.ot-cancel-dialog .p-dialog-footer) {
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 0.5rem;
   }
 }
 </style>

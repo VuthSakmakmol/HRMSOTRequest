@@ -48,7 +48,6 @@ const toast = useToast()
 
 const PAGE_SIZE = 10
 const SEARCH_DEBOUNCE_MS = 250
-const SCROLL_LOAD_DISTANCE = 180
 const FILTER_STACK_WIDTH = 1380
 
 const rows = ref([])
@@ -64,7 +63,6 @@ const loadingMore = ref(false)
 const exporting = ref(false)
 const filtersPanelOpen = ref(false)
 
-const tableScrollShell = ref(null)
 const filterBarRef = ref(null)
 const filterActionsStacked = ref(false)
 
@@ -352,15 +350,6 @@ function employeeLineOf(employee) {
     employee?.productionLineId ||
     {}
 
-  const code = String(
-    employee?.lineCode ||
-      employee?.productionLineCode ||
-      line?.code ||
-      line?.lineCode ||
-      line?.productionLineCode ||
-      '',
-  ).trim()
-
   const name = String(
     employee?.lineName ||
       employee?.productionLineName ||
@@ -370,10 +359,9 @@ function employeeLineOf(employee) {
       '',
   ).trim()
 
-  if (code && name && code !== name) return `${code} · ${name}`
-
-  return code || name || '-'
+  return name || '-'
 }
+
 
 function employeePaidTimeOf(employee, row) {
   return getEmployeePaidHoursLabel(employee, row)
@@ -551,10 +539,6 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
     silent: true,
     version: queryVersion,
   })
-
-  if (tableScrollShell.value && !keepVisible) {
-    tableScrollShell.value.scrollTop = 0
-  }
 }
 
 async function loadNextPage() {
@@ -575,20 +559,6 @@ async function loadNextPage() {
     })
   } finally {
     loadingMore.value = false
-  }
-}
-
-function onTableScroll(event) {
-  const element = event?.target
-  if (!element) return
-  if (!hasMorePages.value) return
-  if (loadingMore.value || backgroundLoading.value) return
-
-  const distanceToBottom =
-    element.scrollHeight - element.scrollTop - element.clientHeight
-
-  if (distanceToBottom <= SCROLL_LOAD_DISTANCE) {
-    loadNextPage()
   }
 }
 
@@ -1082,8 +1052,8 @@ onBeforeUnmount(() => {
       </Transition>
     </section>
 
-    <section class="ot-table-card">
-      <div class="ot-table-toolbar">
+    <section class="ot-table-card ot-approval-table-card">
+      <div class="ot-table-toolbar ot-approval-table-toolbar">
         <div>
           <h2 class="ot-table-title">
             {{ tr('ot.approval.inboxTitle', 'OT Approval Inbox') }}
@@ -1140,9 +1110,7 @@ onBeforeUnmount(() => {
 
       <div
         v-else
-        ref="tableScrollShell"
-        class="ot-approval-table-scroll"
-        @scroll.passive="onTableScroll"
+        class="ot-approval-table-shell"
       >
         <DataTable
           v-model:expandedRows="expandedRows"
@@ -1151,9 +1119,11 @@ onBeforeUnmount(() => {
           lazy
           removable-sort
           row-hover
+          scrollable
+          scroll-height="calc(100vh - 260px)"
           :sort-field="filters.sortBy"
           :sort-order="filters.sortOrder"
-          table-style="width: max-content; min-width: 100%; table-layout: auto;"
+          table-style="min-width: 64rem; table-layout: auto;"
           class="ot-approval-table ot-data-table ot-data-table-compact"
           @sort="onSort"
         >
@@ -1176,7 +1146,11 @@ onBeforeUnmount(() => {
             </div>
           </template>
 
-          <Column style="width: 3.25rem; min-width: 3.25rem">
+          <Column
+            header-class="ot-select-col-header"
+            body-class="ot-select-col-body"
+            style="width: 2.1rem; min-width: 2.1rem; max-width: 2.1rem"
+          >
             <template #header>
               <Checkbox
                 :model-value="allLoadedActionableSelected"
@@ -1198,14 +1172,16 @@ onBeforeUnmount(() => {
 
           <Column
             expander
-            style="width: 3.2rem; min-width: 3.2rem"
+            header-class="ot-expander-col-header"
+            body-class="ot-expander-col-body"
+            style="width: 2.1rem; min-width: 2.1rem; max-width: 2.1rem"
           />
 
           <Column
             field="requestNo"
             :header="tr('ot.requests.requestNo', 'Request No')"
             sortable
-            style="width: 10rem; min-width: 10rem"
+            style="width: 8.2rem; min-width: 8.2rem"
           >
             <template #body="{ data }">
               <span class="ot-request-no-text">
@@ -1216,7 +1192,7 @@ onBeforeUnmount(() => {
 
           <Column
             :header="tr('ot.requests.requester', 'Requester')"
-            style="width: 14rem; min-width: 14rem"
+            style="width: 10.2rem; min-width: 10.2rem"
           >
             <template #body="{ data }">
               <div class="requester-cell">
@@ -1235,7 +1211,7 @@ onBeforeUnmount(() => {
             field="status"
             :header="tr('ot.requests.approvalStatus', 'Approval Status')"
             sortable
-            style="width: 16rem; min-width: 16rem"
+            style="width: 11rem; min-width: 11rem"
           >
             <template #body="{ data }">
               <div class="approval-status-cell">
@@ -1253,7 +1229,7 @@ onBeforeUnmount(() => {
 
           <Column
             :header="tr('ot.approval.requestedStaff', 'Staff')"
-            style="width: 9rem; min-width: 9rem"
+            style="width: 5.8rem; min-width: 5.8rem"
           >
             <template #body="{ data }">
               <Tag
@@ -1271,7 +1247,7 @@ onBeforeUnmount(() => {
             field="otDate"
             :header="tr('ot.requests.otDate', 'OT Date')"
             sortable
-            style="width: 9rem; min-width: 9rem"
+            style="width: 6.5rem; min-width: 6.5rem"
           >
             <template #body="{ data }">
               <span class="ot-meta-text">
@@ -1282,7 +1258,7 @@ onBeforeUnmount(() => {
 
           <Column
             :header="tr('ot.requests.otTime', 'OT Time')"
-            style="width: 9rem; min-width: 9rem"
+            style="width: 6.2rem; min-width: 6.2rem"
           >
             <template #body="{ data }">
               <Tag
@@ -1296,7 +1272,7 @@ onBeforeUnmount(() => {
             field="createdAt"
             :header="tr('common.createdAt', 'Created At')"
             sortable
-            style="width: 12.5rem; min-width: 12.5rem"
+            style="width: 8.6rem; min-width: 8.6rem"
           >
             <template #body="{ data }">
               <span class="ot-meta-text">
@@ -1309,27 +1285,33 @@ onBeforeUnmount(() => {
             :header="tr('common.action', 'Action')"
             frozen
             align-frozen="right"
-            style="width: 13rem; min-width: 13rem"
+            header-class="ot-action-col-header"
+            body-class="ot-action-col-body"
+            style="width: 6.8rem; min-width: 6.8rem"
           >
             <template #body="{ data }">
               <div class="ot-row-actions">
                 <Button
                   v-if="canApprove(data)"
                   :label="tr('ot.approval.approve', 'Approve')"
+                  :aria-label="tr('ot.approval.approve', 'Approve')"
+                  :title="tr('ot.approval.approve', 'Approve')"
                   icon="pi pi-check"
                   size="small"
-                  class="ot-action-mini ot-approve-button"
+                  class="ot-action-mini ot-action-icon-responsive ot-approve-button"
                   @click="openDecision(data, 'APPROVE')"
                 />
 
                 <Button
                   v-if="canReject(data)"
                   :label="tr('ot.approval.reject', 'Reject')"
+                  :aria-label="tr('ot.approval.reject', 'Reject')"
+                  :title="tr('ot.approval.reject', 'Reject')"
                   icon="pi pi-times"
                   severity="danger"
                   outlined
                   size="small"
-                  class="ot-action-mini"
+                  class="ot-action-mini ot-action-icon-responsive"
                   @click="openDecision(data, 'REJECT')"
                 />
 
@@ -1401,34 +1383,6 @@ onBeforeUnmount(() => {
             </div>
           </template>
         </DataTable>
-
-        <div
-          v-if="bootstrapped && hasAnyData"
-          class="ot-list-bottom-bar"
-        >
-          <span class="ot-loaded-badge">
-            {{ summaryText }}
-          </span>
-
-          <Button
-            v-if="hasMorePages"
-            :label="loadingMore ? 'Loading more...' : 'Load more'"
-            icon="pi pi-angle-down"
-            severity="secondary"
-            outlined
-            size="small"
-            class="ot-approval-action-button"
-            :loading="loadingMore"
-            @click="loadNextPage"
-          />
-
-          <span
-            v-else
-            class="ot-all-loaded-text"
-          >
-            All matched requests loaded
-          </span>
-        </div>
       </div>
     </section>
 
@@ -1662,22 +1616,27 @@ onBeforeUnmount(() => {
 <style scoped>
 .ot-approval-page {
   --ot-list-code-rgb: 37 99 235;
-  --ot-list-text-rgb: 15 23 42;
-  --ot-list-muted-rgb: 100 116 139;
-  --ot-list-soft-rgb: 148 163 184;
   --ot-list-green-rgb: 34 197 94;
   --ot-list-amber-rgb: 245 158 11;
   --ot-list-red-rgb: 239 68 68;
   --ot-list-blue-rgb: 59 130 246;
-  --ot-list-purple-rgb: 168 85 247;
-  --ot-list-row-border: 148 163 184;
+  --ot-list-muted-rgb: 100 116 139;
+
+  --ot-approval-body-bg: var(--ot-surface);
+  --ot-approval-head-bg: var(--ot-surface-2);
+  --ot-approval-head-bg-solid: var(--ot-surface-3);
+  --ot-approval-border: var(--ot-border);
+  --ot-approval-text: var(--ot-text);
+  --ot-approval-text-soft: var(--ot-text-soft);
+  --ot-approval-text-muted: var(--ot-text-muted);
+  --ot-approval-freeze-shadow: -10px 0 18px -16px rgb(15 23 42 / 0.7);
 
   display: flex;
   width: 100%;
   max-width: 100%;
   min-width: 0;
   flex-direction: column;
-  gap: 1rem;
+  gap: 0.9rem;
   overflow-x: hidden;
 }
 
@@ -1687,12 +1646,10 @@ onBeforeUnmount(() => {
 .ot-approval-page :deep(.p-button),
 .ot-approval-page :deep(.p-select),
 .ot-approval-page :deep(.p-select-label) {
-  font-family: inherit;
+  font-family: var(--ot-font-main) !important;
 }
 
-/* =========================
-   Filter bar
-   ========================= */
+/* Filter */
 
 .ot-approval-filter-bar {
   display: flex;
@@ -1702,12 +1659,12 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 0.65rem;
   overflow: visible;
-  border: 1px solid var(--surface-border);
-  border-radius: 1.05rem;
+  border: 1px solid var(--ot-approval-border);
+  border-radius: var(--ot-radius-lg);
   background:
-    linear-gradient(135deg, rgb(var(--ot-list-blue-rgb) / 0.055), transparent 34%),
-    var(--surface-card);
-  box-shadow: 0 12px 34px rgb(15 23 42 / 0.055);
+    linear-gradient(135deg, rgba(129, 166, 198, 0.12), transparent 34%),
+    var(--ot-approval-body-bg);
+  box-shadow: var(--ot-shadow-sm);
   padding: 0.85rem;
 }
 
@@ -1727,15 +1684,10 @@ onBeforeUnmount(() => {
   gap: 0.35rem;
 }
 
-.ot-search-field {
-  min-width: 0;
-}
-
 .ot-field-label {
-  color: var(--text-color-secondary);
+  color: var(--ot-approval-text-soft);
   font-size: 0.74rem;
   font-weight: 700;
-  letter-spacing: 0.01em;
 }
 
 .ot-search-icon-field {
@@ -1770,7 +1722,7 @@ onBeforeUnmount(() => {
     minmax(0, auto);
   gap: 0.75rem;
   align-items: end;
-  border-top: 1px solid rgb(var(--ot-list-row-border) / 0.12);
+  border-top: 1px solid var(--ot-approval-border);
   padding-top: 0.72rem;
 }
 
@@ -1811,7 +1763,8 @@ onBeforeUnmount(() => {
 
 .ot-approval-action-button :deep(.p-button-label) {
   overflow: hidden;
-  font-weight: 550;
+  font-size: 0.76rem;
+  font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1822,9 +1775,9 @@ onBeforeUnmount(() => {
 }
 
 .ot-filter-toggle-button.has-active-filters {
-  border-color: rgb(var(--ot-list-blue-rgb) / 0.36) !important;
-  background: rgb(var(--ot-list-blue-rgb) / 0.1) !important;
-  color: rgb(var(--ot-list-blue-rgb)) !important;
+  border-color: color-mix(in srgb, var(--ot-info) 35%, transparent) !important;
+  background: var(--ot-info-soft) !important;
+  color: var(--ot-info) !important;
 }
 
 .ot-loaded-badge {
@@ -1833,10 +1786,10 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   gap: 0.35rem;
-  border: 1px solid rgb(var(--ot-list-blue-rgb) / 0.22);
+  border: 1px solid var(--ot-approval-border);
   border-radius: 999px;
-  background: rgb(var(--ot-list-blue-rgb) / 0.09);
-  color: rgb(var(--ot-list-blue-rgb));
+  background: var(--ot-surface-2);
+  color: var(--ot-approval-text-soft);
   padding: 0.28rem 0.62rem;
   font-size: 0.74rem;
   font-weight: 750;
@@ -1844,36 +1797,34 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-/* =========================
-   Table card
-   ========================= */
+/* Table card */
 
-.ot-table-card {
+.ot-approval-table-card {
   width: 100%;
   max-width: 100%;
   min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--surface-border);
-  border-radius: 1.15rem;
-  background: var(--surface-card);
-  box-shadow: 0 16px 42px rgb(15 23 42 / 0.07);
+  border: 1px solid var(--ot-approval-border);
+  border-radius: var(--ot-radius-lg);
+  background: var(--ot-approval-body-bg);
+  box-shadow: var(--ot-shadow-sm);
 }
 
-.ot-table-toolbar {
+.ot-approval-table-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  border-bottom: 1px solid rgb(var(--ot-list-row-border) / 0.14);
+  border-bottom: 1px solid var(--ot-approval-border);
   background:
-    linear-gradient(135deg, rgb(var(--ot-list-green-rgb) / 0.055), transparent 32%),
-    var(--surface-card);
+    linear-gradient(135deg, rgba(34, 197, 94, 0.07), transparent 32%),
+    var(--ot-approval-body-bg);
   padding: 0.82rem 1rem;
 }
 
 .ot-table-title {
   margin: 0;
-  color: var(--text-color);
+  color: var(--ot-approval-text);
   font-size: 1rem;
   font-weight: 800;
   line-height: 1.25;
@@ -1887,85 +1838,172 @@ onBeforeUnmount(() => {
   gap: 0.45rem;
 }
 
-.ot-approval-table-scroll {
+.ot-approval-table-shell {
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  max-height: min(66vh, 660px);
-  min-height: 22rem;
-  overflow: auto;
-  overscroll-behavior: contain;
-  scroll-behavior: smooth;
-  scrollbar-gutter: stable;
+  overflow: hidden;
 }
 
-/* =========================
-   PrimeVue table
-   ========================= */
+/* Main table */
 
 :deep(.ot-approval-table.p-datatable) {
   max-width: 100% !important;
   min-width: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
 }
 
-:deep(.ot-approval-table.p-datatable .p-datatable-wrapper) {
+:deep(.ot-approval-table.p-datatable .p-datatable-wrapper),
+:deep(.ot-approval-table.p-datatable .p-datatable-table-container) {
   max-width: 100% !important;
   min-width: 0 !important;
-  overflow: visible !important;
+  overflow: auto !important;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 :deep(.ot-approval-table.p-datatable .p-datatable-table) {
-  width: max-content !important;
-  min-width: 100% !important;
+  min-width: 64rem !important;
   table-layout: auto !important;
+  border-collapse: separate !important;
+  border-spacing: 0 !important;
+}
+
+:deep(.ot-approval-table.p-datatable .p-datatable-thead) {
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 80 !important;
 }
 
 :deep(.ot-approval-table.p-datatable .p-datatable-thead > tr > th) {
   position: sticky !important;
-  top: 0;
-  z-index: 5;
-  width: auto !important;
-  min-width: auto !important;
-  max-width: none !important;
-  border-color: rgb(var(--ot-list-row-border) / 0.14) !important;
-  background: var(--surface-ground) !important;
-  color: var(--text-color-secondary) !important;
-  padding: 0.58rem 0.68rem !important;
-  font-size: 0.76rem !important;
-  font-weight: 750 !important;
+  top: 0 !important;
+  z-index: 82 !important;
+  border-color: var(--ot-approval-border) !important;
+  background: var(--ot-approval-head-bg-solid) !important;
+  background-color: var(--ot-approval-head-bg-solid) !important;
+  background-image: none !important;
+  color: var(--ot-approval-text-soft) !important;
+  padding: 0.54rem 0.6rem !important;
+  font-size: 0.74rem !important;
+  font-weight: 800 !important;
   text-align: center !important;
   vertical-align: middle !important;
   white-space: nowrap !important;
+  opacity: 1 !important;
+  box-shadow:
+    0 1px 0 var(--ot-approval-border),
+    0 8px 14px rgb(15 23 42 / 0.045);
 }
 
 :deep(.ot-approval-table.p-datatable .p-datatable-tbody > tr > td) {
-  width: auto !important;
-  min-width: auto !important;
-  max-width: none !important;
-  height: 64px !important;
-  border-color: rgb(var(--ot-list-row-border) / 0.08) !important;
-  padding: 0.44rem 0.68rem !important;
-  color: var(--text-color) !important;
-  font-size: 0.8rem !important;
+  height: 60px !important;
+  border-color: var(--ot-approval-border) !important;
+  background: var(--ot-approval-body-bg) !important;
+  background-color: var(--ot-approval-body-bg) !important;
+  background-image: none !important;
+  padding: 0.4rem 0.6rem !important;
+  color: var(--ot-approval-text) !important;
+  font-size: 0.78rem !important;
   text-align: center !important;
   vertical-align: middle !important;
   white-space: nowrap !important;
+  opacity: 1 !important;
+}
+
+:deep(.ot-approval-table.p-datatable .p-datatable-tbody > tr:hover > td) {
+  background: color-mix(in srgb, var(--ot-approval-body-bg) 92%, var(--ot-sky) 8%) !important;
+  background-color: color-mix(in srgb, var(--ot-approval-body-bg) 92%, var(--ot-sky) 8%) !important;
+  opacity: 1 !important;
 }
 
 :deep(.ot-approval-table.p-datatable .p-datatable-tbody > tr.p-datatable-row-expansion > td) {
   height: auto !important;
   border-color: transparent !important;
-  padding: 0.45rem 0.75rem 0.75rem !important;
-  background: transparent !important;
+  background: var(--ot-approval-body-bg) !important;
+  background-color: var(--ot-approval-body-bg) !important;
+  padding: 0.42rem 0.6rem 0.65rem !important;
 }
 
-:deep(.ot-approval-table.p-datatable .p-datatable-tbody > tr:hover) {
-  background: rgb(var(--ot-list-blue-rgb) / 0.03) !important;
+/* Small checkbox and expander columns */
+
+:deep(.ot-approval-table.p-datatable .ot-select-col-header),
+:deep(.ot-approval-table.p-datatable .ot-select-col-body),
+:deep(.ot-approval-table.p-datatable .ot-expander-col-header),
+:deep(.ot-approval-table.p-datatable .ot-expander-col-body) {
+  width: 2.1rem !important;
+  min-width: 2.1rem !important;
+  max-width: 2.1rem !important;
+  padding-inline: 0.16rem !important;
 }
 
-:deep(.ot-approval-table.p-datatable .p-datatable-tbody > tr.p-row-expanded) {
-  background: rgb(var(--ot-list-blue-rgb) / 0.035) !important;
+:deep(.ot-approval-table.p-datatable .p-checkbox) {
+  display: inline-flex !important;
+  width: 1rem !important;
+  height: 1rem !important;
+  margin-inline: auto !important;
 }
+
+:deep(.ot-approval-table.p-datatable .p-checkbox-box) {
+  width: 1rem !important;
+  height: 1rem !important;
+  border-radius: 0.28rem !important;
+}
+
+:deep(.ot-approval-table.p-datatable .p-row-toggler) {
+  display: inline-flex !important;
+  width: 1.45rem !important;
+  height: 1.45rem !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 999px !important;
+  color: var(--ot-info) !important;
+}
+
+:deep(.ot-approval-table.p-datatable .p-row-toggler:hover) {
+  background: var(--ot-info-soft) !important;
+}
+
+/* Frozen action column */
+
+:deep(.ot-approval-table.p-datatable .p-datatable-frozen-column),
+:deep(.ot-approval-table.p-datatable .ot-action-col-body) {
+  position: sticky !important;
+  right: 0 !important;
+  z-index: 70 !important;
+  background: var(--ot-approval-body-bg) !important;
+  background-color: var(--ot-approval-body-bg) !important;
+  background-image: none !important;
+  opacity: 1 !important;
+  isolation: isolate;
+  box-shadow: var(--ot-approval-freeze-shadow);
+}
+
+:deep(.ot-approval-table.p-datatable .p-datatable-thead > tr > th.p-datatable-frozen-column),
+:deep(.ot-approval-table.p-datatable .ot-action-col-header) {
+  position: sticky !important;
+  right: 0 !important;
+  z-index: 95 !important;
+  background: var(--ot-approval-head-bg-solid) !important;
+  background-color: var(--ot-approval-head-bg-solid) !important;
+  background-image: none !important;
+  opacity: 1 !important;
+  isolation: isolate;
+  box-shadow: var(--ot-approval-freeze-shadow);
+}
+
+:deep(.ot-approval-table.p-datatable .p-datatable-tbody > tr:hover .p-datatable-frozen-column),
+:deep(.ot-approval-table.p-datatable .p-datatable-tbody > tr:hover .ot-action-col-body),
+:deep(.ot-approval-table.p-datatable .p-datatable-tbody > tr.p-row-expanded .p-datatable-frozen-column),
+:deep(.ot-approval-table.p-datatable .p-datatable-tbody > tr.p-row-expanded .ot-action-col-body) {
+  background: var(--ot-approval-body-bg) !important;
+  background-color: var(--ot-approval-body-bg) !important;
+  background-image: none !important;
+  opacity: 1 !important;
+}
+
+/* Header/cell alignment */
 
 :deep(.ot-approval-table.p-datatable .p-datatable-column-header-content),
 :deep(.ot-approval-table.p-datatable .p-column-header-content) {
@@ -1995,54 +2033,16 @@ onBeforeUnmount(() => {
   margin-inline: auto !important;
 }
 
-:deep(.ot-approval-table.p-datatable .p-row-toggler) {
-  display: inline-flex !important;
-  width: 1.85rem !important;
-  height: 1.85rem !important;
-  align-items: center !important;
-  justify-content: center !important;
-  border-radius: 999px !important;
-  color: rgb(var(--ot-list-blue-rgb)) !important;
-}
-
-:deep(.ot-approval-table.p-datatable .p-row-toggler:hover) {
-  background: rgb(var(--ot-list-blue-rgb) / 0.1) !important;
-}
-
-:deep(.ot-approval-table.p-datatable .p-checkbox) {
-  display: inline-flex !important;
-  margin-inline: auto !important;
-}
-
-:deep(.ot-approval-table.p-datatable .p-tag),
-:deep(.ot-approval-table.p-datatable .p-button) {
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  margin-inline: auto !important;
-  text-align: center !important;
-}
-
-:deep(.ot-approval-table.p-datatable .p-tag-value) {
-  max-width: 100%;
-  overflow: hidden;
-  text-align: center !important;
-  text-overflow: ellipsis;
-}
-
-/* =========================
-   Table text
-   ========================= */
+/* Text */
 
 .ot-request-no-text {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: rgb(var(--ot-list-code-rgb));
-  font-size: 0.82rem;
+  color: var(--ot-info);
+  font-size: 0.8rem;
   font-weight: 760;
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.005em;
   text-align: center;
   white-space: nowrap;
 }
@@ -2060,10 +2060,10 @@ onBeforeUnmount(() => {
 }
 
 .ot-main-text {
-  max-width: 13rem;
+  max-width: 9.2rem;
   overflow: hidden;
-  color: rgb(var(--ot-list-text-rgb));
-  font-size: 0.82rem;
+  color: var(--ot-approval-text);
+  font-size: 0.8rem;
   font-weight: 660;
   line-height: 1.25;
   text-align: center;
@@ -2072,10 +2072,10 @@ onBeforeUnmount(() => {
 }
 
 .ot-sub-text {
-  max-width: 12rem;
+  max-width: 8.8rem;
   overflow: hidden;
-  color: var(--text-color-secondary);
-  font-size: 0.71rem;
+  color: var(--ot-approval-text-muted);
+  font-size: 0.7rem;
   font-weight: 520;
   line-height: 1.2;
   text-align: center;
@@ -2089,8 +2089,8 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  color: rgb(var(--ot-list-muted-rgb));
-  font-size: 0.78rem;
+  color: var(--ot-approval-text-soft);
+  font-size: 0.76rem;
   font-weight: 560;
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
@@ -2099,15 +2099,13 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-/* =========================
-   Tags / actions
-   ========================= */
+/* Tags / actions */
 
 .ot-approval-rgb-tag {
   --ot-approval-tag-rgb: var(--ot-list-muted-rgb);
 
   display: inline-flex !important;
-  min-height: 1.42rem;
+  min-height: 1.36rem;
   max-width: 100%;
   align-items: center !important;
   justify-content: center !important;
@@ -2115,8 +2113,8 @@ onBeforeUnmount(() => {
   border-radius: 999px !important;
   background: rgb(var(--ot-approval-tag-rgb) / 0.11) !important;
   color: rgb(var(--ot-approval-tag-rgb)) !important;
-  padding: 0.12rem 0.5rem !important;
-  font-size: 0.7rem !important;
+  padding: 0.1rem 0.46rem !important;
+  font-size: 0.68rem !important;
   font-weight: 730 !important;
   line-height: 1 !important;
   text-align: center !important;
@@ -2124,7 +2122,7 @@ onBeforeUnmount(() => {
 }
 
 .approval-display-tag {
-  max-width: 13.5rem;
+  max-width: 12rem;
 }
 
 .ot-approval-tag-approved {
@@ -2148,31 +2146,34 @@ onBeforeUnmount(() => {
 }
 
 .ot-row-actions {
-  display: inline-flex;
+  display: inline-grid;
+  width: 100%;
   max-width: 100%;
+  grid-template-columns: 1fr;
   align-items: center;
   justify-content: center;
-  gap: 0.36rem;
+  gap: 0.22rem;
 }
 
 .ot-action-mini {
-  min-height: 1.9rem;
-  padding-inline: 0.62rem;
+  width: 100%;
+  min-height: 1.66rem;
+  padding-inline: 0.45rem;
   white-space: nowrap;
 }
 
 .ot-action-mini :deep(.p-button-label) {
-  font-size: 0.73rem;
+  font-size: 0.7rem;
   font-weight: 620;
 }
 
 .ot-action-mini :deep(.p-button-icon) {
-  font-size: 0.72rem;
+  font-size: 0.7rem;
 }
 
 .ot-approve-button {
-  border-color: rgb(var(--ot-list-green-rgb)) !important;
-  background: rgb(var(--ot-list-green-rgb)) !important;
+  border-color: var(--ot-success) !important;
+  background: var(--ot-success) !important;
   color: #ffffff !important;
 }
 
@@ -2183,36 +2184,39 @@ onBeforeUnmount(() => {
 }
 
 .ot-muted-action {
-  color: var(--text-color-secondary);
-  font-size: 0.72rem;
+  color: var(--ot-approval-text-muted);
+  font-size: 0.7rem;
   font-weight: 620;
   white-space: nowrap;
 }
 
-/* =========================
-   Expanded child table
-   ========================= */
+/* Expanded child table */
 
 .ot-expanded-box {
+  width: 100%;
   max-width: 100%;
   min-width: 0;
-  border: 1px solid rgb(var(--ot-list-blue-rgb) / 0.12);
-  border-radius: 0.95rem;
-  background:
-    linear-gradient(135deg, rgb(var(--ot-list-blue-rgb) / 0.035), transparent 35%),
-    var(--surface-ground);
-  padding: 0.72rem;
+  border: 1px solid var(--ot-approval-border);
+  border-radius: 0.9rem;
+  background: var(--ot-approval-body-bg) !important;
+  background-color: var(--ot-approval-body-bg) !important;
+  background-image: none !important;
+  padding: 0.55rem;
 }
 
 .ot-expanded-table-scroll {
+  position: relative;
+  width: 100%;
   max-width: 100%;
-  min-width: 740px;
-  max-height: 19rem;
+  min-width: 0;
+  max-height: 18rem;
   overflow: auto;
   overscroll-behavior: contain;
-  border: 1px solid rgb(var(--ot-list-row-border) / 0.12);
-  border-radius: 0.85rem;
-  background: var(--surface-card);
+  border: 1px solid var(--ot-approval-border);
+  border-radius: 0.78rem;
+  background: var(--ot-approval-body-bg) !important;
+  background-color: var(--ot-approval-body-bg) !important;
+  background-image: none !important;
   scroll-behavior: smooth;
   scrollbar-gutter: stable;
 }
@@ -2220,15 +2224,19 @@ onBeforeUnmount(() => {
 .ot-expanded-grid-row {
   display: grid;
   grid-template-columns:
-    4rem
-    9rem
-    minmax(12rem, 1.2fr)
-    minmax(10rem, 1fr)
-    8rem
-    minmax(10rem, 1fr);
-  min-height: 2.55rem;
-  align-items: center;
-  border-bottom: 1px solid rgb(var(--ot-list-row-border) / 0.075);
+    minmax(2.5rem, 0.34fr)
+    minmax(5.8rem, 0.72fr)
+    minmax(9rem, 1.15fr)
+    minmax(8rem, 1fr)
+    minmax(5.8rem, 0.72fr)
+    minmax(7rem, 0.9fr);
+  min-width: 0;
+  min-height: 2.35rem;
+  align-items: stretch;
+  border-bottom: 1px solid var(--ot-approval-border);
+  background: var(--ot-approval-body-bg) !important;
+  background-color: var(--ot-approval-body-bg) !important;
+  background-image: none !important;
 }
 
 .ot-expanded-grid-row:last-child {
@@ -2241,33 +2249,57 @@ onBeforeUnmount(() => {
   height: 100%;
   align-items: center;
   justify-content: center;
-  border-right: 1px solid rgb(var(--ot-list-row-border) / 0.07);
-  padding: 0.48rem 0.62rem;
-  color: var(--text-color-secondary);
-  font-size: 0.76rem;
+  border-right: 1px solid var(--ot-approval-border);
+  background: var(--ot-approval-body-bg) !important;
+  background-color: var(--ot-approval-body-bg) !important;
+  background-image: none !important;
+  padding: 0.4rem 0.48rem;
+  color: var(--ot-approval-text-soft);
+  font-size: 0.72rem;
   font-weight: 500;
-  line-height: 1.28;
+  line-height: 1.24;
   text-align: center;
+  background-clip: border-box !important;
 }
 
 .ot-expanded-grid-row > div:last-child {
   border-right: 0;
 }
 
+/* Solid child sticky header */
+
 .ot-expanded-grid-row.is-head {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  min-height: 2.35rem;
-  background: var(--surface-ground);
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 60 !important;
+  min-height: 2.15rem;
+  background: var(--ot-approval-head-bg-solid) !important;
+  background-color: var(--ot-approval-head-bg-solid) !important;
+  background-image: none !important;
+  opacity: 1 !important;
+  box-shadow:
+    0 1px 0 var(--ot-approval-border),
+    0 8px 14px rgb(15 23 42 / 0.08);
 }
 
 .ot-expanded-grid-row.is-head > div {
-  color: var(--text-color-secondary);
-  font-size: 0.7rem;
-  font-weight: 740;
+  position: relative;
+  z-index: 61 !important;
+  border-right: 1px solid var(--ot-approval-border);
+  background: var(--ot-approval-head-bg-solid) !important;
+  background-color: var(--ot-approval-head-bg-solid) !important;
+  background-image: none !important;
+  color: var(--ot-approval-text-soft);
+  font-size: 0.66rem;
+  font-weight: 800;
   letter-spacing: 0.02em;
   text-transform: uppercase;
+  opacity: 1 !important;
+  background-clip: border-box !important;
+}
+
+.ot-expanded-grid-row.is-head > div:last-child {
+  border-right: 0;
 }
 
 .cell-center {
@@ -2275,13 +2307,14 @@ onBeforeUnmount(() => {
 }
 
 .cell-code {
-  color: rgb(var(--ot-list-blue-rgb)) !important;
+  color: var(--ot-info) !important;
   font-weight: 700 !important;
   font-variant-numeric: tabular-nums;
 }
 
 .cell-strong {
-  color: var(--text-color) !important;
+  color: var(--ot-approval-text) !important;
+  font-family: var(--ot-font-km) !important;
   font-weight: 650 !important;
 }
 
@@ -2291,35 +2324,18 @@ onBeforeUnmount(() => {
 }
 
 .ot-expanded-empty {
-  border: 1px dashed rgb(var(--ot-list-row-border) / 0.18);
+  border: 1px dashed var(--ot-approval-border);
   border-radius: 0.85rem;
-  background: var(--surface-card);
-  color: var(--text-color-secondary);
+  background: var(--ot-approval-body-bg) !important;
+  background-color: var(--ot-approval-body-bg) !important;
+  color: var(--ot-approval-text-muted);
   padding: 0.85rem;
   font-size: 0.8rem;
   font-weight: 520;
   text-align: center;
 }
 
-/* =========================
-   Bottom / empty state
-   ========================= */
-
-.ot-list-bottom-bar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.55rem;
-  border-top: 1px solid rgb(var(--ot-list-row-border) / 0.1);
-  background: var(--surface-card);
-  padding: 0.65rem;
-}
-
-.ot-all-loaded-text {
-  color: var(--text-color-secondary);
-  font-size: 0.74rem;
-  font-weight: 600;
-}
+/* Empty state */
 
 .ot-empty-state {
   display: flex;
@@ -2329,7 +2345,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: 0.45rem;
   padding: 2rem;
-  color: var(--text-color-secondary);
+  color: var(--ot-approval-text-muted);
 }
 
 .ot-empty-icon {
@@ -2338,13 +2354,13 @@ onBeforeUnmount(() => {
   height: 3rem;
   place-items: center;
   border-radius: 999px;
-  background: rgb(var(--ot-list-blue-rgb) / 0.1);
-  color: rgb(var(--ot-list-blue-rgb));
+  background: var(--ot-info-soft);
+  color: var(--ot-info);
   font-size: 1.25rem;
 }
 
 .ot-empty-title {
-  color: var(--text-color);
+  color: var(--ot-approval-text);
   font-size: 0.95rem;
   font-weight: 800;
 }
@@ -2356,9 +2372,7 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 
-/* =========================
-   Dialogs
-   ========================= */
+/* Dialog */
 
 .ot-dialog-header {
   display: flex;
@@ -2371,21 +2385,21 @@ onBeforeUnmount(() => {
   width: 2.35rem;
   height: 2.35rem;
   place-items: center;
-  border: 1px solid rgb(var(--ot-list-green-rgb) / 0.3);
+  border: 1px solid color-mix(in srgb, var(--ot-success) 35%, transparent);
   border-radius: 999px;
-  background: rgb(var(--ot-list-green-rgb) / 0.12);
-  color: rgb(var(--ot-list-green-rgb));
+  background: var(--ot-success-soft);
+  color: var(--ot-success);
   font-size: 0.95rem;
 }
 
 .ot-dialog-icon.is-danger {
-  border-color: rgb(var(--ot-list-red-rgb) / 0.3);
-  background: rgb(var(--ot-list-red-rgb) / 0.12);
-  color: rgb(var(--ot-list-red-rgb));
+  border-color: color-mix(in srgb, var(--ot-danger) 35%, transparent);
+  background: var(--ot-danger-soft);
+  color: var(--ot-danger);
 }
 
 .ot-dialog-title {
-  color: var(--text-color);
+  color: var(--ot-approval-text);
   font-size: 1rem;
   font-weight: 800;
   line-height: 1.25;
@@ -2393,7 +2407,7 @@ onBeforeUnmount(() => {
 
 .ot-dialog-subtitle {
   margin-top: 0.1rem;
-  color: var(--text-color-secondary);
+  color: var(--ot-approval-text-muted);
   font-size: 0.76rem;
   font-weight: 650;
 }
@@ -2415,14 +2429,14 @@ onBeforeUnmount(() => {
   min-width: 0;
   flex-direction: column;
   gap: 0.18rem;
-  border: 1px solid rgb(var(--ot-list-row-border) / 0.12);
+  border: 1px solid var(--ot-approval-border);
   border-radius: 0.85rem;
-  background: var(--surface-ground);
+  background: var(--ot-surface-2);
   padding: 0.64rem;
 }
 
 .ot-dialog-summary span {
-  color: var(--text-color-secondary);
+  color: var(--ot-approval-text-muted);
   font-size: 0.68rem;
   font-weight: 760;
   letter-spacing: 0.02em;
@@ -2431,13 +2445,13 @@ onBeforeUnmount(() => {
 
 .ot-dialog-summary strong {
   overflow-wrap: anywhere;
-  color: var(--text-color);
+  color: var(--ot-approval-text);
   font-size: 0.8rem;
   font-weight: 760;
 }
 
 .ot-dialog-label {
-  color: var(--text-color-secondary);
+  color: var(--ot-approval-text-soft);
   font-size: 0.76rem;
   font-weight: 750;
 }
@@ -2478,19 +2492,19 @@ onBeforeUnmount(() => {
 
 .ot-native-dialog-button.is-cancel {
   min-width: 6.2rem;
-  border-color: var(--surface-border);
-  background: var(--surface-card);
-  color: var(--text-color-secondary);
+  border-color: var(--ot-approval-border);
+  background: var(--ot-approval-body-bg);
+  color: var(--ot-approval-text-soft);
 }
 
 .ot-native-dialog-button.is-cancel:hover:not(:disabled) {
-  background: var(--surface-hover);
-  color: var(--text-color);
+  background: var(--ot-surface-2);
+  color: var(--ot-approval-text);
 }
 
 .ot-native-dialog-button.is-approve {
-  border-color: rgb(var(--ot-list-green-rgb));
-  background: rgb(var(--ot-list-green-rgb));
+  border-color: var(--ot-success);
+  background: var(--ot-success);
   color: #ffffff;
 }
 
@@ -2501,8 +2515,8 @@ onBeforeUnmount(() => {
 }
 
 .ot-native-dialog-button.is-reject {
-  border-color: rgb(var(--ot-list-red-rgb));
-  background: rgb(var(--ot-list-red-rgb));
+  border-color: var(--ot-danger);
+  background: var(--ot-danger);
   color: #ffffff;
 }
 
@@ -2517,14 +2531,19 @@ onBeforeUnmount(() => {
   opacity: 0.72;
 }
 
-/* =========================
-   Dark mode
-   ========================= */
+/* Dark mode */
 
 :global(.dark) .ot-approval-page {
-  --ot-list-text-rgb: 226 232 240;
   --ot-list-muted-rgb: 203 213 225;
-  --ot-list-row-border: 71 85 105;
+
+  --ot-approval-body-bg: var(--ot-surface);
+  --ot-approval-head-bg: var(--ot-surface-2);
+  --ot-approval-head-bg-solid: var(--ot-surface-3);
+  --ot-approval-border: var(--ot-border);
+  --ot-approval-text: var(--ot-text);
+  --ot-approval-text-soft: var(--ot-text-soft);
+  --ot-approval-text-muted: var(--ot-text-muted);
+  --ot-approval-freeze-shadow: -10px 0 18px -16px rgb(0 0 0 / 0.95);
 }
 
 :global(.dark) .ot-approval-rgb-tag {
@@ -2532,16 +2551,7 @@ onBeforeUnmount(() => {
   background: rgb(var(--ot-approval-tag-rgb) / 0.18) !important;
 }
 
-:global(.dark) .ot-expanded-box {
-  border-color: rgb(var(--ot-list-blue-rgb) / 0.22);
-  background:
-    linear-gradient(135deg, rgb(var(--ot-list-blue-rgb) / 0.075), transparent 35%),
-    var(--surface-ground);
-}
-
-/* =========================
-   Responsive
-   ========================= */
+/* Responsive */
 
 @media (max-width: 1100px) {
   .ot-approval-filter-primary {
@@ -2561,7 +2571,7 @@ onBeforeUnmount(() => {
     justify-content: flex-start;
   }
 
-  .ot-table-toolbar {
+  .ot-approval-table-toolbar {
     align-items: flex-start;
     flex-direction: column;
   }
@@ -2573,14 +2583,19 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 768px) {
-  .ot-approval-filter-bar {
+  .ot-approval-page {
     gap: 0.55rem;
-    padding: 0.65rem;
+  }
+
+  .ot-approval-filter-bar {
+    gap: 0.5rem;
+    border-radius: var(--ot-radius-md);
+    padding: 0.55rem;
   }
 
   .ot-approval-filter-primary {
     grid-template-columns: 1fr;
-    gap: 0.55rem;
+    gap: 0.5rem;
   }
 
   .ot-search-field .ot-field-label {
@@ -2588,7 +2603,7 @@ onBeforeUnmount(() => {
   }
 
   .ot-search-field :deep(.ot-approval-search-input.p-inputtext) {
-    min-height: 2.35rem;
+    min-height: 2.25rem;
     font-size: 16px !important;
     line-height: 1.2;
   }
@@ -2596,7 +2611,7 @@ onBeforeUnmount(() => {
   .ot-approval-filter-actions {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.4rem;
+    gap: 0.35rem;
     justify-content: stretch;
   }
 
@@ -2607,24 +2622,25 @@ onBeforeUnmount(() => {
   .ot-loaded-badge {
     grid-column: 1 / -1;
     width: 100%;
-    min-height: 1.72rem;
-    padding: 0.22rem 0.5rem;
+    min-height: 1.55rem;
+    padding: 0.18rem 0.45rem;
+    font-size: 0.68rem;
   }
 
   .ot-approval-action-button {
     width: 100%;
+    min-height: 2rem;
     justify-content: center;
-    min-height: 2.2rem;
   }
 
   .ot-approval-action-button :deep(.p-button-label) {
-    font-size: 0.78rem;
+    font-size: 0.72rem;
   }
 
   .ot-approval-filter-panel {
     grid-template-columns: 1fr;
-    gap: 0.58rem;
-    padding-top: 0.6rem;
+    gap: 0.5rem;
+    padding-top: 0.55rem;
   }
 
   .ot-approval-filter-panel-actions {
@@ -2636,17 +2652,166 @@ onBeforeUnmount(() => {
     max-height: 16rem;
   }
 
-  .ot-approval-table-scroll {
-    max-height: 64vh;
+  .ot-approval-table-card {
+    border-radius: var(--ot-radius-md);
   }
 
-  .ot-list-bottom-bar {
-    flex-direction: column;
-    align-items: stretch;
+  .ot-approval-table-toolbar {
+    gap: 0.45rem;
+    padding: 0.55rem 0.65rem;
+  }
+
+  .ot-table-title {
+    font-size: 0.88rem;
+  }
+
+  .ot-table-actions {
+    width: 100%;
+    gap: 0.35rem;
   }
 
   .ot-dialog-summary {
     grid-template-columns: 1fr;
+  }
+
+  :deep(.ot-approval-table.p-datatable .p-datatable-table) {
+    min-width: 54rem !important;
+  }
+
+  :deep(.ot-approval-table.p-datatable .p-datatable-thead > tr > th) {
+    padding: 0.34rem 0.38rem !important;
+    font-size: 0.66rem !important;
+  }
+
+  :deep(.ot-approval-table.p-datatable .p-datatable-tbody > tr > td) {
+    height: 44px !important;
+    padding: 0.26rem 0.38rem !important;
+    font-size: 0.7rem !important;
+  }
+
+  :deep(.ot-approval-table.p-datatable .ot-select-col-header),
+  :deep(.ot-approval-table.p-datatable .ot-select-col-body),
+  :deep(.ot-approval-table.p-datatable .ot-expander-col-header),
+  :deep(.ot-approval-table.p-datatable .ot-expander-col-body) {
+    width: 1.9rem !important;
+    min-width: 1.9rem !important;
+    max-width: 1.9rem !important;
+    padding-inline: 0.12rem !important;
+  }
+
+  :deep(.ot-approval-table.p-datatable .p-row-toggler) {
+    width: 1.35rem !important;
+    height: 1.35rem !important;
+  }
+
+  .ot-request-no-text {
+    font-size: 0.7rem;
+  }
+
+  .ot-main-text {
+    max-width: 9.2rem;
+    overflow: hidden;
+    color: var(--ot-approval-text);
+    font-family: var(--ot-font-km) !important;
+    font-size: 0.8rem;
+    font-weight: 660;
+    line-height: 1.25;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ot-sub-text {
+    max-width: 6.8rem;
+    font-size: 0.6rem;
+  }
+
+  .ot-meta-text {
+    font-size: 0.66rem;
+  }
+
+  .ot-approval-rgb-tag {
+    min-height: 1.14rem;
+    padding: 0.07rem 0.32rem !important;
+    font-size: 0.6rem !important;
+  }
+
+  :deep(.ot-approval-table.p-datatable .ot-action-col-header),
+  :deep(.ot-approval-table.p-datatable .ot-action-col-body) {
+    width: 2.45rem !important;
+    min-width: 2.45rem !important;
+    max-width: 2.45rem !important;
+    padding: 0.18rem 0.12rem !important;
+  }
+
+  :deep(.ot-approval-table.p-datatable .ot-action-col-header .p-column-title),
+  :deep(.ot-approval-table.p-datatable .ot-action-col-header .p-datatable-column-title) {
+    display: none !important;
+  }
+
+  .ot-row-actions {
+    display: inline-grid;
+    grid-template-columns: 1fr;
+    gap: 0.18rem;
+  }
+
+  .ot-action-icon-responsive {
+    width: 1.62rem !important;
+    min-width: 1.62rem !important;
+    height: 1.62rem !important;
+    min-height: 1.62rem !important;
+    border-radius: 999px !important;
+    padding: 0 !important;
+  }
+
+  .ot-action-icon-responsive :deep(.p-button-label) {
+    display: none !important;
+  }
+
+  .ot-action-icon-responsive :deep(.p-button-icon) {
+    margin: 0 !important;
+    font-size: 0.7rem !important;
+  }
+
+  .ot-muted-action {
+    max-width: 2.2rem;
+    overflow: hidden;
+    font-size: 0.56rem;
+    line-height: 1.05;
+    text-align: center;
+    white-space: normal;
+  }
+
+  .ot-expanded-box {
+    border-radius: 0.72rem;
+    padding: 0.38rem;
+  }
+
+  .ot-expanded-table-scroll {
+    width: 100%;
+    min-width: 0;
+    max-height: 15rem;
+  }
+
+  .ot-expanded-grid-row {
+    min-width: 38rem;
+    min-height: 2.05rem;
+    grid-template-columns:
+      2.6rem
+      5.8rem
+      minmax(7.5rem, 1.05fr)
+      minmax(6.8rem, 0.95fr)
+      5.6rem
+      minmax(6.4rem, 0.85fr);
+  }
+
+  .ot-expanded-grid-row > div {
+    padding: 0.3rem 0.36rem;
+    font-size: 0.66rem;
+  }
+
+  .ot-expanded-grid-row.is-head > div {
+    font-size: 0.58rem;
   }
 }
 

@@ -15,7 +15,7 @@ router.get(
 
 router.get(
   '/lookup',
-  requirePermission('PAYMENT_FORMULA_VIEW'),
+  requirePermission('PAYMENT_FORMULA_LOOKUP'),
   paymentFormulaController.lookupPaymentFormulas,
 )
 

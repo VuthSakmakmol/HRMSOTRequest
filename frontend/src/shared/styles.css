@@ -16,9 +16,9 @@
   color-scheme: light;
 
   /* Fonts */
-  --ot-font-en: "Arial Nova", Arial, sans-serif;
-  --ot-font-km: "Kantumruy Pro", "Noto Sans Khmer", sans-serif;
-  --ot-font-th: "Arial Nova", Arial, sans-serif;
+  --ot-font-en: "Arial Nova", "Kantumruy Pro", "Noto Sans Khmer", Arial, sans-serif;
+  --ot-font-km: "Kantumruy Pro", "Noto Sans Khmer", "Arial Nova", Arial, sans-serif;
+  --ot-font-th: "Arial Nova", "Kantumruy Pro", "Noto Sans Khmer", Arial, sans-serif;
   --ot-font-main: var(--ot-font-en);
 
   /* Brand palette */

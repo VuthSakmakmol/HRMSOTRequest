@@ -279,6 +279,12 @@ const PERMISSIONS = [
     'Allow viewing payment formulas',
   ),
   permission(
+    'PAYMENT_FORMULA_LOOKUP',
+    'Lookup Payment Formula',
+    'PAYMENT',
+    'Allow reading active payment formula options for payment processing dropdowns only',
+  ),
+  permission(
     'PAYMENT_FORMULA_CREATE',
     'Create Payment Formula',
     'PAYMENT',

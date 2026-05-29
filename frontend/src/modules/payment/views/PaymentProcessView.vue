@@ -13,7 +13,7 @@ import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 
 import HolidayDatePicker from '@/modules/calendar/components/HolidayDatePicker.vue'
-import { getHolidays } from '@/modules/calendar/holiday.api'
+import { getHolidayLookupOptions } from '@/modules/calendar/holiday.api'
 import {
   calculatePaymentExport,
   downloadSalaryTemplate,
@@ -637,15 +637,12 @@ async function loadInternalCalendarForPeriod() {
       monthKeys.map((key) => {
         const [year, month] = key.split('-')
 
-        return getHolidays({
-          page: 1,
+        return getHolidayLookupOptions({
           limit: 100,
           search: '',
           isActive: true,
           year,
           month,
-          sortBy: 'date',
-          sortOrder: 'asc',
         })
       }),
     )
@@ -1161,7 +1158,7 @@ onBeforeUnmount(() => {
               </template>
             </Column>
 
-            <Column
+            <!-- <Column
               header="OT option"
               style="width: 14rem; min-width: 14rem"
             >
@@ -1173,9 +1170,9 @@ onBeforeUnmount(() => {
                   {{ data.shiftOtOptionLabel || '—' }}
                 </span>
               </template>
-            </Column>
+            </Column> -->
 
-            <Column
+            <!-- <Column
               header="OT time"
               style="width: 10rem; min-width: 10rem"
             >
@@ -1184,7 +1181,7 @@ onBeforeUnmount(() => {
                   {{ formatRequestTime(data) }}
                 </span>
               </template>
-            </Column>
+            </Column> -->
 
             <Column
               header="Day type"
@@ -1398,7 +1395,7 @@ onBeforeUnmount(() => {
             </Column>
 
             <Column
-              header="Allowance KHR"
+              header="Meal"
               style="width: 11rem; min-width: 11rem"
             >
               <template #body="{ data }">
