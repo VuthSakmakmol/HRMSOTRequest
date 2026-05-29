@@ -727,16 +727,10 @@ async function handleImport() {
         </div>
       </div>
 
-      <div class="ot-panel">
-        <div class="employee-import-guide-header">
-          <div>
-            <div class="employee-import-guide-title">
-              {{ t('org.employee.importGuideTitle') }}
-            </div>
-
-            <div class="employee-import-guide-subtitle">
-              {{ t('org.employee.importProgress.guideSubtitle') }}
-            </div>
+      <div class="ot-panel employee-import-simple-guide">
+        <div class="employee-import-simple-row">
+          <div class="employee-import-guide-title">
+            {{ t('org.employee.importGuideTitle') }}
           </div>
 
           <Button
@@ -749,6 +743,16 @@ async function handleImport() {
             :disabled="importing"
             @click="handleDownloadSample"
           />
+        </div>
+
+        <div class="employee-import-simple-rules">
+          <span class="employee-import-rule-pill">
+            {{ t('org.employee.blankLineMeansNoLine') }}
+          </span>
+
+          <span class="employee-import-rule-pill employee-import-rule-pill--warning">
+            {{ t('org.employee.employeeLineNotAllLines') }}
+          </span>
         </div>
 
         <div class="employee-import-note">
@@ -934,12 +938,54 @@ async function handleImport() {
   font-weight: 700;
 }
 
-.employee-import-guide-subtitle {
-  margin-top: 0.22rem;
-  color: var(--ot-text-muted);
-  font-size: 0.8rem;
-  line-height: 1.45;
+.employee-import-simple-guide {
+  display: grid;
+  gap: 0.75rem;
 }
+
+.employee-import-simple-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.employee-import-simple-rules {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.employee-import-rule-pill {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(37, 99, 235, 0.18);
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.08);
+  padding: 0.28rem 0.65rem;
+  color: rgb(37, 99, 235);
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.employee-import-rule-pill--warning {
+  border-color: rgba(245, 158, 11, 0.22);
+  background: rgba(245, 158, 11, 0.1);
+  color: rgb(217, 119, 6);
+}
+
+:global(.dark) .employee-import-rule-pill {
+  border-color: rgba(96, 165, 250, 0.28);
+  background: rgba(96, 165, 250, 0.14);
+  color: rgb(147, 197, 253);
+}
+
+:global(.dark) .employee-import-rule-pill--warning {
+  border-color: rgba(251, 191, 36, 0.3);
+  background: rgba(251, 191, 36, 0.14);
+  color: rgb(252, 211, 77);
+}
+
 
 .employee-import-error-count {
   display: inline-flex;
@@ -1319,7 +1365,7 @@ async function handleImport() {
 
 @media (min-width: 640px) {
   .employee-import-file-row,
-  .employee-import-guide-header,
+  .employee-import-simple-row,
   .employee-import-progress-head {
     flex-direction: row;
     align-items: center;

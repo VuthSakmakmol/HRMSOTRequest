@@ -508,9 +508,16 @@ function mapLineOptions(items = []) {
         lineId: value,
         code,
         name,
+
+        // Informational only.
+        // Employee still belongs only to selected line(s).
         departmentId: item.departmentId || null,
         departmentIds: Array.isArray(item.departmentIds) ? item.departmentIds : [],
         departments: Array.isArray(item.departments) ? item.departments : [],
+        positionIds: Array.isArray(item.positionIds) ? item.positionIds : [],
+        positions: Array.isArray(item.positions) ? item.positions : [],
+        isAllDepartments: item.isAllDepartments === true,
+        isAllPositions: item.isAllPositions === true,
       }
     })
     .filter(Boolean)
@@ -583,13 +590,23 @@ function ensureLineOptionsFromRow(row = {}) {
     if (!value) continue
 
     upsertOption(lineOptions, {
-      label: line.name || line.lineName || line.label || line.code || value,
+      label:
+        line.label ||
+        buildLabel(line.code || line.lineCode, line.name || line.lineName) ||
+        line.name ||
+        line.lineName ||
+        line.code ||
+        value,
       value,
       id: value,
       _id: value,
       lineId: value,
       code: line.code || line.lineCode || '',
       name: line.name || line.lineName || '',
+      departmentIds: Array.isArray(line.departmentIds) ? line.departmentIds : [],
+      positionIds: Array.isArray(line.positionIds) ? line.positionIds : [],
+      isAllDepartments: line.isAllDepartments === true,
+      isAllPositions: line.isAllPositions === true,
     })
   }
 
@@ -598,7 +615,12 @@ function ensureLineOptionsFromRow(row = {}) {
 
     if (value) {
       upsertOption(lineOptions, {
-        label: row.lineName || row.linesLabel || row.lineCode || value,
+        label:
+          row.linesLabel ||
+          buildLabel(row.lineCode, row.lineName) ||
+          row.lineName ||
+          row.lineCode ||
+          value,
         value,
         id: value,
         _id: value,
@@ -1264,8 +1286,14 @@ async function onFormDepartmentChange() {
   form.reportsToEmployeeId = null
 
   await Promise.all([
-    fetchPositionsForDropdown(form.departmentId, '', { page: 1, reset: true }),
-    fetchLinesForDropdown(form.departmentId, '', { page: 1, reset: true }),
+    fetchPositionsForDropdown(form.departmentId, '', {
+      page: 1,
+      reset: true,
+    }),
+    fetchLinesForDropdown(form.departmentId, '', {
+      page: 1,
+      reset: true,
+    }),
   ])
 }
 
@@ -1475,13 +1503,25 @@ function lineLabel(row) {
   if (lines.length) {
     return (
       lines
-        .map((line) => line.name || line.lineName || line.label || line.code)
+        .map((line) =>
+          line.label ||
+          buildLabel(line.code || line.lineCode, line.name || line.lineName) ||
+          line.name ||
+          line.lineName ||
+          line.code,
+        )
         .filter(Boolean)
-        .join(', ') || '-'
+        .join(', ') || t('org.employee.noLineAssigned')
     )
   }
 
-  return row?.lineName || row?.linesLabel || row?.lineCode || '-'
+  return (
+    row?.linesLabel ||
+    buildLabel(row?.lineCode, row?.lineName) ||
+    row?.lineName ||
+    row?.lineCode ||
+    t('org.employee.noLineAssigned')
+  )
 }
 
 function shiftLabel(row) {

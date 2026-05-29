@@ -120,8 +120,7 @@ const isSaveDisabled = computed(() => {
   return (
     saving.value ||
     !String(form.code || '').trim() ||
-    !String(form.name || '').trim() ||
-    !normalizeIdList(form.departmentIds).length
+    !String(form.name || '').trim()
   )
 })
 
@@ -239,23 +238,25 @@ async function loadDepartmentOptions() {
 async function loadPositionOptions(departmentIds = []) {
   const ids = normalizeIdList(departmentIds)
 
-  if (!ids.length) {
-    positionOptions.value = []
-    return
-  }
-
   positionLoading.value = true
 
   try {
-    const responses = await Promise.all(
-      ids.map((departmentId) =>
-        getPositionLookupOptions({
-          limit: 100,
-          isActive: true,
-          departmentId,
-        }),
-      ),
-    )
+    const responses = ids.length
+      ? await Promise.all(
+          ids.map((departmentId) =>
+            getPositionLookupOptions({
+              limit: 100,
+              isActive: true,
+              departmentId,
+            }),
+          ),
+        )
+      : [
+          await getPositionLookupOptions({
+            limit: 100,
+            isActive: true,
+          }),
+        ]
 
     const optionMap = new Map()
 
@@ -422,6 +423,8 @@ async function openCreateDialog() {
     await loadDepartmentOptions()
   }
 
+  await loadPositionOptions([])
+
   lineDialogVisible.value = true
 }
 
@@ -459,9 +462,12 @@ async function openEditDialog(row) {
     await loadDepartmentOptions()
   }
 
-  if (form.departmentIds.length) {
-    await loadPositionOptions(form.departmentIds)
-  }
+  // Important:
+  // If departmentIds is empty, load all positions.
+  // This supports position-only restriction:
+  // departmentIds = [] means all departments,
+  // positionIds has value means only selected positions.
+  await loadPositionOptions(form.departmentIds)
 
   lineDialogVisible.value = true
 }
@@ -470,7 +476,6 @@ async function onFormDepartmentsChange() {
   form.positionIds = []
   await loadPositionOptions(form.departmentIds)
 }
-
 async function submitLine() {
   saving.value = true
 
@@ -605,7 +610,7 @@ function departmentSummary(row) {
       hidden: 0,
       total: 0,
       expanded: false,
-      emptyText: '-',
+      emptyText: t('org.line.allDepartments'),
     }
   }
 
@@ -662,7 +667,7 @@ function positionSummary(row) {
       hidden: 0,
       total: 0,
       expanded: false,
-      emptyText: t('org.line.allPositionsInDepartments'),
+      emptyText: t('org.line.allPositions'),
     }
   }
 
@@ -1133,7 +1138,6 @@ onBeforeUnmount(() => {
             filter
             class="w-full"
             :loading="positionLoading"
-            :disabled="!form.departmentIds.length"
           />
 
           <div class="line-help-text">

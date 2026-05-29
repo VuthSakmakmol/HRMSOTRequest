@@ -985,12 +985,13 @@ export default {
       department: 'Department',
       departments: 'Departments',
       allDepartments: 'All Departments',
+      allPositions: 'All Positions',
 
       lineCode: 'Line Code',
       lineName: 'Line Name',
       allowedPositions: 'Allowed Positions',
-      allPositionsInDepartment: 'All positions in department',
-      allPositionsInDepartments: 'All positions in selected departments',
+      allPositionsInDepartment: 'All Positions',
+      allPositionsInDepartments: 'All Positions',
 
       newLine: 'New Line',
       importExcel: 'Import Excel',
@@ -1000,7 +1001,7 @@ export default {
       editTitle: 'Edit Production Line',
 
       selectDepartment: 'Select department',
-      selectDepartments: 'Select departments',
+      selectDepartments: 'Optional: select departments',
       selectAllowedPositions: 'Optional: select allowed positions',
 
       codeExample: 'Example: LINE-01',
@@ -1008,7 +1009,7 @@ export default {
       descriptionPlaceholder: 'Optional production line description',
 
       allowedPositionsMultiDepartmentHelp:
-        'Leave blank to allow all positions in the selected departments. Select positions only when this line should be limited to specific positions.',
+        'Leave blank for normal use. Blank departments = all departments. Blank positions = all positions.',
 
       exported: 'Exported',
       exportedSuccess: 'Production lines exported successfully.',
@@ -1022,15 +1023,19 @@ export default {
       importGuideTitle: 'Import guide',
       importGuideStep1: 'Download the sample file.',
       importGuideStep2:
-        'Fill your production line data using readable codes only.',
+        'Fill line code and line name. Department Codes and Position Codes are optional.',
       importGuideStep3:
-        'Department Code must already exist in Department master data.',
+        'Leave Department Codes blank for normal use. Blank = all departments.',
       importGuideStep4:
-        'Use Position Codes only when the line allows specific positions.',
+        'Leave Position Codes blank for normal use. Blank = all positions.',
       importAllOrNothingNote:
         'All rows must be 100% valid. If any row has an error, nothing will be saved.',
       importUploading: 'Uploading file... {percent}%',
       importProcessing: 'File uploaded. Validating Excel rows and saving data...',
+
+      blankDepartmentsMeansAll: 'Blank departments = all departments',
+      blankPositionsMeansAll: 'Blank positions = all positions',
+      employeeLineStillExplicit: 'Employee line is selected manually',
 
       downloadSample: 'Download Sample',
       downloadSampleFailed: 'Download sample failed',
@@ -1064,15 +1069,15 @@ export default {
 
       field: {
         departmentId: {
-          required: 'Department is required.',
+          required: 'Department is optional.',
           invalid: 'Department is invalid.',
         },
         departmentIds: {
-          required: 'At least one department is required.',
+          required: 'Department is optional.',
           invalid: 'One or more selected departments are invalid.',
         },
         positionIds: {
-          required: 'Position is required.',
+          required: 'Position is optional.',
           invalid: 'One or more selected positions are invalid.',
         },
       },
@@ -1082,7 +1087,7 @@ export default {
         codeTooLong: 'Line code must not be longer than 50 characters.',
         nameRequired: 'Line name is required.',
         nameTooLong: 'Line name must not be longer than 120 characters.',
-        departmentRequired: 'At least one department is required.',
+        departmentRequired: 'Department is optional.',
         descriptionTooLong: 'Description must not be longer than 500 characters.',
         updatePayloadRequired: 'Please update at least one field.',
       },
@@ -1121,7 +1126,7 @@ export default {
           nameRequired: 'Name is required.',
           nameTooLong: 'Name must not be longer than {max} characters.',
 
-          departmentRequired: 'Department Codes is required.',
+          departmentRequired: 'Department Codes is optional.',
           departmentCodeTooLong:
             'Department Code must not be longer than {max} characters: {departmentCodes}.',
           duplicateDepartmentCodeInRow:

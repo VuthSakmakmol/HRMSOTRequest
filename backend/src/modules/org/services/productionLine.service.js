@@ -147,6 +147,9 @@ function mapLine(doc) {
     ? doc.positionIds.map(mapPosition).filter(Boolean)
     : []
 
+  const isAllDepartments = departments.length === 0
+  const isAllPositions = positions.length === 0
+
   return {
     id: id(doc),
     _id: id(doc),
@@ -157,29 +160,36 @@ function mapLine(doc) {
     description: doc.description || '',
 
     // Legacy / primary department fields.
+    // Blank means all departments.
     departmentId: primaryDepartmentId,
     departmentCode: primaryDepartment?.code || '',
     departmentName: primaryDepartment?.name || '',
     departmentLabel: primaryDepartmentId
       ? makeLabel(primaryDepartment?.code, primaryDepartment?.name)
-      : '',
+      : 'All departments',
 
-    // New multi-department fields.
+    // Multi-department restriction.
+    // Empty = all departments.
     departmentIds: departments.map((department) => department.id),
     departments,
     departmentCodes: departments.map((department) => department.code).filter(Boolean),
     departmentNames: departments.map((department) => department.name).filter(Boolean),
-    departmentsLabel: departments.length
-      ? departments.map((department) => department.label).filter(Boolean).join(', ')
-      : '',
+    departmentsLabel: isAllDepartments
+      ? 'All departments'
+      : departments.map((department) => department.label).filter(Boolean).join(', '),
 
+    // Position restriction.
+    // Empty = all positions.
     positionIds: positions.map((position) => position.id),
     positions,
     positionCodes: positions.map((position) => position.code).filter(Boolean),
     positionNames: positions.map((position) => position.name).filter(Boolean),
-    allowedPositionsLabel: positions.length
-      ? positions.map((position) => position.label).filter(Boolean).join(', ')
-      : '',
+    allowedPositionsLabel: isAllPositions
+      ? 'All positions'
+      : positions.map((position) => position.label).filter(Boolean).join(', '),
+
+    isAllDepartments,
+    isAllPositions,
 
     isActive: !!doc.isActive,
 
@@ -214,6 +224,10 @@ function mapLookupItem(doc) {
 
     positionIds: item.positionIds,
     positions: item.positions,
+    allowedPositionsLabel: item.allowedPositionsLabel,
+
+    isAllDepartments: item.isAllDepartments,
+    isAllPositions: item.isAllPositions,
 
     isActive: item.isActive,
   }
@@ -241,6 +255,15 @@ function buildFilter(query = {}) {
       $or: [
         { departmentId: query.departmentId },
         { departmentIds: query.departmentId },
+
+        // Open lines should still show when filtering by department,
+        // because open line means all departments are allowed.
+        {
+          $and: [
+            { departmentId: { $in: [null, undefined] } },
+            { departmentIds: { $size: 0 } },
+          ],
+        },
       ],
     })
   }
@@ -324,15 +347,9 @@ function normalizeDepartmentIdsFromPayload(payload = {}) {
 async function ensureDepartmentsExist(departmentIds = []) {
   const ids = normalizeIdList(departmentIds)
 
-  if (!ids.length) {
-    throw appError({
-      statusCode: 400,
-      code: 'LINE_DEPARTMENT_REQUIRED',
-      messageKey: 'org.line.validation.departmentRequired',
-      message: 'At least one department is required',
-      field: 'departmentIds',
-    })
-  }
+  // New rule:
+  // Empty departmentIds = all departments allowed.
+  if (!ids.length) return []
 
   ids.forEach((departmentId) => {
     if (!isObjectId(departmentId)) {
@@ -391,6 +408,7 @@ async function ensurePositionsAllowed(positionIds = [], departmentIds = []) {
     }
   })
 
+  // Empty positionIds = all positions allowed.
   if (!ids.length) return []
 
   const positions = await Position.find({
@@ -411,23 +429,28 @@ async function ensurePositionsAllowed(positionIds = [], departmentIds = []) {
     })
   }
 
-  const invalidDepartment = positions.find(
-    (position) => !allowedDepartmentIdSet.has(id(position.departmentId)),
-  )
+  // New rule:
+  // If line has selected departments, selected positions must belong to those departments.
+  // If line has no selected departments, selected positions can be from any department.
+  if (allowedDepartmentIdSet.size > 0) {
+    const invalidDepartment = positions.find(
+      (position) => !allowedDepartmentIdSet.has(id(position.departmentId)),
+    )
 
-  if (invalidDepartment) {
-    throw appError({
-      statusCode: 400,
-      code: 'LINE_POSITION_DEPARTMENT_MISMATCH',
-      messageKey: 'org.line.error.positionDepartmentMismatch',
-      message: 'Selected position does not belong to selected line departments',
-      field: 'positionIds',
-      params: {
-        positionId: id(invalidDepartment._id),
-        positionDepartmentId: id(invalidDepartment.departmentId),
-        departmentIds: Array.from(allowedDepartmentIdSet),
-      },
-    })
+    if (invalidDepartment) {
+      throw appError({
+        statusCode: 400,
+        code: 'LINE_POSITION_DEPARTMENT_MISMATCH',
+        messageKey: 'org.line.error.positionDepartmentMismatch',
+        message: 'Selected position does not belong to selected line departments',
+        field: 'positionIds',
+        params: {
+          positionId: id(invalidDepartment._id),
+          positionDepartmentId: id(invalidDepartment.departmentId),
+          departmentIds: Array.from(allowedDepartmentIdSet),
+        },
+      })
+    }
   }
 
   return positions
@@ -548,9 +571,14 @@ async function create(payload = {}, currentUser = null) {
   const doc = await ProductionLine.create({
     code,
     name: s(payload.name),
-    departmentId: departmentObjectIds[0],
+
+    // Empty/null = all departments.
+    departmentId: departmentObjectIds[0] || null,
     departmentIds: departmentObjectIds,
+
+    // Empty = all positions.
     positionIds: positions.map((position) => position._id),
+
     description: s(payload.description),
     isActive: payload.isActive ?? true,
     createdBy: actorId,
@@ -595,9 +623,7 @@ async function update(lineId, payload = {}, currentUser = null) {
     payload.positionIds !== undefined
   ) {
     const existingDepartmentIds = normalizeIdList(
-      Array.isArray(doc.departmentIds) && doc.departmentIds.length
-        ? doc.departmentIds
-        : [doc.departmentId],
+      Array.isArray(doc.departmentIds) ? doc.departmentIds : [],
     )
 
     const nextDepartmentIds =
@@ -613,8 +639,11 @@ async function update(lineId, payload = {}, currentUser = null) {
       departmentObjectIds,
     )
 
-    doc.departmentId = departmentObjectIds[0]
+    // Empty/null = all departments.
+    doc.departmentId = departmentObjectIds[0] || null
     doc.departmentIds = departmentObjectIds
+
+    // Empty = all positions.
     doc.positionIds = positions.map((position) => position._id)
   }
 
@@ -690,11 +719,11 @@ async function exportExcel(query = {}) {
       Code: item.code,
       Name: item.name,
       'Department Codes': item.departmentCodes.join(','),
-      Departments: item.departmentNames.join(', '),
+      Departments: item.isAllDepartments ? 'All departments' : item.departmentNames.join(', '),
       'Primary Department Code': item.departmentCode,
-      'Primary Department': item.departmentName,
+      'Primary Department': item.departmentName || 'All departments',
       'Position Codes': item.positionCodes.join(','),
-      'Allowed Positions': item.allowedPositionsLabel || 'All positions in selected departments',
+      'Allowed Positions': item.allowedPositionsLabel,
       Description: item.description,
       Status: item.isActive ? 'Active' : 'Inactive',
       CreatedAt: formatExcelDate(item.createdAt),
@@ -738,43 +767,63 @@ async function exportExcel(query = {}) {
 async function downloadImportSample() {
   const sampleRows = [
     {
+      Code: 'LINE-01',
+      Name: 'Sewing Line 01',
+      'Department Codes': '',
+      'Position Codes': '',
+      Description: '',
+      Status: 'Active',
+    },
+    {
       Code: 'LINE-02',
       Name: 'Sewing Line 02',
-      'Department Codes': 'SEWING,PROD-MGT',
-      'Position Codes': 'SEWER,FM',
-      Description: 'Sewing line managed with Production Management support',
+      'Department Codes': '',
+      'Position Codes': '',
+      Description: '',
       Status: 'Active',
     },
     {
       Code: 'LINE-03',
-      Name: 'Sewing Line 03',
-      'Department Codes': 'SEWING',
+      Name: 'QC Line 01',
+      'Department Codes': '',
       'Position Codes': '',
-      Description: 'Empty Position Codes means all positions in selected departments',
+      Description: '',
       Status: 'Active',
     },
   ]
 
   const guideRows = [
-    ['Production Line Import Guide', ''],
-    ['', ''],
     ['Field', 'Rule'],
-    ['Code', 'Required. Unique line code. Example: LINE-02'],
-    ['Name', 'Required. Line display name.'],
-    ['Department Codes', 'Required. Comma-separated department codes. Example: SEWING,PROD-MGT'],
-    ['Position Codes', 'Optional. Comma-separated position codes. Blank = all positions in selected departments.'],
-    ['Description', 'Optional. Maximum 500 characters.'],
-    ['Status', 'Optional. Use Active or Inactive. Blank = Active.'],
+    ['Code', 'Required. Unique line code. Example: LINE-01'],
+    ['Name', 'Required. Line name. Example: Sewing Line 01'],
+    ['Department Codes', 'Optional. Leave blank for normal use. Blank = all departments.'],
+    ['Position Codes', 'Optional. Leave blank for normal use. Blank = all positions.'],
+    ['Description', 'Optional. Leave blank if not needed.'],
+    ['Status', 'Optional. Active or Inactive. Blank = Active.'],
     ['', ''],
-    ['Important', 'Each Position Code must belong to at least one selected Department Code.'],
+    ['Normal use', 'Leave Department Codes and Position Codes blank.'],
+    ['Restrict by department', 'Fill Department Codes only when the line must accept employees from selected departments only.'],
+    ['Restrict by position', 'Fill Position Codes only when the line must accept selected positions only.'],
+    ['Combined restriction', 'Fill both only when selected positions must also belong to selected departments.'],
   ]
 
   const workbook = XLSX.utils.book_new()
   const sampleSheet = XLSX.utils.json_to_sheet(sampleRows)
   const guideSheet = XLSX.utils.aoa_to_sheet(guideRows)
 
-  sampleSheet['!cols'] = autoFitColumns(sampleRows)
-  guideSheet['!cols'] = [{ wch: 30 }, { wch: 100 }]
+  sampleSheet['!cols'] = [
+    { wch: 16 },
+    { wch: 24 },
+    { wch: 22 },
+    { wch: 22 },
+    { wch: 24 },
+    { wch: 12 },
+  ]
+
+  guideSheet['!cols'] = [
+    { wch: 24 },
+    { wch: 100 },
+  ]
 
   XLSX.utils.book_append_sheet(workbook, sampleSheet, 'Sample')
   XLSX.utils.book_append_sheet(workbook, guideSheet, 'Guide')
@@ -844,8 +893,6 @@ function normalizeCodeToken(value) {
 
   if (!text) return ''
 
-  // Accept exported labels like: SEWING - Sewing Department
-  // Keep only the real code before " - ".
   const labelParts = text.split(/\s+-\s+/)
 
   return upper(labelParts[0])
@@ -1165,19 +1212,6 @@ async function validateLineImportRows(normalizedRows = []) {
       })
     }
 
-    if (!row.departmentCodes.length) {
-      hasRowError = true
-
-      addImportError(errors, {
-        rowNo: row.rowNo,
-        field: 'Department Codes',
-        value: row.rawDepartmentCodes,
-        code: 'LINE_IMPORT_DEPARTMENT_REQUIRED',
-        messageKey: 'org.line.import.error.departmentRequired',
-        reason: `Row ${row.rowNo}: Department Codes is required.`,
-      })
-    }
-
     const missingDepartmentCodes = row.departmentCodes.filter(
       (departmentCode) =>
         departmentCode.length <= 50 && !departmentMap.has(departmentCode),
@@ -1251,14 +1285,19 @@ async function validateLineImportRows(normalizedRows = []) {
 
     row.positionCodes.forEach((positionCode) => {
       const candidates = positionsByCode.get(positionCode) || []
-      const matchedPositions = candidates.filter((position) =>
-        selectedDepartmentIdSet.has(id(position.departmentId)),
-      )
 
       if (!candidates.length) {
         missingPositionCodes.push(positionCode)
         return
       }
+
+      // New rule:
+      // If department is blank, position can be from any department.
+      const matchedPositions = selectedDepartmentIdSet.size
+        ? candidates.filter((position) =>
+            selectedDepartmentIdSet.has(id(position.departmentId)),
+          )
+        : candidates
 
       if (!matchedPositions.length) {
         mismatchedPositionCodes.push(positionCode)
@@ -1280,7 +1319,7 @@ async function validateLineImportRows(normalizedRows = []) {
       const reason = departmentLikeCodes.length
         ? `Row ${row.rowNo}: Position Codes contains Department Code(s): ${departmentLikeCodes.join(
             ', ',
-          )}. Put these values in Department Codes column, or leave Position Codes blank to allow all positions in selected departments.`
+          )}. Put these values in Department Codes column, or leave Position Codes blank to allow all positions.`
         : `Row ${row.rowNo}: Position Code not found: ${missingPositionCodes.join(
             ', ',
           )}. Position Codes must use codes from Position master, not Department codes.`
@@ -1475,9 +1514,14 @@ async function importExcel(fileBuffer, currentUser = null) {
             $set: {
               code: row.code,
               name: row.name,
-              departmentId: row.resolvedDepartmentIds[0],
+
+              // Empty/null = all departments.
+              departmentId: row.resolvedDepartmentIds[0] || null,
               departmentIds: row.resolvedDepartmentIds,
+
+              // Empty = all positions.
               positionIds: row.resolvedPositionIds,
+
               description: row.description,
               isActive: row.isActive,
               updatedBy: actorId,

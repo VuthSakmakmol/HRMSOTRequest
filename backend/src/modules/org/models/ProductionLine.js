@@ -38,17 +38,17 @@ const productionLineSchema = new mongoose.Schema(
       index: true,
     },
 
-    // Primary / legacy department.
-    // Keep this for old data and old frontend compatibility.
+    // Optional primary / legacy department.
+    // null = this line is open to all departments.
     departmentId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Department',
-      required: true,
+      default: null,
       index: true,
     },
 
-    // New: line can support multiple departments.
-    // Example: Sewing Line 2 can include Sewing + Production Management positions.
+    // Optional department restrictions.
+    // Empty = all departments are allowed.
     departmentIds: [
       {
         type: mongoose.Schema.Types.ObjectId,
@@ -57,7 +57,8 @@ const productionLineSchema = new mongoose.Schema(
       },
     ],
 
-    // Empty = all positions under selected departments are allowed.
+    // Optional position restrictions.
+    // Empty = all positions are allowed.
     positionIds: [
       {
         type: mongoose.Schema.Types.ObjectId,
@@ -109,23 +110,13 @@ productionLineSchema.pre('validate', function normalize(next) {
   this.code = s(this.code).toUpperCase()
   this.name = s(this.name)
   this.description = s(this.description)
-  this.positionIds = uniqueObjectIdStrings(this.positionIds)
 
   this.departmentIds = uniqueObjectIdStrings(this.departmentIds)
+  this.positionIds = uniqueObjectIdStrings(this.positionIds)
 
   // Backward compatibility:
-  // old data/client sends departmentId only.
-  if (!this.departmentIds.length && this.departmentId) {
-    this.departmentIds = [this.departmentId]
-  }
-
-  // New client sends departmentIds only.
-  // departmentId remains the primary department for old code compatibility.
-  if (this.departmentIds.length && !this.departmentId) {
-    this.departmentId = this.departmentIds[0]
-  }
-
-  // Always include primary department in departmentIds.
+  // old client may still send departmentId only.
+  // If departmentId exists, include it in departmentIds.
   if (this.departmentId) {
     const primaryDepartmentId = s(this.departmentId)
 
@@ -135,6 +126,15 @@ productionLineSchema.pre('validate', function normalize(next) {
   }
 
   this.departmentIds = uniqueObjectIdStrings(this.departmentIds)
+
+  // New rule:
+  // no departmentIds = all departments
+  // departmentId should stay null when line is open to all departments.
+  if (this.departmentIds.length) {
+    this.departmentId = this.departmentIds[0]
+  } else {
+    this.departmentId = null
+  }
 
   if (!this.createdBy) {
     this.createdBy = null

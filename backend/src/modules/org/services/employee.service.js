@@ -1223,6 +1223,9 @@ async function ensurePositionExists(positionId, departmentId = null) {
 async function ensureLinesAllowed(lineIds = [], departmentId, positionId) {
   const ids = uniqueIds(lineIds)
 
+  // Important:
+  // Employee with no selected line means "no line assigned".
+  // It does NOT mean employee belongs to all lines.
   if (!ids.length) return []
 
   const objectIdValues = ids.filter(isObjectId).map(objectId)
@@ -1258,9 +1261,7 @@ async function ensureLinesAllowed(lineIds = [], departmentId, positionId) {
   const lineByCode = new Map(lines.map((line) => [upper(line.code), line]))
 
   const sortedLines = ids
-    .map((lineValue) => {
-      return lineById.get(lineValue) || lineByCode.get(upper(lineValue)) || null
-    })
+    .map((lineValue) => lineById.get(lineValue) || lineByCode.get(upper(lineValue)) || null)
     .filter(Boolean)
 
   const foundIds = new Set(sortedLines.map((line) => id(line._id)))
@@ -1303,9 +1304,14 @@ async function ensureLinesAllowed(lineIds = [], departmentId, positionId) {
       line.departmentId,
     ])
 
+    const allowedPositionIds = uniqueIds(line.positionIds || [])
+
+    // Line side rule:
+    // Empty department restriction = this selected line accepts all departments.
+    // Non-empty department restriction = employee department must be inside it.
     if (
-      departmentId &&
       allowedDepartmentIds.length &&
+      departmentId &&
       !allowedDepartmentIds.includes(id(departmentId))
     ) {
       throw appError({
@@ -1322,8 +1328,9 @@ async function ensureLinesAllowed(lineIds = [], departmentId, positionId) {
       })
     }
 
-    const allowedPositionIds = uniqueIds(line.positionIds || [])
-
+    // Line side rule:
+    // Empty position restriction = this selected line accepts all positions.
+    // Non-empty position restriction = employee position must be inside it.
     if (
       allowedPositionIds.length &&
       positionId &&

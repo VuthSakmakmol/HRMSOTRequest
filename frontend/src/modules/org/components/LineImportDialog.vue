@@ -368,24 +368,12 @@ async function handleImport() {
         </div>
       </div>
 
-      <div class="ot-panel">
-        <div class="text-sm font-semibold text-[color:var(--ot-text)]">
-          {{ t('org.line.importGuideTitle') }}
-        </div>
+      <div class="ot-panel line-import-simple-guide">
+        <div class="line-import-simple-row">
+          <div class="line-import-simple-title">
+            {{ t('org.line.importGuideTitle') }}
+          </div>
 
-        <div class="mt-2 space-y-1 text-sm leading-6 text-[color:var(--ot-text-muted)]">
-          <div>1. {{ t('org.line.importGuideStep1') }}</div>
-          <div>2. {{ t('org.line.importGuideStep2') }}</div>
-          <div>3. {{ t('org.line.importGuideStep3') }}</div>
-          <div>4. {{ t('org.line.importGuideStep4') }}</div>
-        </div>
-
-        <div class="line-import-note">
-          <i class="pi pi-shield" />
-          <span>{{ t('org.line.importAllOrNothingNote') }}</span>
-        </div>
-
-        <div class="mt-4">
           <Button
             :label="t('org.line.downloadSample')"
             icon="pi pi-download"
@@ -395,6 +383,25 @@ async function handleImport() {
             :loading="downloading"
             @click="handleDownloadSample"
           />
+        </div>
+
+        <div class="line-import-simple-rules">
+          <span class="line-import-rule-pill">
+            {{ t('org.line.blankDepartmentsMeansAll') }}
+          </span>
+
+          <span class="line-import-rule-pill">
+            {{ t('org.line.blankPositionsMeansAll') }}
+          </span>
+
+          <span class="line-import-rule-pill line-import-rule-pill--warning">
+            {{ t('org.line.employeeLineStillExplicit') }}
+          </span>
+        </div>
+
+        <div class="line-import-note">
+          <i class="pi pi-shield" />
+          <span>{{ t('org.line.importAllOrNothingNote') }}</span>
         </div>
       </div>
 
@@ -595,11 +602,54 @@ async function handleImport() {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
+.line-import-simple-guide {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.line-import-simple-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.line-import-simple-title {
+  color: var(--ot-text);
+  font-size: 0.9rem;
+  font-weight: 750;
+}
+
+.line-import-simple-rules {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.line-import-rule-pill {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(37, 99, 235, 0.18);
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.08);
+  padding: 0.28rem 0.65rem;
+  color: rgb(37, 99, 235);
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.line-import-rule-pill--warning {
+  border-color: rgba(245, 158, 11, 0.22);
+  background: rgba(245, 158, 11, 0.1);
+  color: rgb(217, 119, 6);
+}
+
 .line-import-note {
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
-  margin-top: 0.85rem;
+  margin-top: 0.15rem;
+  width: fit-content;
   border-radius: 999px;
   background: rgba(37, 99, 235, 0.08);
   padding: 0.38rem 0.7rem;
@@ -668,8 +718,21 @@ async function handleImport() {
   color: rgb(147, 197, 253);
 }
 
+:global(.dark) .line-import-rule-pill {
+  border-color: rgba(96, 165, 250, 0.28);
+  background: rgba(96, 165, 250, 0.14);
+  color: rgb(147, 197, 253);
+}
+
+:global(.dark) .line-import-rule-pill--warning {
+  border-color: rgba(251, 191, 36, 0.3);
+  background: rgba(251, 191, 36, 0.14);
+  color: rgb(252, 211, 77);
+}
+
 @media (min-width: 640px) {
-  .line-import-file-row {
+  .line-import-file-row,
+  .line-import-simple-row {
     flex-direction: row;
     align-items: center;
     justify-content: space-between;
