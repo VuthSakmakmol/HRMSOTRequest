@@ -166,6 +166,7 @@ const otOptionDropdownOptions = computed(() => {
         id: String(normalized?.id || normalized?._id || '').trim(),
         optionLabel: formatOTOptionShortLabel(normalized),
         isCustomOption: false,
+        disabled: false,
       }
     })
     .filter((item) => item.id && item.optionLabel)
@@ -184,6 +185,7 @@ const otOptionDropdownOptions = computed(() => {
       paidMinutes: 0,
       paidHours: 0,
       isCustomOption: true,
+      disabled: realOptions.length === 0,
     },
   ]
 })
@@ -238,6 +240,8 @@ const selectedDayType = computed(() => {
 
   return 'WORKING_DAY'
 })
+
+const selectedDayTypeLabel = computed(() => dayTypeLabel(selectedDayType.value))
 
 const selectedDaySeverity = computed(() => {
   if (selectedDayType.value === 'HOLIDAY') return 'danger'
@@ -306,6 +310,16 @@ function labelOr(key, fallback) {
   const value = t(key)
 
   return value === key ? fallback : value
+}
+
+function dayTypeLabel(value) {
+  const dayType = String(value || '').trim().toUpperCase()
+
+  if (dayType === 'SUNDAY') return t('ot.dayType.sunday')
+  if (dayType === 'HOLIDAY') return t('ot.dayType.holiday')
+  if (dayType === 'WORKING_DAY') return t('ot.dayType.workingDay')
+
+  return dayType && dayType !== '—' ? dayType : '—'
 }
 
 function pad2(value) {
@@ -427,9 +441,20 @@ function ensurePolicyOptionForCustomTime() {
 
   if (firstOption) {
     props.form.shiftOtOptionId = String(firstOption?.id || firstOption?._id || '').trim()
+    return firstOption
   }
 
-  return firstOption
+  props.form.otTimingSource = 'SHIFT_OPTION'
+  props.form.shiftOtOptionId = ''
+
+  toast.add({
+    severity: 'warn',
+    summary: t('ot.requests.create.noOptionTitle'),
+    detail: t('ot.requests.create.noOptionGeneric'),
+    life: 3500,
+  })
+
+  return null
 }
 
 function applyCustomTimeDefaults(option = null) {
@@ -455,6 +480,8 @@ function handleOtOptionDropdownChange(value) {
   if (selectedValue === CUSTOM_OPTION_VALUE) {
     const policyOption = ensurePolicyOptionForCustomTime()
 
+    if (!policyOption) return
+
     props.form.otTimingSource = 'CUSTOM_FIXED'
     applyCustomTimeDefaults(policyOption)
 
@@ -471,10 +498,10 @@ function handleOtOptionDropdownChange(value) {
 
 function formatOTOptionShortLabel(option = {}) {
   const minutes = Number(
-    option?.requestedMinutes ||
-      option?.paidMinutes ||
+    option?.paidMinutes ||
       option?.totalRequestPaidMinutes ||
       option?.totalMinutes ||
+      option?.requestedMinutes ||
       0,
   )
 
@@ -666,7 +693,7 @@ onMounted(() => {
       <div class="ot-setup-head">
         <div class="ot-setup-tags">
           <Tag
-            :value="selectedDayType"
+            :value="selectedDayTypeLabel"
             :severity="selectedDaySeverity"
             class="ot-pill-tag"
           />
@@ -769,6 +796,7 @@ onMounted(() => {
               :options="otOptionDropdownOptions"
               option-label="optionLabel"
               option-value="id"
+              option-disabled="disabled"
               class="w-full"
               :placeholder="t('ot.requests.create.selectOtOption')"
               :loading="loadingShiftOptions"

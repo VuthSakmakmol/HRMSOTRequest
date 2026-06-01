@@ -184,11 +184,73 @@ const backendTimingPreview = computed(() => {
   }
 })
 
+const customTimingPreview = computed(() => {
+  const option = selectedOTOption.value
+
+  if (!option) return null
+
+  const requestStartTime = s(
+    form.customStartTime ||
+      option.requestStartTime ||
+      option.startTime,
+  )
+
+  const customPaidMinutes = Math.round(Number(form.customDurationHours || 0) * 60)
+  const breakMinutes = Math.max(0, Math.round(n(form.customBreakMinutes)))
+  const requestedMinutes = customPaidMinutes > 0 ? customPaidMinutes + breakMinutes : 0
+  const calculatedEndTime = requestStartTime && requestedMinutes > 0
+    ? addMinutesToHHmm(requestStartTime, requestedMinutes)
+    : ''
+
+  const requestEndTime = s(form.customEndTime || calculatedEndTime)
+
+  return {
+    source: 'CUSTOM_FIXED_PREVIEW',
+
+    timingMode: 'CUSTOM_FIXED',
+
+    requestStartTime,
+    requestEndTime,
+    calculatedEndTime,
+    startTime: requestStartTime,
+    endTime: requestEndTime,
+
+    breakMinutes,
+    requestedMinutes,
+    totalRequestPaidMinutes: customPaidMinutes,
+    totalMinutes: customPaidMinutes,
+    totalHours: round2(customPaidMinutes / 60),
+
+    paidMinutes: customPaidMinutes,
+    paidHours: round2(customPaidMinutes / 60),
+    paidHoursLabel: formatDurationMinutes(customPaidMinutes),
+    requestedHoursLabel: formatDurationMinutes(requestedMinutes),
+    breakLabel: formatDurationMinutes(breakMinutes),
+  }
+})
+
+const activeTimingPreview = computed(() => {
+  return isCustomFixedTime.value ? customTimingPreview.value : backendTimingPreview.value
+})
+
+const customTimingReady = computed(() => {
+  if (!isCustomFixedTime.value) return true
+
+  const preview = customTimingPreview.value || {}
+
+  return Boolean(
+    preview.requestStartTime &&
+      preview.requestEndTime &&
+      preview.totalRequestPaidMinutes > 0,
+  )
+})
+
 const requestPreview = computed(() => {
   if (selectedShiftState.value.mode !== 'ready') return null
   if (!selectedOTOption.value) return null
+  if (!customTimingReady.value) return null
 
-  return backendTimingPreview.value
+  return activeTimingPreview.value
 })
 
 const pickerRequestPreview = computed(() => requestPreview.value)
@@ -205,12 +267,8 @@ const confirmOptionLabel = computed(() => {
 })
 
 const confirmTimeLabel = computed(() => {
-  if (isCustomFixedTime.value && Number(form.customDurationHours || 0) > 0) {
-    return formatDurationMinutes(Number(form.customDurationHours || 0) * 60)
-  }
-
   return formatDurationMinutes(
-    backendTimingPreview.value?.totalRequestPaidMinutes ||
+    activeTimingPreview.value?.totalRequestPaidMinutes ||
       selectedOTOption.value?.totalRequestPaidMinutes ||
       selectedOTOption.value?.requestedMinutes ||
       editRequestDetail.value?.totalRequestPaidMinutes ||
@@ -225,7 +283,8 @@ const employeePickerReady = computed(() => {
       selectedShiftState.value.mode === 'ready' &&
       form.shiftOtOptionId &&
       selectedOTOption.value &&
-      backendTimingPreview.value?.totalRequestPaidMinutes > 0,
+      customTimingReady.value &&
+      activeTimingPreview.value?.totalRequestPaidMinutes > 0,
   )
 })
 
@@ -293,6 +352,8 @@ const confirmSubmitLabel = computed(() => {
     : labelOr('ot.requests.create.submitRequest', 'Submit request')
 })
 
+const selectedOptionDayTypeLabel = computed(() => dayTypeLabel(selectedOptionDayType.value))
+
 function s(value) {
   return String(value ?? '').trim()
 }
@@ -358,6 +419,41 @@ function formatYMD(value) {
   if (Number.isNaN(date.getTime())) return ''
 
   return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
+}
+
+function isHHmm(value) {
+  return /^([01]\d|2[0-3]):([0-5]\d)$/.test(s(value))
+}
+
+function timeToMinutes(value) {
+  if (!isHHmm(value)) return 0
+
+  const [hours, minutes] = s(value).split(':').map(Number)
+  return hours * 60 + minutes
+}
+
+function minutesToHHmm(totalMinutes) {
+  const normalized = ((Math.round(n(totalMinutes)) % 1440) + 1440) % 1440
+  const hours = Math.floor(normalized / 60)
+  const minutes = normalized % 60
+
+  return `${pad2(hours)}:${pad2(minutes)}`
+}
+
+function addMinutesToHHmm(startTime, minutesToAdd = 0) {
+  if (!isHHmm(startTime)) return ''
+
+  return minutesToHHmm(timeToMinutes(startTime) + Math.max(0, Math.round(n(minutesToAdd))))
+}
+
+function dayTypeLabel(value) {
+  const dayType = upper(value)
+
+  if (dayType === 'SUNDAY') return t('ot.dayType.sunday')
+  if (dayType === 'HOLIDAY') return t('ot.dayType.holiday')
+  if (dayType === 'WORKING_DAY') return t('ot.dayType.workingDay')
+
+  return dayType || '-'
 }
 
 function formatDurationMinutes(value) {
@@ -870,7 +966,7 @@ async function loadShiftOptionsForSelectedShift(options = {}) {
         t('ot.requests.create.noOptionTitle'),
         selectedOptionDayType.value
           ? t('ot.requests.create.noOptionForDayType', {
-              dayType: selectedOptionDayType.value,
+              dayType: selectedOptionDayTypeLabel.value,
             })
           : t('ot.requests.create.noOptionGeneric'),
         4500,
@@ -930,8 +1026,10 @@ function buildPayload() {
   }
 
   if (isCustomFixedTime.value) {
-    payload.customStartTime = s(form.customStartTime)
-    payload.customEndTime = s(form.customEndTime)
+    const preview = customTimingPreview.value || {}
+
+    payload.customStartTime = s(preview.requestStartTime || form.customStartTime)
+    payload.customEndTime = s(preview.requestEndTime || form.customEndTime)
     payload.customBreakMinutes = n(form.customBreakMinutes)
   }
 
@@ -972,7 +1070,7 @@ function validateBeforeSubmit(payload) {
   }
 
   if (payload.otTimingSource === 'CUSTOM_FIXED') {
-    if (!payload.customStartTime || !payload.customEndTime) {
+    if (!payload.customStartTime || !payload.customEndTime || !customTimingReady.value) {
       return t('ot.requests.create.selectValidTiming')
     }
   }
@@ -1151,7 +1249,7 @@ function formatEmployeeOTTime(employee = {}) {
     employee?.totalRequestPaidMinutes,
     employee?.totalMinutes,
     employee?.requestedMinutes,
-    backendTimingPreview.value?.totalRequestPaidMinutes,
+    activeTimingPreview.value?.totalRequestPaidMinutes,
   )
 
   return formatDurationMinutes(minutes)
@@ -1381,7 +1479,6 @@ watch(
   () => [
     form.otTimingSource,
     form.customStartTime,
-    form.customEndTime,
     form.customBreakMinutes,
     form.customDurationHours,
   ].join('|'),
@@ -1391,6 +1488,13 @@ watch(
       form.customEndTime = ''
       form.customBreakMinutes = 0
       form.customDurationHours = null
+      return
+    }
+
+    const calculatedEndTime = customTimingPreview.value?.calculatedEndTime
+
+    if (calculatedEndTime && calculatedEndTime !== form.customEndTime) {
+      form.customEndTime = calculatedEndTime
     }
   },
 )

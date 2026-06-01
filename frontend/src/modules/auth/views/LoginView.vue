@@ -68,18 +68,18 @@ async function submit() {
       <section class="w-full max-w-[34rem] rounded-[28px] border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] p-6 shadow-[var(--ot-shadow-lg)] sm:p-8">
         <div class="mb-7 flex items-start justify-between gap-4">
           <div class="min-w-0">
-            <div class="ot-page-kicker">
+            <!-- <div class="ot-page-kicker">
               <i class="pi pi-shield" />
               {{ t('common.appName') }}
-            </div>
+            </div> -->
 
             <h1 class="ot-page-title">
               {{ t('auth.login') }}
             </h1>
 
-            <p class="ot-page-subtitle">
+            <!-- <p class="ot-page-subtitle">
               {{ t('auth.loginSubtitle') }}
-            </p>
+            </p> -->
           </div>
 
           <AppLanguageSwitcher />
