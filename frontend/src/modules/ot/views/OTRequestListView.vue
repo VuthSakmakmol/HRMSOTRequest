@@ -352,6 +352,7 @@ function buildQuery(page) {
     otDateTo: formatDateYMD(filters.otDateTo),
     sortBy: filters.sortBy,
     sortOrder: filters.sortOrder === 1 ? 'asc' : 'desc',
+    scope: 'mine',
   }
 }
 
@@ -363,6 +364,7 @@ function buildExportQuery() {
     otDateTo: formatDateYMD(filters.otDateTo),
     sortBy: filters.sortBy,
     sortOrder: filters.sortOrder === 1 ? 'asc' : 'desc',
+    scope: 'mine',
   }
 }
 
@@ -1141,7 +1143,7 @@ onBeforeUnmount(() => {
       <div class="ot-table-toolbar ot-request-table-toolbar">
         <div>
           <h2 class="ot-table-title">
-            {{ tr('ot.requests.tableTitle', 'OT Request List') }}
+            {{ tr('ot.requests.tableTitle', 'My OT Requests') }}
           </h2>
         </div>
 
@@ -1158,8 +1160,8 @@ onBeforeUnmount(() => {
 
       <AppTableLoading
         v-if="firstLoading"
-        :title="tr('ot.requests.loading', 'Loading OT requests')"
-        :message="tr('ot.requests.fetchingRecords', 'Fetching OT request records')"
+        :title="tr('ot.requests.loading', 'Loading my OT requests')"
+        :message="tr('ot.requests.fetchingRecords', 'Fetching my OT request records')"
         :rows="8"
         :columns="9"
         icon="pi pi-clock"
@@ -1199,7 +1201,7 @@ onBeforeUnmount(() => {
               </div>
 
               <div class="ot-empty-text">
-                {{ tr('ot.requests.noData', 'No OT requests found') }}
+                {{ tr('ot.requests.noData', 'No OT requests found for you') }}
               </div>
             </div>
           </template>

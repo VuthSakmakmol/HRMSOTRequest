@@ -1947,14 +1947,14 @@ export default {
     },
 
     requests: {
-      tableTitle: 'បញ្ជីសំណើ OT',
-      title: 'សំណើ OT',
+      tableTitle: 'សំណើ OT របស់ខ្ញុំ',
+      title: 'សំណើ OT របស់ខ្ញុំ',
       createTitle: 'បង្កើតសំណើ OT',
       editTitle: 'កែប្រែសំណើ OT',
       detailTitle: 'ព័ត៌មានលម្អិតសំណើ OT',
       approvalTitle: 'ប្រអប់អនុម័ត OT',
       acknowledgeTitle: 'ប្រអប់ទទួលដឹង OT',
-      subtitle: 'គ្រប់គ្រងសំណើម៉ោងបន្ថែមដោយប្រើទិន្នន័យពី Backend។',
+      subtitle: 'មើល និងគ្រប់គ្រងតែសំណើ OT ដែលអ្នកបានបង្កើត។',
 
       requestNo: 'លេខសំណើ',
       otDate: 'កាលបរិច្ឆេទ OT',
@@ -1981,13 +1981,13 @@ export default {
 
       allDayTypes: 'ប្រភេទថ្ងៃទាំងអស់',
 
-      loading: 'កំពុងផ្ទុកសំណើ OT',
-      fetchingRecords: 'កំពុងទាញយកកំណត់ត្រាសំណើ OT...',
-      noData: 'រកមិនឃើញសំណើ OT។',
-      loadFailed: 'ផ្ទុកសំណើ OT មិនបានសម្រេច។',
+      loading: 'កំពុងផ្ទុកសំណើ OT របស់ខ្ញុំ',
+      fetchingRecords: 'កំពុងទាញយកកំណត់ត្រាសំណើ OT របស់ខ្ញុំ...',
+      noData: 'រកមិនឃើញសំណើ OT របស់អ្នក។',
+      loadFailed: 'ផ្ទុកសំណើ OT របស់ខ្ញុំមិនបានសម្រេច។',
 
       exported: 'ឯកសារត្រៀមរួច',
-      exportedSuccess: 'បានទាញយកឯកសារ Excel ដោយជោគជ័យ។',
+      exportedSuccess: 'បានទាញយកឯកសារ Excel សំណើ OT របស់ខ្ញុំដោយជោគជ័យ។',
       exportFailed: 'នាំចេញមិនបានសម្រេច',
 
       approvalStatus: 'ស្ថានភាពអនុម័ត',

@@ -1969,14 +1969,14 @@ export default {
     },
 
     requests: {
-      tableTitle: 'OT Request List',
-      title: 'OT Requests',
+      tableTitle: 'My OT Requests',
+      title: 'My OT Requests',
       createTitle: 'Create OT Request',
       editTitle: 'Edit OT Request',
       detailTitle: 'OT Request Detail',
       approvalTitle: 'OT Approval Inbox',
       acknowledgeTitle: 'OT Acknowledge Inbox',
-      subtitle: 'Manage overtime requests using backend-driven data.',
+      subtitle: 'View and manage only the OT requests you created.',
 
       requestNo: 'Request No.',
       otDate: 'OT Date',
@@ -2003,13 +2003,13 @@ export default {
 
       allDayTypes: 'All Day Types',
 
-      loading: 'Loading OT requests',
-      fetchingRecords: 'Fetching OT request records...',
-      noData: 'No OT requests found.',
-      loadFailed: 'Failed to load OT requests.',
+      loading: 'Loading my OT requests',
+      fetchingRecords: 'Fetching my OT request records...',
+      noData: 'No OT requests found for you.',
+      loadFailed: 'Failed to load my OT requests.',
 
       exported: 'Export ready',
-      exportedSuccess: 'Excel file downloaded successfully.',
+      exportedSuccess: 'My OT requests Excel file downloaded successfully.',
       exportFailed: 'Export failed',
 
       approvalStatus: 'Approval Status',

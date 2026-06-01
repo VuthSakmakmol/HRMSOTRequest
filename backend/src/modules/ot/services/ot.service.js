@@ -969,11 +969,45 @@ function hasPermission(authUser = {}, permissionCode) {
   return permissionCodesOf(authUser).includes(target)
 }
 
+function isRequesterOfOTRequest(doc = {}, authUser = {}) {
+  const actorEmployeeId = s(authUser?.employeeId)
+  const requesterEmployeeId = s(doc?.requesterEmployeeId)
+
+  return Boolean(actorEmployeeId && requesterEmployeeId && actorEmployeeId === requesterEmployeeId)
+}
+
+function isWorkflowParticipantOfOTRequest(doc = {}, authUser = {}) {
+  const actorEmployeeId = s(authUser?.employeeId)
+
+  if (!actorEmployeeId) return false
+
+  const steps = Array.isArray(doc.approvalSteps) ? doc.approvalSteps : []
+
+  return steps.some((step) => s(step?.approverEmployeeId) === actorEmployeeId)
+}
+
+function canViewOTRequest(doc = {}, authUser = {}) {
+  if (authUser?.isRootAdmin === true) return true
+  if (hasPermission(authUser, 'OT_REQUEST_VIEW_ALL')) return true
+
+  return (
+    isRequesterOfOTRequest(doc, authUser) ||
+    isWorkflowParticipantOfOTRequest(doc, authUser)
+  )
+}
+
 function canModifyOTRequestBeforeApproval(doc = {}, authUser = {}) {
   const status = upper(doc.status)
 
   if (status !== 'PENDING') return false
   if (hasApprovedStep(doc)) return false
+
+  // Confidential rule: normal Request List is owner-only, so edit/cancel must also
+  // stay owner-only. Approvers and acknowledge users can view from their own inboxes
+  // but they must not edit/cancel the requester's own request.
+  if (!authUser?.isRootAdmin && !isRequesterOfOTRequest(doc, authUser)) {
+    return false
+  }
 
   return hasPermission(authUser, 'OT_REQUEST_UPDATE')
 }
@@ -1474,6 +1508,27 @@ function buildListFilter(query = {}) {
     filter.$and = filter.$and || []
     filter.$and.push(searchFilter)
   }
+
+  return filter
+}
+
+function buildMyRequestListFilter(query = {}, authUser = {}) {
+  const filter = buildListFilter(query)
+  const requesterEmployeeId = s(authUser?.employeeId)
+
+  filter.$and = filter.$and || []
+
+  if (!requesterEmployeeId || !isObjectId(requesterEmployeeId)) {
+    filter.$and.push({
+      _id: { $exists: false },
+    })
+
+    return filter
+  }
+
+  filter.$and.push({
+    requesterEmployeeId,
+  })
 
   return filter
 }
@@ -2082,7 +2137,7 @@ async function list(query = {}, authUser = {}) {
   const limit = Number(query.limit || 10)
   const skip = (page - 1) * limit
 
-  const filter = buildListFilter(query)
+  const filter = buildMyRequestListFilter(query, authUser)
   const sort = buildSort(query)
 
   const [items, total] = await Promise.all([
@@ -2149,11 +2204,20 @@ async function getById(requestId, authUser = {}) {
     })
   }
 
+  if (!canViewOTRequest(doc, authUser)) {
+    throw appError({
+      statusCode: 403,
+      code: 'OT_REQUEST_VIEW_NOT_ALLOWED',
+      messageKey: 'ot.request.error.viewNotAllowed',
+      message: 'You are not allowed to view this OT request',
+    })
+  }
+
   return mapDetail(doc, authUser)
 }
 
-async function exportRequestsExcel(query = {}) {
-  const filter = buildListFilter(query)
+async function exportRequestsExcel(query = {}, authUser = {}) {
+  const filter = buildMyRequestListFilter(query, authUser)
   const sort = buildSort(query)
 
   const items = await OTRequest.find(filter).sort(sort).lean()

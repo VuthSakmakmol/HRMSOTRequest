@@ -1549,6 +1549,29 @@ async function resolveFinalManagerIds({
   lineIds = [],
   manualReportsToEmployeeId = null,
 }) {
+  const manualManagerId = id(manualReportsToEmployeeId)
+
+  // Manual manager selected in Employee form must win.
+  // Position report-to is only the automatic fallback when no manual manager is selected.
+  if (manualManagerId) {
+    if (employeeId && sameId(manualManagerId, employeeId)) {
+      throw appError({
+        statusCode: 400,
+        code: 'EMPLOYEE_REPORT_TO_SELF',
+        messageKey: 'org.employee.error.reportToSelf',
+        message: 'Employee cannot report to self',
+        field: 'reportsToEmployeeId',
+      })
+    }
+
+    await ensureReportsToEmployeeExists(manualManagerId)
+
+    return {
+      primaryManagerId: manualManagerId,
+      lineManagerIds: [manualManagerId],
+    }
+  }
+
   const autoManagerIds = await findAutoManagerIdsByPositionAndLine({
     employeeId,
     departmentId,
@@ -1558,34 +1581,17 @@ async function resolveFinalManagerIds({
   })
 
   if (autoManagerIds.length) {
+    const primaryManagerId = autoManagerIds[0]
+
     return {
-      primaryManagerId: autoManagerIds[0],
-      lineManagerIds: autoManagerIds,
+      primaryManagerId,
+      lineManagerIds: primaryManagerId ? [primaryManagerId] : [],
     }
   }
-
-  if (!manualReportsToEmployeeId) {
-    return {
-      primaryManagerId: null,
-      lineManagerIds: [],
-    }
-  }
-
-  if (employeeId && sameId(manualReportsToEmployeeId, employeeId)) {
-    throw appError({
-      statusCode: 400,
-      code: 'EMPLOYEE_REPORT_TO_SELF',
-      messageKey: 'org.employee.error.reportToSelf',
-      message: 'Employee cannot report to self',
-      field: 'reportsToEmployeeId',
-    })
-  }
-
-  await ensureReportsToEmployeeExists(manualReportsToEmployeeId)
 
   return {
-    primaryManagerId: manualReportsToEmployeeId,
-    lineManagerIds: [manualReportsToEmployeeId],
+    primaryManagerId: null,
+    lineManagerIds: [],
   }
 }
 
@@ -2944,6 +2950,21 @@ function resolveImportManagerIds({
     ...(row?.lineIds || []),
   ])
 
+  // IMPORTANT:
+  // Excel import is treated the same as manual Employee form update.
+  // If the file provides "Reports To Employee Code", that value is the source of truth
+  // and must not be replaced by the automatic position/line manager resolver.
+  if (row.reportsToEmployeeCode) {
+    const manualManager = employeeByCode.get(row.reportsToEmployeeCode)
+
+    if (manualManager && !sameId(manualManager._id, employeeId)) {
+      return {
+        primaryManagerId: manualManager._id,
+        lineManagerIds: [manualManager._id],
+      }
+    }
+  }
+
   let autoManagers = []
 
   if (parentPositionId) {
@@ -2973,22 +2994,11 @@ function resolveImportManagerIds({
   const sortedAutoManagers = sortManagerCandidates(autoManagers)
 
   if (sortedAutoManagers.length) {
-    const lineManagerIds = uniqueIds(sortedAutoManagers.map((item) => item._id))
+    const primaryManagerId = sortedAutoManagers[0]?._id || null
 
     return {
-      primaryManagerId: lineManagerIds[0] || null,
-      lineManagerIds,
-    }
-  }
-
-  if (row.reportsToEmployeeCode) {
-    const manualManager = employeeByCode.get(row.reportsToEmployeeCode)
-
-    if (manualManager && !sameId(manualManager._id, employeeId)) {
-      return {
-        primaryManagerId: manualManager._id,
-        lineManagerIds: [manualManager._id],
-      }
+      primaryManagerId,
+      lineManagerIds: primaryManagerId ? [primaryManagerId] : [],
     }
   }
 
@@ -3903,6 +3913,7 @@ async function syncSameLineManagersForAllEmployees() {
   ])
 
   const positionById = new Map(positions.map((position) => [id(position._id), position]))
+  const activeEmployeeIds = new Set(employees.map((employee) => id(employee._id)).filter(Boolean))
   const employeesByPositionLine = new Map()
   const employeesByPositionDepartment = new Map()
   const employeesByPosition = new Map()
@@ -3989,15 +4000,31 @@ async function syncSameLineManagersForAllEmployees() {
       managerCandidates = employeesByPosition.get(parentPositionId) || []
     }
 
-    const nextLineManagerIds = uniqueIds(
+    const autoManagerIds = uniqueIds(
       managerCandidates
         .filter((manager) => !sameId(manager._id, employeeId))
         .map((manager) => manager._id),
     )
 
-    const nextPrimaryManagerId = nextLineManagerIds[0] || null
+    let nextPrimaryManagerId = autoManagerIds[0] || null
+    let nextLineManagerIds = nextPrimaryManagerId ? [nextPrimaryManagerId] : []
 
     const currentPrimaryManagerId = id(employee.reportsToEmployeeId)
+
+    // Preserve the saved primary manager as the final manager.
+    // This prevents CROSS_DEPARTMENT positions such as Sewing Loader -> FM
+    // from expanding lineManagerIds to every FM account (FM_1 + FM_2).
+    // Employee form and Excel import are treated as manual source of truth.
+    const shouldPreserveSavedPrimaryManager =
+      currentPrimaryManagerId &&
+      activeEmployeeIds.has(currentPrimaryManagerId) &&
+      !sameId(currentPrimaryManagerId, employeeId)
+
+    if (shouldPreserveSavedPrimaryManager) {
+      nextPrimaryManagerId = currentPrimaryManagerId
+      nextLineManagerIds = [currentPrimaryManagerId]
+    }
+
     const currentLineManagerIds = uniqueIds(employee.lineManagerIds || [])
 
     const primaryChanged = currentPrimaryManagerId !== id(nextPrimaryManagerId)
