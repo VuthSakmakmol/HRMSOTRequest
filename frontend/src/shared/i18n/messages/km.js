@@ -2251,6 +2251,7 @@ export default {
           alreadyInRequest: 'មានក្នុងសំណើ OT {requestNo} រួចហើយ',
           alreadyUnavailable: 'មិនអាចប្រើបានសម្រាប់ថ្ងៃនេះរួចហើយ។',
           employeeNoShift: 'បុគ្គលិកមិនមានវេន។',
+          noLineNotEligible: 'បុគ្គលិកមិនមានខ្សែផលិតកម្ម ដូច្នេះមិនអាចជ្រើសសម្រាប់ OT បានទេ។',
           shiftMismatch: 'វេនបុគ្គលិកមិនត្រូវនឹងវេនដែលបានជ្រើស។',
         },
       },

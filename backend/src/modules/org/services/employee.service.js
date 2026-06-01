@@ -911,6 +911,7 @@ function buildEmployeeListFilter(
     lineId = '',
     shiftId = '',
     isActive,
+    otEligibleOnly = false,
   } = {},
   scopeFilter = {},
 ) {
@@ -944,6 +945,15 @@ function buildEmployeeListFilter(
       $or: [
         { lineId: objectId(lineId) },
         { lineIds: objectId(lineId) },
+      ],
+    })
+  }
+
+  if (otEligibleOnly === true) {
+    addAndFilter(filter, {
+      $or: [
+        { lineId: { $exists: true, $ne: null } },
+        { 'lineIds.0': { $exists: true } },
       ],
     })
   }
@@ -1689,6 +1699,7 @@ async function lookup(query = {}, currentUser = null) {
       lineId: query.lineId,
       shiftId: query.shiftId,
       isActive: query.isActive,
+      otEligibleOnly: query.otEligibleOnly === true,
     },
     scopeFilter,
   )

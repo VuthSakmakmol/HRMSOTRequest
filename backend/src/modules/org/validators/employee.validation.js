@@ -185,6 +185,11 @@ const lookupEmployeeQuerySchema = z.object({
   shiftId: z.string().trim().optional().default(''),
   reportsToEmployeeId: z.string().trim().optional().default(''),
 
+  // Used by OT employee multipicker only.
+  // true = return only employees that belong to at least one production line.
+  otEligibleOnly: booleanLike,
+  hasLineOnly: booleanLike,
+
   isActive: booleanLike,
 
   scope: z
@@ -371,6 +376,9 @@ function normalizeLookupQuery(raw = {}) {
     reportsToEmployeeId: parsed.reportsToEmployeeId,
     isActive: toBoolean(parsed.isActive, true),
     scope: parsed.scope,
+    otEligibleOnly:
+      toBoolean(parsed.otEligibleOnly, false) ||
+      toBoolean(parsed.hasLineOnly, false),
   }
 }
 

@@ -77,6 +77,17 @@ function normalizeIdArray(values = []) {
   ]
 }
 
+function employeeLineIds(employee = {}) {
+  return normalizeIdArray([
+    ...(Array.isArray(employee.lineIds) ? employee.lineIds : []),
+    employee.lineId,
+  ])
+}
+
+function hasEmployeeLine(employee = {}) {
+  return employeeLineIds(employee).length > 0
+}
+
 function actorAccountId(authUser) {
   const actorId = authUser?.accountId || authUser?.id || authUser?._id
   return isObjectId(actorId) ? actorId : null
@@ -452,6 +463,61 @@ async function ensureNoDuplicateOTEmployeesForDate({
       otDate: date,
       duplicates,
       duplicateEmployeeIds: duplicates.map((item) => item.employeeId),
+    },
+  })
+}
+
+async function ensureEmployeesHaveProductionLine(employeeIds = []) {
+  const uniqueEmployeeIds = normalizeIdArray(employeeIds)
+
+  if (!uniqueEmployeeIds.length) return
+
+  const employees = await Employee.find({
+    _id: {
+      $in: uniqueEmployeeIds
+        .filter(isObjectId)
+        .map((item) => new mongoose.Types.ObjectId(item)),
+    },
+  })
+    .select({
+      _id: 1,
+      employeeNo: 1,
+      employeeCode: 1,
+      displayName: 1,
+      lineId: 1,
+      lineIds: 1,
+    })
+    .lean()
+
+  const employeeById = new Map(
+    employees.map((employee) => [String(employee._id), employee]),
+  )
+
+  const missingLineEmployees = uniqueEmployeeIds
+    .map((employeeId) => employeeById.get(employeeId))
+    .filter(Boolean)
+    .filter((employee) => !hasEmployeeLine(employee))
+    .map((employee) => ({
+      employeeId: String(employee._id),
+      employeeCode: employeeCode(employee),
+      employeeName: employeeName(employee),
+      employeeLabel: [employeeCode(employee), employeeName(employee)]
+        .filter(Boolean)
+        .join(' - '),
+    }))
+
+  if (!missingLineEmployees.length) return
+
+  throw appError({
+    statusCode: 400,
+    code: 'OT_EMPLOYEE_LINE_REQUIRED',
+    messageKey: 'ot.request.error.employeeLineRequired',
+    message:
+      'Some selected employees have no production line and cannot be selected for OT',
+    field: 'employeeIds',
+    params: {
+      employees: missingLineEmployees,
+      employeeIds: missingLineEmployees.map((item) => item.employeeId),
     },
   })
 }
@@ -1708,6 +1774,8 @@ async function create(payload, authUser) {
 
   await assertSelectedEmployeesInsideRequesterScope(authUser, uniqueEmployeeIds)
 
+  await ensureEmployeesHaveProductionLine(uniqueEmployeeIds)
+
   await ensureNoDuplicateOTEmployeesForDate({
     otDate: payload.otDate,
     employeeIds: uniqueEmployeeIds,
@@ -1851,6 +1919,8 @@ async function update(requestId, payload, authUser) {
   }
 
   await assertSelectedEmployeesInsideRequesterScope(authUser, uniqueEmployeeIds)
+
+  await ensureEmployeesHaveProductionLine(uniqueEmployeeIds)
 
   await ensureNoDuplicateOTEmployeesForDate({
     otDate: payload.otDate,

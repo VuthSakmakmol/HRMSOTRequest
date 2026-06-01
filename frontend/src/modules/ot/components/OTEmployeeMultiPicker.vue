@@ -143,6 +143,11 @@ const hasActiveTableFilter = computed(() => {
   )
 })
 
+// Important UX rule:
+// The table is a selected-employee review table, not a full employee directory.
+// Candidate employees are fetched silently for auto-select and only appear while searching.
+const hasSearchCandidateMode = computed(() => Boolean(toTrimmedString(search.value)))
+
 const defaultTime = computed(() => {
   const preview = props.requestPreview || {}
 
@@ -549,9 +554,14 @@ function extractShiftFields(source = {}) {
 function hasLine(employee) {
   return Boolean(
     toTrimmedString(employee?.lineId) ||
+      (Array.isArray(employee?.lineIds) && employee.lineIds.some((lineId) => toTrimmedString(lineId))) ||
       toTrimmedString(employee?.lineCode) ||
       toTrimmedString(employee?.lineName),
   )
+}
+
+function noLineNotEligibleMessage() {
+  return t('ot.requests.create.employeePicker.noLineNotEligible')
 }
 
 function getLineGroupKey(employee) {
@@ -614,7 +624,7 @@ function normalizeEmployeeRecord(source = {}) {
 function normalizeSelectedEmployeeRecord(source = {}) {
   const base = normalizeEmployeeRecord(source)
 
-  if (!base) return null
+  if (!base || !hasLine(base)) return null
 
   const startTime = toTrimmedString(source?.requestStartTime || defaultTime.value.requestStartTime)
   const endTime = toTrimmedString(source?.requestEndTime || defaultTime.value.requestEndTime)
@@ -661,6 +671,7 @@ function normalizeEmployeeLookupResponse(res) {
     ? rows
         .map((item) => normalizeEmployeeRecord(item))
         .filter(Boolean)
+        .filter(hasLine)
     : []
 
   const pagination = root?.pagination || res?.data?.pagination || {}
@@ -699,11 +710,8 @@ function normalizeLineOptionsResponse(res) {
     const id = toTrimmedString(row?._id || row?.id || row?.lineId)
     if (!id) continue
 
-    const code = toTrimmedString(row?.code || row?.lineCode)
     const name = toTrimmedString(row?.name || row?.lineName)
-    const label =
-      [code, name].filter(Boolean).join(' · ') ||
-      t('ot.requests.create.employeePicker.unnamedLine')
+    const label = name || t('ot.requests.create.employeePicker.unnamedLine')
 
     map.set(id, {
       label,
@@ -731,7 +739,7 @@ function buildLineLabel(employee = {}) {
   if (!hasLine(employee)) return t('ot.requests.create.employeePicker.noLine')
 
   return (
-    [employee?.lineCode, employee?.lineName].filter(Boolean).join(' · ') ||
+    toTrimmedString(employee?.lineName) ||
     t('ot.requests.create.employeePicker.unnamedLine')
   )
 }
@@ -842,6 +850,13 @@ function getEmployeeBlockInfo(employee) {
     return {
       blocked: true,
       reason: t('ot.requests.create.employeePicker.invalidEmployee'),
+    }
+  }
+
+  if (!hasLine(employee)) {
+    return {
+      blocked: true,
+      reason: noLineNotEligibleMessage(),
     }
   }
 
@@ -1229,6 +1244,8 @@ function buildEmployeeParams(targetPage, targetScope = employeeScope.value) {
     lineId: toTrimmedString(selectedLineId.value),
     shiftId: toTrimmedString(props.selectedShiftId),
     isActive: true,
+    otEligibleOnly: true,
+    hasLineOnly: true,
     scope: targetScope,
     all: targetScope === 'ALL',
     includeAll: targetScope === 'ALL',
@@ -1244,6 +1261,8 @@ function buildBulkManagedParams(targetPage) {
     lineId: '',
     shiftId: toTrimmedString(props.selectedShiftId),
     isActive: true,
+    otEligibleOnly: true,
+    hasLineOnly: true,
     scope: 'MANAGED',
   }
 }
@@ -1437,11 +1456,10 @@ async function fetchEmployeePage(targetPage = 1, { replace = false, silent = fal
 }
 
 async function resetAndLoadEmployees() {
+  // Do not load every employee into the visible table.
+  // Keep the table clean and show selected employees only.
   resetEmployeeListState()
-
-  await fetchEmployeePage(1, {
-    replace: true,
-  })
+  showSelectedOnlyTable()
 }
 
 async function onLazyScroll(event) {
@@ -1504,9 +1522,13 @@ async function autoSelectManagedEmployees() {
     }
 
     const selectableRows = rows.filter((row) => !getEmployeeBlockInfo(row).blocked)
+    const nextSelectedRows = mergeUniqueRows([...selectedRows.value, ...selectableRows])
 
-    emitSelected(mergeUniqueRows([...selectedRows.value, ...selectableRows]))
-    employees.value = mergeLoadedEmployees(rows, [])
+    emitSelected(nextSelectedRows)
+
+    // Fetch silently, but do not show all fetched/unselected employees.
+    // The requester should only review the employees that will be submitted.
+    employees.value = mergeLoadedEmployees(nextSelectedRows, [])
     total.value = employees.value.length
     loadedPages.value = new Set()
     clearLineUiState()
@@ -1560,6 +1582,8 @@ async function searchEmployeeSuggestions(event = {}) {
       lineId: '',
       shiftId: toTrimmedString(props.selectedShiftId),
       isActive: true,
+      otEligibleOnly: true,
+      hasLineOnly: true,
       scope: suggestionScope,
       all: suggestionScope === 'ALL',
       includeAll: suggestionScope === 'ALL',
@@ -1627,11 +1651,25 @@ function onEmployeeAutocompleteSelect(event = {}) {
 }
 
 function onFilterChange() {
-  resetAndLoadEmployees()
+  // Line filter should not load a long unselected employee list.
+  showSelectedOnlyTable()
 }
 
 watch(employeeScope, () => {
-  resetAndLoadEmployees()
+  // Switching to All Employees changes the search/auto-select scope only.
+  // It must not turn the table into a long employee directory.
+  clearEmployeeSuggestionSearch()
+  showSelectedOnlyTable()
+})
+
+watch(employeeSearchValue, (value) => {
+  if (toTrimmedString(value)) return
+
+  if (!toTrimmedString(search.value) && !employeeSuggestions.value.length) return
+
+  search.value = ''
+  employeeSuggestions.value = []
+  showSelectedOnlyTable()
 })
 
 watch(
@@ -1675,7 +1713,7 @@ watch(
     await autoSelectManagedEmployees()
 
     if (!employees.value.length) {
-      await resetAndLoadEmployees()
+      showSelectedOnlyTable()
     } else {
       syncLineState()
     }
@@ -1689,7 +1727,7 @@ watch(
     await autoSelectManagedEmployees()
 
     if (!employees.value.length) {
-      await resetAndLoadEmployees()
+      showSelectedOnlyTable()
     } else {
       syncLineState()
     }
@@ -1711,7 +1749,7 @@ onMounted(async () => {
   await autoSelectManagedEmployees()
 
   if (!employees.value.length) {
-    await resetAndLoadEmployees()
+    showSelectedOnlyTable()
   } else {
     syncLineState()
   }

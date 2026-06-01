@@ -2273,6 +2273,7 @@ export default {
           alreadyInRequest: 'Already in OT request {requestNo}',
           alreadyUnavailable: 'Already unavailable for this date.',
           employeeNoShift: 'Employee has no shift.',
+          noLineNotEligible: 'Employee has no production line, so they cannot be selected for OT.',
           shiftMismatch: 'Employee shift does not match selected shift.',
         },
       },
