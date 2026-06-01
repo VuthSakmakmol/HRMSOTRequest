@@ -39,7 +39,6 @@ const toast = useToast()
 
 const PAGE_SIZE = 10
 const SEARCH_DEBOUNCE_MS = 250
-const SCROLL_LOAD_DISTANCE = 180
 const FILTER_STACK_WIDTH = 1280
 
 const rows = ref([])
@@ -50,10 +49,8 @@ const expandedRows = ref({})
 
 const bootstrapped = ref(false)
 const backgroundLoading = ref(false)
-const loadingMore = ref(false)
 const filtersPanelOpen = ref(false)
 
-const tableScrollShell = ref(null)
 const filterBarRef = ref(null)
 const filterActionsStacked = ref(false)
 
@@ -102,8 +99,6 @@ const statusOptions = computed(() => [
 const totalRequests = computed(() => Number(totalRecords.value || 0))
 const loadedCount = computed(() => rows.value.length)
 const hasAnyData = computed(() => rows.value.length > 0)
-const hasMorePages = computed(() => loadedCount.value < totalRequests.value)
-
 const summaryText = computed(() =>
   tr('common.loaded', 'Loaded {loaded} of {total}', {
     loaded: loadedCount.value,
@@ -446,44 +441,6 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
     version: queryVersion,
   })
 
-  if (tableScrollShell.value && !keepVisible) {
-    tableScrollShell.value.scrollTop = 0
-  }
-}
-
-async function loadNextPage() {
-  if (loadingMore.value) return
-  if (backgroundLoading.value) return
-  if (!hasMorePages.value) return
-
-  const loaded = [...loadedPages.value]
-  const nextPage = loaded.length ? Math.max(...loaded) + 1 : 1
-
-  loadingMore.value = true
-
-  try {
-    await fetchPage(nextPage, {
-      replace: false,
-      silent: false,
-      version: queryVersion,
-    })
-  } finally {
-    loadingMore.value = false
-  }
-}
-
-function onTableScroll(event) {
-  const element = event?.target
-  if (!element) return
-  if (!hasMorePages.value) return
-  if (loadingMore.value || backgroundLoading.value) return
-
-  const distanceToBottom =
-    element.scrollHeight - element.scrollTop - element.clientHeight
-
-  if (distanceToBottom <= SCROLL_LOAD_DISTANCE) {
-    loadNextPage()
-  }
 }
 
 function updateFilterLayout() {
@@ -712,9 +669,7 @@ onBeforeUnmount(() => {
 
       <div
         v-else
-        ref="tableScrollShell"
-        class="ot-ack-table-scroll"
-        @scroll.passive="onTableScroll"
+        class="ot-ack-table-shell"
       >
         <DataTable
           v-model:expandedRows="expandedRows"
@@ -723,6 +678,8 @@ onBeforeUnmount(() => {
           lazy
           removable-sort
           row-hover
+          scrollable
+          scroll-height="calc(100vh - 260px)"
           :sort-field="filters.sortBy"
           :sort-order="filters.sortOrder"
           table-style="min-width: 64rem; table-layout: auto;"
@@ -1159,17 +1116,11 @@ onBeforeUnmount(() => {
   gap: 0.45rem;
 }
 
-.ot-ack-table-scroll {
-  position: relative;
+.ot-ack-table-shell {
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  max-height: calc(100vh - 260px);
-  min-height: 22rem;
-  overflow: auto;
-  overscroll-behavior: contain;
-  scroll-behavior: smooth;
-  scrollbar-gutter: stable;
+  overflow: hidden;
 }
 
 /* Main table */
@@ -1183,10 +1134,11 @@ onBeforeUnmount(() => {
 
 :deep(.ot-ack-table.p-datatable .p-datatable-wrapper),
 :deep(.ot-ack-table.p-datatable .p-datatable-table-container) {
-  position: static !important;
   max-width: 100% !important;
   min-width: 0 !important;
-  overflow: visible !important;
+  overflow: auto !important;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 :deep(.ot-ack-table.p-datatable .p-datatable-table) {
@@ -1785,11 +1737,16 @@ onBeforeUnmount(() => {
     gap: 0.35rem;
   }
 
-  .ot-ack-table-scroll {
+  .ot-ack-table-shell {
     width: 100%;
     max-width: 100%;
-    max-height: 64vh;
-    min-height: 18rem;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  :deep(.ot-ack-table.p-datatable .p-datatable-wrapper),
+  :deep(.ot-ack-table.p-datatable .p-datatable-table-container) {
+    max-height: 64vh !important;
     overflow-x: auto !important;
     overflow-y: auto !important;
     overscroll-behavior-x: contain;

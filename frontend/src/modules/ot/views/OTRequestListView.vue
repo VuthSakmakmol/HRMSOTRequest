@@ -1,6 +1,6 @@
 <!-- frontend/src/modules/ot/views/OTRequestListView.vue -->
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
@@ -66,6 +66,7 @@ const cancelTargetRow = ref(null)
 const filtersPanelOpen = ref(false)
 const activeDatePicker = ref('')
 
+const requestDataTableRef = ref(null)
 const tableScrollShell = ref(null)
 const filterBarRef = ref(null)
 const filterActionsStacked = ref(false)
@@ -85,6 +86,7 @@ const filters = reactive({
 let searchTimer = null
 let queryVersion = 0
 let filterResizeObserver = null
+let tableScrollListenerElement = null
 
 const canCreate = computed(() => auth.hasPermission('OT_REQUEST_CREATE'))
 const canExport = computed(() => auth.hasPermission('OT_REQUEST_VIEW'))
@@ -464,8 +466,12 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
     version: queryVersion,
   })
 
+  await nextTick()
+  bindTableScrollListener()
+
   if (tableScrollShell.value && !keepVisible) {
     tableScrollShell.value.scrollTop = 0
+    tableScrollShell.value.scrollLeft = 0
   }
 }
 
@@ -488,6 +494,39 @@ async function loadNextPage() {
   } finally {
     loadingMore.value = false
   }
+}
+
+function resolveTableScrollElement() {
+  const root = requestDataTableRef.value?.$el || requestDataTableRef.value
+
+  return (
+    root?.querySelector?.('.p-datatable-table-container') ||
+    root?.querySelector?.('.p-datatable-wrapper') ||
+    null
+  )
+}
+
+function bindTableScrollListener() {
+  const element = resolveTableScrollElement()
+
+  if (!element || tableScrollListenerElement === element) {
+    if (element) tableScrollShell.value = element
+    return
+  }
+
+  unbindTableScrollListener()
+
+  tableScrollListenerElement = element
+  tableScrollShell.value = element
+  element.addEventListener('scroll', onTableScroll, { passive: true })
+}
+
+function unbindTableScrollListener() {
+  if (tableScrollListenerElement) {
+    tableScrollListenerElement.removeEventListener('scroll', onTableScroll)
+  }
+
+  tableScrollListenerElement = null
 }
 
 function onTableScroll(event) {
@@ -947,6 +986,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.clearTimeout(searchTimer)
+  unbindTableScrollListener()
   cleanupFilterObserver()
 })
 </script>
@@ -1127,17 +1167,18 @@ onBeforeUnmount(() => {
 
       <div
         v-else
-        ref="tableScrollShell"
-        class="ot-request-table-scroll"
-        @scroll.passive="onTableScroll"
+        class="ot-request-table-shell"
       >
         <DataTable
+          ref="requestDataTableRef"
           v-model:expandedRows="expandedRows"
           :value="rows"
           data-key="id"
           lazy
           removable-sort
           row-hover
+          scrollable
+          scroll-height="calc(100vh - 260px)"
           :sort-field="filters.sortBy"
           :sort-order="filters.sortOrder"
           table-style="min-width: 64rem; table-layout: auto;"
@@ -1736,17 +1777,11 @@ onBeforeUnmount(() => {
   gap: 0.45rem;
 }
 
-.ot-request-table-scroll {
-  position: relative;
+.ot-request-table-shell {
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  max-height: calc(100vh - 260px);
-  min-height: 22rem;
-  overflow: auto;
-  overscroll-behavior: contain;
-  scroll-behavior: smooth;
-  scrollbar-gutter: stable;
+  overflow: hidden;
 }
 
 /* Main table */
@@ -1760,10 +1795,11 @@ onBeforeUnmount(() => {
 
 :deep(.ot-request-table.p-datatable .p-datatable-wrapper),
 :deep(.ot-request-table.p-datatable .p-datatable-table-container) {
-  position: static !important;
   max-width: 100% !important;
   min-width: 0 !important;
-  overflow: visible !important;
+  overflow: auto !important;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 :deep(.ot-request-table.p-datatable .p-datatable-table) {
@@ -2533,11 +2569,16 @@ onBeforeUnmount(() => {
     gap: 0.35rem;
   }
 
-  .ot-request-table-scroll {
+  .ot-request-table-shell {
     width: 100%;
     max-width: 100%;
-    max-height: 64vh;
-    min-height: 18rem;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  :deep(.ot-request-table.p-datatable .p-datatable-wrapper),
+  :deep(.ot-request-table.p-datatable .p-datatable-table-container) {
+    max-height: 64vh !important;
     overflow-x: auto !important;
     overflow-y: auto !important;
     overscroll-behavior-x: contain;
@@ -2611,6 +2652,7 @@ onBeforeUnmount(() => {
   :deep(.ot-request-table.p-datatable .ot-action-column-header .p-datatable-column-title) {
     display: none !important;
   }
+
 
   .ot-row-actions {
     display: inline-grid;

@@ -1408,7 +1408,10 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="ot-create-page">
+  <div
+    class="ot-create-page"
+    :class="{ 'is-confirm-dialog-open': confirmVisible }"
+  >
     <Message
       v-if="isEditMode"
       severity="info"
@@ -1453,7 +1456,10 @@ onMounted(async () => {
         @loading-change="employeePickerLoading = $event"
       />
 
-      <div class="ot-create-bottom-grid">
+      <div
+        v-if="!confirmVisible"
+        class="ot-create-bottom-grid"
+      >
         <OTSubmitBar
           :submit-label="submitLabel"
           :submitting="submitting"
@@ -1735,6 +1741,13 @@ onMounted(async () => {
 @media (max-width: 640px) {
   .ot-create-page {
     padding-bottom: calc(5.6rem + env(safe-area-inset-bottom, 0px));
+  }
+  .ot-create-page.is-confirm-dialog-open {
+    padding-bottom: 0;
+  }
+
+  .ot-create-page.is-confirm-dialog-open .ot-create-bottom-grid {
+    display: none !important;
   }
 
   .ot-create-bottom-grid {

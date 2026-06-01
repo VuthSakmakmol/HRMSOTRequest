@@ -489,35 +489,145 @@ svg {
 
 /* =========================================================
    Global Frozen Action Column
-   Use with:
-   <Column frozen alignFrozen="right" headerClass="ot-action-column-header" bodyClass="ot-action-column-body">
+   Works with both existing class styles:
+   - ApprovalInbox: ot-action-col-header / ot-action-col-body
+   - RequestList:   ot-action-column-header / ot-action-column-body
+
+   Important:
+   Do NOT set this action column to position: static in mobile CSS.
    ========================================================= */
 
-.ot-data-table .p-datatable-thead > tr > th.ot-action-column-header,
-.ot-data-table .p-datatable-tbody > tr > td.ot-action-column-body {
+.ot-data-table.p-datatable .p-datatable-wrapper,
+.ot-data-table.p-datatable .p-datatable-table-container {
+  max-width: 100% !important;
+  min-width: 0 !important;
+  overflow: auto !important;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable;
+}
+
+.ot-data-table.p-datatable .p-datatable-table {
+  min-width: 100%;
+  width: max-content;
+}
+
+/* Body frozen/action cell */
+.ot-data-table.p-datatable .p-datatable-tbody > tr > td.p-datatable-frozen-column,
+.ot-data-table.p-datatable .p-datatable-tbody > tr > td.ot-action-column-body,
+.ot-data-table.p-datatable .p-datatable-tbody > tr > td.ot-action-col-body {
   position: sticky !important;
   right: 0 !important;
-  z-index: 9 !important;
-  width: 7.5rem !important;
-  min-width: 7.5rem !important;
-  max-width: 7.5rem !important;
+  z-index: 30 !important;
+  width: 6.8rem !important;
+  min-width: 6.8rem !important;
+  max-width: 6.8rem !important;
   background: var(--ot-surface) !important;
-  box-shadow: -8px 0 18px rgba(15, 23, 42, 0.06) !important;
+  background-color: var(--ot-surface) !important;
+  background-image: none !important;
+  opacity: 1 !important;
+  isolation: isolate;
+  box-shadow: -10px 0 18px -16px rgb(15 23 42 / 0.7) !important;
 }
 
-.ot-data-table .p-datatable-thead > tr > th.ot-action-column-header {
-  z-index: 11 !important;
+/* Header frozen/action cell */
+.ot-data-table.p-datatable .p-datatable-thead > tr > th.p-datatable-frozen-column,
+.ot-data-table.p-datatable .p-datatable-thead > tr > th.ot-action-column-header,
+.ot-data-table.p-datatable .p-datatable-thead > tr > th.ot-action-col-header {
+  position: sticky !important;
+  top: 0 !important;
+  right: 0 !important;
+  z-index: 45 !important;
+  width: 6.8rem !important;
+  min-width: 6.8rem !important;
+  max-width: 6.8rem !important;
   background: linear-gradient(180deg, var(--ot-surface-2), var(--ot-surface-3)) !important;
+  background-color: var(--ot-surface-3) !important;
+  background-image: none !important;
+  opacity: 1 !important;
+  isolation: isolate;
+  box-shadow: -10px 0 18px -16px rgb(15 23 42 / 0.7) !important;
 }
 
-.dark .ot-data-table .p-datatable-thead > tr > th.ot-action-column-header,
-.dark .ot-data-table .p-datatable-tbody > tr > td.ot-action-column-body {
-  box-shadow: -8px 0 18px rgba(0, 0, 0, 0.22) !important;
+/* Keep sticky body cell solid when row hover/expanded changes */
+.ot-data-table.p-datatable .p-datatable-tbody > tr:hover > td.p-datatable-frozen-column,
+.ot-data-table.p-datatable .p-datatable-tbody > tr:hover > td.ot-action-column-body,
+.ot-data-table.p-datatable .p-datatable-tbody > tr:hover > td.ot-action-col-body,
+.ot-data-table.p-datatable .p-datatable-tbody > tr.p-row-expanded > td.p-datatable-frozen-column,
+.ot-data-table.p-datatable .p-datatable-tbody > tr.p-row-expanded > td.ot-action-column-body,
+.ot-data-table.p-datatable .p-datatable-tbody > tr.p-row-expanded > td.ot-action-col-body {
+  background: var(--ot-surface) !important;
+  background-color: var(--ot-surface) !important;
+  background-image: none !important;
+  opacity: 1 !important;
 }
 
-.ot-action-column-body .ot-row-actions {
+.dark .ot-data-table.p-datatable .p-datatable-tbody > tr > td.p-datatable-frozen-column,
+.dark .ot-data-table.p-datatable .p-datatable-tbody > tr > td.ot-action-column-body,
+.dark .ot-data-table.p-datatable .p-datatable-tbody > tr > td.ot-action-col-body,
+.dark .ot-data-table.p-datatable .p-datatable-thead > tr > th.p-datatable-frozen-column,
+.dark .ot-data-table.p-datatable .p-datatable-thead > tr > th.ot-action-column-header,
+.dark .ot-data-table.p-datatable .p-datatable-thead > tr > th.ot-action-col-header {
+  box-shadow: -10px 0 18px -16px rgb(0 0 0 / 0.95) !important;
+}
+
+.ot-action-column-body .ot-row-actions,
+.ot-action-col-body .ot-row-actions {
   width: 100%;
-  justify-content: flex-end;
+  justify-content: center;
+}
+
+/* Phone: keep action column sticky, but make it compact icon-only */
+@media (max-width: 768px) {
+  .ot-data-table.p-datatable .p-datatable-tbody > tr > td.p-datatable-frozen-column,
+  .ot-data-table.p-datatable .p-datatable-tbody > tr > td.ot-action-column-body,
+  .ot-data-table.p-datatable .p-datatable-tbody > tr > td.ot-action-col-body,
+  .ot-data-table.p-datatable .p-datatable-thead > tr > th.p-datatable-frozen-column,
+  .ot-data-table.p-datatable .p-datatable-thead > tr > th.ot-action-column-header,
+  .ot-data-table.p-datatable .p-datatable-thead > tr > th.ot-action-col-header {
+    position: sticky !important;
+    right: 0 !important;
+    width: 2.45rem !important;
+    min-width: 2.45rem !important;
+    max-width: 2.45rem !important;
+    padding: 0.18rem 0.12rem !important;
+  }
+
+  .ot-data-table.p-datatable .p-datatable-thead > tr > th.ot-action-column-header .p-column-title,
+  .ot-data-table.p-datatable .p-datatable-thead > tr > th.ot-action-column-header .p-datatable-column-title,
+  .ot-data-table.p-datatable .p-datatable-thead > tr > th.ot-action-col-header .p-column-title,
+  .ot-data-table.p-datatable .p-datatable-thead > tr > th.ot-action-col-header .p-datatable-column-title {
+    display: none !important;
+  }
+
+  .ot-action-column-body .ot-row-actions,
+  .ot-action-col-body .ot-row-actions {
+    display: inline-grid;
+    grid-template-columns: 1fr;
+    gap: 0.18rem;
+    justify-content: center;
+  }
+
+  .ot-action-column-body .ot-action-icon-responsive,
+  .ot-action-col-body .ot-action-icon-responsive {
+    width: 1.62rem !important;
+    min-width: 1.62rem !important;
+    height: 1.62rem !important;
+    min-height: 1.62rem !important;
+    border-radius: 999px !important;
+    padding: 0 !important;
+  }
+
+  .ot-action-column-body .ot-action-icon-responsive .p-button-label,
+  .ot-action-col-body .ot-action-icon-responsive .p-button-label {
+    display: none !important;
+  }
+
+  .ot-action-column-body .ot-action-icon-responsive .p-button-icon,
+  .ot-action-col-body .ot-action-icon-responsive .p-button-icon {
+    margin: 0 !important;
+    font-size: 0.7rem !important;
+  }
 }
 
 /* =========================================================
