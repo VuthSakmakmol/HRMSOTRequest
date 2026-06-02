@@ -531,6 +531,10 @@ attendanceRecordSchema.pre('validate', function preValidate(next) {
 // Keep indexes here only. Do not duplicate with `index: true` on fields.
 attendanceRecordSchema.index({ importId: 1, rawRowNo: 1 })
 attendanceRecordSchema.index({ attendanceDate: -1, employeeNo: 1 })
+
+// Optimized for Attendance Records first-page and virtual-scroll loading after large imports.
+attendanceRecordSchema.index({ attendanceDate: -1, employeeNo: 1, rawRowNo: 1, createdAt: -1, _id: -1 })
+attendanceRecordSchema.index({ attendanceDate: -1, rawRowNo: 1, employeeNo: 1, _id: -1 })
 attendanceRecordSchema.index({ attendanceDate: -1, employeeId: 1 })
 attendanceRecordSchema.index({ attendanceDateValue: -1 })
 attendanceRecordSchema.index({ employeeId: 1, attendanceDate: -1 })

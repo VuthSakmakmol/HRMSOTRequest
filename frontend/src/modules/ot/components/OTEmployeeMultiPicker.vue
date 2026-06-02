@@ -76,6 +76,9 @@ const GROUP_VISIBLE_STEP = 10
 const BULK_PAGE_SIZE = 100
 const MAX_BULK_PAGES = 100
 const SCROLL_LOAD_OFFSET = 140
+const MIN_OT_DURATION_MINUTES = 60
+const MAX_OT_DURATION_MINUTES = 24 * 60
+const OT_DURATION_STEP_MINUTES = 30
 
 const loadingAccess = ref(false)
 const loadingLines = ref(false)
@@ -337,12 +340,27 @@ function addMinutesToHHmm(startTime, minutesToAdd = 0) {
   return `${pad2(hours)}:${pad2(minutes)}`
 }
 
-function durationHoursToMinutes(value) {
-  const hours = Math.round(Number(value || 0))
+function clampNumber(value, min, max) {
+  const number = Number(value)
+
+  if (!Number.isFinite(number)) return min
+
+  return Math.min(max, Math.max(min, number))
+}
+
+function normalizeDurationMinutes(value) {
+  const hours = Number(value || 0)
 
   if (!Number.isFinite(hours) || hours <= 0) return 0
 
-  return hours * 60
+  const rawMinutes = hours * 60
+  const steppedMinutes = Math.round(rawMinutes / OT_DURATION_STEP_MINUTES) * OT_DURATION_STEP_MINUTES
+
+  return clampNumber(steppedMinutes, MIN_OT_DURATION_MINUTES, MAX_OT_DURATION_MINUTES)
+}
+
+function durationHoursToMinutes(value) {
+  return normalizeDurationMinutes(value)
 }
 
 function minutesToHoursNumber(value) {
@@ -350,7 +368,10 @@ function minutesToHoursNumber(value) {
 
   if (!Number.isFinite(minutes) || minutes <= 0) return null
 
-  return Math.max(1, Math.round(minutes / 60))
+  const steppedMinutes = normalizeDurationMinutes(minutes / 60)
+  const hours = steppedMinutes / 60
+
+  return Number(hours.toFixed(1))
 }
 
 function getEmployeeId(employee) {
@@ -2014,9 +2035,9 @@ onBeforeUnmount(() => {
                           input-class="ot-duration-input-field"
                           :min="1"
                           :max="24"
-                          :step="1"
+                          :step="0.5"
                           :min-fraction-digits="0"
-                          :max-fraction-digits="0"
+                          :max-fraction-digits="1"
                           suffix=" h"
                           show-buttons
                           button-layout="horizontal"

@@ -83,6 +83,9 @@ const props = defineProps({
 })
 
 const CUSTOM_OPTION_VALUE = '__OTHER_CUSTOM_TIME__'
+const OT_DURATION_STEP_HOURS = 0.5
+const MIN_OT_DURATION_HOURS = 1
+const MAX_OT_DURATION_HOURS = 24
 
 const toast = useToast()
 const { t, locale } = useI18n()
@@ -518,6 +521,17 @@ function formatOTOptionShortLabel(option = {}) {
   return `${Number(hours.toFixed(2))}h`
 }
 
+function normalizeCustomDurationMinutes(value) {
+  const hours = Number(value || 0)
+
+  if (!Number.isFinite(hours) || hours <= 0) return 0
+
+  const steppedHours = Math.round(hours / OT_DURATION_STEP_HOURS) * OT_DURATION_STEP_HOURS
+  const safeHours = Math.min(MAX_OT_DURATION_HOURS, Math.max(MIN_OT_DURATION_HOURS, steppedHours))
+
+  return Math.round(safeHours * 60)
+}
+
 function formatOptionMeta(option = {}) {
   if (option?.isCustomOption) {
     return labelOr(
@@ -848,12 +862,12 @@ onMounted(() => {
                   input-class="w-full"
                   :min="1"
                   :max="24"
-                  :step="1"
+                  :step="0.5"
                   :min-fraction-digits="0"
-                  :max-fraction-digits="0"
+                  :max-fraction-digits="1"
                   suffix=" h"
                   show-buttons
-                  :placeholder="labelOr('ot.requests.create.customDurationPlaceholder', 'Example: 1, 2, 3, 4')"
+                  :placeholder="labelOr('ot.requests.create.customDurationPlaceholder', 'Example: 1, 1.5, 2, 2.5')"
                 />
               </div>
             </div>

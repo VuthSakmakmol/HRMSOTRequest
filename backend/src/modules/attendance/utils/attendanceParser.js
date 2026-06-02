@@ -95,8 +95,16 @@ function parseExcelTimeFraction(value) {
   const numeric = Number(value)
   if (!Number.isFinite(numeric)) return ''
 
+  // Excel stores real time cells as a fraction of one day:
+  // 0.291666... => 07:00, 0.666666... => 16:00.
+  // Some Excel exports store full date-time serials like 46200.291666.
+  // In that case, keep only the fractional time part.
   const fraction = numeric >= 1 ? numeric % 1 : numeric
-  if (fraction < 0 || fraction >= 1) return ''
+
+  // Important:
+  // Integer values like 700, 1600, 502, 1749 are NOT Excel time fractions.
+  // They are compact HHMM attendance-machine values and must be parsed separately.
+  if (fraction <= 0 || fraction >= 1) return ''
 
   let totalMinutes = Math.round(fraction * 24 * 60)
   if (totalMinutes >= 24 * 60) totalMinutes = 0
@@ -105,6 +113,34 @@ function parseExcelTimeFraction(value) {
   const mm = totalMinutes % 60
 
   return `${pad2(hh)}:${pad2(mm)}`
+}
+
+function parseCompactAttendanceTime(value) {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return ''
+
+  const rounded = Math.round(numeric)
+  if (Math.abs(numeric - rounded) > 0.000001) return ''
+  if (rounded < 0) return ''
+
+  // Attendance-machine files often export times as plain numbers:
+  // 700 => 07:00, 1600 => 16:00, 502 => 05:02, 1749 => 17:49.
+  if (rounded >= 100 && rounded <= 2359) {
+    const hh = Math.floor(rounded / 100)
+    const mm = rounded % 100
+
+    if (hh >= 0 && hh <= 23 && mm >= 0 && mm <= 59) {
+      return `${pad2(hh)}:${pad2(mm)}`
+    }
+  }
+
+  // Also accept hour-only values such as 7, 13, 15.
+  // This is useful when Excel drops trailing zeroes from simple time exports.
+  if (rounded >= 1 && rounded <= 23) {
+    return `${pad2(rounded)}:00`
+  }
+
+  return ''
 }
 
 function parseDateTimeTimeValue(value) {
@@ -125,11 +161,14 @@ function parseDateTimeTimeValue(value) {
 function parseTimeValue(value) {
   if (value == null || value === '') return ''
 
-  // Most reliable for Excel time cells when cellDates is false:
-  // 0.75 => 18:00
-  // 0.7291666667 => 17:30
   if (typeof value === 'number') {
-    return parseExcelTimeFraction(value)
+    const compactTime = parseCompactAttendanceTime(value)
+    if (compactTime) return compactTime
+
+    const fractionTime = parseExcelTimeFraction(value)
+    if (fractionTime) return fractionTime
+
+    return ''
   }
 
   if (value instanceof Date) {
@@ -140,10 +179,8 @@ function parseTimeValue(value) {
   const raw = s(value)
   if (!raw) return ''
 
-  if (/^\d+(\.\d+)?$/.test(raw)) {
-    const fractionTime = parseExcelTimeFraction(raw)
-    if (fractionTime) return fractionTime
-  }
+  const emptyMarkers = new Set(['-', '—', '–', 'N/A', 'NA', 'NULL', 'NONE'])
+  if (emptyMarkers.has(raw.toUpperCase())) return ''
 
   let match = raw.match(/^(\d{1,2}):(\d{1,2})(?::\d{1,2})?$/)
   if (match) {
@@ -165,14 +202,14 @@ function parseTimeValue(value) {
     }
   }
 
-  match = raw.match(/^(\d{1,2})(\d{2})$/)
-  if (match) {
-    const hh = Number(match[1])
-    const mm = Number(match[2])
+  if (/^\d+(\.\d+)?$/.test(raw)) {
+    const numeric = Number(raw)
 
-    if (hh >= 0 && hh <= 23 && mm >= 0 && mm <= 59) {
-      return `${pad2(hh)}:${pad2(mm)}`
-    }
+    const compactTime = parseCompactAttendanceTime(numeric)
+    if (compactTime) return compactTime
+
+    const fractionTime = parseExcelTimeFraction(numeric)
+    if (fractionTime) return fractionTime
   }
 
   return ''

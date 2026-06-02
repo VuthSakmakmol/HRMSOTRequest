@@ -81,17 +81,9 @@ function parseSalaryRow(row = {}, index = 0) {
     ]),
   )
 
-  const name = s(
-    findValue(row, [
-      'Name',
-      'Employee Name',
-      'EmployeeName',
-      'Full Name',
-      'FullName',
-      'Staff Name',
-    ]),
-  )
-
+  // Payment salary import is matched by Employee ID only.
+  // Name columns are intentionally ignored because names can be Khmer/English,
+  // formatted differently, or changed after the salary file was prepared.
   const salary = toNumber(
     findValue(row, [
       'Salary',
@@ -108,7 +100,7 @@ function parseSalaryRow(row = {}, index = 0) {
   return {
     excelRowNo,
     employeeNo,
-    name,
+    name: '',
     salary,
   }
 }
@@ -153,7 +145,6 @@ function parseSalaryExcel(buffer) {
       invalidRows.push({
         rowNo: parsed.excelRowNo,
         employeeNo: '',
-        name: parsed.name,
         reason: 'Missing Employee ID',
       })
       return
@@ -163,7 +154,6 @@ function parseSalaryExcel(buffer) {
       invalidRows.push({
         rowNo: parsed.excelRowNo,
         employeeNo: parsed.employeeNo,
-        name: parsed.name,
         reason: 'Invalid salary',
       })
       return
@@ -173,7 +163,6 @@ function parseSalaryExcel(buffer) {
       duplicateRows.push({
         rowNo: parsed.excelRowNo,
         employeeNo: parsed.employeeNo,
-        name: parsed.name,
         reason: 'Duplicate employee ID in salary Excel',
       })
       return
@@ -181,7 +170,6 @@ function parseSalaryExcel(buffer) {
 
     salaryMap.set(parsed.employeeNo, {
       employeeNo: parsed.employeeNo,
-      name: parsed.name,
       salary: parsed.salary,
       rowNo: parsed.excelRowNo,
     })
@@ -201,17 +189,16 @@ function buildSalaryTemplateWorkbook() {
   const workbook = XLSX.utils.book_new()
 
   const rows = [
-    ['Employee ID', 'Employee Name', 'Monthly Salary'],
-    ['52520351', 'Sample Employee 1', 250],
-    ['52520352', 'Sample Employee 2', 300],
-    ['52520353', 'Sample Employee 3', 280],
+    ['Employee ID', 'Monthly Salary'],
+    ['52520351', 250],
+    ['52520352', 300],
+    ['52520353', 280],
   ]
 
   const sheet = XLSX.utils.aoa_to_sheet(rows)
 
   sheet['!cols'] = [
     { wch: 18 },
-    { wch: 28 },
     { wch: 18 },
   ]
 

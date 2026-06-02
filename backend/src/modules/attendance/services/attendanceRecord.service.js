@@ -344,6 +344,37 @@ function mapRecordItem(doc = {}) {
   }
 }
 
+function hasHeavyFilter(filter = {}) {
+  return Boolean(
+    Object.keys(filter || {}).length &&
+      !(Object.keys(filter || {}).length === 1 && filter.attendanceDate)
+  )
+}
+
+async function safeCountRecords(filter = {}, fallbackTotal = 0) {
+  try {
+    const hasFilter = Object.keys(filter || {}).length > 0
+
+    // No filter is common on first load. Estimated count is much faster and avoids
+    // crashing the records page when the collection becomes large after import.
+    if (!hasFilter) {
+      return await AttendanceRecord.estimatedDocumentCount().maxTimeMS(8000)
+    }
+
+    // Filtered count is useful, but it must never block the page. The table can
+    // still load rows with an approximate total if MongoDB count is slow.
+    return await AttendanceRecord.countDocuments(filter).maxTimeMS(8000)
+  } catch (error) {
+    console.warn('[attendance.records] count fallback:', error?.message || error)
+    return fallbackTotal
+  }
+}
+
+function approximateTotalFromPage(page, limit, itemCount, hasMore) {
+  const currentMinimum = (page - 1) * limit + itemCount
+  return hasMore ? currentMinimum + limit : currentMinimum
+}
+
 async function listRecords(query = {}) {
   const page = normalizePage(query.page)
   const limit = normalizeLimit(query.limit)
@@ -352,26 +383,44 @@ async function listRecords(query = {}) {
   const filter = buildRecordFilter(query)
   const sort = buildRecordSort(query)
 
-  const [items, total] = await Promise.all([
-    AttendanceRecord.find(filter)
+  let docs = []
+
+  try {
+    docs = await AttendanceRecord.find(filter)
       .sort(sort)
       .skip(skip)
-      .limit(limit)
+      .limit(limit + 1)
       .maxTimeMS(120000)
-      .lean(),
-    AttendanceRecord.countDocuments(filter).maxTimeMS(120000),
-  ])
+      .lean()
+  } catch (error) {
+    // Some MongoDB deployments can fail when sorting many imported rows before
+    // the compound index is ready. Fall back to a simpler indexed sort instead
+    // of returning 500 to the frontend.
+    console.warn('[attendance.records] primary query fallback:', error?.message || error)
 
-  const totalPages = Math.ceil(total / limit) || 1
+    docs = await AttendanceRecord.find(filter)
+      .sort({ attendanceDate: -1, employeeNo: 1, _id: -1 })
+      .skip(skip)
+      .limit(limit + 1)
+      .maxTimeMS(120000)
+      .lean()
+  }
+
+  const hasMore = docs.length > limit
+  const items = hasMore ? docs.slice(0, limit) : docs
+  const fallbackTotal = approximateTotalFromPage(page, limit, items.length, hasMore)
+  const total = await safeCountRecords(filter, fallbackTotal)
+  const safeTotal = Math.max(Number(total || 0), fallbackTotal)
+  const totalPages = Math.ceil(safeTotal / limit) || 1
 
   return {
     items: items.map(mapRecordItem),
     pagination: {
       page,
       limit,
-      total,
+      total: safeTotal,
       totalPages,
-      hasMore: page < totalPages,
+      hasMore: hasMore || page < totalPages,
     },
   }
 }

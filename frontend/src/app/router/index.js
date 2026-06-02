@@ -2,6 +2,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/modules/auth/auth.store'
 import i18n from '@/shared/i18n'
+import { resolveDefaultHomePath, safeRedirectPath } from './defaultRoute'
 
 import AppLayout from '@/layouts/AppLayout.vue'
 
@@ -11,7 +12,6 @@ import ProfileView from '@/modules/auth/views/ProfileView.vue'
 import SystemRoleView from '@/modules/access/views/SystemRoleView.vue'
 import PermissionsView from '@/modules/access/views/PermissionsView.vue'
 
-import DashboardView from '@/modules/dashboard/views/DashboardView.vue'
 
 import DepartmentView from '@/modules/org/views/DepartmentView.vue'
 import PositionView from '@/modules/org/views/PositionView.vue'
@@ -56,17 +56,6 @@ function uniqueStrings(values = []) {
         .filter(Boolean),
     ),
   ]
-}
-
-function safeRedirectPath(value, fallback = '/dashboard') {
-  const path = s(value)
-
-  if (!path) return fallback
-  if (!path.startsWith('/')) return fallback
-  if (path.startsWith('//')) return fallback
-  if (path.startsWith('/login')) return fallback
-
-  return path
 }
 
 function collectRequiredPermissions(to, key) {
@@ -139,7 +128,11 @@ const routes = [
     children: [
       {
         path: '',
-        redirect: '/dashboard',
+        name: 'home',
+        meta: {
+          requiresAuth: true,
+        },
+        beforeEnter: () => true,
       },
 
       {
@@ -150,20 +143,6 @@ const routes = [
           requiresAuth: true,
           title: 'Profile',
           titleKey: 'auth.profile',
-        },
-      },
-
-      // =========================
-      // Dashboard
-      // =========================
-      {
-        path: 'dashboard',
-        name: 'dashboard',
-        component: DashboardView,
-        meta: {
-          requiresAuth: true,
-          title: 'Dashboard',
-          titleKey: 'nav.dashboard',
         },
       },
 
@@ -325,8 +304,6 @@ const routes = [
             'OT_REQUEST_VIEW',
             'OT_REQUEST_CREATE',
             'OT_REQUEST_UPDATE',
-            'OT_REQUEST_APPROVE',
-            'OT_REQUEST_ACKNOWLEDGE',
           ],
         },
       },
@@ -503,8 +480,12 @@ const routes = [
     ],
   },
   {
+    path: '/dashboard',
+    redirect: '/',
+  },
+  {
     path: '/:pathMatch(.*)*',
-    redirect: '/dashboard',
+    redirect: '/',
   },
 ]
 
@@ -522,7 +503,11 @@ router.beforeEach(async (to) => {
   await ensureAuthBootstrapped()
 
   if (routeIsPublic(to) && auth.token && to.path === '/login') {
-    return safeRedirectPath(to.query?.redirect)
+    return safeRedirectPath(to.query?.redirect, auth)
+  }
+
+  if (routeRequiresAuth(to) && auth.token && (to.path === '/' || to.path === '/dashboard')) {
+    return resolveDefaultHomePath(auth)
   }
 
   if (routeRequiresAuth(to) && !auth.token) {

@@ -4,6 +4,8 @@ import api from '@/shared/services/api'
 import { toApiDate } from '@/shared/utils/dateFormat'
 
 const ATTENDANCE_IMPORT_TIMEOUT_MS = 30 * 60 * 1000
+const ATTENDANCE_LIST_TIMEOUT_MS = 5 * 60 * 1000
+const ATTENDANCE_VERIFY_TIMEOUT_MS = 5 * 60 * 1000
 
 // =========================
 // Helpers
@@ -47,6 +49,34 @@ function normalizeImportInput(input = {}, options = {}) {
   return {
     ...(input || {}),
     ...(options.payload || {}),
+  }
+}
+
+function normalizeDateParam(value) {
+  return toApiDate(value, '') || undefined
+}
+
+function normalizeAttendanceRecordParams(params = {}) {
+  return {
+    ...params,
+    attendanceDateFrom: normalizeDateParam(params.attendanceDateFrom),
+    attendanceDateTo: normalizeDateParam(params.attendanceDateTo),
+  }
+}
+
+function normalizeAttendanceImportParams(params = {}) {
+  return {
+    ...params,
+    periodFrom: normalizeDateParam(params.periodFrom),
+    periodTo: normalizeDateParam(params.periodTo),
+  }
+}
+
+function normalizeVerificationSearchParams(params = {}) {
+  return {
+    ...params,
+    otDateFrom: normalizeDateParam(params.otDateFrom),
+    otDateTo: normalizeDateParam(params.otDateTo),
   }
 }
 
@@ -97,6 +127,7 @@ function buildAttendanceImportFormData(input = {}, options = {}) {
 export function downloadAttendanceImportSample() {
   return api.get('/attendance/import/sample', {
     responseType: 'blob',
+    timeout: ATTENDANCE_LIST_TIMEOUT_MS,
   })
 }
 
@@ -115,29 +146,42 @@ export function importAttendanceExcel(input = {}, options = {}) {
 }
 
 export function getAttendanceImports(params = {}) {
-  return api.get('/attendance/imports', { params })
+  return api.get('/attendance/imports', {
+    params: normalizeAttendanceImportParams(params),
+    timeout: ATTENDANCE_LIST_TIMEOUT_MS,
+  })
 }
 
 export function getAttendanceImportById(id) {
-  return api.get(`/attendance/imports/${cleanId(id)}`)
+  return api.get(`/attendance/imports/${cleanId(id)}`, {
+    timeout: ATTENDANCE_LIST_TIMEOUT_MS,
+  })
 }
 
 // =========================
 // Attendance Records
 // =========================
 export function getAttendanceRecords(params = {}) {
-  return api.get('/attendance/records', { params })
+  return api.get('/attendance/records', {
+    params: normalizeAttendanceRecordParams(params),
+    timeout: ATTENDANCE_LIST_TIMEOUT_MS,
+  })
 }
 
 export function getAttendanceRecordById(id) {
-  return api.get(`/attendance/records/${cleanId(id)}`)
+  return api.get(`/attendance/records/${cleanId(id)}`, {
+    timeout: ATTENDANCE_LIST_TIMEOUT_MS,
+  })
 }
 
 // =========================
 // OT Attendance Verification
 // =========================
 export function searchOTRequestsForVerification(params = {}) {
-  return api.get('/attendance/verification/ot/search', { params })
+  return api.get('/attendance/verification/ot/search', {
+    params: normalizeVerificationSearchParams(params),
+    timeout: ATTENDANCE_VERIFY_TIMEOUT_MS,
+  })
 }
 
 // Old alias support.
@@ -148,7 +192,9 @@ export const searchOTVerificationRequests = searchOTRequestsForVerification
  * Does not save payable minutes into OTRequest.
  */
 export function previewOTAttendanceVerification(otRequestId) {
-  return api.get(`/attendance/verification/ot/${cleanId(otRequestId)}`)
+  return api.get(`/attendance/verification/ot/${cleanId(otRequestId)}`, {
+    timeout: ATTENDANCE_VERIFY_TIMEOUT_MS,
+  })
 }
 
 // Old alias support.
@@ -160,8 +206,29 @@ export const verifyOTAttendance = previewOTAttendanceVerification
  * Payment reads this saved result.
  */
 export function verifyAndSaveOTAttendance(otRequestId) {
-  return api.post(`/attendance/verification/ot/${cleanId(otRequestId)}/verify`)
+  return api.post(`/attendance/verification/ot/${cleanId(otRequestId)}/verify`, null, {
+    timeout: ATTENDANCE_VERIFY_TIMEOUT_MS,
+  })
 }
 
 // Extra alias support.
 export const saveOTAttendanceVerification = verifyAndSaveOTAttendance
+
+const attendanceService = {
+  downloadAttendanceImportSample,
+  importAttendanceExcel,
+  getAttendanceImports,
+  getAttendanceImportById,
+
+  getAttendanceRecords,
+  getAttendanceRecordById,
+
+  searchOTRequestsForVerification,
+  searchOTVerificationRequests,
+  previewOTAttendanceVerification,
+  verifyOTAttendance,
+  verifyAndSaveOTAttendance,
+  saveOTAttendanceVerification,
+}
+
+export default attendanceService

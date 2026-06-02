@@ -28,7 +28,7 @@ const { t } = useI18n()
 
 const pageTitle = computed(() => {
   const titleKey = String(route.meta?.titleKey || '').trim()
-  const fallbackTitle = String(route.meta?.title || t('nav.dashboard')).trim()
+  const fallbackTitle = String(route.meta?.title || t('common.appName')).trim()
 
   return titleKey ? t(titleKey) : fallbackTitle
 })

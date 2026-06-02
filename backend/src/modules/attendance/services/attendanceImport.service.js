@@ -20,6 +20,7 @@ const { mapRecordItem } = require('./attendanceRecord.service')
 const SHIFT_IN_TOLERANCE_MINUTES = 240
 const SHIFT_OUT_TOLERANCE_MINUTES = 360
 const LATE_GRACE_MINUTES = 0
+const ATTENDANCE_INSERT_CHUNK_SIZE = 500
 
 function s(value) {
   return String(value ?? '').trim()
@@ -557,9 +558,10 @@ async function buildRecordPayloadFromParsedRow({
   importDoc,
   employeeMap,
   authUser,
+  dayInfoCache = null,
 }) {
   const attendanceDate = toYmd(parsedRow.attendanceDate) || s(parsedRow.attendanceDate)
-  const dayInfo = await classifyDayType(attendanceDate)
+  const dayInfo = dayInfoCache?.get(attendanceDate) || (await classifyDayType(attendanceDate))
 
   const matchedEmployee = employeeMap.get(upper(parsedRow.importedEmployeeId))
   const departmentDoc = matchedEmployee?.departmentId || null
@@ -707,6 +709,33 @@ async function buildRecordPayloadFromParsedRow({
   }
 }
 
+async function buildDayInfoCache(parsedRows = []) {
+  const attendanceDates = Array.from(
+    new Set(
+      (Array.isArray(parsedRows) ? parsedRows : [])
+        .map((row) => toYmd(row?.attendanceDate) || s(row?.attendanceDate))
+        .filter(Boolean),
+    ),
+  )
+
+  const entries = await Promise.all(
+    attendanceDates.map(async (attendanceDate) => [attendanceDate, await classifyDayType(attendanceDate)]),
+  )
+
+  return new Map(entries)
+}
+
+async function insertAttendanceRecordsInChunks(recordsPayload = []) {
+  const rows = Array.isArray(recordsPayload) ? recordsPayload : []
+
+  for (let index = 0; index < rows.length; index += ATTENDANCE_INSERT_CHUNK_SIZE) {
+    const chunk = rows.slice(index, index + ATTENDANCE_INSERT_CHUNK_SIZE)
+    if (chunk.length) {
+      await AttendanceRecord.insertMany(chunk, { ordered: false })
+    }
+  }
+}
+
 async function importExcel(file, payload, authUser) {
   if (!file) {
     throw createHttpError('Attendance file is required', 400)
@@ -737,6 +766,8 @@ async function importExcel(file, payload, authUser) {
       employees.map((employee) => [upper(employee.employeeCode), employee]),
     )
 
+    const dayInfoCache = await buildDayInfoCache(parsed.rows)
+
     const recordsPayload = await Promise.all(
       parsed.rows.map((parsedRow) =>
         buildRecordPayloadFromParsedRow({
@@ -744,6 +775,7 @@ async function importExcel(file, payload, authUser) {
           importDoc,
           employeeMap,
           authUser,
+          dayInfoCache,
         }),
       ),
     )
@@ -752,7 +784,7 @@ async function importExcel(file, payload, authUser) {
 
     if (recordsPayload.length) {
       overriddenRowCount = await overrideExistingAttendanceRecords(recordsPayload, importDoc._id)
-      await AttendanceRecord.insertMany(recordsPayload, { ordered: false })
+      await insertAttendanceRecordsInChunks(recordsPayload)
     }
 
     const attendanceDate = toYmd(payload.attendanceDate) || s(payload.attendanceDate)

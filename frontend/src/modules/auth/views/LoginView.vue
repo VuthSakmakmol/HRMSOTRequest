@@ -11,6 +11,7 @@ import Password from 'primevue/password'
 import AppLanguageSwitcher from '@/shared/components/AppLanguageSwitcher.vue'
 import { useAuthStore } from '@/modules/auth/auth.store'
 import { getApiErrorMessage } from '@/shared/utils/apiError'
+import { safeRedirectPath } from '@/app/router/defaultRoute'
 
 const router = useRouter()
 const route = useRoute()
@@ -32,17 +33,6 @@ const isSubmitDisabled = computed(() => {
   )
 })
 
-function safeRedirectPath(value, fallback = '/dashboard') {
-  const path = String(value || '').trim()
-
-  if (!path) return fallback
-  if (!path.startsWith('/')) return fallback
-  if (path.startsWith('//')) return fallback
-  if (path.startsWith('/login')) return fallback
-
-  return path
-}
-
 async function submit() {
   errorMessage.value = ''
 
@@ -52,7 +42,7 @@ async function submit() {
       password: form.password,
     })
 
-    await router.push(safeRedirectPath(route.query?.redirect))
+    await router.push(safeRedirectPath(route.query?.redirect, auth))
   } catch (error) {
     errorMessage.value = getApiErrorMessage(
       error,
@@ -68,18 +58,18 @@ async function submit() {
       <section class="w-full max-w-[34rem] rounded-[28px] border border-[color:var(--ot-border)] bg-[color:var(--ot-surface)] p-6 shadow-[var(--ot-shadow-lg)] sm:p-8">
         <div class="mb-7 flex items-start justify-between gap-4">
           <div class="min-w-0">
-            <!-- <div class="ot-page-kicker">
+            <div class="ot-page-kicker">
               <i class="pi pi-shield" />
               {{ t('common.appName') }}
-            </div> -->
+            </div>
 
             <h1 class="ot-page-title">
               {{ t('auth.login') }}
             </h1>
 
-            <!-- <p class="ot-page-subtitle">
+            <p class="ot-page-subtitle">
               {{ t('auth.loginSubtitle') }}
-            </p> -->
+            </p>
           </div>
 
           <AppLanguageSwitcher />

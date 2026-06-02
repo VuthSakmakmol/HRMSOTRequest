@@ -57,15 +57,15 @@ function buildSalaryTemplateWorkbook() {
   const workbook = XLSX.utils.book_new()
 
   const rows = [
-    ['Employee ID', 'Employee Name', 'Monthly Salary'],
-    ['52520351', 'Sample Employee 1', 250],
-    ['52520352', 'Sample Employee 2', 300],
-    ['52520353', 'Sample Employee 3', 280],
+    ['Employee ID', 'Monthly Salary'],
+    ['52520351', 250],
+    ['52520352', 300],
+    ['52520353', 280],
   ]
 
   const sheet = XLSX.utils.aoa_to_sheet(rows)
 
-  sheet['!cols'] = [{ wch: 18 }, { wch: 28 }, { wch: 18 }]
+  sheet['!cols'] = [{ wch: 18 }, { wch: 18 }]
 
   XLSX.utils.book_append_sheet(workbook, sheet, 'Salary Template')
 
@@ -294,7 +294,7 @@ function buildIssuesRows(data) {
       'OT Request No': '',
       'OT Date': '',
       'Employee ID': item.employeeNo || '',
-      Name: item.name || item.rawName || '',
+      Name: '',
       Department: '',
       Position: '',
       Line: '',
@@ -310,7 +310,7 @@ function buildIssuesRows(data) {
       'OT Request No': '',
       'OT Date': '',
       'Employee ID': item.employeeNo || '',
-      Name: item.name || '',
+      Name: '',
       Department: '',
       Position: '',
       Line: '',

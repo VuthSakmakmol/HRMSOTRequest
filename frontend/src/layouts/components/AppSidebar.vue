@@ -108,10 +108,6 @@ function hasAccess(requiredPermissions = []) {
 function isActivePath(to) {
   if (!to) return false
 
-  if (to === '/dashboard') {
-    return route.path === '/' || route.path === '/dashboard'
-  }
-
   return route.path === to || route.path.startsWith(`${to}/`)
 }
 
@@ -142,19 +138,6 @@ async function logout() {
 
 const navGroups = computed(() => {
   const groups = [
-    {
-      key: 'workspace',
-      label: t('nav.workspace'),
-      icon: 'pi pi-home',
-      items: [
-        {
-          key: 'dashboard',
-          label: t('nav.dashboard'),
-          icon: 'pi pi-chart-bar',
-          to: '/dashboard',
-        },
-      ],
-    },
     {
       key: 'organization',
       label: t('nav.organization'),
