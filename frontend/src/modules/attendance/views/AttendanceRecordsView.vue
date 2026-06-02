@@ -19,7 +19,7 @@ import HolidayDatePicker from '@/modules/calendar/components/HolidayDatePicker.v
 import { getAttendanceRecords } from '@/modules/attendance/attendance.api'
 import AppTableLoading from '@/shared/components/AppTableLoading.vue'
 import { getApiErrorMessage } from '@/shared/utils/apiError'
-import { formatDate } from '@/shared/utils/dateFormat'
+import { formatDate, toApiDate } from '@/shared/utils/dateFormat'
 
 const toast = useToast()
 const { t } = useI18n()
@@ -170,8 +170,8 @@ function buildQuery(page) {
     importedStatus: filters.importedStatus || undefined,
     shiftMatchStatus: filters.shiftMatchStatus || undefined,
     dayType: filters.dayType || undefined,
-    attendanceDateFrom: s(filters.attendanceDateFrom) || undefined,
-    attendanceDateTo: s(filters.attendanceDateTo) || undefined,
+    attendanceDateFrom: toApiDate(filters.attendanceDateFrom, '') || undefined,
+    attendanceDateTo: toApiDate(filters.attendanceDateTo, '') || undefined,
     sortBy: 'attendanceDate',
     sortOrder: 'desc',
   }

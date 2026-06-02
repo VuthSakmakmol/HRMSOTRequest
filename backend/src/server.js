@@ -21,6 +21,8 @@ const {
 let httpServer = null
 let isShuttingDown = false
 
+const LONG_RUNNING_REQUEST_TIMEOUT_MS = 30 * 60 * 1000
+
 function createSocketServer(server) {
   const io = new Server(server, {
     cors: {
@@ -44,6 +46,11 @@ async function start() {
     await connectMongo()
 
     httpServer = http.createServer(app)
+
+    // Attendance Excel import can process thousands of rows.
+    // Keep normal API timeout on the frontend, but allow this server to wait for long-running imports.
+    httpServer.requestTimeout = LONG_RUNNING_REQUEST_TIMEOUT_MS
+    httpServer.headersTimeout = LONG_RUNNING_REQUEST_TIMEOUT_MS + 60 * 1000
 
     createSocketServer(httpServer)
 

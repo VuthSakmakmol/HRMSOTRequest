@@ -8,10 +8,19 @@ const requirePermission = require('../../../middlewares/requirePermission.middle
 
 const router = express.Router()
 
+const ATTENDANCE_IMPORT_TIMEOUT_MS = 30 * 60 * 1000
+const ATTENDANCE_IMPORT_FILE_SIZE_LIMIT = 50 * 1024 * 1024
+
+function useLongAttendanceImportTimeout(req, res, next) {
+  req.setTimeout(ATTENDANCE_IMPORT_TIMEOUT_MS)
+  res.setTimeout(ATTENDANCE_IMPORT_TIMEOUT_MS)
+  next()
+}
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 10 * 1024 * 1024,
+    fileSize: ATTENDANCE_IMPORT_FILE_SIZE_LIMIT,
   },
 })
 
@@ -23,6 +32,7 @@ router.get(
 
 router.post(
   '/import',
+  useLongAttendanceImportTimeout,
   requirePermission('ATTENDANCE_IMPORT'),
   upload.single('file'),
   attendanceController.importAttendanceExcel,

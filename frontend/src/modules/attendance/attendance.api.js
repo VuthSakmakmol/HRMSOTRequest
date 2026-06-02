@@ -3,6 +3,8 @@
 import api from '@/shared/services/api'
 import { toApiDate } from '@/shared/utils/dateFormat'
 
+const ATTENDANCE_IMPORT_TIMEOUT_MS = 30 * 60 * 1000
+
 // =========================
 // Helpers
 // =========================
@@ -105,6 +107,9 @@ export function importAttendanceExcel(input = {}, options = {}) {
     headers: {
       'Content-Type': 'multipart/form-data',
     },
+    timeout: ATTENDANCE_IMPORT_TIMEOUT_MS,
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity,
     onUploadProgress,
   })
 }

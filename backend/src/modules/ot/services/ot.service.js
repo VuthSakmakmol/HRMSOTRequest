@@ -6,7 +6,6 @@ const XLSX = require('xlsx')
 const AppError = require('../../../shared/errors/AppError')
 
 const OTRequest = require('../models/OTRequest')
-const AttendanceRecord = require('../../attendance/models/AttendanceRecord')
 
 const Employee = require('../../org/models/Employee')
 const Department = require('../../org/models/Department')
@@ -522,77 +521,9 @@ async function ensureEmployeesHaveProductionLine(employeeIds = []) {
   })
 }
 
-async function ensureEmployeesHaveTodayClockIn({ otDate, employeeIds = [] }) {
-  const date = s(otDate)
-  const uniqueEmployeeIds = normalizeIdArray(employeeIds)
-
-  if (!date || !uniqueEmployeeIds.length) return
-  if (!isTodayInPhnomPenh(date)) return
-
-  const employeeObjectIds = uniqueEmployeeIds
-    .filter(isObjectId)
-    .map((item) => new mongoose.Types.ObjectId(item))
-
-  if (!employeeObjectIds.length) return
-
-  const records = await AttendanceRecord.find({
-    attendanceDate: date,
-    employeeId: { $in: employeeObjectIds },
-    $or: [{ hasClockIn: true }, { clockIn: { $exists: true, $ne: '' } }],
-  })
-    .select({
-      employeeId: 1,
-      clockIn: 1,
-      hasClockIn: 1,
-    })
-    .lean()
-
-  const clockInEmployeeIdSet = new Set(
-    records.map((record) => s(record.employeeId)).filter(Boolean),
-  )
-
-  const missingEmployeeIds = uniqueEmployeeIds.filter(
-    (employeeId) => !clockInEmployeeIdSet.has(employeeId),
-  )
-
-  if (!missingEmployeeIds.length) return
-
-  const employees = await Employee.find({
-    _id: {
-      $in: missingEmployeeIds
-        .filter(isObjectId)
-        .map((item) => new mongoose.Types.ObjectId(item)),
-    },
-  })
-    .select({
-      employeeNo: 1,
-      displayName: 1,
-    })
-    .lean()
-
-  const missingEmployees = employees.map((employee) => ({
-    employeeId: String(employee._id),
-    employeeCode: employeeCode(employee),
-    employeeName: employeeName(employee),
-    employeeLabel: [employeeCode(employee), employeeName(employee)]
-      .filter(Boolean)
-      .join(' - '),
-  }))
-
-  throw appError({
-    statusCode: 400,
-    code: 'OT_TODAY_ATTENDANCE_TIME_IN_REQUIRED',
-    messageKey: 'ot.request.error.todayAttendanceTimeInRequired',
-    message: 'Cannot create OT request for today because some employees do not have attendance time-in',
-    field: 'employeeIds',
-    params: {
-      otDate: date,
-      missingEmployees,
-      missingEmployeeIds,
-    },
-  })
-}
-
+// Attendance is final payment proof, not a request-creation gate.
+// Requesters can create/edit OT before attendance is imported; payment verification
+// will later set payable minutes to 0 when attendance is missing or mismatched.
 function collectUnavailableEmployeesFromRequest(doc, map) {
   const collections = collectEmployeeSnapshotsFromRequest(doc)
 
@@ -1836,10 +1767,6 @@ async function create(payload, authUser) {
     employeeIds: uniqueEmployeeIds,
   })
 
-  await ensureEmployeesHaveTodayClockIn({
-    otDate: payload.otDate,
-    employeeIds: uniqueEmployeeIds,
-  })
 
   const employeeContexts = await resolveEmployeesSnapshotsWithContext(uniqueEmployeeIds)
 
@@ -1983,10 +1910,6 @@ async function update(requestId, payload, authUser) {
     excludeRequestId: requestId,
   })
 
-  await ensureEmployeesHaveTodayClockIn({
-    otDate: payload.otDate,
-    employeeIds: uniqueEmployeeIds,
-  })
 
   const employeeContexts = await resolveEmployeesSnapshotsWithContext(uniqueEmployeeIds)
 

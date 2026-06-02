@@ -59,15 +59,49 @@ function s(value) {
   return String(value ?? '').trim()
 }
 
+function pad2(value) {
+  return String(value).padStart(2, '0')
+}
+
+function normalizeDateOnly(value) {
+  const raw = s(value)
+  if (!raw) return ''
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw
+
+  const dmy = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  if (dmy) {
+    const day = Number(dmy[1])
+    const month = Number(dmy[2])
+    const year = Number(dmy[3])
+    const date = new Date(year, month - 1, day)
+
+    if (
+      date.getFullYear() === year &&
+      date.getMonth() === month - 1 &&
+      date.getDate() === day
+    ) {
+      return `${year}-${pad2(month)}-${pad2(day)}`
+    }
+  }
+
+  const parsed = new Date(raw)
+  if (!Number.isNaN(parsed.getTime())) {
+    return `${parsed.getFullYear()}-${pad2(parsed.getMonth() + 1)}-${pad2(parsed.getDate())}`
+  }
+
+  return raw
+}
+
 const objectIdSchema = z
   .string()
   .trim()
   .regex(/^[a-f\d]{24}$/i, 'Invalid id')
 
-const ymdSchema = z
-  .string()
-  .trim()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format')
+const ymdSchema = z.preprocess(
+  (value) => normalizeDateOnly(value),
+  z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format'),
+)
 
 const pageSchema = z.coerce.number().int().min(1).default(1)
 const limitSchema = z.coerce.number().int().min(1).max(200).default(10)
@@ -120,7 +154,7 @@ function optionalBoolean() {
 
 const optionalYmdSchema = z.preprocess(
   (value) => {
-    const raw = s(value)
+    const raw = normalizeDateOnly(value)
     return raw || undefined
   },
   ymdSchema.optional(),

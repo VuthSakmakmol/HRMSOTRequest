@@ -17,6 +17,40 @@ function upper(value) {
   return s(value).toUpperCase()
 }
 
+function pad2(value) {
+  return String(value).padStart(2, '0')
+}
+
+function normalizeDateOnly(value) {
+  const raw = s(value)
+  if (!raw) return ''
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw
+
+  const dmy = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  if (dmy) {
+    const day = Number(dmy[1])
+    const month = Number(dmy[2])
+    const year = Number(dmy[3])
+    const date = new Date(year, month - 1, day)
+
+    if (
+      date.getFullYear() === year &&
+      date.getMonth() === month - 1 &&
+      date.getDate() === day
+    ) {
+      return `${year}-${pad2(month)}-${pad2(day)}`
+    }
+  }
+
+  const parsed = new Date(raw)
+  if (!Number.isNaN(parsed.getTime())) {
+    return `${parsed.getFullYear()}-${pad2(parsed.getMonth() + 1)}-${pad2(parsed.getDate())}`
+  }
+
+  return raw
+}
+
 function escapeRegex(value) {
   return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
@@ -149,15 +183,18 @@ function buildRecordFilter(query = {}) {
   addBooleanFilter(filter, 'shiftMatched', query.shiftMatched)
   addBooleanFilter(filter, 'shiftTimeMatched', query.shiftTimeMatched)
 
-  if (s(query.attendanceDateFrom) || s(query.attendanceDateTo)) {
+  const attendanceDateFrom = normalizeDateOnly(query.attendanceDateFrom)
+  const attendanceDateTo = normalizeDateOnly(query.attendanceDateTo)
+
+  if (attendanceDateFrom || attendanceDateTo) {
     filter.attendanceDate = {}
 
-    if (s(query.attendanceDateFrom)) {
-      filter.attendanceDate.$gte = s(query.attendanceDateFrom)
+    if (attendanceDateFrom) {
+      filter.attendanceDate.$gte = attendanceDateFrom
     }
 
-    if (s(query.attendanceDateTo)) {
-      filter.attendanceDate.$lte = s(query.attendanceDateTo)
+    if (attendanceDateTo) {
+      filter.attendanceDate.$lte = attendanceDateTo
     }
   }
 
@@ -316,8 +353,13 @@ async function listRecords(query = {}) {
   const sort = buildRecordSort(query)
 
   const [items, total] = await Promise.all([
-    AttendanceRecord.find(filter).sort(sort).skip(skip).limit(limit).lean(),
-    AttendanceRecord.countDocuments(filter),
+    AttendanceRecord.find(filter)
+      .sort(sort)
+      .skip(skip)
+      .limit(limit)
+      .maxTimeMS(120000)
+      .lean(),
+    AttendanceRecord.countDocuments(filter).maxTimeMS(120000),
   ])
 
   const totalPages = Math.ceil(total / limit) || 1
