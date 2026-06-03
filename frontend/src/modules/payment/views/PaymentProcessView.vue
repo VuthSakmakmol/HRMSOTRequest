@@ -9,16 +9,19 @@ import Button from 'primevue/button'
 import Column from 'primevue/column'
 import DataTable from 'primevue/datatable'
 import InputNumber from 'primevue/inputnumber'
+import ProgressBar from 'primevue/progressbar'
 import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 
 import HolidayDatePicker from '@/modules/calendar/components/HolidayDatePicker.vue'
 import { getHolidayLookupOptions } from '@/modules/calendar/holiday.api'
 import {
-  calculatePaymentExport,
+  downloadPaymentProcessJobResult,
   downloadSalaryTemplate,
   getPaymentFormulaLookupOptions,
-  previewPayment,
+  getPaymentProcessJobStatus,
+  startPaymentExportJob,
+  startPaymentPreviewJob,
 } from '@/modules/payment/payment.api'
 import { getApiErrorMessage } from '@/shared/utils/apiError'
 import { formatDate } from '@/shared/utils/dateFormat'
@@ -45,6 +48,18 @@ const previewDone = ref(false)
 const previewResult = ref(null)
 const detailLoadedCount = ref(DETAIL_PAGE_SIZE)
 
+const processProgress = reactive({
+  visible: false,
+  type: '',
+  jobId: '',
+  status: '',
+  progress: 1,
+  phase: '',
+  message: '',
+  uploadProgress: 0,
+  meta: {},
+})
+
 const form = reactive({
   fromDate: '',
   toDate: '',
@@ -53,6 +68,8 @@ const form = reactive({
 })
 
 let calendarTimer = null
+let paymentProcessRunId = 0
+
 
 const selectedFormula = computed(() => {
   const id = s(form.formulaId)
@@ -226,6 +243,37 @@ const canPreview = computed(() => {
 
 const canGenerate = computed(() => {
   return Boolean(canPreview.value && previewDone.value && previewResult.value)
+})
+
+const paymentProcessRunning = computed(() => {
+  return previewing.value || generating.value
+})
+
+const processProgressLabel = computed(() => {
+  const action = processProgress.type === 'EXPORT' ? 'Generating Excel' : 'Preparing preview'
+  const progress = Math.round(Number(processProgress.progress || 1))
+  const message = s(processProgress.message) || 'Processing payment'
+
+  return `${action} · ${progress}% · ${message}`
+})
+
+const processProgressMetaLabel = computed(() => {
+  const meta = processProgress.meta || {}
+  const pieces = []
+
+  if (Number(meta.totalRequests || 0) > 0) {
+    pieces.push(`Requests ${Number(meta.processedRequests || 0)}/${Number(meta.totalRequests || 0)}`)
+  }
+
+  if (Number(meta.paymentRows || 0) > 0) {
+    pieces.push(`Rows ${Number(meta.paymentRows || 0)}`)
+  }
+
+  if (Number(processProgress.uploadProgress || 0) > 0 && processProgress.status === 'UPLOADING') {
+    pieces.push(`Upload ${Number(processProgress.uploadProgress || 0)}%`)
+  }
+
+  return pieces.join(' · ')
 })
 
 const summaryCards = computed(() => {
@@ -498,6 +546,87 @@ function showToast(severity, summary, detail, life = 3000) {
   })
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms)
+  })
+}
+
+function normalizeJobPayload(res) {
+  return normalizePayload(res) || {}
+}
+
+function resetProcessProgress() {
+  processProgress.visible = false
+  processProgress.type = ''
+  processProgress.jobId = ''
+  processProgress.status = ''
+  processProgress.progress = 1
+  processProgress.phase = ''
+  processProgress.message = ''
+  processProgress.uploadProgress = 0
+  processProgress.meta = {}
+}
+
+function startProcessProgress(type) {
+  processProgress.visible = true
+  processProgress.type = type
+  processProgress.jobId = ''
+  processProgress.status = 'UPLOADING'
+  processProgress.progress = 1
+  processProgress.phase = 'UPLOADING'
+  processProgress.message = 'Uploading salary file'
+  processProgress.uploadProgress = 0
+  processProgress.meta = {}
+}
+
+function updateProcessProgress(job = {}) {
+  processProgress.visible = true
+  processProgress.type = s(job.type || processProgress.type)
+  processProgress.jobId = s(job.jobId || processProgress.jobId)
+  processProgress.status = s(job.status || processProgress.status)
+  processProgress.progress = Math.min(100, Math.max(1, Math.round(Number(job.progress || processProgress.progress || 1))))
+  processProgress.phase = s(job.phase || processProgress.phase)
+  processProgress.message = s(job.message || processProgress.message)
+  processProgress.meta = job.meta || processProgress.meta || {}
+}
+
+function handleProcessUploadProgress(event) {
+  if (!event?.total) return
+
+  const uploadPercent = Math.min(100, Math.round((event.loaded / event.total) * 100))
+  processProgress.uploadProgress = uploadPercent
+  processProgress.progress = Math.min(10, Math.max(1, Math.round(uploadPercent / 10)))
+}
+
+async function waitForPaymentProcessJob(jobId, type, runId) {
+  while (paymentProcessRunId === runId) {
+    const res = await getPaymentProcessJobStatus(jobId)
+    const job = normalizeJobPayload(res)
+
+    updateProcessProgress(job)
+
+    if (job.status === 'COMPLETED') {
+      if (type === 'PREVIEW') {
+        previewResult.value = job.result || null
+        previewDone.value = Boolean(job.result)
+        detailLoadedCount.value = DETAIL_PAGE_SIZE
+      }
+
+      return job
+    }
+
+    if (job.status === 'FAILED') {
+      const message = job.error?.message || job.message || 'Payment process failed'
+      throw new Error(message)
+    }
+
+    await sleep(900)
+  }
+
+  throw new Error('Payment process was stopped')
+}
+
 function resetPreview() {
   previewDone.value = false
   previewResult.value = null
@@ -733,6 +862,7 @@ function clearForm() {
 
   clearFile()
   resetPreview()
+  resetProcessProgress()
 }
 
 async function handleDownloadTemplate() {
@@ -777,16 +907,23 @@ async function handlePreview() {
     return
   }
 
+  paymentProcessRunId += 1
+  const runId = paymentProcessRunId
+
   previewing.value = true
   resetPreview()
+  startProcessProgress('PREVIEW')
 
   try {
-    const res = await previewPayment(buildProcessPayload())
-    const payload = normalizePayload(res)
+    const res = await startPaymentPreviewJob(buildProcessPayload(), {
+      onUploadProgress: handleProcessUploadProgress,
+    })
 
-    previewResult.value = payload
-    previewDone.value = true
-    detailLoadedCount.value = DETAIL_PAGE_SIZE
+    const startedJob = normalizeJobPayload(res)
+    updateProcessProgress(startedJob)
+
+    const completedJob = await waitForPaymentProcessJob(startedJob.jobId, 'PREVIEW', runId)
+    updateProcessProgress(completedJob)
 
     showToast('success', 'Preview ready', 'Payment preview is ready', 2500)
   } catch (error) {
@@ -814,11 +951,28 @@ async function handleGenerate() {
     return
   }
 
+  paymentProcessRunId += 1
+  const runId = paymentProcessRunId
+
   generating.value = true
+  startProcessProgress('EXPORT')
 
   try {
-    const res = await calculatePaymentExport(buildProcessPayload())
-    downloadBlob(res, `payment_${periodStartYMD.value}_to_${periodEndYMD.value}.xlsx`)
+    const res = await startPaymentExportJob(buildProcessPayload(), {
+      onUploadProgress: handleProcessUploadProgress,
+    })
+
+    const startedJob = normalizeJobPayload(res)
+    updateProcessProgress(startedJob)
+
+    const completedJob = await waitForPaymentProcessJob(startedJob.jobId, 'EXPORT', runId)
+    updateProcessProgress(completedJob)
+
+    const downloadRes = await downloadPaymentProcessJobResult(completedJob.jobId)
+    downloadBlob(
+      downloadRes,
+      completedJob.filename || `payment_${periodStartYMD.value}_to_${periodEndYMD.value}.xlsx`,
+    )
 
     showToast('success', 'Generated', 'Payment Excel generated')
   } catch (error) {
@@ -839,6 +993,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  paymentProcessRunId += 1
   window.clearTimeout(calendarTimer)
 })
 </script>
@@ -940,7 +1095,7 @@ onBeforeUnmount(() => {
           outlined
           size="small"
           class="payment-action-button"
-          :disabled="previewing || generating"
+          :disabled="paymentProcessRunning"
           @click="clearForm"
         />
 
@@ -951,7 +1106,7 @@ onBeforeUnmount(() => {
           size="small"
           class="payment-action-button"
           :loading="previewing"
-          :disabled="!canPreview || generating"
+          :disabled="!canPreview || paymentProcessRunning"
           @click="handlePreview"
         />
 
@@ -961,13 +1116,43 @@ onBeforeUnmount(() => {
           size="small"
           class="payment-action-button"
           :loading="generating"
-          :disabled="!canGenerate || previewing"
+          :disabled="!canGenerate || paymentProcessRunning"
           @click="handleGenerate"
         />
       </div>
     </section>
 
-    
+    <section
+      v-if="processProgress.visible"
+      class="ot-table-card payment-progress-card"
+    >
+      <div class="payment-progress-header">
+        <div>
+          <h2 class="payment-progress-title">
+            {{ processProgress.type === 'EXPORT' ? 'Generating payment Excel' : 'Preparing payment preview' }}
+          </h2>
+
+          <p class="payment-progress-message">
+            {{ processProgressLabel }}
+          </p>
+        </div>
+
+        <Tag
+          :value="processProgress.status || 'PROCESSING'"
+          class="payment-rgb-tag payment-tag-info"
+        />
+      </div>
+
+      <ProgressBar
+        :value="processProgress.progress"
+        class="payment-progress-bar"
+      />
+
+      <div class="payment-progress-footer">
+        <span>{{ processProgress.phase || 'PROCESSING' }}</span>
+        <span v-if="processProgressMetaLabel">{{ processProgressMetaLabel }}</span>
+      </div>
+    </section>
 
     <section class="ot-table-card">
       <div class="ot-table-toolbar">
@@ -1742,6 +1927,56 @@ onBeforeUnmount(() => {
   font-size: 0.78rem !important;
   font-weight: 750 !important;
   font-variant-numeric: tabular-nums;
+}
+
+/* =========================
+   Payment process progress
+   ========================= */
+
+.payment-progress-card {
+  padding: 0.85rem;
+}
+
+.payment-progress-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.7rem;
+}
+
+.payment-progress-title {
+  margin: 0;
+  color: var(--ot-text);
+  font-size: 0.9rem;
+  font-weight: 850;
+  line-height: 1.15;
+}
+
+.payment-progress-message {
+  margin: 0.25rem 0 0;
+  color: var(--ot-text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.payment-progress-bar {
+  height: 0.65rem;
+  overflow: hidden;
+  border-radius: 999px;
+}
+
+.payment-progress-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.45rem;
+  color: var(--ot-text-muted);
+  font-size: 0.68rem;
+  font-weight: 750;
+  line-height: 1.2;
 }
 
 /* =========================

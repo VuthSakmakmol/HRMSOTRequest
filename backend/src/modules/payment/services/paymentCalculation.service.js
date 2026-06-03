@@ -38,6 +38,31 @@ function createHttpError(message, status = 400, messageKey = '') {
   return error
 }
 
+function nextTick() {
+  return new Promise((resolve) => {
+    setImmediate(resolve)
+  })
+}
+
+async function reportPaymentProgress(onProgress, progress, phase, message, extra = {}) {
+  if (typeof onProgress !== 'function') {
+    return
+  }
+
+  try {
+    await onProgress({
+      progress: Math.min(99, Math.max(1, Math.round(Number(progress || 1)))),
+      phase: s(phase),
+      message: s(message),
+      ...extra,
+    })
+  } catch (error) {
+    // Progress must never break the payment calculation.
+  }
+
+  await nextTick()
+}
+
 function safeNumber(value, fallback = 0) {
   const num = Number(value)
   return Number.isFinite(num) ? num : fallback
@@ -1435,6 +1460,7 @@ async function buildPaymentItems({
   formula,
   exchangeRate,
   allowancePolicies = [],
+  onProgress,
 }) {
   const items = []
   const missingSalaryEmployeesMap = new Map()
@@ -1442,7 +1468,23 @@ async function buildPaymentItems({
   const payableWarningEmployeesMap = new Map()
   const verificationSummaries = []
 
-  for (const rawOTRequest of otRequests) {
+  const totalRequests = Array.isArray(otRequests) ? otRequests.length : 0
+
+  for (let requestIndex = 0; requestIndex < totalRequests; requestIndex += 1) {
+    const rawOTRequest = otRequests[requestIndex]
+
+    await reportPaymentProgress(
+      onProgress,
+      35 + Math.round((requestIndex / Math.max(totalRequests, 1)) * 45),
+      'VERIFYING_ATTENDANCE',
+      `Checking attendance ${requestIndex + 1}/${totalRequests}`,
+      {
+        processedRequests: requestIndex,
+        totalRequests,
+        currentRequestNo: s(rawOTRequest?.requestNo),
+      },
+    )
+
     const live = await buildLivePaymentVerification(rawOTRequest)
     const otRequest = live.otRequest
     const employees = live.verifiedEmployees
@@ -1515,6 +1557,18 @@ async function buildPaymentItems({
       }
     }
   }
+
+  await reportPaymentProgress(
+    onProgress,
+    84,
+    'APPLYING_ALLOWANCE',
+    'Applying allowance and cash breakdown',
+    {
+      processedRequests: totalRequests,
+      totalRequests,
+      paymentRows: items.length,
+    },
+  )
 
   return {
     items: applyAllowancePoliciesToItems(items, allowancePolicies, exchangeRate),
@@ -1794,15 +1848,48 @@ async function buildPaymentPreview({
   toDate,
   formulaId,
   exchangeRate,
+  onProgress,
 }) {
   validateSalaryFile(salaryFile)
 
+  await reportPaymentProgress(
+    onProgress,
+    5,
+    'VALIDATING',
+    'Checking payment period and uploaded salary file',
+  )
+
   const formula = await getFormulaOrThrow(formulaId)
+  await reportPaymentProgress(onProgress, 12, 'FORMULA', 'Loaded payment formula')
+
   const manualExchangeRate = buildManualExchangeRate(exchangeRate, formula)
+  await reportPaymentProgress(onProgress, 18, 'EXCHANGE_RATE', 'Prepared manual exchange rate')
+
   const allowancePolicies = await getActiveAllowancePoliciesForCalculation()
+  await reportPaymentProgress(onProgress, 24, 'ALLOWANCE', 'Loaded allowance policies')
 
   const parsedSalary = parseSalaryExcel(salaryFile.buffer)
+  await reportPaymentProgress(
+    onProgress,
+    30,
+    'SALARY_FILE',
+    `Read salary Excel: ${parsedSalary.validCount || 0} valid employees`,
+    {
+      salaryRows: parsedSalary.rowsCount || 0,
+      salaryValidRows: parsedSalary.validCount || 0,
+    },
+  )
+
   const otRequests = await fetchApprovedOTRequests(fromDate, toDate)
+  await reportPaymentProgress(
+    onProgress,
+    35,
+    'OT_REQUESTS',
+    `Loaded ${otRequests.length} approved OT requests`,
+    {
+      totalRequests: otRequests.length,
+    },
+  )
 
   const {
     items,
@@ -1816,10 +1903,32 @@ async function buildPaymentPreview({
     formula,
     exchangeRate: manualExchangeRate,
     allowancePolicies,
+    onProgress,
   })
+
+  await reportPaymentProgress(
+    onProgress,
+    90,
+    'SUMMARY',
+    `Building payment summary for ${items.length} rows`,
+    {
+      paymentRows: items.length,
+    },
+  )
 
   const summary = summarizePaymentItems(items, manualExchangeRate)
   const generatedAt = new Date()
+
+  await reportPaymentProgress(
+    onProgress,
+    95,
+    'FINALIZING',
+    'Finalizing payment preview',
+    {
+      paymentRows: items.length,
+      totalRequests: otRequests.length,
+    },
+  )
 
   return {
     period: {

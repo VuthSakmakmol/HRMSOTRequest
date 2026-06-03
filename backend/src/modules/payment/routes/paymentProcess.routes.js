@@ -21,6 +21,33 @@ router.get(
   paymentExportController.downloadSalaryTemplate,
 )
 
+
+router.post(
+  '/preview-job',
+  requirePermission('PAYMENT_PROCESS'),
+  upload.single('salaryFile'),
+  paymentExportController.startPaymentPreviewJob,
+)
+
+router.post(
+  '/calculate-export-job',
+  requirePermission('PAYMENT_PROCESS'),
+  upload.single('salaryFile'),
+  paymentExportController.startPaymentExportJob,
+)
+
+router.get(
+  '/jobs/:jobId/status',
+  requirePermission('PAYMENT_PROCESS'),
+  paymentExportController.getPaymentJobStatus,
+)
+
+router.get(
+  '/jobs/:jobId/download',
+  requirePermission('PAYMENT_PROCESS'),
+  paymentExportController.downloadPaymentJobResult,
+)
+
 router.post(
   '/preview',
   requirePermission('PAYMENT_PROCESS'),

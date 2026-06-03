@@ -2,13 +2,26 @@
 
 const XLSX = require('xlsx')
 
+const DEFAULT_DENOMINATIONS = [50000, 20000, 10000, 5000, 1000, 500, 100]
+const COMPANY_NAME = 'Trax Apparel (Cambodia) Co., Ltd.'
+
 function s(value) {
   return String(value ?? '').trim()
+}
+
+function upper(value) {
+  return s(value).toUpperCase()
 }
 
 function n(value, fallback = 0) {
   const number = Number(value)
   return Number.isFinite(number) ? number : fallback
+}
+
+function roundAmount(value, decimals = 2) {
+  const safeDecimals = Math.min(Math.max(Number(decimals || 0), 0), 6)
+  const factor = 10 ** safeDecimals
+  return Math.round((Number(value || 0) + Number.EPSILON) * factor) / factor
 }
 
 function getDenominations(data) {
@@ -24,33 +37,7 @@ function getDenominations(data) {
     ].sort((a, b) => b - a)
   }
 
-  return [50000, 20000, 10000, 5000, 1000, 500, 100]
-}
-
-function buildBreakdownColumns(data, breakdown = {}) {
-  return getDenominations(data).reduce((acc, denomination) => {
-    acc[String(denomination)] = n(breakdown[String(denomination)], 0)
-    return acc
-  }, {})
-}
-
-function allowancePolicyText(item = {}) {
-  const policies = Array.isArray(item.allowancePolicies) ? item.allowancePolicies : []
-
-  if (!policies.length) return ''
-
-  return policies
-    .map((policy) => {
-      const code = s(policy.code)
-      const name = s(policy.name)
-      const amount = n(policy.amount, 0)
-      const currency = s(policy.currency)
-
-      return [code, name, amount ? `${amount} ${currency}` : '']
-        .filter(Boolean)
-        .join(' - ')
-    })
-    .join('; ')
+  return DEFAULT_DENOMINATIONS
 }
 
 function buildSalaryTemplateWorkbook() {
@@ -64,7 +51,6 @@ function buildSalaryTemplateWorkbook() {
   ]
 
   const sheet = XLSX.utils.aoa_to_sheet(rows)
-
   sheet['!cols'] = [{ wch: 18 }, { wch: 18 }]
 
   XLSX.utils.book_append_sheet(workbook, sheet, 'Salary Template')
@@ -75,386 +61,437 @@ function buildSalaryTemplateWorkbook() {
   })
 }
 
-function buildSummaryRows(data) {
-  const exchangeRate = data.exchangeRate || {}
-  const summary = data.summary || {}
-  const issues = data.issues || {}
+function normalizeSheetName(value, fallback = 'Sheet') {
+  const cleaned = s(value)
+    .replace(/[\\/?*\[\]:]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 
-  return [
-    ['Period From', data.period?.fromDateDisplay || data.period?.fromDate || ''],
-    ['Period To', data.period?.toDateDisplay || data.period?.toDate || ''],
-
-    ['Formula', `${data.formula?.code || ''} - ${data.formula?.name || ''}`],
-    ['Formula Currency', data.formula?.currency || ''],
-
-    ['Exchange Rate', `${exchangeRate.code || ''} - ${exchangeRate.name || ''}`],
-    ['Rate', exchangeRate.rate || ''],
-    ['From Currency', exchangeRate.fromCurrency || ''],
-    ['To Currency', exchangeRate.toCurrency || ''],
-    ['Rounding Mode', exchangeRate.roundingMode || ''],
-    ['Rounding Unit', exchangeRate.roundingUnit || ''],
-    ['Denominations', getDenominations(data).join(', ')],
-
-    ['OT Requests', data.otRequestCount || 0],
-    ['Payment Rows', summary.totalItemCount || 0],
-    ['Payable Rows', summary.payableItemCount || 0],
-    ['Rows With Allowance', summary.allowanceItemCount || 0],
-    ['Missing Salary Rows', summary.missingSalaryItemCount || 0],
-
-    [
-      'Missing Payable Employees',
-      Array.isArray(issues.missingPayableEmployees)
-        ? issues.missingPayableEmployees.length
-        : 0,
-    ],
-
-    ['Total Payable Minutes', summary.totalPayableMinutes || 0],
-    ['Total Payable Hours', summary.totalPayableHours || 0],
-
-    ['OT Amount USD', summary.totalAmountUsd || 0],
-    ['OT KHR Raw', summary.totalAmountKhrRaw || 0],
-    ['OT KHR Rounded', summary.totalAmountKhrRounded || 0],
-    ['OT KHR Round Difference', summary.totalKhrRoundDifference || 0],
-
-    ['Allowance USD', summary.totalAllowanceUsd || 0],
-    ['Allowance KHR Raw', summary.totalAllowanceKhrRaw || 0],
-    ['Allowance KHR Rounded', summary.totalAllowanceKhrRounded || 0],
-
-    ['Total Payable KHR Raw', summary.totalPayableKhrRaw || 0],
-    ['Total Payable KHR Rounded', summary.totalPayableKhrRounded || 0],
-
-    ['Generated At', data.generatedAtDisplayHm || ''],
-    ['Exported By', s(data.exportedBy)],
-  ]
+  const name = cleaned || fallback
+  return name.slice(0, 31)
 }
 
-function buildEmployeeSummaryRows(data) {
-  const rows = Array.isArray(data.summary?.summaryByEmployee)
-    ? data.summary.summaryByEmployee
-    : []
+function appendUniqueSheet(workbook, sheet, requestedName) {
+  const base = normalizeSheetName(requestedName, `Sheet ${workbook.SheetNames.length + 1}`)
+  const used = new Set(workbook.SheetNames.map((name) => name.toLowerCase()))
 
-  return rows.map((item, index) => ({
-    No: index + 1,
-    'Employee ID': item.employeeNo || '',
-    'Employee Name': item.employeeName || '',
-    Department: item.departmentName || '',
-    Position: item.positionName || '',
-    Line: item.lineName || '',
+  let name = base
+  let index = 2
 
-    'Monthly Salary': n(item.monthlySalary, 0),
-    Currency: item.currency || '',
-    'Request Count': n(item.requestCount, 0),
-    'Allowance Count': n(item.allowanceCount, 0),
-
-    'Payable Minutes': n(item.payableMinutes, 0),
-    'Payable Hours': n(item.payableHours, 0),
-
-    'OT Amount USD': n(item.amountUsd, 0),
-    Rate: data.exchangeRate?.rate || '',
-    'OT Raw KHR': n(item.amountKhrRaw, 0),
-    'OT Rounded KHR': n(item.amountKhrRounded, 0),
-    'OT Round Diff KHR': n(item.khrRoundDifference, 0),
-
-    'Allowance USD': n(item.allowanceAmountUsd, 0),
-    'Allowance Raw KHR': n(item.allowanceAmountKhrRaw, 0),
-    'Allowance Rounded KHR': n(item.allowanceAmountKhrRounded, 0),
-
-    'Total Payable Raw KHR': n(item.totalPayableKhrRaw, 0),
-    'Total Payable Rounded KHR': n(item.totalPayableKhrRounded, 0),
-
-    ...buildBreakdownColumns(data, item.totalPayableKhrBreakdown),
-  }))
-}
-
-function buildDayTypeSummaryRows(data) {
-  const rows = Array.isArray(data.summary?.summaryByDayType)
-    ? data.summary.summaryByDayType
-    : []
-
-  return rows.map((item, index) => ({
-    No: index + 1,
-    'Day Type': item.dayType || '',
-    'Request Count': n(item.requestCount, 0),
-    'Allowance Count': n(item.allowanceCount, 0),
-
-    'Payable Minutes': n(item.payableMinutes, 0),
-    'Payable Hours': n(item.payableHours, 0),
-
-    'OT Amount USD': n(item.amountUsd, 0),
-    Rate: data.exchangeRate?.rate || '',
-    'OT Raw KHR': n(item.amountKhrRaw, 0),
-    'OT Rounded KHR': n(item.amountKhrRounded, 0),
-    'OT Round Diff KHR': n(item.khrRoundDifference, 0),
-
-    'Allowance USD': n(item.allowanceAmountUsd, 0),
-    'Allowance Raw KHR': n(item.allowanceAmountKhrRaw, 0),
-    'Allowance Rounded KHR': n(item.allowanceAmountKhrRounded, 0),
-
-    'Total Payable Raw KHR': n(item.totalPayableKhrRaw, 0),
-    'Total Payable Rounded KHR': n(item.totalPayableKhrRounded, 0),
-
-    ...buildBreakdownColumns(data, item.totalPayableKhrBreakdown),
-  }))
-}
-
-function buildDetailRows(data) {
-  const rows = Array.isArray(data.items) ? data.items : []
-
-  return rows.map((item, index) => ({
-    No: index + 1,
-
-    'OT Request No': item.requestNo || '',
-    'OT Date': item.otDateDisplay || item.otDate || '',
-    'Day Type': item.dayType || '',
-    Status: item.status || '',
-
-    'Employee ID': item.employeeNo || '',
-    'Employee Name': item.employeeName || '',
-    Department: item.departmentName || '',
-    Position: item.positionName || '',
-    Line: item.lineName || '',
-    Shift: item.shiftName || '',
-
-    'Start Time': item.requestStartTime || '',
-    'End Time': item.requestEndTime || '',
-
-    'Requested Minutes': n(item.requestedMinutes, 0),
-    'Break Minutes': n(item.breakMinutes, 0),
-    'Request Paid Minutes': n(item.requestPaidMinutes, 0),
-
-    'Actual OT Minutes': n(item.actualOtMinutes, 0),
-    'Eligible OT Minutes': n(item.eligibleOtMinutes, 0),
-    'Rounded OT Minutes': n(item.roundedOtMinutes, 0),
-
-    'Payable Minutes': n(item.payableMinutes, 0),
-    'Payable Hours': n(item.payableHours, 0),
-
-    'Attendance Status': item.attendanceStatus || '',
-    'OT Result': item.otResult || '',
-    'OT Result Reason': item.otResultReason || '',
-    'Payment Blocked Reason': item.paymentBlockedReason || '',
-
-    'Policy Code': item.policyCode || '',
-    'Policy Name': item.policyName || '',
-    'Policy Round Method': item.policyRoundMethod || '',
-    'Policy Round Unit Minutes': n(item.policyRoundUnitMinutes, 0),
-    'Policy Min Eligible Minutes': n(item.policyMinEligibleMinutes, 0),
-
-    'Monthly Salary': n(item.monthlySalary, 0),
-    'Hourly Rate': n(item.hourlyRate, 0),
-    Multiplier: n(item.multiplier, 0),
-
-    Currency: item.currency || '',
-    'OT Amount USD': n(item.amountUsd, 0),
-    Rate: n(item.exchangeRate, 0),
-    'OT Raw KHR': n(item.amountKhrRaw, 0),
-    'OT Rounded KHR': n(item.amountKhrRounded, 0),
-    'OT Round Diff KHR': n(item.khrRoundDifference, 0),
-
-    'Allowance Policies': allowancePolicyText(item),
-    'Allowance Count': n(item.allowanceCount, 0),
-    'Allowance USD': n(item.allowanceAmountUsd, 0),
-    'Allowance Raw KHR': n(item.allowanceAmountKhrRaw, 0),
-    'Allowance Rounded KHR': n(item.allowanceAmountKhrRounded, 0),
-
-    'Total Payable Raw KHR': n(item.totalPayableKhrRaw, 0),
-    'Total Payable Rounded KHR': n(item.totalPayableKhrRounded, 0),
-
-    ...buildBreakdownColumns(data, item.totalPayableKhrBreakdown),
-
-    'Salary Found': item.hasSalary ? 'Yes' : 'No',
-    'Attendance/Policy Payable Found': item.hasAttendancePolicyPayable ? 'Yes' : 'No',
-    'Payment Eligible': item.paymentEligible ? 'Yes' : 'No',
-    'Salary Row No': item.salaryRowNo || '',
-  }))
-}
-
-function buildCashSummaryRows(data) {
-  const breakdown =
-    data.summary?.totalPayableKhrBreakdown ||
-    data.summary?.totalKhrBreakdown ||
-    {}
-
-  return getDenominations(data).map((denomination, index) => ({
-    No: index + 1,
-    Denomination: denomination,
-    Papers: n(breakdown[String(denomination)], 0),
-    Total: denomination * n(breakdown[String(denomination)], 0),
-  }))
-}
-
-function buildIssuesRows(data) {
-  const rows = []
-  const issues = data.issues || {}
-
-  for (const item of issues.invalidSalaryRows || []) {
-    rows.push({
-      Type: 'Invalid Salary Row',
-      Row: item.rowNo || item.excelRowNo || '',
-      'OT Request No': '',
-      'OT Date': '',
-      'Employee ID': item.employeeNo || '',
-      Name: '',
-      Department: '',
-      Position: '',
-      Line: '',
-      'OT Result': '',
-      Reason: item.reason || '',
-    })
+  while (used.has(name.toLowerCase())) {
+    const suffix = ` (${index})`
+    name = `${base.slice(0, 31 - suffix.length)}${suffix}`
+    index += 1
   }
 
-  for (const item of issues.duplicateSalaryRows || []) {
-    rows.push({
-      Type: 'Duplicate Salary Row',
-      Row: item.rowNo || item.excelRowNo || '',
-      'OT Request No': '',
-      'OT Date': '',
-      'Employee ID': item.employeeNo || '',
-      Name: '',
-      Department: '',
-      Position: '',
-      Line: '',
-      'OT Result': '',
-      Reason: item.reason || '',
-    })
-  }
-
-  for (const item of issues.missingSalaryEmployees || []) {
-    rows.push({
-      Type: 'Missing Salary',
-      Row: '',
-      'OT Request No': '',
-      'OT Date': '',
-      'Employee ID': item.employeeNo || '',
-      Name: item.employeeName || '',
-      Department: item.departmentName || '',
-      Position: item.positionName || '',
-      Line: item.lineName || '',
-      'OT Result': '',
-      Reason: item.reason || 'Salary not found in uploaded salary Excel',
-    })
-  }
-
-  for (const item of issues.missingPayableEmployees || []) {
-    rows.push({
-      Type: 'No Attendance/Policy Payable Minutes',
-      Row: '',
-      'OT Request No': item.requestNo || '',
-      'OT Date': item.otDate || '',
-      'Employee ID': item.employeeNo || '',
-      Name: item.employeeName || '',
-      Department: item.departmentName || '',
-      Position: item.positionName || '',
-      Line: item.lineName || '',
-      'OT Result': item.otResult || '',
-      Reason: item.reason || 'No attendance/policy payable minutes found',
-    })
-  }
-
-  return rows
+  XLSX.utils.book_append_sheet(workbook, sheet, name)
 }
 
 function applyColumnWidths(sheet, widths = []) {
   sheet['!cols'] = widths.map((wch) => ({ wch }))
 }
 
-function appendAoaSheet(workbook, name, rows, widths = []) {
+function addMerges(sheet, merges = []) {
+  sheet['!merges'] = merges.map(([sCell, eCell]) => ({
+    s: XLSX.utils.decode_cell(sCell),
+    e: XLSX.utils.decode_cell(eCell),
+  }))
+}
+
+function parseYmd(value) {
+  const raw = s(value)
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!match) return null
+
+  const [, year, month, day] = match
+  return new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)))
+}
+
+function formatLongDate(value, fallback = '') {
+  const date = parseYmd(value)
+  if (!date) return fallback || s(value)
+
+  return new Intl.DateTimeFormat('en-US', {
+    weekday: 'long',
+    month: 'long',
+    day: '2-digit',
+    year: 'numeric',
+    timeZone: 'UTC',
+  }).format(date)
+}
+
+function formatSheetDate(value, fallback = '') {
+  const date = parseYmd(value)
+  if (!date) return s(fallback || value)
+
+  const day = new Intl.DateTimeFormat('en-US', {
+    day: '2-digit',
+    timeZone: 'UTC',
+  }).format(date)
+
+  const month = new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    timeZone: 'UTC',
+  }).format(date)
+
+  return `${day}${month}`
+}
+
+function displayDayType(value) {
+  const dayType = upper(value)
+
+  if (dayType === 'HOLIDAY') return 'Holiday'
+  if (dayType === 'SUNDAY') return 'Sunday'
+  if (dayType === 'WORKING_DAY') return 'Working Day'
+
+  return s(value) || 'OT'
+}
+
+function getItemTotalUsd(item = {}) {
+  return roundAmount(n(item.amountUsd, 0) + n(item.allowanceAmountUsd, 0), 2)
+}
+
+function getItemTotalKhrRaw(item = {}) {
+  return n(item.totalPayableKhrRaw, 0) || n(item.amountKhrRaw, 0) + n(item.allowanceAmountKhrRaw, 0)
+}
+
+function getItemTotalKhrRounded(item = {}) {
+  return (
+    n(item.totalPayableKhrRounded, 0) ||
+    n(item.amountKhrRounded, 0) + n(item.allowanceAmountKhrRounded, 0)
+  )
+}
+
+function getItemBreakdown(item = {}, denominations = []) {
+  const source = item.totalPayableKhrBreakdown || {}
+
+  return denominations.reduce((acc, denomination) => {
+    acc[String(denomination)] = n(source[String(denomination)], 0)
+    return acc
+  }, {})
+}
+
+function emptyBreakdown(denominations = []) {
+  return denominations.reduce((acc, denomination) => {
+    acc[String(denomination)] = 0
+    return acc
+  }, {})
+}
+
+function addBreakdown(target = {}, source = {}, denominations = []) {
+  for (const denomination of denominations) {
+    const key = String(denomination)
+    target[key] = n(target[key], 0) + n(source[key], 0)
+  }
+
+  return target
+}
+
+function getRequestGroupKey(item = {}) {
+  return (
+    s(item.otRequestId) ||
+    s(item.requestNo) ||
+    [item.otDate, item.shiftName, item.lineName].map(s).filter(Boolean).join('|') ||
+    'request'
+  )
+}
+
+function buildRequestGroups(data = {}) {
+  const items = Array.isArray(data.items) ? data.items : []
+  const groups = new Map()
+
+  for (const item of items) {
+    const key = getRequestGroupKey(item)
+    const existing = groups.get(key) || {
+      key,
+      requestNo: s(item.requestNo),
+      otDate: s(item.otDate),
+      otDateDisplay: s(item.otDateDisplay),
+      dayType: upper(item.dayType),
+      requesterName: s(item.requesterName),
+      shiftCode: upper(item.shiftCode),
+      shiftName: s(item.shiftName),
+      shiftType: upper(item.shiftType),
+      shiftOtOptionLabel: s(item.shiftOtOptionLabel),
+      lineName: s(item.lineName),
+      items: [],
+    }
+
+    if (!existing.requestNo) existing.requestNo = s(item.requestNo)
+    if (!existing.otDate) existing.otDate = s(item.otDate)
+    if (!existing.otDateDisplay) existing.otDateDisplay = s(item.otDateDisplay)
+    if (!existing.dayType) existing.dayType = upper(item.dayType)
+    if (!existing.shiftCode) existing.shiftCode = upper(item.shiftCode)
+    if (!existing.shiftName) existing.shiftName = s(item.shiftName)
+    if (!existing.shiftOtOptionLabel) existing.shiftOtOptionLabel = s(item.shiftOtOptionLabel)
+    if (!existing.lineName) existing.lineName = s(item.lineName)
+
+    existing.items.push(item)
+    groups.set(key, existing)
+  }
+
+  return Array.from(groups.values()).sort((a, b) => {
+    const byDate = s(a.otDate).localeCompare(s(b.otDate))
+    if (byDate) return byDate
+
+    const byShift = s(a.shiftCode || a.shiftName).localeCompare(s(b.shiftCode || b.shiftName))
+    if (byShift) return byShift
+
+    const byLine = s(a.lineName).localeCompare(s(b.lineName))
+    if (byLine) return byLine
+
+    return s(a.requestNo).localeCompare(s(b.requestNo))
+  })
+}
+
+function summarizeItems(items = [], denominations = []) {
+  const result = {
+    headCount: items.length,
+    payableHours: 0,
+    otUsd: 0,
+    allowanceUsd: 0,
+    totalUsd: 0,
+    totalKhrRaw: 0,
+    totalKhrRounded: 0,
+    breakdown: emptyBreakdown(denominations),
+  }
+
+  for (const item of items) {
+    result.payableHours += n(item.payableHours, 0)
+    result.otUsd += n(item.amountUsd, 0)
+    result.allowanceUsd += n(item.allowanceAmountUsd, 0)
+    result.totalUsd += getItemTotalUsd(item)
+    result.totalKhrRaw += getItemTotalKhrRaw(item)
+    result.totalKhrRounded += getItemTotalKhrRounded(item)
+    addBreakdown(result.breakdown, getItemBreakdown(item, denominations), denominations)
+  }
+
+  result.payableHours = roundAmount(result.payableHours, 2)
+  result.otUsd = roundAmount(result.otUsd, 2)
+  result.allowanceUsd = roundAmount(result.allowanceUsd, 2)
+  result.totalUsd = roundAmount(result.totalUsd, 2)
+  result.totalKhrRaw = Math.round(result.totalKhrRaw)
+  result.totalKhrRounded = Math.round(result.totalKhrRounded)
+  result.variance = Math.round(result.totalKhrRaw - result.totalKhrRounded)
+
+  return result
+}
+
+function requestLabel(group = {}) {
+  return [
+    s(group.requestNo),
+    s(group.shiftCode || group.shiftName || group.shiftOtOptionLabel),
+    s(group.lineName),
+  ]
+    .filter(Boolean)
+    .join(' - ')
+}
+
+function detailTitle(group = {}) {
+  const dateLabel = formatLongDate(group.otDate, group.otDateDisplay)
+  const dayTypeLabel = displayDayType(group.dayType)
+  const lineLabel = [
+    s(group.shiftCode || group.shiftName || group.shiftOtOptionLabel),
+    s(group.lineName),
+  ]
+    .filter(Boolean)
+    .join('-')
+
+  return [
+    `Extra O.T. - ${dayTypeLabel}`,
+    dateLabel,
+    lineLabel,
+    `${group.items.length} PAX`,
+  ]
+    .filter(Boolean)
+    .join(' ')
+}
+
+function buildSummarySheet(data = {}, groups = [], denominations = []) {
+  const rows = [
+    [],
+    [],
+    ['', '', '', '', '', 'Bank Note'],
+    [
+      '',
+      '',
+      'HCs',
+      'USD',
+      'Riel',
+      ...denominations,
+      'Total',
+      'Variance',
+    ],
+    [],
+  ]
+
+  const grand = {
+    totalUsd: 0,
+    totalKhrRaw: 0,
+    totalKhrRounded: 0,
+    headCount: 0,
+    breakdown: emptyBreakdown(denominations),
+  }
+
+  for (const group of groups) {
+    const summary = summarizeItems(group.items, denominations)
+
+    grand.totalUsd += summary.totalUsd
+    grand.totalKhrRaw += summary.totalKhrRaw
+    grand.totalKhrRounded += summary.totalKhrRounded
+    grand.headCount += summary.headCount
+    addBreakdown(grand.breakdown, summary.breakdown, denominations)
+
+    rows.push([
+      group.otDateDisplay || group.otDate || '',
+      requestLabel(group),
+      summary.headCount,
+      summary.totalUsd,
+      summary.totalKhrRaw,
+      ...denominations.map((denomination) => summary.breakdown[String(denomination)] || 0),
+      summary.totalKhrRounded,
+      summary.variance,
+    ])
+  }
+
+  while (rows.length < 32) rows.push([])
+
+  grand.totalUsd = roundAmount(grand.totalUsd, 2)
+  grand.totalKhrRaw = Math.round(grand.totalKhrRaw)
+  grand.totalKhrRounded = Math.round(grand.totalKhrRounded)
+
+  rows.push([
+    '',
+    'Total',
+    grand.headCount,
+    grand.totalUsd,
+    grand.totalKhrRaw,
+    ...denominations.map((denomination) => grand.breakdown[String(denomination)] || 0),
+    grand.totalKhrRounded,
+    grand.totalKhrRaw - grand.totalKhrRounded,
+  ])
+
+  rows.push([], [], [], [], ['','Checked By'], [], [], [], ['', '', '', '', '', '', '', '', '', '', 'Received By'])
+
   const sheet = XLSX.utils.aoa_to_sheet(rows)
-  applyColumnWidths(sheet, widths)
-  XLSX.utils.book_append_sheet(workbook, sheet, name)
+  applyColumnWidths(sheet, [14, 24, 8, 12, 14, ...denominations.map(() => 9), 14, 12])
+
+  return sheet
 }
 
-function appendJsonSheet(workbook, name, rows, widths = []) {
-  const sheet = XLSX.utils.json_to_sheet(rows)
-  applyColumnWidths(sheet, widths)
-  XLSX.utils.book_append_sheet(workbook, sheet, name)
+function buildDetailSheet(group = {}, data = {}, denominations = []) {
+  const firstItem = group.items[0] || {}
+  const multiplier = n(firstItem.multiplier, 0)
+  const multiplierLabel = multiplier > 0 ? ` ${Math.round(multiplier * 100)}%` : ''
+  const otAmountHeader = `OT ${displayDayType(group.dayType)}${multiplierLabel}`
+
+  const rows = [
+    [COMPANY_NAME],
+    [detailTitle(group)],
+    [],
+    [
+      'No',
+      'Employee ID',
+      'Employee Name',
+      'Position',
+      'Line',
+      'Payable Hours',
+      otAmountHeader,
+      'Food\nAllowance',
+      'Total Pay',
+      'Total KHR',
+      ...denominations,
+    ],
+  ]
+
+  group.items.forEach((item, index) => {
+    const breakdown = getItemBreakdown(item, denominations)
+
+    rows.push([
+      index + 1,
+      s(item.employeeNo),
+      s(item.employeeName),
+      s(item.positionName),
+      s(item.lineName),
+      roundAmount(n(item.payableHours, 0), 2),
+      roundAmount(n(item.amountUsd, 0), 2),
+      roundAmount(n(item.allowanceAmountUsd, 0), 2),
+      getItemTotalUsd(item),
+      Math.round(getItemTotalKhrRounded(item)),
+      ...denominations.map((denomination) => breakdown[String(denomination)] || 0),
+    ])
+  })
+
+  const summary = summarizeItems(group.items, denominations)
+
+  rows.push([
+    'Total',
+    '',
+    '',
+    '',
+    '',
+    summary.payableHours,
+    summary.otUsd,
+    summary.allowanceUsd,
+    summary.totalUsd,
+    summary.totalKhrRounded,
+    ...denominations.map((denomination) => summary.breakdown[String(denomination)] || 0),
+  ])
+
+  rows.push([], [], [], [], [], [], [], [], [], [COMPANY_NAME], [], ['Page 1'])
+
+  const sheet = XLSX.utils.aoa_to_sheet(rows)
+
+  applyColumnWidths(sheet, [
+    5,
+    14,
+    28,
+    22,
+    14,
+    14,
+    16,
+    14,
+    14,
+    14,
+    ...denominations.map(() => 8),
+  ])
+
+  const lastColumnIndex = 9 + denominations.length
+  const lastColumn = XLSX.utils.encode_col(lastColumnIndex)
+  const totalRowNumber = 5 + group.items.length
+
+  addMerges(sheet, [
+    ['A1', `${lastColumn}1`],
+    ['A2', `${lastColumn}2`],
+    ['A' + totalRowNumber, 'E' + totalRowNumber],
+  ])
+
+  return sheet
 }
 
-function denominationWidths(data) {
-  return getDenominations(data).map(() => 10)
+function buildRequestSheetName(group = {}) {
+  const dateLabel = formatSheetDate(group.otDate, group.otDateDisplay)
+  const label = [dateLabel, s(group.shiftCode || group.shiftName), s(group.lineName), s(group.requestNo)]
+    .filter(Boolean)
+    .join(' ')
+
+  return label || `Request ${s(group.requestNo || '')}`
 }
 
 function buildPaymentWorkbook(data) {
   const workbook = XLSX.utils.book_new()
+  const denominations = getDenominations(data)
+  const groups = buildRequestGroups(data)
 
-  appendAoaSheet(workbook, 'Summary', buildSummaryRows(data), [34, 42])
+  appendUniqueSheet(workbook, buildSummarySheet(data, groups, denominations), 'Summary')
 
-  appendJsonSheet(
-    workbook,
-    'Employee Summary',
-    buildEmployeeSummaryRows(data),
-    [
-      8, 16, 28, 22, 22, 18,
-      16, 12, 14, 16,
-      18, 18,
-      16, 12, 14, 16, 16,
-      16, 18, 20,
-      22, 24,
-      ...denominationWidths(data),
-    ],
-  )
-
-  appendJsonSheet(
-    workbook,
-    'Day Type Summary',
-    buildDayTypeSummaryRows(data),
-    [
-      8, 18, 14, 16,
-      18, 18,
-      16, 12, 14, 16, 16,
-      16, 18, 20,
-      22, 24,
-      ...denominationWidths(data),
-    ],
-  )
-
-  appendJsonSheet(
-    workbook,
-    'Details',
-    buildDetailRows(data),
-    [
-      8,
-
-      18, 14, 16, 14,
-
-      16, 28, 22, 22, 18, 18,
-
-      14, 14,
-
-      18, 16, 18,
-      18, 18, 18,
-      18, 18,
-
-      18, 14, 36, 36,
-
-      16, 24, 18, 18, 20,
-
-      16, 16, 12,
-
-      12, 14, 12, 14, 16, 16,
-
-      34, 16, 16, 18, 22,
-      24, 26,
-
-      ...denominationWidths(data),
-
-      14, 28, 16, 14,
-    ],
-  )
-
-  appendJsonSheet(
-    workbook,
-    'Cash Summary',
-    buildCashSummaryRows(data),
-    [8, 16, 12, 18],
-  )
-
-  appendJsonSheet(
-    workbook,
-    'Issues',
-    buildIssuesRows(data),
-    [34, 10, 18, 14, 16, 28, 22, 22, 18, 18, 48],
-  )
+  for (const group of groups) {
+    appendUniqueSheet(
+      workbook,
+      buildDetailSheet(group, data, denominations),
+      buildRequestSheetName(group),
+    )
+  }
 
   return XLSX.write(workbook, {
     type: 'buffer',

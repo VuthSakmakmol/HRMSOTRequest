@@ -2,6 +2,10 @@
 
 import api from '@/shared/services/api'
 
+const PAYMENT_PROCESS_TIMEOUT_MS = 5 * 60 * 1000
+const PAYMENT_LOOKUP_TIMEOUT_MS = 60000
+const PAYMENT_PROGRESS_TIMEOUT_MS = 15000
+
 // =========================
 // Helpers
 // =========================
@@ -42,11 +46,11 @@ function buildPaymentProcessFormData(input = {}) {
 // Payment Formulas
 // =========================
 export function getPaymentFormulas(params = {}) {
-  return api.get('/payment/formulas', { params })
+  return api.get('/payment/formulas', { params, timeout: PAYMENT_LOOKUP_TIMEOUT_MS })
 }
 
 export function getPaymentFormulaLookupOptions(params = {}) {
-  return api.get('/payment/formulas/lookup', { params })
+  return api.get('/payment/formulas/lookup', { params, timeout: PAYMENT_LOOKUP_TIMEOUT_MS })
 }
 
 export function getPaymentFormulaById(id) {
@@ -65,11 +69,11 @@ export function updatePaymentFormula(id, payload) {
 // Payment Allowance Policies
 // =========================
 export function getPaymentAllowancePolicies(params = {}) {
-  return api.get('/payment/allowance-policies', { params })
+  return api.get('/payment/allowance-policies', { params, timeout: PAYMENT_LOOKUP_TIMEOUT_MS })
 }
 
 export function getPaymentAllowancePolicyLookupOptions(params = {}) {
-  return api.get('/payment/allowance-policies/lookup', { params })
+  return api.get('/payment/allowance-policies/lookup', { params, timeout: PAYMENT_LOOKUP_TIMEOUT_MS })
 }
 
 export function getPaymentAllowancePolicyById(id) {
@@ -90,6 +94,7 @@ export function updatePaymentAllowancePolicy(id, payload) {
 export function downloadSalaryTemplate() {
   return api.get('/payment/salary-template', {
     responseType: 'blob',
+    timeout: PAYMENT_PROCESS_TIMEOUT_MS,
   })
 }
 
@@ -101,6 +106,7 @@ export function previewPayment(input = {}, options = {}) {
       'Content-Type': 'multipart/form-data',
     },
     onUploadProgress,
+    timeout: PAYMENT_PROCESS_TIMEOUT_MS,
   })
 }
 
@@ -113,6 +119,45 @@ export function calculateAndExportPayment(input = {}, options = {}) {
     },
     responseType: 'blob',
     onUploadProgress,
+    timeout: PAYMENT_PROCESS_TIMEOUT_MS,
+  })
+}
+
+
+export function startPaymentPreviewJob(input = {}, options = {}) {
+  const { onUploadProgress } = options
+
+  return api.post('/payment/preview-job', buildPaymentProcessFormData(input), {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+    onUploadProgress,
+    timeout: PAYMENT_PROCESS_TIMEOUT_MS,
+  })
+}
+
+export function startPaymentExportJob(input = {}, options = {}) {
+  const { onUploadProgress } = options
+
+  return api.post('/payment/calculate-export-job', buildPaymentProcessFormData(input), {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+    onUploadProgress,
+    timeout: PAYMENT_PROCESS_TIMEOUT_MS,
+  })
+}
+
+export function getPaymentProcessJobStatus(jobId) {
+  return api.get(`/payment/jobs/${encodeURIComponent(String(jobId || ''))}/status`, {
+    timeout: PAYMENT_PROGRESS_TIMEOUT_MS,
+  })
+}
+
+export function downloadPaymentProcessJobResult(jobId) {
+  return api.get(`/payment/jobs/${encodeURIComponent(String(jobId || ''))}/download`, {
+    responseType: 'blob',
+    timeout: PAYMENT_PROCESS_TIMEOUT_MS,
   })
 }
 

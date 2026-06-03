@@ -64,7 +64,7 @@ async function calculateAndExportPayment({
   })
 
   return {
-    filename: `payment-calculation-${safeFrom}-to-${safeTo}.xlsx`,
+    filename: `payment-report-${safeFrom}-to-${safeTo}.xlsx`,
     buffer,
   }
 }
