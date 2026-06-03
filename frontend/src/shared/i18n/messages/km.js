@@ -60,6 +60,8 @@ export default {
     downloadFailed: 'ទាញយកមិនបានសម្រេច',
     created: 'បានបង្កើត',
     updated: 'បានធ្វើបច្ចុប្បន្នភាព',
+    deleted: 'បានលុប',
+    deleteFailed: 'លុបមិនបានសម្រេច',
     downloaded: 'បានទាញយក',
     loadingData: 'កំពុងផ្ទុកទិន្នន័យ',
     fetchingRecords: 'កំពុងទាញយកទិន្នន័យពីម៉ាស៊ីនមេ។',
@@ -1978,6 +1980,13 @@ export default {
 
       exportExcel: 'នាំចេញ Excel',
       newRequest: 'សំណើ OT ថ្មី',
+
+      deleteConfirmTitle: 'លុបសំណើ OT',
+      deleteConfirmHeading: 'លុបសំណើ OT នេះជាអចិន្ត្រៃយ៍?',
+      deleteConfirmHelp:
+        'វានឹងលុបសំណើ OT និងការជូនដំណឹងដែលពាក់ព័ន្ធជាអចិន្ត្រៃយ៍។ ប្រើសម្រាប់ទិន្នន័យសាកល្បង ឬទិន្នន័យដែលបានយល់ព្រមសម្អាតប៉ុណ្ណោះ។',
+      deletedSuccess: 'បានលុបសំណើ OT ដោយជោគជ័យ។',
+      deleteFailed: 'លុបមិនបានសម្រេច។',
 
       allDayTypes: 'ប្រភេទថ្ងៃទាំងអស់',
 

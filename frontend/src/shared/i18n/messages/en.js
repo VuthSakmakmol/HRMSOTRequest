@@ -62,6 +62,8 @@ export default {
     downloadFailed: 'Download failed',
     created: 'Created',
     updated: 'Updated',
+    deleted: 'Deleted',
+    deleteFailed: 'Delete failed',
     downloaded: 'Downloaded',
     loadingData: 'Loading data',
     fetchingRecords: 'Fetching records from the server.',
@@ -2000,6 +2002,13 @@ export default {
 
       exportExcel: 'Export Excel',
       newRequest: 'New OT Request',
+
+      deleteConfirmTitle: 'Delete OT request',
+      deleteConfirmHeading: 'Delete this OT request permanently?',
+      deleteConfirmHelp:
+        'This will permanently remove the OT request and its related notifications. Use this only for test or agreed cleanup records.',
+      deletedSuccess: 'OT request deleted successfully.',
+      deleteFailed: 'Delete failed.',
 
       allDayTypes: 'All Day Types',
 

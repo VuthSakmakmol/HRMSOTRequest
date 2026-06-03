@@ -387,11 +387,24 @@ function hasPermission(authUser = {}, permissionCode) {
   return permissionCodesOf(authUser).includes(target)
 }
 
+function isRequesterOfOTRequest(doc = {}, authUser = {}) {
+  const actorEmployeeId = s(authUser?.employeeId)
+  const requesterEmployeeId = s(doc?.requesterEmployeeId)
+
+  return Boolean(actorEmployeeId && requesterEmployeeId && actorEmployeeId === requesterEmployeeId)
+}
+
 function canModifyOTRequestBeforeApproval(doc = {}, authUser = {}) {
   const status = upper(doc.status)
 
   if (status !== 'PENDING') return false
   if (hasApprovedStep(doc)) return false
+
+  // Edit/cancel are normal workflow actions. They stay separate from permanent delete.
+  // Normal users can only edit/cancel their own requests; Root Admin can bypass.
+  if (!authUser?.isRootAdmin && !isRequesterOfOTRequest(doc, authUser)) {
+    return false
+  }
 
   return hasPermission(authUser, 'OT_REQUEST_UPDATE')
 }
@@ -432,6 +445,10 @@ function canEditOTRequest(doc = {}, authUser = {}) {
 
 function canCancelOTRequest(doc = {}, authUser = {}) {
   return canModifyOTRequestBeforeApproval(doc, authUser)
+}
+
+function canDeleteOTRequest(doc = {}, authUser = {}) {
+  return hasPermission(authUser, 'OT_REQUEST_DELETE')
 }
 
 function canRequesterConfirm(doc = {}, authUser = {}) {
@@ -674,6 +691,7 @@ function buildPermissionOutput(doc = {}, authUser = {}) {
     canRequesterConfirm: canRequesterConfirm(doc, authUser),
     canAcknowledge: false,
     canCancel: canCancelOTRequest(doc, authUser),
+    canDelete: canDeleteOTRequest(doc, authUser),
   }
 }
 

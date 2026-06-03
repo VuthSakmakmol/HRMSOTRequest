@@ -162,6 +162,22 @@ async function updateOTRequest(req, res, next) {
 }
 
 
+async function deleteOTRequest(req, res, next) {
+  try {
+    const params = parse(otRequestIdParamSchema, req.params || {})
+
+    const deletedItem = await otService.deleteRequest(params.id, req.user)
+
+    await safeRealtime(() => emitOTChanged(deletedItem, req.user, 'DELETED'))
+
+    return successResponse(res, {
+      item: presentItem(deletedItem, req.user),
+    })
+  } catch (error) {
+    return next(error)
+  }
+}
+
 async function cancelOTRequest(req, res, next) {
   try {
     const params = parse(otRequestIdParamSchema, req.params || {})
@@ -333,6 +349,7 @@ module.exports = {
   createOTRequest,
   updateOTRequest,
   cancelOTRequest,
+  deleteOTRequest,
   listUnavailableOTEmployees,
   listOTRequests,
   exportOTRequestsExcel,

@@ -24,6 +24,7 @@ import { useOTRealtimeRefresh } from '@/modules/ot/otRealtimeRefresh'
 
 import {
   cancelOTRequest,
+  deleteOTRequest,
   exportOTRequestsExcel,
   getOTRequests,
 } from '@/modules/ot/ot.api'
@@ -62,8 +63,11 @@ const backgroundLoading = ref(false)
 const loadingMore = ref(false)
 const exporting = ref(false)
 const cancellingIds = ref(new Set())
+const deletingIds = ref(new Set())
 const cancelConfirmVisible = ref(false)
+const deleteConfirmVisible = ref(false)
 const cancelTargetRow = ref(null)
+const deleteTargetRow = ref(null)
 const filtersPanelOpen = ref(false)
 const activeDatePicker = ref('')
 
@@ -90,8 +94,23 @@ let filterResizeObserver = null
 let tableScrollListenerElement = null
 let tableAutoLoadRunning = false
 
+const isRootAdminUser = computed(() => {
+  const roleCodes = Array.isArray(auth.user?.roleCodes)
+    ? auth.user.roleCodes.map((code) => String(code || '').trim().toUpperCase()).filter(Boolean)
+    : []
+
+  return (
+    auth.isRootAdmin === true ||
+    auth.user?.isRootAdmin === true ||
+    roleCodes.includes('ROOT_ADMIN')
+  )
+})
+
 const canCreate = computed(() => auth.hasPermission('OT_REQUEST_CREATE'))
 const canExport = computed(() => auth.hasPermission('OT_REQUEST_VIEW'))
+const canDeleteAnyRequest = computed(() => {
+  return isRootAdminUser.value || auth.hasPermission('OT_REQUEST_DELETE')
+})
 
 const totalRequests = computed(() => Number(totalRecords.value || 0))
 const loadedCount = computed(() => rows.value.length)
@@ -121,6 +140,27 @@ const cancelTargetEmployeeCount = computed(() => {
 
 const cancelTargetIsLoading = computed(() => {
   return cancelTargetRow.value ? isCancellingRow(cancelTargetRow.value) : false
+})
+
+const deleteTargetRequestNo = computed(() => {
+  const row = deleteTargetRow.value || {}
+
+  return String(row.requestNo || row.otRequestNo || row.id || '').trim()
+})
+
+const deleteTargetStatusLabel = computed(() => {
+  const row = deleteTargetRow.value || {}
+  const approval = displayApproval(row)
+
+  return String(approval?.label || row.statusLabel || row.status || '-').trim()
+})
+
+const deleteTargetEmployeeCount = computed(() => {
+  return displayStaffCount(deleteTargetRow.value || {})
+})
+
+const deleteTargetIsLoading = computed(() => {
+  return deleteTargetRow.value ? isDeletingRow(deleteTargetRow.value) : false
 })
 
 function tr(key, fallback, params) {
@@ -933,6 +973,10 @@ function hasOTUpdatePermission() {
   return auth?.hasPermission?.('OT_REQUEST_UPDATE') === true
 }
 
+function hasOTDeletePermission() {
+  return canDeleteAnyRequest.value === true
+}
+
 function canEditRow(row = {}) {
   const explicit = readRowAction(row, 'canEdit', ['edit', 'editable'])
 
@@ -949,8 +993,16 @@ function canCancelRow(row = {}) {
   return hasOTUpdatePermission() && isBeforeApprovalStarted(row)
 }
 
+function canDeleteRow(row = {}) {
+  if (hasOTDeletePermission()) return true
+
+  const explicit = readRowAction(row, 'canDelete', ['delete', 'deletable', 'remove', 'removable'])
+
+  return explicit === true
+}
+
 function hasRowActions(row = {}) {
-  return canEditRow(row) || canCancelRow(row)
+  return canEditRow(row) || canCancelRow(row) || canDeleteRow(row)
 }
 
 function isCancellingRow(row = {}) {
@@ -970,6 +1022,25 @@ function setCancellingRow(row = {}, value) {
   }
 
   cancellingIds.value = next
+}
+
+function isDeletingRow(row = {}) {
+  return deletingIds.value.has(rowIdOf(row))
+}
+
+function setDeletingRow(row = {}, value) {
+  const id = rowIdOf(row)
+  if (!id) return
+
+  const next = new Set(deletingIds.value)
+
+  if (value) {
+    next.add(id)
+  } else {
+    next.delete(id)
+  }
+
+  deletingIds.value = next
 }
 
 function editRequest(row = {}) {
@@ -1027,6 +1098,57 @@ async function confirmCancelRequest() {
     })
   } finally {
     setCancellingRow(row, false)
+  }
+}
+
+function openDeleteDialog(row = {}) {
+  if (!rowIdOf(row) || !canDeleteRow(row)) return
+
+  deleteTargetRow.value = row
+  deleteConfirmVisible.value = true
+}
+
+function closeDeleteDialog() {
+  if (deleteTargetIsLoading.value) return
+
+  deleteConfirmVisible.value = false
+  deleteTargetRow.value = null
+}
+
+async function confirmDeleteRequest() {
+  const row = deleteTargetRow.value || {}
+  const id = rowIdOf(row)
+
+  if (!id || !canDeleteRow(row)) {
+    closeDeleteDialog()
+    return
+  }
+
+  setDeletingRow(row, true)
+
+  try {
+    await deleteOTRequest(id)
+
+    toast.add({
+      severity: 'success',
+      summary: tr('common.deleted', 'Deleted'),
+      detail: tr('ot.requests.deletedSuccess', 'OT request deleted successfully.'),
+      life: 2500,
+    })
+
+    deleteConfirmVisible.value = false
+    deleteTargetRow.value = null
+
+    await reloadFirstPage({ keepVisible: true })
+  } catch (error) {
+    toast.add({
+      severity: 'error',
+      summary: tr('common.deleteFailed', 'Delete failed'),
+      detail: getApiErrorMessage(error, tr('ot.requests.deleteFailed', 'Delete failed.')),
+      life: 4000,
+    })
+  } finally {
+    setDeletingRow(row, false)
   }
 }
 
@@ -1374,7 +1496,7 @@ onBeforeUnmount(() => {
             :header="tr('common.action', 'Action')"
             header-class="ot-action-column-header"
             body-class="ot-action-column-body"
-            style="width: 6.8rem; min-width: 6.8rem"
+            style="width: 9.4rem; min-width: 9.4rem"
           >
             <template #body="{ data }">
               <div
@@ -1407,6 +1529,20 @@ onBeforeUnmount(() => {
                   :loading="isCancellingRow(data)"
                   :disabled="isCancellingRow(data)"
                   @click="openCancelDialog(data)"
+                />
+
+                <Button
+                  v-if="canDeleteRow(data)"
+                  :label="tr('common.delete', 'Delete')"
+                  :aria-label="tr('common.delete', 'Delete')"
+                  :title="tr('common.delete', 'Delete')"
+                  icon="pi pi-trash"
+                  severity="danger"
+                  size="small"
+                  class="ot-row-action-button ot-row-delete-button ot-action-icon-responsive"
+                  :loading="isDeletingRow(data)"
+                  :disabled="isDeletingRow(data)"
+                  @click="openDeleteDialog(data)"
                 />
               </div>
 
@@ -1545,6 +1681,75 @@ onBeforeUnmount(() => {
           class="ot-dialog-button"
           :loading="cancelTargetIsLoading"
           @click="confirmCancelRequest"
+        />
+      </template>
+    </Dialog>
+
+    <Dialog
+      v-model:visible="deleteConfirmVisible"
+      modal
+      class="ot-cancel-dialog ot-delete-dialog"
+      :header="tr('ot.requests.deleteConfirmTitle', 'Delete OT request')"
+      :style="{ width: 'min(92vw, 460px)' }"
+      @hide="closeDeleteDialog"
+    >
+      <div class="ot-cancel-dialog-body">
+        <div class="ot-cancel-icon ot-delete-icon">
+          <i class="pi pi-trash" />
+        </div>
+
+        <div class="ot-cancel-message">
+          <strong>
+            {{ tr('ot.requests.deleteConfirmHeading', 'Delete this OT request permanently?') }}
+          </strong>
+
+          <span>
+            {{
+              tr(
+                'ot.requests.deleteConfirmHelp',
+                'This will permanently remove the OT request and its related notifications. Use this only for test or agreed cleanup records.',
+              )
+            }}
+          </span>
+        </div>
+
+        <div class="ot-cancel-summary">
+          <div>
+            <span>{{ tr('ot.requests.requestNo', 'Request No') }}</span>
+            <strong>{{ deleteTargetRequestNo || '-' }}</strong>
+          </div>
+
+          <div>
+            <span>{{ tr('ot.requests.approvalStatus', 'Approval Status') }}</span>
+            <strong>{{ deleteTargetStatusLabel }}</strong>
+          </div>
+
+          <div>
+            <span>{{ tr('ot.approval.requestedStaff', 'Staff') }}</span>
+            <strong>{{ deleteTargetEmployeeCount }}</strong>
+          </div>
+        </div>
+      </div>
+
+      <template #footer>
+        <Button
+          :label="tr('common.keep', 'Keep')"
+          severity="secondary"
+          outlined
+          size="small"
+          class="ot-dialog-button"
+          :disabled="deleteTargetIsLoading"
+          @click="closeDeleteDialog"
+        />
+
+        <Button
+          :label="tr('common.delete', 'Delete')"
+          icon="pi pi-trash"
+          severity="danger"
+          size="small"
+          class="ot-dialog-button ot-delete-confirm-button"
+          :loading="deleteTargetIsLoading"
+          @click="confirmDeleteRequest"
         />
       </template>
     </Dialog>

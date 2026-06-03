@@ -27,6 +27,10 @@ export function cancelOTRequest(id) {
   return api.post(`/ot/requests/${id}/cancel`).then(normalize)
 }
 
+export function deleteOTRequest(id) {
+  return api.delete(`/ot/requests/${id}`).then(normalize)
+}
+
 export function exportOTRequestsExcel(params = {}) {
   return api.get('/ot/requests/export', {
     params,

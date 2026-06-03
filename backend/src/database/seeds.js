@@ -191,9 +191,21 @@ const PERMISSIONS = [
   // =========================
   // OT Request Workflow
   // =========================
-  permission('OT_REQUEST_VIEW', 'View OT Requests', 'OT', 'Allow viewing OT requests'),
+  permission('OT_REQUEST_VIEW', 'View OT Requests', 'OT', 'Allow viewing own OT requests'),
+  permission(
+    'OT_REQUEST_VIEW_ALL',
+    'View All OT Requests',
+    'OT',
+    'Allow viewing OT requests from all employees',
+  ),
   permission('OT_REQUEST_CREATE', 'Create OT Requests', 'OT', 'Allow creating OT requests'),
   permission('OT_REQUEST_UPDATE', 'Update OT Requests', 'OT', 'Allow updating OT requests'),
+  permission(
+    'OT_REQUEST_DELETE',
+    'Delete OT Requests',
+    'OT',
+    'Allow permanently deleting OT requests from the system',
+  ),
   permission('OT_REQUEST_APPROVE', 'Approve OT Requests', 'OT', 'Allow approving OT requests'),
   permission(
     'OT_REQUEST_ACKNOWLEDGE',

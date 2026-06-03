@@ -6,6 +6,7 @@ const XLSX = require('xlsx')
 const AppError = require('../../../shared/errors/AppError')
 
 const OTRequest = require('../models/OTRequest')
+const Notification = require('../../notification/models/Notification')
 
 const Employee = require('../../org/models/Employee')
 const Department = require('../../org/models/Department')
@@ -948,6 +949,10 @@ function canCancelOTRequest(doc = {}, authUser = {}) {
   return canModifyOTRequestBeforeApproval(doc, authUser)
 }
 
+function canDeleteOTRequest(doc = {}, authUser = {}) {
+  return authUser?.isRootAdmin === true || hasPermission(authUser, 'OT_REQUEST_DELETE')
+}
+
 function canRequesterConfirm(doc = {}, authUser = {}) {
   const actorEmployeeId = s(authUser.employeeId)
   const ownerEmployeeId = s(doc.requesterEmployeeId)
@@ -980,6 +985,17 @@ function assertCanCancelOTRequest(doc = {}, authUser = {}) {
       code: 'OT_REQUEST_CANCEL_NOT_ALLOWED',
       messageKey: 'ot.request.error.cancelNotAllowed',
       message: 'This OT request cannot be cancelled',
+    })
+  }
+}
+
+function assertCanDeleteOTRequest(doc = {}, authUser = {}) {
+  if (!canDeleteOTRequest(doc, authUser)) {
+    throw appError({
+      statusCode: 403,
+      code: 'OT_REQUEST_DELETE_NOT_ALLOWED',
+      messageKey: 'ot.request.error.deleteNotAllowed',
+      message: 'You do not have permission to delete this OT request',
     })
   }
 }
@@ -1297,6 +1313,7 @@ function mapListItem(doc = {}, authUser = {}) {
     hasApprovedStep: hasApprovedStep(doc),
     canEdit: canEditOTRequest(doc, authUser),
     canCancel: canCancelOTRequest(doc, authUser),
+    canDelete: canDeleteOTRequest(doc, authUser),
     canRequesterConfirm: canRequesterConfirm(doc, authUser),
 
     employees: effectiveEmployees.map(mapEmployeeOutput),
@@ -1442,6 +1459,13 @@ function buildListFilter(query = {}) {
 
 function buildMyRequestListFilter(query = {}, authUser = {}) {
   const filter = buildListFilter(query)
+
+  // Root Admin and users with OT_REQUEST_VIEW_ALL can see/export every employee's OT request.
+  // Normal requesters stay owner-only.
+  if (hasPermission(authUser, 'OT_REQUEST_VIEW_ALL')) {
+    return filter
+  }
+
   const requesterEmployeeId = s(authUser?.employeeId)
 
   filter.$and = filter.$and || []
@@ -1728,6 +1752,148 @@ function applyRequestSheetLayout(worksheet) {
     { wch: 16 },
     { wch: 14 },
   ]
+}
+
+
+function formatOTExportDate(value) {
+  if (!value) return 'No Date'
+
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10)
+  }
+
+  const text = s(value)
+  if (!text) return 'No Date'
+
+  // otDate is normally stored as YYYY-MM-DD. If it ever comes as an ISO
+  // datetime, keep only the date so sheets are grouped correctly.
+  const isoDateMatch = text.match(/^\d{4}-\d{2}-\d{2}/)
+  if (isoDateMatch) return isoDateMatch[0]
+
+  return text
+}
+
+function makeOTDateSheetName(dateValue) {
+  const dateText = formatOTExportDate(dateValue)
+  return dateText === 'No Date' ? 'No Date Request' : `${dateText} Request`
+}
+
+function makeSimpleEmployeeExportRow(doc = {}, item = {}, rowNo = 1) {
+  const paidMinutes = Number(
+    item.totalRequestPaidMinutes ??
+      item.totalMinutes ??
+      doc.totalRequestPaidMinutes ??
+      doc.totalMinutes ??
+      0,
+  )
+
+  const requestedMinutes = Number(
+    item.requestedMinutes ?? doc.requestedMinutes ?? 0,
+  )
+
+  const breakMinutes = Number(item.breakMinutes ?? doc.breakMinutes ?? 0)
+
+  return [
+    rowNo,
+    s(item.employeeId),
+    s(item.employeeCode),
+    s(item.employeeName),
+    s(item.departmentName),
+    s(item.positionName),
+    firstText(item.lineLabel, item.lineName, item.lineCode),
+    s(item.startTime || doc.requestStartTime || doc.startTime),
+    s(item.endTime || doc.requestEndTime || doc.endTime),
+    breakMinutes,
+    requestedMinutes,
+    paidMinutes,
+    Number((paidMinutes / 60).toFixed(2)),
+  ]
+}
+
+function buildCombinedDayEmployeeRows(dayItems = []) {
+  const rows = [
+    ['REQUESTED EMPLOYEES'],
+    [
+      'No',
+      'Employee ID',
+      'Employee Code',
+      'Employee Name',
+      'Department',
+      'Position',
+      'Line',
+      'Start Time',
+      'End Time',
+      'Break Minutes',
+      'Requested Minutes',
+      'Paid Minutes',
+      'Paid Hours',
+    ],
+  ]
+
+  let rowNo = 1
+
+  for (const doc of Array.isArray(dayItems) ? dayItems : []) {
+    const requestedEmployees = Array.isArray(doc?.requestedEmployees)
+      ? doc.requestedEmployees
+      : []
+
+    for (const item of requestedEmployees) {
+      rows.push(makeSimpleEmployeeExportRow(doc, item, rowNo))
+      rowNo += 1
+    }
+  }
+
+  if (rowNo === 1) {
+    rows.push(['No employees found'])
+  }
+
+  return rows
+}
+
+function groupRequestsByOTDate(items = []) {
+  const grouped = new Map()
+
+  for (const doc of Array.isArray(items) ? items : []) {
+    const key = formatOTExportDate(doc?.otDate)
+
+    if (!grouped.has(key)) grouped.set(key, [])
+    grouped.get(key).push(doc)
+  }
+
+  return grouped
+}
+
+function buildRequestsByDateWorkbook(items = [], query = {}, emptySheetName = 'OT Requests') {
+  const workbook = XLSX.utils.book_new()
+  const usedSheetNames = new Set()
+
+  if (!items.length) {
+    const emptySheet = XLSX.utils.aoa_to_sheet([['No data found']])
+    XLSX.utils.book_append_sheet(workbook, emptySheet, emptySheetName)
+    return workbook
+  }
+
+  const grouped = groupRequestsByOTDate(items)
+  const dateKeys = [...grouped.keys()]
+  const dateDirection = query.sortOrder === 'asc' ? 1 : -1
+
+  dateKeys.sort((left, right) => {
+    if (left === 'No Date' && right !== 'No Date') return 1
+    if (right === 'No Date' && left !== 'No Date') return -1
+    return left.localeCompare(right) * dateDirection
+  })
+
+  for (const dateKey of dateKeys) {
+    const dayItems = grouped.get(dateKey) || []
+    const rows = buildCombinedDayEmployeeRows(dayItems)
+    const worksheet = XLSX.utils.aoa_to_sheet(rows)
+    applyRequestSheetLayout(worksheet)
+
+    const sheetName = makeSafeSheetName(makeOTDateSheetName(dateKey), usedSheetNames)
+    XLSX.utils.book_append_sheet(workbook, worksheet, sheetName)
+  }
+
+  return workbook
 }
 
 async function create(payload, authUser) {
@@ -2052,6 +2218,42 @@ async function cancel(requestId, authUser) {
   return getById(doc._id, authUser)
 }
 
+async function deleteRequest(requestId, authUser) {
+  if (!isObjectId(requestId)) {
+    throw appError({
+      statusCode: 400,
+      code: 'INVALID_OT_REQUEST_ID',
+      messageKey: 'common.error.invalidId',
+      message: 'Invalid OT request id',
+      field: 'id',
+    })
+  }
+
+  const doc = await OTRequest.findById(requestId)
+
+  if (!doc) {
+    throw appError({
+      statusCode: 404,
+      code: 'OT_REQUEST_NOT_FOUND',
+      messageKey: 'ot.request.error.notFound',
+      message: 'OT request not found',
+    })
+  }
+
+  assertCanDeleteOTRequest(doc, authUser)
+
+  const itemBeforeDelete = mapDetail(doc, authUser)
+
+  await OTRequest.deleteOne({ _id: doc._id })
+
+  await Notification.deleteMany({
+    entityType: 'OT_REQUEST',
+    entityId: doc._id,
+  })
+
+  return itemBeforeDelete
+}
+
 async function list(query = {}, authUser = {}) {
   const page = Number(query.page || 1)
   const limit = Number(query.limit || 10)
@@ -2141,29 +2343,10 @@ async function exportRequestsExcel(query = {}, authUser = {}) {
   const sort = buildSort(query)
 
   const items = await OTRequest.find(filter).sort(sort).lean()
-
-  const workbook = XLSX.utils.book_new()
-  const usedSheetNames = new Set()
-
-  if (!items.length) {
-    const emptySheet = XLSX.utils.aoa_to_sheet([['No data found']])
-    XLSX.utils.book_append_sheet(workbook, emptySheet, 'OT Requests')
-  } else {
-    for (const doc of items) {
-      const rows = buildRequestSheetRows(doc)
-      const worksheet = XLSX.utils.aoa_to_sheet(rows)
-
-      applyRequestSheetLayout(worksheet)
-
-      const baseSheetName = s(doc.requestNo) || `Request-${String(doc._id).slice(-6)}`
-      const sheetName = makeSafeSheetName(baseSheetName, usedSheetNames)
-
-      XLSX.utils.book_append_sheet(workbook, worksheet, sheetName)
-    }
-  }
+  const workbook = buildRequestsByDateWorkbook(items, query, 'OT Requests')
 
   return {
-    filename: `ot-requests-${new Date().toISOString().slice(0, 10)}.xlsx`,
+    filename: `ot-requests-by-date-${new Date().toISOString().slice(0, 10)}.xlsx`,
     buffer: XLSX.write(workbook, {
       type: 'buffer',
       bookType: 'xlsx',
@@ -2176,29 +2359,10 @@ async function exportApprovalInboxExcel(query = {}, authUser = {}) {
   const sort = buildSort(query)
 
   const items = await OTRequest.find(filter).sort(sort).lean()
-
-  const workbook = XLSX.utils.book_new()
-  const usedSheetNames = new Set()
-
-  if (!items.length) {
-    const emptySheet = XLSX.utils.aoa_to_sheet([['No data found']])
-    XLSX.utils.book_append_sheet(workbook, emptySheet, 'Approval Inbox')
-  } else {
-    for (const doc of items) {
-      const rows = buildRequestSheetRows(doc)
-      const worksheet = XLSX.utils.aoa_to_sheet(rows)
-
-      applyRequestSheetLayout(worksheet)
-
-      const baseSheetName = s(doc.requestNo) || `Request-${String(doc._id).slice(-6)}`
-      const sheetName = makeSafeSheetName(baseSheetName, usedSheetNames)
-
-      XLSX.utils.book_append_sheet(workbook, worksheet, sheetName)
-    }
-  }
+  const workbook = buildRequestsByDateWorkbook(items, query, 'Approval Inbox')
 
   return {
-    filename: `ot-approval-inbox-${new Date().toISOString().slice(0, 10)}.xlsx`,
+    filename: `ot-approval-inbox-by-date-${new Date().toISOString().slice(0, 10)}.xlsx`,
     buffer: XLSX.write(workbook, {
       type: 'buffer',
       bookType: 'xlsx',
@@ -2505,6 +2669,7 @@ module.exports = {
   create,
   update,
   cancel,
+  deleteRequest,
   list,
   listApprovalInbox,
   exportRequestsExcel,

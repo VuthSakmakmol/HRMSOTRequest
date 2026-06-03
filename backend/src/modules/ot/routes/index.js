@@ -61,6 +61,12 @@ router.patch(
   otController.updateOTRequest,
 )
 
+router.delete(
+  '/requests/:id',
+  requirePermission('OT_REQUEST_DELETE'),
+  otController.deleteOTRequest,
+)
+
 router.post(
   '/requests/:id/cancel',
   requirePermission('OT_REQUEST_UPDATE'),
