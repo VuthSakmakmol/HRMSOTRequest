@@ -2,7 +2,7 @@
 <script setup>
 // frontend/src/modules/ot/views/OTApprovalInboxView.vue
 
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
 
@@ -48,6 +48,8 @@ const toast = useToast()
 
 const PAGE_SIZE = 10
 const SEARCH_DEBOUNCE_MS = 250
+const SCROLL_LOAD_DISTANCE = 180
+const AUTO_LOAD_GUARD_LIMIT = 6
 const FILTER_STACK_WIDTH = 1380
 
 const rows = ref([])
@@ -64,6 +66,8 @@ const exporting = ref(false)
 const filtersPanelOpen = ref(false)
 
 const filterBarRef = ref(null)
+const approvalDataTableRef = ref(null)
+const tableScrollShell = ref(null)
 const filterActionsStacked = ref(false)
 
 const filters = reactive({
@@ -93,6 +97,8 @@ const bulkDialog = reactive({
 let searchTimer = null
 let queryVersion = 0
 let filterResizeObserver = null
+let tableScrollListenerElement = null
+let tableAutoLoadRunning = false
 
 function tr(key, fallback, params) {
   const value = t(key, params || {})
@@ -539,26 +545,132 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
     silent: true,
     version: queryVersion,
   })
+
+  await nextTick()
+  bindTableScrollListener()
+
+  if (tableScrollShell.value && !keepVisible) {
+    tableScrollShell.value.scrollTop = 0
+    tableScrollShell.value.scrollLeft = 0
+  }
+
+  await ensureTableScrollCanContinue()
 }
 
-async function loadNextPage() {
-  if (loadingMore.value) return
-  if (backgroundLoading.value) return
-  if (!hasMorePages.value) return
-
+function getNextPageToLoad() {
   const loaded = [...loadedPages.value]
-  const nextPage = loaded.length ? Math.max(...loaded) + 1 : 1
+
+  return loaded.length ? Math.max(...loaded) + 1 : 1
+}
+
+async function loadNextPage({ auto = false } = {}) {
+  if (loadingMore.value) return false
+  if (backgroundLoading.value) return false
+  if (!hasMorePages.value) return false
 
   loadingMore.value = true
 
   try {
-    await fetchPage(nextPage, {
+    await fetchPage(getNextPageToLoad(), {
       replace: false,
-      silent: false,
+      silent: auto,
       version: queryVersion,
     })
+
+    return true
   } finally {
     loadingMore.value = false
+  }
+}
+
+function resolveTableScrollElement() {
+  const root = approvalDataTableRef.value?.$el || approvalDataTableRef.value
+
+  return (
+    root?.querySelector?.('.p-datatable-table-container') ||
+    root?.querySelector?.('.p-datatable-wrapper') ||
+    null
+  )
+}
+
+function bindTableScrollListener() {
+  const element = resolveTableScrollElement()
+
+  if (!element || tableScrollListenerElement === element) {
+    if (element) tableScrollShell.value = element
+    return
+  }
+
+  unbindTableScrollListener()
+
+  tableScrollListenerElement = element
+  tableScrollShell.value = element
+  element.addEventListener('scroll', onTableScroll, { passive: true })
+}
+
+function unbindTableScrollListener() {
+  if (tableScrollListenerElement) {
+    tableScrollListenerElement.removeEventListener('scroll', onTableScroll)
+  }
+
+  tableScrollListenerElement = null
+}
+
+function shouldLoadMoreFromScrollElement(element) {
+  if (!element || !hasMorePages.value) return false
+
+  const scrollHeight = Number(element.scrollHeight || 0)
+  const scrollTop = Number(element.scrollTop || 0)
+  const clientHeight = Number(element.clientHeight || 0)
+
+  if (!clientHeight) return false
+
+  const hasVerticalScrollbar = scrollHeight > clientHeight + 8
+
+  if (!hasVerticalScrollbar) return true
+
+  return scrollHeight - scrollTop - clientHeight <= SCROLL_LOAD_DISTANCE
+}
+
+async function ensureTableScrollCanContinue() {
+  if (tableAutoLoadRunning) return
+
+  tableAutoLoadRunning = true
+
+  try {
+    await nextTick()
+    bindTableScrollListener()
+
+    const element = tableScrollShell.value || resolveTableScrollElement()
+    if (!element) return
+
+    let guard = 0
+
+    while (
+      guard < AUTO_LOAD_GUARD_LIMIT &&
+      !loadingMore.value &&
+      !backgroundLoading.value &&
+      shouldLoadMoreFromScrollElement(element)
+    ) {
+      guard += 1
+
+      const loaded = await loadNextPage({ auto: true })
+      if (!loaded) break
+
+      await nextTick()
+    }
+  } finally {
+    tableAutoLoadRunning = false
+  }
+}
+
+function onTableScroll(event) {
+  const element = event?.target
+  if (!element) return
+  if (loadingMore.value || backgroundLoading.value) return
+
+  if (shouldLoadMoreFromScrollElement(element)) {
+    ensureTableScrollCanContinue()
   }
 }
 
@@ -930,6 +1042,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.clearTimeout(searchTimer)
+  unbindTableScrollListener()
   cleanupFilterObserver()
 })
 </script>
@@ -1113,6 +1226,7 @@ onBeforeUnmount(() => {
         class="ot-approval-table-shell"
       >
         <DataTable
+          ref="approvalDataTableRef"
           v-model:expandedRows="expandedRows"
           :value="rows"
           data-key="id"

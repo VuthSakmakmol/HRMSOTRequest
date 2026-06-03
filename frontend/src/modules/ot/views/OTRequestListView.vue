@@ -48,6 +48,7 @@ const { t, te } = useI18n()
 const PAGE_SIZE = 10
 const SEARCH_DEBOUNCE_MS = 250
 const SCROLL_LOAD_DISTANCE = 180
+const AUTO_LOAD_GUARD_LIMIT = 6
 const FILTER_STACK_WIDTH = 1460
 
 const rows = ref([])
@@ -87,6 +88,7 @@ let searchTimer = null
 let queryVersion = 0
 let filterResizeObserver = null
 let tableScrollListenerElement = null
+let tableAutoLoadRunning = false
 
 const canCreate = computed(() => auth.hasPermission('OT_REQUEST_CREATE'))
 const canExport = computed(() => auth.hasPermission('OT_REQUEST_VIEW'))
@@ -475,24 +477,31 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
     tableScrollShell.value.scrollTop = 0
     tableScrollShell.value.scrollLeft = 0
   }
+
+  await ensureTableScrollCanContinue()
 }
 
-async function loadNextPage() {
-  if (loadingMore.value) return
-  if (backgroundLoading.value) return
-  if (!hasMorePages.value) return
-
+function getNextPageToLoad() {
   const loaded = [...loadedPages.value]
-  const nextPage = loaded.length ? Math.max(...loaded) + 1 : 1
+
+  return loaded.length ? Math.max(...loaded) + 1 : 1
+}
+
+async function loadNextPage({ auto = false } = {}) {
+  if (loadingMore.value) return false
+  if (backgroundLoading.value) return false
+  if (!hasMorePages.value) return false
 
   loadingMore.value = true
 
   try {
-    await fetchPage(nextPage, {
+    await fetchPage(getNextPageToLoad(), {
       replace: false,
-      silent: false,
+      silent: auto,
       version: queryVersion,
     })
+
+    return true
   } finally {
     loadingMore.value = false
   }
@@ -531,17 +540,61 @@ function unbindTableScrollListener() {
   tableScrollListenerElement = null
 }
 
+function shouldLoadMoreFromScrollElement(element) {
+  if (!element || !hasMorePages.value) return false
+
+  const scrollHeight = Number(element.scrollHeight || 0)
+  const scrollTop = Number(element.scrollTop || 0)
+  const clientHeight = Number(element.clientHeight || 0)
+
+  if (!clientHeight) return false
+
+  const hasVerticalScrollbar = scrollHeight > clientHeight + 8
+
+  if (!hasVerticalScrollbar) return true
+
+  return scrollHeight - scrollTop - clientHeight <= SCROLL_LOAD_DISTANCE
+}
+
+async function ensureTableScrollCanContinue() {
+  if (tableAutoLoadRunning) return
+
+  tableAutoLoadRunning = true
+
+  try {
+    await nextTick()
+    bindTableScrollListener()
+
+    const element = tableScrollShell.value || resolveTableScrollElement()
+    if (!element) return
+
+    let guard = 0
+
+    while (
+      guard < AUTO_LOAD_GUARD_LIMIT &&
+      !loadingMore.value &&
+      !backgroundLoading.value &&
+      shouldLoadMoreFromScrollElement(element)
+    ) {
+      guard += 1
+
+      const loaded = await loadNextPage({ auto: true })
+      if (!loaded) break
+
+      await nextTick()
+    }
+  } finally {
+    tableAutoLoadRunning = false
+  }
+}
+
 function onTableScroll(event) {
   const element = event?.target
   if (!element) return
-  if (!hasMorePages.value) return
   if (loadingMore.value || backgroundLoading.value) return
 
-  const distanceToBottom =
-    element.scrollHeight - element.scrollTop - element.clientHeight
-
-  if (distanceToBottom <= SCROLL_LOAD_DISTANCE) {
-    loadNextPage()
+  if (shouldLoadMoreFromScrollElement(element)) {
+    ensureTableScrollCanContinue()
   }
 }
 

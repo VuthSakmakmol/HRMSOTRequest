@@ -2,7 +2,7 @@
 <script setup>
 // frontend/src/modules/ot/views/OTAcknowledgeInboxView.vue
 
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
 
@@ -39,6 +39,8 @@ const toast = useToast()
 
 const PAGE_SIZE = 10
 const SEARCH_DEBOUNCE_MS = 250
+const SCROLL_LOAD_DISTANCE = 180
+const AUTO_LOAD_GUARD_LIMIT = 6
 const FILTER_STACK_WIDTH = 1280
 
 const rows = ref([])
@@ -49,9 +51,12 @@ const expandedRows = ref({})
 
 const bootstrapped = ref(false)
 const backgroundLoading = ref(false)
+const loadingMore = ref(false)
 const filtersPanelOpen = ref(false)
 
 const filterBarRef = ref(null)
+const ackDataTableRef = ref(null)
+const tableScrollShell = ref(null)
 const filterActionsStacked = ref(false)
 
 const filters = reactive({
@@ -66,6 +71,8 @@ const filters = reactive({
 let searchTimer = null
 let queryVersion = 0
 let filterResizeObserver = null
+let tableScrollListenerElement = null
+let tableAutoLoadRunning = false
 
 function tr(key, fallback, params) {
   if (typeof te === 'function' && !te(key)) return fallback
@@ -99,6 +106,7 @@ const statusOptions = computed(() => [
 const totalRequests = computed(() => Number(totalRecords.value || 0))
 const loadedCount = computed(() => rows.value.length)
 const hasAnyData = computed(() => rows.value.length > 0)
+const hasMorePages = computed(() => loadedCount.value < totalRequests.value)
 const summaryText = computed(() =>
   tr('common.loaded', 'Loaded {loaded} of {total}', {
     loaded: loadedCount.value,
@@ -441,6 +449,132 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
     version: queryVersion,
   })
 
+  await nextTick()
+  bindTableScrollListener()
+
+  if (tableScrollShell.value && !keepVisible) {
+    tableScrollShell.value.scrollTop = 0
+    tableScrollShell.value.scrollLeft = 0
+  }
+
+  await ensureTableScrollCanContinue()
+}
+
+function getNextPageToLoad() {
+  const loaded = [...loadedPages.value]
+
+  return loaded.length ? Math.max(...loaded) + 1 : 1
+}
+
+async function loadNextPage({ auto = false } = {}) {
+  if (loadingMore.value) return false
+  if (backgroundLoading.value) return false
+  if (!hasMorePages.value) return false
+
+  loadingMore.value = true
+
+  try {
+    await fetchPage(getNextPageToLoad(), {
+      replace: false,
+      silent: auto,
+      version: queryVersion,
+    })
+
+    return true
+  } finally {
+    loadingMore.value = false
+  }
+}
+
+function resolveTableScrollElement() {
+  const root = ackDataTableRef.value?.$el || ackDataTableRef.value
+
+  return (
+    root?.querySelector?.('.p-datatable-table-container') ||
+    root?.querySelector?.('.p-datatable-wrapper') ||
+    null
+  )
+}
+
+function bindTableScrollListener() {
+  const element = resolveTableScrollElement()
+
+  if (!element || tableScrollListenerElement === element) {
+    if (element) tableScrollShell.value = element
+    return
+  }
+
+  unbindTableScrollListener()
+
+  tableScrollListenerElement = element
+  tableScrollShell.value = element
+  element.addEventListener('scroll', onTableScroll, { passive: true })
+}
+
+function unbindTableScrollListener() {
+  if (tableScrollListenerElement) {
+    tableScrollListenerElement.removeEventListener('scroll', onTableScroll)
+  }
+
+  tableScrollListenerElement = null
+}
+
+function shouldLoadMoreFromScrollElement(element) {
+  if (!element || !hasMorePages.value) return false
+
+  const scrollHeight = Number(element.scrollHeight || 0)
+  const scrollTop = Number(element.scrollTop || 0)
+  const clientHeight = Number(element.clientHeight || 0)
+
+  if (!clientHeight) return false
+
+  const hasVerticalScrollbar = scrollHeight > clientHeight + 8
+
+  if (!hasVerticalScrollbar) return true
+
+  return scrollHeight - scrollTop - clientHeight <= SCROLL_LOAD_DISTANCE
+}
+
+async function ensureTableScrollCanContinue() {
+  if (tableAutoLoadRunning) return
+
+  tableAutoLoadRunning = true
+
+  try {
+    await nextTick()
+    bindTableScrollListener()
+
+    const element = tableScrollShell.value || resolveTableScrollElement()
+    if (!element) return
+
+    let guard = 0
+
+    while (
+      guard < AUTO_LOAD_GUARD_LIMIT &&
+      !loadingMore.value &&
+      !backgroundLoading.value &&
+      shouldLoadMoreFromScrollElement(element)
+    ) {
+      guard += 1
+
+      const loaded = await loadNextPage({ auto: true })
+      if (!loaded) break
+
+      await nextTick()
+    }
+  } finally {
+    tableAutoLoadRunning = false
+  }
+}
+
+function onTableScroll(event) {
+  const element = event?.target
+  if (!element) return
+  if (loadingMore.value || backgroundLoading.value) return
+
+  if (shouldLoadMoreFromScrollElement(element)) {
+    ensureTableScrollCanContinue()
+  }
 }
 
 function updateFilterLayout() {
@@ -528,6 +662,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.clearTimeout(searchTimer)
+  unbindTableScrollListener()
   cleanupFilterObserver()
 })
 </script>
@@ -672,6 +807,7 @@ onBeforeUnmount(() => {
         class="ot-ack-table-shell"
       >
         <DataTable
+          ref="ackDataTableRef"
           v-model:expandedRows="expandedRows"
           :value="rows"
           data-key="id"
