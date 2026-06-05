@@ -439,12 +439,101 @@ async function resolveCurrentPolicyAndShiftOption(otRequest = {}) {
   }
 }
 
+function employeeRequestMergeKey(item = {}) {
+  const employeeId = s(item.employeeId)
+  if (employeeId) return `ID:${employeeId}`
+
+  const employeeCode = upper(item.employeeCode || item.employeeNo)
+  if (employeeCode) return `CODE:${employeeCode}`
+
+  return ''
+}
+
+function mergeApprovedEmployeeWithRequestedTiming(approved = {}, requested = {}) {
+  return {
+    ...requested,
+    ...approved,
+
+    // Keep approved employee identity/details, but preserve the employee-level
+    // OT time from requestedEmployees when approvedEmployees was saved by older
+    // code without custom time fields. Payment must use the approved row time
+    // such as 7h, not the original request-level OT option such as 2h.
+    otTimeMode: s(approved.otTimeMode) || s(requested.otTimeMode),
+    startTime: s(approved.startTime) || s(requested.startTime),
+    endTime: s(approved.endTime) || s(requested.endTime),
+    requestStartTime:
+      s(approved.requestStartTime) ||
+      s(approved.startTime) ||
+      s(requested.requestStartTime) ||
+      s(requested.startTime),
+    requestEndTime:
+      s(approved.requestEndTime) ||
+      s(approved.endTime) ||
+      s(requested.requestEndTime) ||
+      s(requested.endTime),
+    expectedOtStartTime:
+      s(approved.expectedOtStartTime) ||
+      s(approved.startTime) ||
+      s(requested.expectedOtStartTime) ||
+      s(requested.startTime),
+    expectedOtEndTime:
+      s(approved.expectedOtEndTime) ||
+      s(approved.endTime) ||
+      s(requested.expectedOtEndTime) ||
+      s(requested.endTime),
+
+    breakMinutes: firstNonNegativeNumber(approved.breakMinutes, requested.breakMinutes),
+    requestedMinutes: firstPositiveNumber(
+      approved.requestedMinutes,
+      approved.requestedOtMinutes,
+      requested.requestedMinutes,
+      requested.requestedOtMinutes,
+    ),
+    totalRequestPaidMinutes: firstPositiveNumber(
+      approved.totalRequestPaidMinutes,
+      approved.approvedPaidMinutes,
+      approved.requestPaidMinutes,
+      approved.totalMinutes,
+      requested.totalRequestPaidMinutes,
+      requested.approvedPaidMinutes,
+      requested.requestPaidMinutes,
+      requested.totalMinutes,
+    ),
+    totalMinutes: firstPositiveNumber(
+      approved.totalMinutes,
+      approved.totalRequestPaidMinutes,
+      requested.totalMinutes,
+      requested.totalRequestPaidMinutes,
+    ),
+    totalHours: firstPositiveNumber(approved.totalHours, requested.totalHours),
+  }
+}
+
 function getEffectiveApprovedEmployeesForVerification(otRequest = {}) {
-  if (Array.isArray(otRequest.approvedEmployees) && otRequest.approvedEmployees.length) {
-    return otRequest.approvedEmployees
+  const requestedEmployees = Array.isArray(otRequest.requestedEmployees)
+    ? otRequest.requestedEmployees
+    : []
+
+  const approvedEmployees = Array.isArray(otRequest.approvedEmployees)
+    ? otRequest.approvedEmployees
+    : []
+
+  if (!approvedEmployees.length) return requestedEmployees
+
+  const requestedMap = new Map()
+  for (const requested of requestedEmployees) {
+    const key = employeeRequestMergeKey(requested)
+    if (key && !requestedMap.has(key)) requestedMap.set(key, requested)
   }
 
-  return Array.isArray(otRequest.requestedEmployees) ? otRequest.requestedEmployees : []
+  return approvedEmployees.map((approved) => {
+    const key = employeeRequestMergeKey(approved)
+    const requested = key ? requestedMap.get(key) : null
+
+    return requested
+      ? mergeApprovedEmployeeWithRequestedTiming(approved, requested)
+      : approved
+  })
 }
 
 function buildVerificationOTRequestPayload(otRequest, approvedEmployees = [], options = {}) {
@@ -589,17 +678,46 @@ function buildVerificationOTRequestPayload(otRequest, approvedEmployees = [], op
   }
 }
 
+function buildUniqueEmployeeLookupList(...employeeGroups) {
+  const result = []
+  const seen = new Set()
+
+  for (const group of employeeGroups) {
+    for (const item of Array.isArray(group) ? group : []) {
+      const employeeId = s(item?.employeeId)
+      const employeeCode = upper(item?.employeeCode || item?.employeeNo)
+      const key = employeeId ? `ID:${employeeId}` : employeeCode ? `CODE:${employeeCode}` : ''
+
+      if (!key || seen.has(key)) continue
+
+      seen.add(key)
+      result.push(item)
+    }
+  }
+
+  return result
+}
+
 function buildAttendanceRecordFilterForOT(otRequest = {}) {
   const requestedEmployees = Array.isArray(otRequest.requestedEmployees)
     ? otRequest.requestedEmployees
     : []
 
+  const approvedEmployees = Array.isArray(otRequest.approvedEmployees)
+    ? otRequest.approvedEmployees
+    : []
+
+  // Payment must check attendance for the employees that are actually approved
+  // for payment. Some rows can be changed/increased during approval, and the
+  // approved employee list can differ from the original request list.
+  const lookupEmployees = buildUniqueEmployeeLookupList(approvedEmployees, requestedEmployees)
+
   const requestedEmployeeIds = normalizeObjectIdArray(
-    requestedEmployees.map((item) => item?.employeeId),
+    lookupEmployees.map((item) => item?.employeeId),
   )
 
   const requestedEmployeeCodes = normalizeCodeArray(
-    requestedEmployees.map((item) => item?.employeeCode || item?.employeeNo),
+    lookupEmployees.map((item) => item?.employeeCode || item?.employeeNo),
   )
 
   const orConditions = []
@@ -782,7 +900,11 @@ async function buildLivePaymentVerification(otRequest = {}) {
     ? effectiveApprovedEmployees
     : requestedEmployees
 
-  const attendanceRecords = await findAttendanceRecordsForOTRequest(otRequest)
+  const attendanceRecords = await findAttendanceRecordsForOTRequest({
+    ...otRequest,
+    requestedEmployees: sourceEmployees,
+    approvedEmployees: sourceEmployees,
+  })
 
   const internalDayInfo = await classifyDayType(s(otRequest.otDate))
   const internalCalendarDayType = upper(internalDayInfo?.dayType || 'WORKING_DAY')
@@ -799,7 +921,7 @@ async function buildLivePaymentVerification(otRequest = {}) {
 
   const verification = verifyAttendanceAgainstOT({
     otRequest: verificationOtRequest,
-    requestedEmployees,
+    requestedEmployees: sourceEmployees,
     approvedEmployees: sourceEmployees,
     attendanceRecords,
   })

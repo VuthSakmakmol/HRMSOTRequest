@@ -429,6 +429,51 @@ function mapEmployeeSnapshot(item) {
     positionId: item?.positionId ? String(item.positionId) : null,
     positionCode: upper(item?.positionCode),
     positionName: s(item?.positionName),
+
+    lineId: item?.lineId ? String(item.lineId) : null,
+    lineCode: upper(item?.lineCode),
+    lineName: s(item?.lineName),
+    lineLabel: s(item?.lineLabel),
+
+    // Keep employee-level OT time as source of truth.
+    // Payment must calculate from the approved employee row, not only the
+    // request-level OT option that was selected at the beginning.
+    otTimeMode: upper(item?.otTimeMode || 'DEFAULT'),
+    startTime: s(item?.startTime || item?.requestStartTime),
+    endTime: s(item?.endTime || item?.requestEndTime),
+    requestStartTime: s(item?.requestStartTime || item?.startTime),
+    requestEndTime: s(item?.requestEndTime || item?.endTime),
+    expectedOtStartTime: s(item?.expectedOtStartTime || item?.startTime),
+    expectedOtEndTime: s(item?.expectedOtEndTime || item?.endTime),
+
+    requestedMinutes: safeNonNegativeInt(item?.requestedMinutes, 0),
+    requestedOtMinutes: safeNonNegativeInt(
+      item?.requestedOtMinutes ?? item?.requestedMinutes,
+      0,
+    ),
+    breakMinutes: safeNonNegativeInt(item?.breakMinutes, 0),
+    totalRequestPaidMinutes: safeNonNegativeInt(
+      item?.totalRequestPaidMinutes ?? item?.totalMinutes ?? item?.paidMinutes,
+      0,
+    ),
+    requestPaidMinutes: safeNonNegativeInt(
+      item?.requestPaidMinutes ?? item?.totalRequestPaidMinutes ?? item?.totalMinutes,
+      0,
+    ),
+    approvedMinutes: safeNonNegativeInt(
+      item?.approvedMinutes ?? item?.totalRequestPaidMinutes ?? item?.totalMinutes,
+      0,
+    ),
+    approvedPaidMinutes: safeNonNegativeInt(
+      item?.approvedPaidMinutes ?? item?.totalRequestPaidMinutes ?? item?.totalMinutes,
+      0,
+    ),
+    payableCapMinutes: safeNonNegativeInt(
+      item?.payableCapMinutes ?? item?.totalRequestPaidMinutes ?? item?.totalMinutes,
+      0,
+    ),
+    totalMinutes: safeNonNegativeInt(item?.totalMinutes ?? item?.totalRequestPaidMinutes, 0),
+    totalHours: safeNumber(item?.totalHours, 0),
   }
 }
 
@@ -534,7 +579,41 @@ function isNormalAttendancePresentForApprovedOt(status) {
   return ['PRESENT', 'LATE'].includes(upper(status))
 }
 
-function isAttendanceBlockedForApprovedOt(status) {
+function isOnePunchAttendanceForApprovedOt(status) {
+  return ['FORGET_SCAN_IN', 'FORGET_SCAN_OUT'].includes(upper(status))
+}
+
+function hasAnyAttendancePunch(attendanceRecord = {}) {
+  return (
+    attendanceRecord?.hasClockIn === true ||
+    attendanceRecord?.hasClockOut === true ||
+    Boolean(s(attendanceRecord?.clockIn)) ||
+    Boolean(s(attendanceRecord?.clockOut))
+  )
+}
+
+function isAttendanceCreditableForApprovedOt(status, attendanceRecord = {}) {
+  const normalizedStatus = upper(status)
+
+  if (
+    isNormalAttendancePresentForApprovedOt(normalizedStatus) ||
+    isOnePunchAttendanceForApprovedOt(normalizedStatus)
+  ) {
+    return true
+  }
+
+  // Payment policy can allow approved OT without exact OT clock-out. In that
+  // case, shift mismatch from attendance import must not block payment when
+  // the employee still has at least one valid punch. The approved employee OT
+  // time remains the source of truth for payable minutes.
+  return hasAnyAttendancePunch(attendanceRecord)
+}
+
+function isAttendanceBlockedForApprovedOt(status, attendanceRecord = {}) {
+  if (hasAnyAttendancePunch(attendanceRecord)) {
+    return false
+  }
+
   return ['ABSENT', 'LEAVE', 'OFF', 'SHIFT_MISMATCH', 'UNKNOWN'].includes(upper(status))
 }
 
@@ -835,12 +914,18 @@ function buildApprovedOtWithoutExactOutResponse(base, normalizedOtRequest, atten
 
   const timingMode = upper(normalizedOtRequest.shiftOtOptionTimingMode)
   const isFixedTime = timingMode === 'FIXED_TIME'
-  const isLate = upper(attendanceStatus) === 'LATE'
+  const normalizedAttendanceStatus = upper(attendanceStatus)
+  const isLate = normalizedAttendanceStatus === 'LATE'
+  const isOnePunch = isOnePunchAttendanceForApprovedOt(normalizedAttendanceStatus)
 
   let reason = ''
   let reasonKey = ''
 
-  if (isFixedTime && isLate) {
+  if (isFixedTime && isOnePunch) {
+    reason =
+      'Fixed OT credited by policy. Employee has one attendance punch, and exact OT scan is not required.'
+    reasonKey = MESSAGE_KEYS.VERIFICATION.FIXED_OT_APPROVED_WITHOUT_EXACT_CLOCK_OUT
+  } else if (isFixedTime && isLate) {
     reason =
       'Fixed OT credited by policy. Employee was late but attended normal shift. Exact OT end scan is not required.'
     reasonKey = MESSAGE_KEYS.VERIFICATION.FIXED_OT_APPROVED_WITHOUT_EXACT_CLOCK_OUT_LATE
@@ -848,6 +933,10 @@ function buildApprovedOtWithoutExactOutResponse(base, normalizedOtRequest, atten
     reason =
       'Fixed OT credited by policy. Employee attended normal shift. Exact OT end scan is not required.'
     reasonKey = MESSAGE_KEYS.VERIFICATION.FIXED_OT_APPROVED_WITHOUT_EXACT_CLOCK_OUT
+  } else if (isOnePunch) {
+    reason =
+      'Approved OT credited by policy. Employee has one attendance punch, and exact OT scan is not required.'
+    reasonKey = MESSAGE_KEYS.VERIFICATION.APPROVED_WITHOUT_EXACT_CLOCK_OUT
   } else if (isLate) {
     reason =
       'Approved OT credited by policy. Employee was late but attended normal shift. Exact OT end scan is not required.'
@@ -941,27 +1030,15 @@ function calculatePolicyDrivenOtMetrics({ otRequest, attendanceRecord }) {
     upper(normalizedOtRequest.dayType) === 'WORKING_DAY' &&
     policy.allowApprovedOtWithoutExactClockOut === true
   ) {
-    if (attendanceStatus === 'FORGET_SCAN_IN' && policy.treatForgetScanInAsPending) {
-      return buildMismatchResponse(base, 'Forget scan in is pending review by OT policy', {
-        rawOtDecision: 'PENDING_REVIEW',
-        otResult: 'PENDING_REVIEW',
-        otResultReasonKey: MESSAGE_KEYS.VERIFICATION.FORGET_SCAN_IN_PENDING,
-      })
-    }
-
-    if (attendanceStatus === 'FORGET_SCAN_OUT' && policy.treatForgetScanOutAsPending) {
-      return buildMismatchResponse(base, 'Forget scan out is pending review by OT policy', {
-        rawOtDecision: 'PENDING_REVIEW',
-        otResult: 'PENDING_REVIEW',
-        otResultReasonKey: MESSAGE_KEYS.VERIFICATION.FORGET_SCAN_OUT_PENDING,
-      })
-    }
-
-    if (isNormalAttendancePresentForApprovedOt(attendanceStatus)) {
+    // For approved OT options that explicitly allow payment without an exact
+    // OT clock-out, one valid punch is enough to pay the approved employee OT
+    // time. This prevents payment from falling back to warning just because the
+    // employee forgot scan-in/out.
+    if (isAttendanceCreditableForApprovedOt(attendanceStatus, attendanceRecord)) {
       return buildApprovedOtWithoutExactOutResponse(base, normalizedOtRequest, attendanceStatus)
     }
 
-    if (isAttendanceBlockedForApprovedOt(attendanceStatus)) {
+    if (isAttendanceBlockedForApprovedOt(attendanceStatus, attendanceRecord)) {
       return buildMismatchResponse(
         base,
         `Approved OT not credited because attendance status is ${attendanceStatus || 'UNKNOWN'}`,
@@ -1259,8 +1336,76 @@ function calculateWorkingDayOt({
   })
 }
 
+function buildEmployeeSpecificOtRequest(otRequest = {}, requested = {}) {
+  const requestedStartTime = s(
+    requested.requestStartTime ||
+      requested.startTime ||
+      requested.expectedOtStartTime ||
+      otRequest.requestStartTime ||
+      otRequest.startTime ||
+      otRequest.expectedOtStartTime,
+  )
+
+  const requestedEndTime = s(
+    requested.requestEndTime ||
+      requested.endTime ||
+      requested.expectedOtEndTime ||
+      otRequest.requestEndTime ||
+      otRequest.endTime ||
+      otRequest.expectedOtEndTime,
+  )
+
+  const requestedMinutes = safeNonNegativeInt(
+    requested.requestedMinutes ||
+      requested.requestedOtMinutes ||
+      requested.totalRequestPaidMinutes ||
+      requested.totalMinutes ||
+      otRequest.requestedMinutes,
+    0,
+  )
+
+  const breakMinutes = safeNonNegativeInt(
+    requested.breakMinutes ?? otRequest.breakMinutes,
+    0,
+  )
+
+  const totalRequestPaidMinutes = safeNonNegativeInt(
+    requested.totalRequestPaidMinutes ||
+      requested.approvedPaidMinutes ||
+      requested.requestPaidMinutes ||
+      requested.totalMinutes ||
+      (requestedMinutes > 0 && breakMinutes > 0 && breakMinutes < requestedMinutes
+        ? requestedMinutes - breakMinutes
+        : requestedMinutes) ||
+      otRequest.totalRequestPaidMinutes ||
+      otRequest.totalMinutes,
+    0,
+  )
+
+  return {
+    ...otRequest,
+    requestStartTime: requestedStartTime,
+    startTime: requestedStartTime || otRequest.startTime,
+    expectedOtStartTime: requestedStartTime || otRequest.expectedOtStartTime,
+
+    requestEndTime: requestedEndTime,
+    endTime: requestedEndTime || otRequest.endTime,
+    expectedOtEndTime: requestedEndTime || otRequest.expectedOtEndTime,
+
+    requestedMinutes,
+    requestedOtMinutes: requestedMinutes,
+    breakMinutes,
+    totalRequestPaidMinutes,
+    totalPaidMinutes: totalRequestPaidMinutes,
+    requestPaidMinutes: totalRequestPaidMinutes,
+    totalMinutes: totalRequestPaidMinutes,
+    totalHours: totalRequestPaidMinutes > 0 ? totalRequestPaidMinutes / 60 : 0,
+  }
+}
+
 function buildVerificationItem(requested, attendanceRecord, otRequest) {
-  const normalizedOtRequest = normalizeOtRequestContext(otRequest)
+  const employeeOtRequest = buildEmployeeSpecificOtRequest(otRequest, requested)
+  const normalizedOtRequest = normalizeOtRequestContext(employeeOtRequest)
 
   const metrics = calculatePolicyDrivenOtMetrics({
     otRequest: normalizedOtRequest,
@@ -1410,8 +1555,18 @@ function verifyAttendanceAgainstOT({
       otMismatchEmployees.push(item)
     }
 
-    if (!isShiftValidRecord(attendanceRecord)) {
+    if (!isShiftValidRecord(attendanceRecord) && upper(item.otResult) !== 'MATCH') {
       shiftMismatchEmployees.push(item)
+      continue
+    }
+
+    if (upper(item.otResult) === 'MATCH') {
+      attendedEmployees.push(item)
+
+      if (!approvedKeySet.has(requestedKey)) {
+        attendedButNotApproved.push(item)
+      }
+
       continue
     }
 

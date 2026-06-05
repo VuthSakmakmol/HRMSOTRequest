@@ -109,6 +109,16 @@ const paymentDetailLoadedLabel = computed(() => {
   return `Loaded ${visiblePaymentDetailRows.value.length} of ${paymentDetailRows.value.length}`
 })
 
+const paymentDetailLookup = computed(() => {
+  const map = new Map()
+
+  paymentDetailRows.value.forEach((row) => {
+    addPaymentDetailLookupKeys(map, row)
+  })
+
+  return map
+})
+
 const missingSalaryRows = computed(() => {
   const rows = previewResult.value?.issues?.missingSalaryEmployees || []
   return Array.isArray(rows) ? rows : []
@@ -142,6 +152,7 @@ const warningRows = computed(() => {
     })),
 
     ...missingPayableRows.map((row) => ({
+      ...row,
       type: 'No payable minutes',
       rowNo: '',
       employeeNo: row.employeeNo || '',
@@ -150,6 +161,7 @@ const warningRows = computed(() => {
     })),
 
     ...payableWarningRows.map((row) => ({
+      ...row,
       type: 'Payable warning',
       rowNo: '',
       employeeNo: row.employeeNo || '',
@@ -157,6 +169,17 @@ const warningRows = computed(() => {
       reason: row.reason || 'Payable minutes calculated with warning',
     })),
   ]
+})
+
+const paymentIssueRows = computed(() => {
+  const missingSalaryIssues = missingSalaryRows.value.map((row) => ({
+    ...row,
+    type: 'Missing salary',
+    rowNo: row.rowNo || row.salaryRowNo || '',
+    reason: row.reason || 'Salary not found in uploaded salary Excel',
+  }))
+
+  return [...missingSalaryIssues, ...warningRows.value].map(buildPaymentIssueRow)
 })
 
 const holidayDateSet = computed(() => {
@@ -508,6 +531,82 @@ function khrPaper(row, denomination) {
       row?.khrBreakdown?.[key] ??
       0,
   )
+}
+
+function issueLookupEmployeeNo(row = {}) {
+  return upper(row.employeeNo || row.employeeCode || row.staffId)
+}
+
+function issueLookupRequestNo(row = {}) {
+  return upper(row.requestNo)
+}
+
+function issueLookupDate(row = {}) {
+  return normalizeYMD(row.otDate || row.date || row.attendanceDate)
+}
+
+function addPaymentDetailLookupKey(map, key, row) {
+  if (!key || map.has(key)) return
+  map.set(key, row)
+}
+
+function addPaymentDetailLookupKeys(map, row = {}) {
+  const employeeNo = issueLookupEmployeeNo(row)
+  if (!employeeNo) return
+
+  const requestNo = issueLookupRequestNo(row)
+  const otDate = issueLookupDate(row)
+
+  addPaymentDetailLookupKey(map, `${requestNo}::${employeeNo}`, row)
+  addPaymentDetailLookupKey(map, `${otDate}::${employeeNo}`, row)
+  addPaymentDetailLookupKey(map, employeeNo, row)
+}
+
+function findPaymentDetailForIssue(issue = {}) {
+  const employeeNo = issueLookupEmployeeNo(issue)
+  if (!employeeNo) return null
+
+  const requestNo = issueLookupRequestNo(issue)
+  const otDate = issueLookupDate(issue)
+  const lookup = paymentDetailLookup.value
+
+  return (
+    lookup.get(`${requestNo}::${employeeNo}`) ||
+    lookup.get(`${otDate}::${employeeNo}`) ||
+    lookup.get(employeeNo) ||
+    null
+  )
+}
+
+function buildPaymentIssueRow(issue = {}) {
+  const detail = findPaymentDetailForIssue(issue) || {}
+
+  return {
+    ...detail,
+    ...issue,
+
+    issueType: issue.type || issue.issueType || 'Warning',
+    issueRowNo: issue.rowNo || issue.excelRowNo || issue.salaryRowNo || '',
+    reason: issue.reason || detail.reason || 'Please review this payment row',
+
+    otDate: issue.otDate || detail.otDate || '',
+    otDateDisplay:
+      detail.otDateDisplay ||
+      (issue.otDate ? formatDateDMY(issue.otDate) : ''),
+    requestNo: issue.requestNo || detail.requestNo || '',
+
+    employeeNo: issue.employeeNo || issue.employeeCode || detail.employeeNo || '',
+    employeeName: issue.employeeName || issue.name || detail.employeeName || '',
+    departmentName: issue.departmentName || detail.departmentName || '',
+    positionName: issue.positionName || detail.positionName || '',
+    lineName: issue.lineName || detail.lineName || '',
+
+    dayType: issue.dayType || detail.dayType || '',
+    requestedMinutes: issue.requestedMinutes ?? detail.requestedMinutes ?? 0,
+    breakMinutes: issue.breakMinutes ?? detail.breakMinutes ?? 0,
+    payableMinutes: issue.payableMinutes ?? detail.payableMinutes ?? 0,
+    hasSalary: detail.hasSalary ?? false,
+  }
 }
 
 function parseDownloadFileName(response, fallback) {
@@ -1662,196 +1761,381 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <div class="grid gap-4 xl:grid-cols-2">
-        <div class="ot-table-card">
-          <div class="ot-table-toolbar">
-            <div>
-              <h2 class="ot-table-title">
-                Missing salary
-              </h2>
-            </div>
+      <div class="ot-table-card">
+        <div class="ot-table-toolbar">
+          <div>
+            <h2 class="ot-table-title">
+              Payment warnings / issues
+            </h2>
           </div>
 
-          <div class="ot-table-wrapper">
-            <DataTable
-              :value="missingSalaryRows"
-              scrollable
-              scroll-height="260px"
-              table-style="width: max-content; min-width: 100%; table-layout: auto;"
-              class="ot-data-table ot-data-table-compact payment-preview-table"
-            >
-              <template #empty>
-                <div class="ot-empty-state">
-                  <div class="ot-empty-icon">
-                    <i class="pi pi-check-circle" />
-                  </div>
-
-                  <div class="ot-empty-title">
-                    No missing salary
-                  </div>
-                </div>
-              </template>
-
-              <Column
-                field="employeeNo"
-                header="Employee ID"
-                style="width: 8rem; min-width: 8rem"
-              >
-                <template #body="{ data }">
-                  <span class="payment-code-text">
-                    {{ data.employeeNo || '—' }}
-                  </span>
-                </template>
-              </Column>
-
-              <Column
-                field="employeeName"
-                header="Employee name"
-                style="width: 14rem; min-width: 14rem"
-              >
-                <template #body="{ data }">
-                  <span class="payment-name-text">
-                    {{ data.employeeName || '—' }}
-                  </span>
-                </template>
-              </Column>
-
-              <Column
-                field="departmentName"
-                header="Department"
-                style="width: 12rem; min-width: 12rem"
-              >
-                <template #body="{ data }">
-                  <span class="payment-line-text">
-                    {{ data.departmentName || '—' }}
-                  </span>
-                </template>
-              </Column>
-
-              <Column
-                field="positionName"
-                header="Position"
-                style="width: 12rem; min-width: 12rem"
-              >
-                <template #body="{ data }">
-                  <span class="payment-line-text">
-                    {{ data.positionName || '—' }}
-                  </span>
-                </template>
-              </Column>
-
-              <Column
-                field="reason"
-                header="Reason"
-                style="width: 18rem; min-width: 18rem"
-              >
-                <template #body="{ data }">
-                  <span
-                    class="payment-reason-text"
-                    :title="data.reason || '—'"
-                  >
-                    {{ data.reason || '—' }}
-                  </span>
-                </template>
-              </Column>
-            </DataTable>
+          <div class="ot-table-actions">
+            <span class="ot-loaded-badge">
+              {{ paymentIssueRows.length }} rows
+            </span>
           </div>
         </div>
 
-        <div class="ot-table-card">
-          <div class="ot-table-toolbar">
-            <div>
-              <h2 class="ot-table-title">
-                Warnings
-              </h2>
-            </div>
-          </div>
-
-          <div class="ot-table-wrapper">
-            <DataTable
-              :value="warningRows"
-              scrollable
-              scroll-height="260px"
-              table-style="width: max-content; min-width: 100%; table-layout: auto;"
-              class="ot-data-table ot-data-table-compact payment-preview-table"
-            >
-              <template #empty>
-                <div class="ot-empty-state">
-                  <div class="ot-empty-icon">
-                    <i class="pi pi-check-circle" />
-                  </div>
-
-                  <div class="ot-empty-title">
-                    No warnings
-                  </div>
+        <div class="ot-table-wrapper">
+          <DataTable
+            :value="paymentIssueRows"
+            scrollable
+            scroll-height="420px"
+            table-style="width: max-content; min-width: 100%; table-layout: auto;"
+            class="ot-data-table ot-data-table-compact payment-preview-table"
+          >
+            <template #empty>
+              <div class="ot-empty-state">
+                <div class="ot-empty-icon">
+                  <i class="pi pi-check-circle" />
                 </div>
+
+                <div class="ot-empty-title">
+                  No warnings
+                </div>
+              </div>
+            </template>
+
+            <Column
+              field="issueType"
+              header="Issue"
+              frozen
+              header-class="payment-auto-fit-column payment-issue-column"
+              body-class="payment-auto-fit-column payment-issue-column"
+              style="width: max-content; min-width: max-content"
+            >
+              <template #body="{ data }">
+                <Tag
+                  :value="data.issueType || data.type || 'Warning'"
+                  class="payment-rgb-tag payment-tag-warning"
+                />
               </template>
+            </Column>
 
-              <Column
-                field="type"
-                header="Type"
-                style="width: 14rem; min-width: 14rem"
-              >
-                <template #body="{ data }">
-                  <Tag
-                    :value="data.type || '—'"
-                    class="payment-rgb-tag payment-tag-warning"
-                  />
-                </template>
-              </Column>
+            <Column
+              field="reason"
+              header="Reason"
+              header-class="payment-auto-fit-column payment-reason-column"
+              body-class="payment-auto-fit-column payment-reason-column"
+              style="width: max-content; min-width: max-content"
+            >
+              <template #body="{ data }">
+                <span
+                  class="payment-reason-text payment-auto-fit-text"
+                  :title="data.reason || '—'"
+                >
+                  {{ data.reason || '—' }}
+                </span>
+              </template>
+            </Column>
 
-              <Column
-                field="rowNo"
-                header="Row"
-                style="width: 7rem; min-width: 7rem"
-              >
-                <template #body="{ data }">
-                  <span class="payment-meta-text">
-                    {{ data.rowNo || '—' }}
-                  </span>
-                </template>
-              </Column>
+            <Column
+              field="issueRowNo"
+              header="Excel row"
+              style="width: 8rem; min-width: 8rem"
+            >
+              <template #body="{ data }">
+                <span class="payment-meta-text">
+                  {{ data.issueRowNo || '—' }}
+                </span>
+              </template>
+            </Column>
 
-              <Column
-                field="employeeNo"
-                header="Employee ID"
-                style="width: 8rem; min-width: 8rem"
-              >
-                <template #body="{ data }">
-                  <span class="payment-code-text">
-                    {{ data.employeeNo || '—' }}
-                  </span>
-                </template>
-              </Column>
+            <Column
+              header="Date"
+              style="width: 8rem; min-width: 8rem"
+            >
+              <template #body="{ data }">
+                <span class="payment-meta-text">
+                  {{ data.otDateDisplay || formatDateDMY(data.otDate) }}
+                </span>
+              </template>
+            </Column>
 
-              <Column
-                field="employeeName"
-                header="Employee name"
-                style="width: 14rem; min-width: 14rem"
-              >
-                <template #body="{ data }">
-                  <span class="payment-name-text">
-                    {{ data.employeeName || '—' }}
-                  </span>
-                </template>
-              </Column>
+            <Column
+              field="requestNo"
+              header="Request No"
+              style="width: 11rem; min-width: 11rem"
+            >
+              <template #body="{ data }">
+                <span class="payment-code-text">
+                  {{ data.requestNo || '—' }}
+                </span>
+              </template>
+            </Column>
 
-              <Column
-                field="reason"
-                header="Reason"
-                style="width: 18rem; min-width: 18rem"
-              >
-                <template #body="{ data }">
-                  <span
-                    class="payment-reason-text"
-                    :title="data.reason || '—'"
-                  >
-                    {{ data.reason || '—' }}
-                  </span>
-                </template>
-              </Column>
-            </DataTable>
-          </div>
+            <Column
+              header="Day type"
+              style="width: 10rem; min-width: 10rem"
+            >
+              <template #body="{ data }">
+                <Tag
+                  :value="dayTypeLabel(data.dayType)"
+                  class="payment-rgb-tag"
+                  :class="dayTypeTagClass(data.dayType)"
+                />
+              </template>
+            </Column>
+
+            <Column
+              field="employeeNo"
+              header="Employee ID"
+              style="width: 8rem; min-width: 8rem"
+            >
+              <template #body="{ data }">
+                <span class="payment-code-text">
+                  {{ data.employeeNo || '—' }}
+                </span>
+              </template>
+            </Column>
+
+            <Column
+              field="employeeName"
+              header="Employee name"
+              style="width: 14rem; min-width: 14rem"
+            >
+              <template #body="{ data }">
+                <span
+                  class="payment-name-text"
+                  :title="data.employeeName || '—'"
+                >
+                  {{ data.employeeName || '—' }}
+                </span>
+              </template>
+            </Column>
+
+            <Column
+              field="departmentName"
+              header="Department"
+              style="width: 12rem; min-width: 12rem"
+            >
+              <template #body="{ data }">
+                <span
+                  class="payment-line-text"
+                  :title="data.departmentName || '—'"
+                >
+                  {{ data.departmentName || '—' }}
+                </span>
+              </template>
+            </Column>
+
+            <Column
+              field="positionName"
+              header="Position"
+              style="width: 12rem; min-width: 12rem"
+            >
+              <template #body="{ data }">
+                <span
+                  class="payment-line-text"
+                  :title="data.positionName || '—'"
+                >
+                  {{ data.positionName || '—' }}
+                </span>
+              </template>
+            </Column>
+
+            <Column
+              field="lineName"
+              header="Line"
+              style="width: 10rem; min-width: 10rem"
+            >
+              <template #body="{ data }">
+                <span
+                  class="payment-line-text"
+                  :title="data.lineName || '—'"
+                >
+                  {{ data.lineName || '—' }}
+                </span>
+              </template>
+            </Column>
+
+            <Column
+              header="Requested"
+              style="width: 9rem; min-width: 9rem"
+            >
+              <template #body="{ data }">
+                <Tag
+                  :value="formatMinutesLabel(data.requestedMinutes)"
+                  class="payment-rgb-tag payment-tag-info"
+                />
+              </template>
+            </Column>
+
+            <Column
+              header="Break"
+              style="width: 8rem; min-width: 8rem"
+            >
+              <template #body="{ data }">
+                <span class="payment-meta-text">
+                  {{ formatMinutesLabel(data.breakMinutes) }}
+                </span>
+              </template>
+            </Column>
+
+            <Column
+              header="Payable"
+              style="width: 9rem; min-width: 9rem"
+            >
+              <template #body="{ data }">
+                <Tag
+                  :value="formatMinutesLabel(data.payableMinutes)"
+                  class="payment-rgb-tag payment-status-active"
+                />
+              </template>
+            </Column>
+
+            <Column
+              header="OT hours"
+              style="width: 9rem; min-width: 9rem"
+            >
+              <template #body="{ data }">
+                <span class="payment-money-text">
+                  {{ formatNumber(data.payableHours || actualOtTimeMinutes(data) / 60, 4) }}
+                </span>
+              </template>
+            </Column>
+
+            <Column
+              header="Salary"
+              style="width: 10rem; min-width: 10rem"
+            >
+              <template #body="{ data }">
+                <span class="payment-money-text">
+                  {{ formatMoney(data.monthlySalary, data.currency || 'USD') }}
+                </span>
+              </template>
+            </Column>
+
+            <Column
+              header="Hourly rate"
+              style="width: 10rem; min-width: 10rem"
+            >
+              <template #body="{ data }">
+                <span class="payment-money-text">
+                  {{ formatMoney(data.hourlyRate, data.currency || 'USD') }}
+                </span>
+              </template>
+            </Column>
+
+            <Column
+              header="Multiplier"
+              style="width: 8rem; min-width: 8rem"
+            >
+              <template #body="{ data }">
+                <Tag
+                  :value="`${formatNumber(data.multiplier, 4)}x`"
+                  class="payment-rgb-tag payment-tag-purple"
+                />
+              </template>
+            </Column>
+
+            <Column
+              header="Amount USD"
+              style="width: 10rem; min-width: 10rem"
+            >
+              <template #body="{ data }">
+                <span class="payment-money-text">
+                  {{ formatMoney(data.amountUsd ?? data.amount, data.currency || 'USD') }}
+                </span>
+              </template>
+            </Column>
+
+            <Column
+              header="Rate"
+              style="width: 8rem; min-width: 8rem"
+            >
+              <template #body="{ data }">
+                <Tag
+                  :value="formatNumber(data.exchangeRate, 6)"
+                  class="payment-rgb-tag payment-tag-info"
+                />
+              </template>
+            </Column>
+
+            <Column
+              header="Raw KHR"
+              style="width: 10rem; min-width: 10rem"
+            >
+              <template #body="{ data }">
+                <span class="payment-khr-text">
+                  {{ formatNumber(data.amountKhrRaw, 0) }}
+                </span>
+              </template>
+            </Column>
+
+            <Column
+              header="Rounded KHR"
+              style="width: 11rem; min-width: 11rem"
+            >
+              <template #body="{ data }">
+                <Tag
+                  :value="formatNumber(data.amountKhrRounded, 0)"
+                  class="payment-rgb-tag payment-status-active"
+                />
+              </template>
+            </Column>
+
+            <Column
+              header="Meal"
+              style="width: 11rem; min-width: 11rem"
+            >
+              <template #body="{ data }">
+                <Tag
+                  :value="formatNumber(data.allowanceAmountKhrRounded || 0, 0)"
+                  class="payment-rgb-tag payment-tag-warning"
+                />
+              </template>
+            </Column>
+
+            <Column
+              header="Total KHR"
+              style="width: 12rem; min-width: 12rem"
+            >
+              <template #body="{ data }">
+                <Tag
+                  :value="formatNumber(data.totalPayableKhrRounded || data.amountKhrRounded || 0, 0)"
+                  class="payment-rgb-tag payment-tag-purple"
+                />
+              </template>
+            </Column>
+
+            <Column
+              header="Diff"
+              style="width: 8rem; min-width: 8rem"
+            >
+              <template #body="{ data }">
+                <span class="payment-khr-text">
+                  {{ formatNumber(data.khrRoundDifference, 0) }}
+                </span>
+              </template>
+            </Column>
+
+            <Column
+              v-for="denomination in denominationColumns"
+              :key="denomination"
+              :header="formatNumber(denomination, 0)"
+              style="width: 7rem; min-width: 7rem"
+            >
+              <template #body="{ data }">
+                <span class="payment-paper-text">
+                  {{ khrPaper(data, denomination) }}
+                </span>
+              </template>
+            </Column>
+
+            <Column
+              header="Salary found"
+              style="width: 9rem; min-width: 9rem"
+            >
+              <template #body="{ data }">
+                <Tag
+                  :value="salaryStatusLabel(data.hasSalary)"
+                  class="payment-rgb-tag"
+                  :class="salaryStatusTagClass(data.hasSalary)"
+                />
+              </template>
+            </Column>
+          </DataTable>
         </div>
       </div>
     </section>
@@ -2257,6 +2541,46 @@ onBeforeUnmount(() => {
 
 :deep(.payment-preview-table.p-datatable .p-datatable-tbody > tr > td > *) {
   margin-inline: auto !important;
+}
+
+:deep(.payment-preview-table.p-datatable .payment-auto-fit-column) {
+  width: max-content !important;
+  min-width: max-content !important;
+  max-width: none !important;
+  white-space: nowrap !important;
+}
+
+:deep(.payment-preview-table.p-datatable .payment-issue-column) {
+  padding-inline: 0.75rem !important;
+}
+
+:deep(.payment-preview-table.p-datatable .payment-reason-column) {
+  padding-inline: 0.85rem !important;
+  text-align: left !important;
+}
+
+:deep(.payment-preview-table.p-datatable .payment-reason-column > *) {
+  margin-inline: 0 !important;
+}
+
+:deep(.payment-preview-table.p-datatable .payment-reason-column .p-datatable-column-title),
+:deep(.payment-preview-table.p-datatable .payment-reason-column .p-column-title) {
+  justify-content: flex-start !important;
+  text-align: left !important;
+}
+
+:deep(.payment-preview-table.p-datatable .payment-reason-column .p-datatable-column-header-content),
+:deep(.payment-preview-table.p-datatable .payment-reason-column .p-column-header-content) {
+  justify-content: flex-start !important;
+}
+
+.payment-auto-fit-text {
+  display: inline-block;
+  width: max-content;
+  max-width: none;
+  overflow: visible;
+  white-space: nowrap;
+  text-overflow: clip;
 }
 
 :deep(.payment-preview-table.p-datatable .p-tag),
