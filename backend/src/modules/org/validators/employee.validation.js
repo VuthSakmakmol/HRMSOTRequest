@@ -149,6 +149,8 @@ const listEmployeeQuerySchema = z.object({
   positionId: z.string().trim().optional().default(''),
   lineId: z.string().trim().optional().default(''),
   shiftId: z.string().trim().optional().default(''),
+  managerEmployeeId: z.string().trim().optional().default(''),
+  reportsToEmployeeId: z.string().trim().optional().default(''),
 
   isActive: booleanLike,
 
@@ -184,6 +186,7 @@ const lookupEmployeeQuerySchema = z.object({
   lineId: z.string().trim().optional().default(''),
   shiftId: z.string().trim().optional().default(''),
   reportsToEmployeeId: z.string().trim().optional().default(''),
+  managerEmployeeId: z.string().trim().optional().default(''),
 
   // Used by OT employee multipicker only.
   // true = return only employees that belong to at least one production line.

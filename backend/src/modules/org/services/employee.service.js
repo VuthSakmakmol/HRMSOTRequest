@@ -910,6 +910,8 @@ function buildEmployeeListFilter(
     positionId = '',
     lineId = '',
     shiftId = '',
+    managerEmployeeId = '',
+    reportsToEmployeeId = '',
     isActive,
     otEligibleOnly = false,
   } = {},
@@ -960,6 +962,19 @@ function buildEmployeeListFilter(
 
   if (shiftId && isObjectId(shiftId)) {
     filter.shiftId = objectId(shiftId)
+  }
+
+  const effectiveManagerEmployeeId = managerEmployeeId || reportsToEmployeeId
+
+  if (effectiveManagerEmployeeId && isObjectId(effectiveManagerEmployeeId)) {
+    const managerObjectId = objectId(effectiveManagerEmployeeId)
+
+    addAndFilter(filter, {
+      $or: [
+        { reportsToEmployeeId: managerObjectId },
+        { lineManagerIds: managerObjectId },
+      ],
+    })
   }
 
   if (typeof isActive === 'boolean') {
@@ -1704,15 +1719,13 @@ async function lookup(query = {}, currentUser = null) {
       positionId: query.positionId,
       lineId: query.lineId,
       shiftId: query.shiftId,
+      managerEmployeeId: query.managerEmployeeId || query.reportsToEmployeeId,
+      reportsToEmployeeId: query.reportsToEmployeeId,
       isActive: query.isActive,
       otEligibleOnly: query.otEligibleOnly === true,
     },
     scopeFilter,
   )
-
-  if (query.reportsToEmployeeId && isObjectId(query.reportsToEmployeeId)) {
-    filter.reportsToEmployeeId = objectId(query.reportsToEmployeeId)
-  }
 
   const skip = (query.page - 1) * query.limit
 

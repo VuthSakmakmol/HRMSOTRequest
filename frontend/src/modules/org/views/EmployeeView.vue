@@ -76,6 +76,7 @@ function createFilterState() {
     positionId: '',
     lineId: '',
     shiftId: '',
+    managerEmployeeId: '',
     isActive: '',
     sortBy: 'createdAt',
     sortOrder: -1,
@@ -133,6 +134,11 @@ const lineFilterOptions = computed(() => [
 const shiftFilterOptions = computed(() => [
   { label: t('org.employee.allShifts'), value: '' },
   ...shiftOptions.value,
+])
+
+const managerFilterOptions = computed(() => [
+  { label: t('org.employee.allManagers'), value: '' },
+  ...managerOptions.value.filter((option) => option?.value),
 ])
 
 const otWorkflowRoleOptions = computed(() => [
@@ -255,6 +261,7 @@ function assignFilterState(target, source = {}) {
   target.positionId = source.positionId || ''
   target.lineId = source.lineId || ''
   target.shiftId = source.shiftId || ''
+  target.managerEmployeeId = source.managerEmployeeId || ''
   target.isActive = source.isActive || ''
   target.sortBy = source.sortBy || 'createdAt'
   target.sortOrder = typeof source.sortOrder === 'number' ? source.sortOrder : -1
@@ -650,6 +657,7 @@ function buildQuery(page) {
     positionId: appliedFilters.positionId,
     lineId: appliedFilters.lineId,
     shiftId: appliedFilters.shiftId,
+    managerEmployeeId: appliedFilters.managerEmployeeId,
     isActive: appliedFilters.isActive,
     sortBy: appliedFilters.sortBy,
     sortOrder: appliedFilters.sortOrder === 1 ? 'asc' : 'desc',
@@ -1174,6 +1182,10 @@ async function clearFilters() {
       page: 1,
       reset: true,
     }),
+    fetchManagersForDropdown('', {
+      page: 1,
+      reset: true,
+    }),
   ])
 
   await reloadFirstPage({ keepVisible: false })
@@ -1410,6 +1422,7 @@ async function handleExport() {
       positionId: appliedFilters.positionId,
       lineId: appliedFilters.lineId,
       shiftId: appliedFilters.shiftId,
+      managerEmployeeId: appliedFilters.managerEmployeeId,
       isActive: appliedFilters.isActive,
       sortBy: appliedFilters.sortBy,
       sortOrder: appliedFilters.sortOrder === 1 ? 'asc' : 'desc',
@@ -1688,6 +1701,31 @@ onBeforeUnmount(() => {
             onLazyLoad: onShiftLookupLazyLoad,
           }"
           @filter="onShiftLookupFilter"
+        />
+      </div>
+
+
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ t('org.employee.manager') }}
+        </label>
+
+        <Select
+          v-model="draftFilters.managerEmployeeId"
+          :options="managerFilterOptions"
+          option-label="label"
+          option-value="value"
+          class="w-full"
+          size="small"
+          filter
+          :loading="loadingManagers"
+          :virtual-scroller-options="{
+            itemSize: 38,
+            lazy: true,
+            showLoader: false,
+            onLazyLoad: onManagerLookupLazyLoad,
+          }"
+          @filter="onManagerLookupFilter"
         />
       </div>
 
