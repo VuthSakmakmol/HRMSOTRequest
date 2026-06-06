@@ -64,6 +64,16 @@ const props = defineProps({
     type: Object,
     default: null,
   },
+
+  isEditMode: {
+    type: Boolean,
+    default: false,
+  },
+
+  editableRequestEmployeeMap: {
+    type: Object,
+    default: () => ({}),
+  },
 })
 
 const emit = defineEmits(['update:modelValue', 'loading-change'])
@@ -643,19 +653,20 @@ function normalizeEmployeeRecord(source = {}) {
 }
 
 function normalizeSelectedEmployeeRecord(source = {}) {
-  const base = normalizeEmployeeRecord(source)
+  const mergedSource = mergeEmployeeWithEditableRequest(source)
+  const base = normalizeEmployeeRecord(mergedSource)
 
   if (!base || !hasLine(base)) return null
 
-  const startTime = toTrimmedString(source?.requestStartTime || defaultTime.value.requestStartTime)
-  const endTime = toTrimmedString(source?.requestEndTime || defaultTime.value.requestEndTime)
-  const breakMinutes = Number(source?.breakMinutes ?? defaultTime.value.breakMinutes ?? 0)
+  const startTime = toTrimmedString(mergedSource?.requestStartTime || defaultTime.value.requestStartTime)
+  const endTime = toTrimmedString(mergedSource?.requestEndTime || defaultTime.value.requestEndTime)
+  const breakMinutes = Number(mergedSource?.breakMinutes ?? defaultTime.value.breakMinutes ?? 0)
 
   const requestedMinutes =
     Number(
-      source?.totalRequestPaidMinutes ??
-        source?.totalMinutes ??
-        source?.requestedMinutes ??
+      mergedSource?.totalRequestPaidMinutes ??
+        mergedSource?.totalMinutes ??
+        mergedSource?.requestedMinutes ??
         0,
     ) ||
     calculateTimeWindowMinutes(startTime, endTime, breakMinutes) ||
@@ -672,7 +683,7 @@ function normalizeSelectedEmployeeRecord(source = {}) {
     totalRequestPaidMinutes: requestedMinutes,
     totalMinutes: requestedMinutes,
 
-    otTimeMode: toUpperCode(source?.otTimeMode || 'DEFAULT'),
+    otTimeMode: toUpperCode(mergedSource?.otTimeMode || 'DEFAULT'),
   }
 }
 
@@ -821,7 +832,12 @@ function getSelectedEmployee(employee) {
 }
 
 function getEditableEmployee(employee) {
-  return getSelectedEmployee(employee) || normalizeSelectedEmployeeRecord(employee) || employee
+  return (
+    getSelectedEmployee(employee) ||
+    getEditableRequestRecord(employee) ||
+    normalizeSelectedEmployeeRecord(employee) ||
+    employee
+  )
 }
 
 function getEmployeeRequestedMinutes(employee) {
@@ -864,6 +880,56 @@ function getBlockedRecord(employee) {
   return map[id] || null
 }
 
+function getEditableRequestRecord(employee) {
+  const id = getEmployeeId(employee)
+  if (!id || !props.isEditMode) return null
+
+  const map = props.editableRequestEmployeeMap || {}
+
+  if (map instanceof Map) {
+    return map.get(id) || null
+  }
+
+  return map[id] || null
+}
+
+function mergeEmployeeWithEditableRequest(employee = {}) {
+  const editableRequestRecord = getEditableRequestRecord(employee)
+
+  if (!editableRequestRecord) return employee
+
+  return {
+    ...employee,
+    ...editableRequestRecord,
+    isOutsideManaged: employee?.isOutsideManaged === true || editableRequestRecord?.isOutsideManaged === true,
+  }
+}
+
+function buildAlreadyRequestedReason(unavailable = {}) {
+  const requesterLabel = toTrimmedString(
+    unavailable?.requesterLabel ||
+      [unavailable?.requesterCode, unavailable?.requesterName].filter(Boolean).join(' - ') ||
+      unavailable?.requesterName ||
+      unavailable?.requesterCode,
+  )
+  const requestNo = toTrimmedString(unavailable?.requestNo)
+  const status = toTrimmedString(unavailable?.statusLabel || unavailable?.status)
+
+  if (requesterLabel && requestNo) {
+    return `Already requested by ${requesterLabel} (${requestNo})`
+  }
+
+  if (requesterLabel) {
+    return `Already requested by ${requesterLabel}`
+  }
+
+  if (requestNo) {
+    return t('ot.requests.create.employeePicker.alreadyInRequest', { requestNo })
+  }
+
+  return status || t('ot.requests.create.employeePicker.alreadyUnavailable')
+}
+
 function getEmployeeBlockInfo(employee) {
   const id = getEmployeeId(employee)
 
@@ -874,7 +940,9 @@ function getEmployeeBlockInfo(employee) {
     }
   }
 
-  if (!hasLine(employee)) {
+  const effectiveEmployee = mergeEmployeeWithEditableRequest(employee)
+
+  if (!hasLine(effectiveEmployee)) {
     return {
       blocked: true,
       reason: noLineNotEligibleMessage(),
@@ -884,18 +952,20 @@ function getEmployeeBlockInfo(employee) {
   const unavailable = getBlockedRecord(employee)
 
   if (unavailable) {
-    const requestNo = toTrimmedString(unavailable?.requestNo)
-    const status = toTrimmedString(unavailable?.statusLabel || unavailable?.status)
-
     return {
       blocked: true,
-      reason: requestNo
-        ? t('ot.requests.create.employeePicker.alreadyInRequest', { requestNo })
-        : status || t('ot.requests.create.employeePicker.alreadyUnavailable'),
+      reason: buildAlreadyRequestedReason(unavailable),
     }
   }
 
-  const shiftId = toTrimmedString(employee?.shiftId)
+  if (props.isEditMode && getEditableRequestRecord(employee)) {
+    return {
+      blocked: false,
+      reason: '',
+    }
+  }
+
+  const shiftId = toTrimmedString(effectiveEmployee?.shiftId)
 
   if (!shiftId) {
     return {

@@ -86,6 +86,7 @@ const CUSTOM_OPTION_VALUE = '__OTHER_CUSTOM_TIME__'
 const OT_DURATION_STEP_HOURS = 0.5
 const MIN_OT_DURATION_HOURS = 1
 const MAX_OT_DURATION_HOURS = 24
+const SHOW_REQUEST_REASON_FIELD = false
 
 const toast = useToast()
 const { t, locale } = useI18n()
@@ -812,6 +813,9 @@ onMounted(() => {
               option-value="id"
               option-disabled="disabled"
               class="w-full"
+              append-to="body"
+              panel-class="ot-option-select-panel"
+              scroll-height="24rem"
               :placeholder="t('ot.requests.create.selectOtOption')"
               :loading="loadingShiftOptions"
               :disabled="selectedShiftState?.mode !== 'ready' || loadingShiftOptions || loadingShifts"
@@ -881,7 +885,10 @@ onMounted(() => {
             </Message>
           </div>
 
-          <div class="ot-field">
+          <div
+            v-if="SHOW_REQUEST_REASON_FIELD"
+            class="ot-field"
+          >
             <label class="ot-field-label">
               {{ t('ot.requests.create.reason') }}
               <span class="ot-optional-text">
@@ -1275,6 +1282,22 @@ onMounted(() => {
 :deep(.ot-time-picker .p-inputtext) {
   text-align: center;
   font-variant-numeric: tabular-nums;
+}
+
+:global(.ot-option-select-panel) {
+  width: min(32rem, calc(100vw - 1rem)) !important;
+  max-width: calc(100vw - 1rem) !important;
+  z-index: 9999 !important;
+}
+
+:global(.ot-option-select-panel .p-select-list-container),
+:global(.ot-option-select-panel .p-select-list) {
+  max-height: 24rem !important;
+}
+
+:global(.ot-option-select-panel .p-select-option),
+:global(.ot-option-select-panel .p-select-option-content) {
+  min-height: 2.35rem;
 }
 
 @media (min-width: 768px) {

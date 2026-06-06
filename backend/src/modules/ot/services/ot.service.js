@@ -385,6 +385,12 @@ function collectDuplicateEmployeesFromRequest(doc, selectedIdSet, duplicateMap) 
       employeeLabel: buildEmployeeLabel(item),
       requestId: doc?._id ? String(doc._id) : '',
       requestNo: s(doc?.requestNo),
+      requesterEmployeeId: doc?.requesterEmployeeId ? String(doc.requesterEmployeeId) : '',
+      requesterCode: s(doc?.requesterEmployeeCode || doc?.requesterCode),
+      requesterName: s(doc?.requesterName),
+      requesterLabel: [s(doc?.requesterEmployeeCode || doc?.requesterCode), s(doc?.requesterName)]
+        .filter(Boolean)
+        .join(' - '),
       otDate: s(doc?.otDate),
       status: upper(doc?.status),
       statusKey: statusKey(doc?.status),
@@ -429,6 +435,10 @@ async function ensureNoDuplicateOTEmployeesForDate({
     .select({
       _id: 1,
       requestNo: 1,
+      requesterEmployeeId: 1,
+      requesterEmployeeCode: 1,
+      requesterCode: 1,
+      requesterName: 1,
       otDate: 1,
       status: 1,
       requestedEmployees: 1,
@@ -538,6 +548,12 @@ function collectUnavailableEmployeesFromRequest(doc, map) {
       employeeLabel: buildEmployeeLabel(item),
       requestId: doc?._id ? String(doc._id) : '',
       requestNo: s(doc?.requestNo),
+      requesterEmployeeId: doc?.requesterEmployeeId ? String(doc.requesterEmployeeId) : '',
+      requesterCode: s(doc?.requesterEmployeeCode || doc?.requesterCode),
+      requesterName: s(doc?.requesterName),
+      requesterLabel: [s(doc?.requesterEmployeeCode || doc?.requesterCode), s(doc?.requesterName)]
+        .filter(Boolean)
+        .join(' - '),
       otDate: s(doc?.otDate),
       status: upper(doc?.status),
       statusKey: statusKey(doc?.status),
@@ -548,14 +564,27 @@ function collectUnavailableEmployeesFromRequest(doc, map) {
 
 async function listUnavailableEmployeesForDate(query = {}) {
   const otDate = s(query.otDate)
+  const excludeRequestId = s(query.excludeRequestId)
 
-  const docs = await OTRequest.find({
+  const filter = {
     otDate,
     status: { $in: OT_DUPLICATE_BLOCKING_STATUSES },
-  })
+  }
+
+  if (excludeRequestId && isObjectId(excludeRequestId)) {
+    filter._id = {
+      $ne: new mongoose.Types.ObjectId(excludeRequestId),
+    }
+  }
+
+  const docs = await OTRequest.find(filter)
     .select({
       _id: 1,
       requestNo: 1,
+      requesterEmployeeId: 1,
+      requesterEmployeeCode: 1,
+      requesterCode: 1,
+      requesterName: 1,
       otDate: 1,
       status: 1,
       requestedEmployees: 1,

@@ -149,6 +149,26 @@ const unavailableEmployeeMap = computed(() => {
   return map
 })
 
+// Edit-mode allow-list for employees already inside this request.
+// Request A can select/unselect/select-back its own employees.
+// Other active requests on the same date still block selection.
+const editableRequestEmployeeMap = computed(() => {
+  const map = {}
+
+  if (!isEditMode.value || !editRequestDetail.value) return map
+
+  for (const item of getEditRequestSourceEmployees(editRequestDetail.value)) {
+    const normalized = normalizeSelectedEmployee(item)
+    const employeeId = getEmployeeId(normalized)
+
+    if (employeeId) {
+      map[employeeId] = normalized
+    }
+  }
+
+  return map
+})
+
 const backendTimingPreview = computed(() => {
   const option = selectedOTOption.value
 
@@ -619,6 +639,10 @@ function normalizeUnavailableEmployeesResponse(res) {
       employeeName: s(item?.employeeName),
       employeeLabel: s(item?.employeeLabel),
       requestNo: s(item?.requestNo),
+      requesterEmployeeId: s(item?.requesterEmployeeId),
+      requesterCode: s(item?.requesterCode || item?.requesterEmployeeCode),
+      requesterName: s(item?.requesterName),
+      requesterLabel: s(item?.requesterLabel),
       status: s(item?.status),
       statusLabel: s(item?.statusLabel),
       otDate: s(item?.otDate),
@@ -669,10 +693,63 @@ function normalizeShiftOptionsResponse(res) {
     .filter((item) => item?.id && item?.optionLabel)
 }
 
+function getEditRequestSourceEmployees(data = {}) {
+  if (Array.isArray(data?.requestedEmployees) && data.requestedEmployees.length) {
+    return data.requestedEmployees
+  }
+
+  if (Array.isArray(data?.employees) && data.employees.length) {
+    return data.employees
+  }
+
+  return []
+}
+
+function buildRequestShiftFallback(source = {}) {
+  return normalizeShiftRecord({
+    shiftId:
+      source?.shiftId ||
+      source?.shift?._id ||
+      source?.shift?.id ||
+      editRequestDetail.value?.shiftId ||
+      form.shiftId,
+    shiftCode:
+      source?.shiftCode ||
+      source?.shift?.code ||
+      editRequestDetail.value?.shiftCode ||
+      selectedShiftState.value?.shift?.code,
+    shiftName:
+      source?.shiftName ||
+      source?.shift?.name ||
+      editRequestDetail.value?.shiftName ||
+      selectedShiftState.value?.shift?.name,
+    shiftType: source?.shiftType || editRequestDetail.value?.shiftType,
+    shiftStartTime: source?.shiftStartTime || editRequestDetail.value?.shiftStartTime,
+    shiftEndTime: source?.shiftEndTime || editRequestDetail.value?.shiftEndTime,
+  })
+}
+
 function normalizeSelectedEmployee(source = {}) {
   const employeeId = s(source?.employeeId || source?._id || source?.id)
   const employeeNo = s(source?.employeeNo || source?.employeeCode)
   const displayName = s(source?.displayName || source?.employeeName || source?.name)
+  const shift = buildRequestShiftFallback(source)
+
+  const requestStartTime = s(
+    source?.requestStartTime ||
+      source?.startTime ||
+      editRequestDetail.value?.requestStartTime ||
+      editRequestDetail.value?.startTime,
+  )
+
+  const requestEndTime = s(
+    source?.requestEndTime ||
+      source?.endTime ||
+      editRequestDetail.value?.requestEndTime ||
+      editRequestDetail.value?.endTime,
+  )
+
+  const breakMinutes = n(source?.breakMinutes ?? editRequestDetail.value?.breakMinutes)
 
   return {
     ...source,
@@ -684,6 +761,15 @@ function normalizeSelectedEmployee(source = {}) {
     displayName,
     employeeName: displayName,
     employeeLabel: [employeeNo, displayName].filter(Boolean).join(' - ') || displayName || employeeId,
+    lineId: s(
+      source?.lineId ||
+        source?.productionLineId ||
+        source?.line?._id ||
+        source?.line?.id ||
+        source?.productionLine?._id ||
+        source?.productionLine?.id,
+    ),
+    lineCode: s(source?.lineCode || source?.productionLineCode || source?.line?.code || source?.productionLine?.code),
     lineName: s(
       source?.lineName ||
         source?.productionLineName ||
@@ -691,7 +777,22 @@ function normalizeSelectedEmployee(source = {}) {
         source?.productionLine?.name,
     ),
     lineLabel: s(source?.lineName || source?.productionLineName || source?.lineLabel || source?.productionLineLabel),
-    requestedMinutes: n(source?.requestedMinutes),
+    shiftId: shift?.id || '',
+    shiftCode: shift?.code || '',
+    shiftName: shift?.name || '',
+    shiftType: shift?.type || '',
+    shiftStartTime: shift?.startTime || '',
+    shiftEndTime: shift?.endTime || '',
+    shift: shift || null,
+    requestStartTime,
+    requestEndTime,
+    startTime: requestStartTime,
+    endTime: requestEndTime,
+    breakMinutes,
+    requestedMinutes: positiveNumber(
+      source?.requestedMinutes,
+      editRequestDetail.value?.requestedMinutes,
+    ),
     totalRequestPaidMinutes: positiveNumber(
       source?.totalRequestPaidMinutes,
       source?.totalMinutes,
@@ -706,6 +807,7 @@ function normalizeSelectedEmployee(source = {}) {
       editRequestDetail.value?.totalRequestPaidMinutes,
       editRequestDetail.value?.requestedMinutes,
     ),
+    otTimeMode: upper(source?.otTimeMode || 'DEFAULT'),
   }
 }
 
@@ -723,6 +825,127 @@ function resetCustomTiming() {
   form.customEndTime = ''
   form.customBreakMinutes = 0
   form.customDurationHours = null
+}
+
+function getOptionId(source = {}) {
+  return s(
+    source?.shiftOtOptionId ||
+      source?.otOption?.id ||
+      source?.otOption?._id ||
+      source?.shiftOtOption?.id ||
+      source?.shiftOtOption?._id,
+  )
+}
+
+function getEditRequestTimingSource(source = {}) {
+  return upper(
+    source?.otTimingSource ||
+      source?.otOption?.timingSource ||
+      source?.timingSource ||
+      'SHIFT_OPTION',
+  )
+}
+
+function getOptionPaidMinutes(source = {}) {
+  return positiveNumber(
+    source?.totalRequestPaidMinutes,
+    source?.totalMinutes,
+    source?.paidMinutes,
+    source?.otOption?.totalRequestPaidMinutes,
+    source?.otOption?.totalMinutes,
+    source?.otOption?.paidMinutes,
+    source?.requestedMinutes,
+    source?.otOption?.requestedMinutes,
+  )
+}
+
+function getOptionRequestedMinutes(source = {}) {
+  return positiveNumber(
+    source?.requestedMinutes,
+    source?.otOption?.requestedMinutes,
+    source?.totalRequestPaidMinutes,
+    source?.totalMinutes,
+    source?.otOption?.totalRequestPaidMinutes,
+    source?.otOption?.totalMinutes,
+  )
+}
+
+function getOptionLabel(source = {}) {
+  return s(
+    source?.shiftOtOptionLabel ||
+      source?.otOption?.label ||
+      source?.optionLabel ||
+      source?.label ||
+      source?.name,
+  ).toLowerCase()
+}
+
+function getOptionTimingMode(source = {}) {
+  return upper(
+    source?.shiftOtOptionTimingMode ||
+      source?.otOption?.timingMode ||
+      source?.timingMode,
+  )
+}
+
+function nearlySameMinutes(a, b) {
+  const left = Number(a || 0)
+  const right = Number(b || 0)
+
+  if (!left || !right) return false
+
+  return Math.abs(left - right) <= 1
+}
+
+function scoreOptionAgainstEditRequest(option = {}, editData = {}) {
+  if (!option || !editData) return 0
+
+  const optionId = s(option?.id || option?._id)
+  const editOptionId = getOptionId(editData)
+
+  if (optionId && editOptionId && optionId === editOptionId) return 1000
+
+  const optionPaidMinutes = getOptionPaidMinutes(option)
+  const editPaidMinutes = getOptionPaidMinutes(editData)
+  const optionRequestedMinutes = getOptionRequestedMinutes(option)
+  const editRequestedMinutes = getOptionRequestedMinutes(editData)
+  const optionTimingMode = getOptionTimingMode(option)
+  const editTimingMode = getOptionTimingMode(editData)
+  const optionLabel = getOptionLabel(option)
+  const editLabel = getOptionLabel(editData)
+
+  let score = 0
+
+  if (nearlySameMinutes(optionPaidMinutes, editPaidMinutes)) score += 120
+  if (nearlySameMinutes(optionRequestedMinutes, editRequestedMinutes)) score += 40
+  if (optionTimingMode && editTimingMode && optionTimingMode === editTimingMode) score += 20
+  if (optionLabel && editLabel && optionLabel === editLabel) score += 15
+
+  return score
+}
+
+function findBestEditRequestOption(rows = [], editData = {}) {
+  let bestOption = null
+  let bestScore = 0
+
+  for (const item of rows) {
+    const score = scoreOptionAgainstEditRequest(item, editData)
+
+    if (score > bestScore) {
+      bestOption = item
+      bestScore = score
+    }
+  }
+
+  return bestScore >= 100 ? bestOption : null
+}
+
+function getEditRequestCustomDurationHours(data = {}) {
+  const minutes = getOptionPaidMinutes(data)
+
+  if (!minutes) return null
+
+  return round2(minutes / 60)
 }
 
 function removeUnavailableSelectedEmployees() {
@@ -779,23 +1002,22 @@ function hydrateFormFromEditRequest(data = {}) {
 
   editRequestDetail.value = data
 
+  const editTimingSource = getEditRequestTimingSource(data)
+
   form.otDate = parseYMDToDate(data?.otDate) || new Date()
   form.shiftId = s(data?.shiftId)
-  form.otTimingSource = upper(data?.otTimingSource || 'SHIFT_OPTION')
-  form.shiftOtOptionId = s(data?.shiftOtOptionId)
+  form.otTimingSource = editTimingSource
+  form.shiftOtOptionId = getOptionId(data)
   form.customStartTime = s(data?.customStartTime || data?.requestStartTime || data?.startTime)
   form.customEndTime = s(data?.customEndTime || data?.requestEndTime || data?.endTime)
   form.customBreakMinutes = n(data?.customBreakMinutes ?? data?.breakMinutes)
-  form.customDurationHours = null
+  form.customDurationHours =
+    editTimingSource === 'CUSTOM_FIXED' ? getEditRequestCustomDurationHours(data) : null
   form.reason = s(data?.reason)
 
   requesterEmployee.value = hydrateRequesterFromEditRequest(data)
 
-  const sourceEmployees = Array.isArray(data?.requestedEmployees) && data.requestedEmployees.length
-    ? data.requestedEmployees
-    : Array.isArray(data?.employees)
-      ? data.employees
-      : []
+  const sourceEmployees = getEditRequestSourceEmployees(data)
 
   selectedEmployees.value = sourceEmployees
     .map(normalizeSelectedEmployee)
@@ -890,8 +1112,14 @@ async function loadUnavailableEmployeesForDate() {
   loadingUnavailableEmployees.value = true
 
   try {
+    const params = { otDate }
+
+    if (isEditMode.value && editRequestId.value) {
+      params.excludeRequestId = editRequestId.value
+    }
+
     const res = await api.get('/ot/requests/unavailable-employees', {
-      params: { otDate },
+      params,
     })
 
     if (requestSeq !== unavailableRequestSeq) return
@@ -946,11 +1174,21 @@ async function loadShiftOptionsForSelectedShift(options = {}) {
     shiftOptions.value = rows
     lastLoadedShiftKey.value = loadKey
 
-    if (keepSelectedOption && currentOptionId) {
-      const exists = rows.some((item) => s(item.id || item._id) === currentOptionId)
+    if (keepSelectedOption) {
+      const existingOption = rows.find((item) => s(item.id || item._id) === currentOptionId)
+      const editTimingSource = isEditMode.value
+        ? getEditRequestTimingSource(editRequestDetail.value)
+        : ''
+      const editOption = isEditMode.value
+        ? findBestEditRequestOption(rows, editRequestDetail.value)
+        : null
 
-      if (exists) {
-        form.shiftOtOptionId = currentOptionId
+      if (existingOption) {
+        form.shiftOtOptionId = s(existingOption.id || existingOption._id)
+      } else if (editOption) {
+        form.shiftOtOptionId = s(editOption.id || editOption._id)
+      } else if (editTimingSource === 'CUSTOM_FIXED' && rows.length) {
+        form.shiftOtOptionId = rows[0].id
       } else if (rows.length === 1) {
         form.shiftOtOptionId = rows[0].id
       } else {
@@ -1155,6 +1393,10 @@ function normalizeDuplicateEmployees(error) {
       employeeName: s(item?.employeeName),
       employeeLabel: s(item?.employeeLabel),
       requestNo: s(item?.requestNo),
+      requesterEmployeeId: s(item?.requesterEmployeeId),
+      requesterCode: s(item?.requesterCode || item?.requesterEmployeeCode),
+      requesterName: s(item?.requesterName),
+      requesterLabel: s(item?.requesterLabel),
       status: s(item?.status),
       otDate: s(item?.otDate),
     }))
@@ -1557,6 +1799,8 @@ onMounted(async () => {
         :blocked-employee-map="unavailableEmployeeMap"
         :blocked-loading="loadingUnavailableEmployees"
         :request-preview="pickerRequestPreview"
+        :is-edit-mode="isEditMode"
+        :editable-request-employee-map="editableRequestEmployeeMap"
         @loading-change="employeePickerLoading = $event"
       />
 

@@ -346,6 +346,7 @@ const listOTApprovalInboxQuerySchema = z.object({
 
 const unavailableOTEmployeesQuerySchema = z.object({
   otDate: ymdSchema,
+  excludeRequestId: optionalObjectIdSchema,
 })
 
 const otRequestIdParamSchema = z.object({
