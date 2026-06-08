@@ -25,7 +25,7 @@ function getActorLabel(actor = {}) {
 async function downloadSalaryTemplate() {
   return {
     filename: 'payment-salary-template.xlsx',
-    buffer: buildSalaryTemplateWorkbook(),
+    buffer: await buildSalaryTemplateWorkbook(),
   }
 }
 
@@ -58,7 +58,7 @@ async function calculateAndExportPayment({
   const safeFrom = s(fromDate).replace(/[^\d-]/g, '')
   const safeTo = s(toDate).replace(/[^\d-]/g, '')
 
-  const buffer = buildPaymentWorkbook({
+  const buffer = await buildPaymentWorkbook({
     ...data,
     exportedBy: s(getActorLabel(actor)),
   })

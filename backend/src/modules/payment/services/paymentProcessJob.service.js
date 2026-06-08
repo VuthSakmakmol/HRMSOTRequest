@@ -274,7 +274,7 @@ async function runExportJob(jobId) {
     const safeFrom = s(job.input.fromDate).replace(/[^\d-]/g, '')
     const safeTo = s(job.input.toDate).replace(/[^\d-]/g, '')
 
-    const buffer = buildPaymentWorkbook({
+    const buffer = await buildPaymentWorkbook({
       ...data,
       exportedBy: s(job.actor?.label),
     })
