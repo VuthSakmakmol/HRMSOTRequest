@@ -5,10 +5,8 @@ const { z } = require('zod')
 
 const OT_STATUS = [
   'PENDING',
-  'PENDING_REQUESTER_CONFIRMATION',
   'APPROVED',
   'REJECTED',
-  'REQUESTER_DISAGREED',
   'CANCELLED',
 ]
 

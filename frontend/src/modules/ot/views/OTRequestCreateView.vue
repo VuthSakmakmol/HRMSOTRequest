@@ -308,10 +308,10 @@ const employeePickerReady = computed(() => {
   )
 })
 
+// Readiness flag for loading/listing employees only. It does not select employees.
 const autoSelectEmployeesReady = computed(() => {
   return Boolean(
-    !isEditMode.value &&
-      employeePickerReady.value &&
+    employeePickerReady.value &&
       !loadingUnavailableEmployees.value &&
       !loadingShiftOptions.value,
   )
@@ -1758,14 +1758,7 @@ onMounted(async () => {
     class="ot-create-page"
     :class="{ 'is-confirm-dialog-open': confirmVisible }"
   >
-    <Message
-      v-if="isEditMode"
-      severity="info"
-      :closable="false"
-      class="ot-edit-mode-message"
-    >
-      {{ labelOr('ot.requests.edit.editModeMessage', 'Editing pending OT request. Changes are allowed only before any approval step is approved.') }}
-    </Message>
+
 
     <div
       v-if="pageLoading"
@@ -1794,7 +1787,6 @@ onMounted(async () => {
         :ot-date="selectedDateYMD"
         :selected-shift-id="sharedShiftIdForPicker"
         :selected-shift-label="sharedShiftLabelForPicker"
-        :auto-select-all="!isEditMode"
         :auto-select-ready="autoSelectEmployeesReady"
         :blocked-employee-map="unavailableEmployeeMap"
         :blocked-loading="loadingUnavailableEmployees"

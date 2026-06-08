@@ -2,7 +2,7 @@
 <script setup>
 // frontend/src/modules/ot/components/OTEmployeeMultiPicker.vue
 
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
 
@@ -12,12 +12,9 @@ import Checkbox from 'primevue/checkbox'
 import InputNumber from 'primevue/inputnumber'
 import Message from 'primevue/message'
 import ProgressSpinner from 'primevue/progressspinner'
-import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 
-import api from '@/shared/services/api'
 import { getEmployeeLookupOptions } from '@/modules/org/employee.api'
-import { getLineLookupOptions } from '@/modules/org/line.api'
 
 const props = defineProps({
   modelValue: {
@@ -101,8 +98,8 @@ const manualSelectionTouched = ref(false)
 const search = ref('')
 const employeeSearchValue = ref('')
 const selectedLineId = ref('')
-const employeeScope = ref('MANAGED')
-const canSelectOtherEmployees = ref(false)
+const employeeScope = ref('ALL')
+const canSelectOtherEmployees = ref(true)
 
 const employeeSuggestions = ref([])
 const loadingSuggestions = ref(false)
@@ -149,16 +146,11 @@ const nextPageToLoad = computed(() => {
   return loadedPages.value.size + 1
 })
 
-const hasActiveTableFilter = computed(() => {
-  return Boolean(
-    toTrimmedString(search.value) ||
-      toTrimmedString(selectedLineId.value),
-  )
-})
+const hasActiveTableFilter = computed(() => Boolean(toTrimmedString(search.value)))
 
-// Important UX rule:
-// The table is a selected-employee review table, not a full employee directory.
-// Candidate employees are fetched silently for auto-select and only appear while searching.
+// Default list = employees under the requester.
+// Search box = global employee search.
+// No "my employees/all employees" selector, no line selector, and no auto-select.
 const hasSearchCandidateMode = computed(() => Boolean(toTrimmedString(search.value)))
 
 const defaultTime = computed(() => {
@@ -220,35 +212,15 @@ const pickerBusy = computed(() => {
   )
 })
 
-const employeeScopeOptions = computed(() => [
-  {
-    label: t('ot.requests.create.employeePicker.myEmployees'),
-    value: 'MANAGED',
-  },
-  {
-    label: t('ot.requests.create.employeePicker.allEmployees'),
-    value: 'ALL',
-  },
-])
-
-const lineOptions = computed(() => [
-  {
-    label: t('ot.requests.create.employeePicker.allLines'),
-    value: '',
-  },
-  ...remoteLineOptions.value,
-])
 
 const displayedEmployees = computed(() => {
   const keyword = toTrimmedString(search.value).toLowerCase()
-  const lineId = toTrimmedString(selectedLineId.value)
 
   return employees.value
     .filter((employee) => {
-      if (lineId && toTrimmedString(employee?.lineId) !== lineId) {
-        return isSelected(employee)
-      }
-
+      // Default mode must show every employee under the requester.
+      // Selected rows are merged into employees.value separately; they must not be
+      // the only rows shown when the search box is empty.
       if (!keyword) return true
 
       if (isSelected(employee)) return true
@@ -261,7 +233,7 @@ const displayedEmployees = computed(() => {
         employee.positionName,
         employee.shiftCode,
         employee.shiftName,
-        employee.isOutsideManaged ? 'outside other employee' : 'my employee managed team',
+        employee.isOutsideManaged ? 'outside employee global employee' : 'employee',
       ]
         .join(' ')
         .toLowerCase()
@@ -1326,21 +1298,30 @@ function toggleLineGroup(group, checked) {
   removeRows(rows)
 }
 
-function buildEmployeeParams(targetPage, targetScope = employeeScope.value) {
-  return {
+function buildEmployeeParams(targetPage, targetScope = 'MANAGED') {
+  const cleanScope = toUpperCode(targetScope) === 'ALL' ? 'ALL' : 'MANAGED'
+  const keyword = toTrimmedString(search.value)
+
+  const params = {
     page: targetPage,
     limit: PAGE_SIZE,
-    search: toTrimmedString(search.value),
-    q: toTrimmedString(search.value),
-    lineId: toTrimmedString(selectedLineId.value),
-    shiftId: toTrimmedString(props.selectedShiftId),
+    search: keyword,
+    q: keyword,
+    lineId: '',
+    shiftId: '',
     isActive: true,
     otEligibleOnly: true,
     hasLineOnly: true,
-    scope: targetScope,
-    all: targetScope === 'ALL',
-    includeAll: targetScope === 'ALL',
+    purpose: 'OT_REQUEST_PICKER',
+    scope: cleanScope,
   }
+
+  if (cleanScope === 'ALL') {
+    params.all = true
+    params.includeAll = true
+  }
+
+  return params
 }
 
 function buildBulkManagedParams(targetPage) {
@@ -1350,59 +1331,24 @@ function buildBulkManagedParams(targetPage) {
     search: '',
     q: '',
     lineId: '',
-    shiftId: toTrimmedString(props.selectedShiftId),
+    shiftId: '',
     isActive: true,
     otEligibleOnly: true,
     hasLineOnly: true,
+    purpose: 'OT_REQUEST_PICKER',
     scope: 'MANAGED',
   }
 }
 
 async function loadAccess() {
-  loadingAccess.value = true
-
-  try {
-    const res = await api.get('/auth/me')
-    const access = extractAuthAccess(res)
-
-    canSelectOtherEmployees.value = access.canLookupAll
-
-    if (!canSelectOtherEmployees.value && employeeScope.value === 'ALL') {
-      employeeScope.value = 'MANAGED'
-    }
-  } catch {
-    canSelectOtherEmployees.value = false
-    employeeScope.value = 'MANAGED'
-  } finally {
-    loadingAccess.value = false
-  }
+  // Default table uses the requester's managed employees.
+  // The search box uses global OT picker lookup when the requester types a keyword.
+  canSelectOtherEmployees.value = true
+  employeeScope.value = 'MANAGED'
 }
 
 async function loadLineOptions() {
-  loadingLines.value = true
-
-  try {
-    const res = await getLineLookupOptions({
-      page: 1,
-      limit: 100,
-      isActive: 'true',
-      sortBy: 'code',
-      sortOrder: 'asc',
-    })
-
-    remoteLineOptions.value = normalizeLineOptionsResponse(res)
-  } catch (error) {
-    remoteLineOptions.value = []
-
-    toast.add({
-      severity: 'warn',
-      summary: t('ot.requests.create.employeePicker.lineFilterUnavailableTitle'),
-      detail: buildApiErrorMessage(error) || t('ot.requests.create.employeePicker.lineFilterUnavailableDetail'),
-      life: 3000,
-    })
-  } finally {
-    loadingLines.value = false
-  }
+  remoteLineOptions.value = []
 }
 
 function clearLineUiState() {
@@ -1491,7 +1437,7 @@ function clearEmployeeSuggestionSearch() {
   search.value = ''
 }
 
-async function fetchEmployeePage(targetPage = 1, { replace = false, silent = false } = {}) {
+async function fetchEmployeePage(targetPage = 1, { replace = false, silent = false, scope = 'MANAGED' } = {}) {
   if (!props.otDate) {
     resetEmployeeListState()
     return
@@ -1509,7 +1455,7 @@ async function fetchEmployeePage(targetPage = 1, { replace = false, silent = fal
   }
 
   try {
-    const res = await getEmployeeLookupOptions(buildEmployeeParams(targetPage))
+    const res = await getEmployeeLookupOptions(buildEmployeeParams(targetPage, scope))
 
     const payload = normalizeEmployeeLookupResponse(res)
 
@@ -1546,11 +1492,87 @@ async function fetchEmployeePage(targetPage = 1, { replace = false, silent = fal
   }
 }
 
+
+async function loadManagedEmployeesToTable() {
+  if (!props.otDate) {
+    resetEmployeeListState()
+    return
+  }
+
+  const currentSeq = ++requestSeq
+  const rows = []
+  let currentPage = 1
+  let keepLoading = true
+
+  loading.value = true
+
+  try {
+    while (keepLoading) {
+      const res = await getEmployeeLookupOptions(buildBulkManagedParams(currentPage))
+
+      const payload = normalizeEmployeeLookupResponse(res)
+
+      rows.push(...payload.rows)
+
+      const loaded = currentPage * BULK_PAGE_SIZE
+      keepLoading = loaded < payload.total && payload.rows.length > 0
+      currentPage += 1
+
+      if (currentPage > MAX_BULK_PAGES) keepLoading = false
+    }
+
+    if (currentSeq !== requestSeq) return
+
+    employees.value = mergeLoadedEmployees(selectedRows.value, rows)
+    total.value = employees.value.length
+    loadedPages.value = new Set()
+    clearLineUiState()
+    syncLineState()
+  } catch (error) {
+    if (currentSeq === requestSeq) {
+      resetEmployeeListState()
+
+      toast.add({
+        severity: 'error',
+        summary: t('ot.requests.create.employeePicker.employeeLoadFailedTitle'),
+        detail: buildApiErrorMessage(error),
+        life: 3000,
+      })
+    }
+  } finally {
+    if (currentSeq === requestSeq) {
+      loading.value = false
+      loadingMore.value = false
+    }
+  }
+}
+
+function shouldLoadManagedEmployeesInFull() {
+  return false
+}
+
 async function resetAndLoadEmployees() {
-  // Do not load every employee into the visible table.
-  // Keep the table clean and show selected employees only.
   resetEmployeeListState()
-  showSelectedOnlyTable()
+
+  if (!props.otDate || props.blockedLoading) {
+    showSelectedOnlyTable()
+    return
+  }
+
+  if (!toTrimmedString(search.value)) {
+    await loadManagedEmployeesToTable()
+    return
+  }
+
+  await fetchEmployeePage(1, {
+    replace: true,
+    silent: true,
+    scope: 'ALL',
+  })
+
+  if (!employees.value.length) {
+    showSelectedOnlyTable()
+  }
 }
 
 async function onLazyScroll(event) {
@@ -1568,72 +1590,16 @@ async function onLazyScroll(event) {
   await fetchEmployeePage(nextPageToLoad.value, {
     replace: false,
     silent: false,
+    scope: toTrimmedString(search.value) ? 'ALL' : 'MANAGED',
   })
 }
 
 async function autoSelectManagedEmployees() {
-  if (!props.autoSelectAll) return
-  if (!props.autoSelectReady) return
-  if (!props.otDate) return
-  if (props.blockedLoading) return
-  if (selectingManaged.value) return
-
-  // Auto-select is only first-time helper.
-  // After user manually changes/unselects employee, do not auto-select again.
-  if (manualSelectionTouched.value) return
-
-  const nextKey = [
-    props.otDate,
-    toTrimmedString(props.selectedShiftId),
-    defaultTimeKey.value,
-    blockedStamp.value,
-  ].join('|')
-
-  if (autoSelectKey === nextKey) return
-
-  autoSelectKey = nextKey
-  selectingManaged.value = true
-
-  try {
-    const rows = []
-    let currentPage = 1
-    let keepLoading = true
-
-    while (keepLoading) {
-      const res = await getEmployeeLookupOptions(buildBulkManagedParams(currentPage))
-      const payload = normalizeEmployeeLookupResponse(res)
-
-      rows.push(...payload.rows)
-
-      const loaded = currentPage * BULK_PAGE_SIZE
-      keepLoading = loaded < payload.total && payload.rows.length > 0
-      currentPage += 1
-
-      if (currentPage > MAX_BULK_PAGES) keepLoading = false
-    }
-
-    const selectableRows = rows.filter((row) => !getEmployeeBlockInfo(row).blocked)
-    const nextSelectedRows = mergeUniqueRows([...selectedRows.value, ...selectableRows])
-
-    emitSelected(nextSelectedRows)
-
-    // Fetch silently, but do not show all fetched/unselected employees.
-    // The requester should only review the employees that will be submitted.
-    employees.value = mergeLoadedEmployees(nextSelectedRows, [])
-    total.value = employees.value.length
-    loadedPages.value = new Set()
-    clearLineUiState()
-    syncLineState()
-  } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: t('ot.requests.create.employeePicker.autoSelectFailedTitle'),
-      detail: buildApiErrorMessage(error) || t('ot.requests.create.employeePicker.autoSelectFailedDetail'),
-      life: 3000,
-    })
-  } finally {
-    selectingManaged.value = false
-  }
+  // Intentionally disabled.
+  // Business rule: creating/editing OT may list managed employees, but must never
+  // automatically select all employees in the multi picker.
+  // Requester must choose each employee manually.
+  return
 }
 
 function removeInvalidSelectedRows() {
@@ -1656,11 +1622,9 @@ async function searchEmployeeSuggestions(event = {}) {
 
   if (!props.otDate || !keyword) {
     employeeSuggestions.value = []
-    showSelectedOnlyTable()
+    await resetAndLoadEmployees()
     return
   }
-
-  const suggestionScope = canSelectOtherEmployees.value ? 'ALL' : employeeScope.value
 
   loadingSuggestions.value = true
 
@@ -1671,22 +1635,24 @@ async function searchEmployeeSuggestions(event = {}) {
       search: keyword,
       q: keyword,
       lineId: '',
-      shiftId: toTrimmedString(props.selectedShiftId),
+      shiftId: '',
       isActive: true,
       otEligibleOnly: true,
       hasLineOnly: true,
-      scope: suggestionScope,
-      all: suggestionScope === 'ALL',
-      includeAll: suggestionScope === 'ALL',
+      purpose: 'OT_REQUEST_PICKER',
+      scope: 'ALL',
+      all: true,
+      includeAll: true,
     })
 
     const payload = normalizeEmployeeLookupResponse(res)
 
     employeeSuggestions.value = payload.rows
 
-    // Show only selected rows + current search matches.
+    // While searching, show selected rows + current global search matches.
+    // When search is cleared, the table returns to the requester's managed employees.
     employees.value = mergeLoadedEmployees(selectedRows.value, payload.rows)
-    total.value = employees.value.length
+    total.value = Math.max(Number(payload.total || 0), employees.value.length)
     loadedPages.value = new Set([1])
     clearLineUiState()
     syncLineState()
@@ -1697,12 +1663,12 @@ async function searchEmployeeSuggestions(event = {}) {
   }
 }
 
-function onEmployeeAutocompleteSelect(event = {}) {
+async function onEmployeeAutocompleteSelect(event = {}) {
   const employee = normalizeEmployeeRecord(event.value)
 
   if (!employee) {
     clearEmployeeSuggestionSearch()
-    showSelectedOnlyTable()
+    await resetAndLoadEmployees()
     return
   }
 
@@ -1717,7 +1683,7 @@ function onEmployeeAutocompleteSelect(event = {}) {
     })
 
     clearEmployeeSuggestionSearch()
-    showSelectedOnlyTable()
+    await resetAndLoadEmployees()
     return
   }
 
@@ -1729,38 +1695,26 @@ function onEmployeeAutocompleteSelect(event = {}) {
   }
 
   selectRows([employee])
+  clearEmployeeSuggestionSearch()
 
-  // Keep table simple after select:
-  // selected employees only, so it will not show every line.
-  employees.value = mergeLoadedEmployees([...selectedRows.value, employee], [])
-  total.value = employees.value.length
-  clearLineUiState()
-  syncLineState()
+  await nextTick()
+  await resetAndLoadEmployees()
   openEmployeeGroup(employee)
-
-  clearEmployeeSuggestionSearch()
 }
 
-function onFilterChange() {
-  // Line filter should not load a long unselected employee list.
-  showSelectedOnlyTable()
+async function onFilterChange() {
+  await resetAndLoadEmployees()
 }
 
-watch(employeeScope, () => {
-  // Switching to All Employees changes the search/auto-select scope only.
-  // It must not turn the table into a long employee directory.
-  clearEmployeeSuggestionSearch()
-  showSelectedOnlyTable()
-})
 
-watch(employeeSearchValue, (value) => {
+watch(employeeSearchValue, async (value) => {
   if (toTrimmedString(value)) return
 
   if (!toTrimmedString(search.value) && !employeeSuggestions.value.length) return
 
   search.value = ''
   employeeSuggestions.value = []
-  showSelectedOnlyTable()
+  await resetAndLoadEmployees()
 })
 
 watch(
@@ -1786,7 +1740,7 @@ watch(
     const dateChanged = nextOtDate !== lastWatchedOtDate
 
     if (dateChanged) {
-      // New OT date = allow first-time auto-select again.
+      // New OT date resets manual state only. Employees are still never auto-selected.
       manualSelectionTouched.value = false
       autoSelectKey = ''
       lastWatchedOtDate = nextOtDate
@@ -1799,15 +1753,12 @@ watch(
 
     resetEmployeeListState()
 
-    if (!props.otDate) return
-
-    await autoSelectManagedEmployees()
-
-    if (!employees.value.length) {
+    if (!props.otDate) {
       showSelectedOnlyTable()
-    } else {
-      syncLineState()
+      return
     }
+
+    await resetAndLoadEmployees()
   },
 )
 
@@ -1815,13 +1766,7 @@ watch(
   () => [props.otDate, props.autoSelectReady, props.blockedLoading, blockedStamp.value].join('|'),
   async () => {
     removeInvalidSelectedRows()
-    await autoSelectManagedEmployees()
-
-    if (!employees.value.length) {
-      showSelectedOnlyTable()
-    } else {
-      syncLineState()
-    }
+    await resetAndLoadEmployees()
   },
 )
 
@@ -1830,20 +1775,11 @@ watch(selectedRowsKey, () => {
 })
 
 onMounted(async () => {
-  await Promise.all([
-    loadAccess(),
-    loadLineOptions(),
-  ])
+  await loadAccess()
 
   lastWatchedOtDate = toTrimmedString(props.otDate)
 
-  await autoSelectManagedEmployees()
-
-  if (!employees.value.length) {
-    showSelectedOnlyTable()
-  } else {
-    syncLineState()
-  }
+  await resetAndLoadEmployees()
 })
 
 onBeforeUnmount(() => {
@@ -1891,29 +1827,6 @@ onBeforeUnmount(() => {
           </div>
         </template>
       </AutoComplete>
-
-      <Select
-        v-model="employeeScope"
-        :options="employeeScopeOptions"
-        option-label="label"
-        option-value="value"
-        class="ot-scope-filter"
-        size="small"
-        :placeholder="t('ot.requests.create.employeePicker.scopePlaceholder')"
-        :disabled="loadingAccess"
-      />
-
-      <Select
-        v-model="selectedLineId"
-        :options="lineOptions"
-        option-label="label"
-        option-value="value"
-        class="ot-line-filter"
-        size="small"
-        :placeholder="t('ot.requests.create.employeePicker.allLines')"
-        :loading="loadingLines"
-        @change="onFilterChange"
-      />
     </div>
 
     <Message
@@ -1948,11 +1861,7 @@ onBeforeUnmount(() => {
         />
 
         <span>
-          {{
-            selectingManaged
-              ? t('ot.requests.create.employeePicker.autoSelecting')
-              : t('ot.requests.create.employeePicker.loadingEmployees')
-          }}
+{{ t('ot.requests.create.employeePicker.loadingEmployees') }}
         </span>
       </div>
 
@@ -1962,9 +1871,13 @@ onBeforeUnmount(() => {
       >
         <i class="pi pi-users" />
 
-        <strong>{{ t('ot.requests.create.employeePicker.emptyTitle') }}</strong>
+        <strong>
+          {{ toTrimmedString(search) ? t('ot.requests.create.employeePicker.emptyTitle') : 'No employees under your scope' }}
+        </strong>
 
-        <span>{{ t('ot.requests.create.employeePicker.emptyText') }}</span>
+        <span>
+          {{ toTrimmedString(search) ? t('ot.requests.create.employeePicker.emptyText') : 'Use the search box above to find employees globally.' }}
+        </span>
       </div>
 
       <div
@@ -2000,12 +1913,9 @@ onBeforeUnmount(() => {
               />
 
               <Tag
-                :value="t('ot.requests.create.employeePicker.groupSelectedCount', {
-                  selected: group.selectedCount,
-                  total: group.count,
-                })"
+                :value="pad2(group.selectedCount || 0)"
                 :severity="group.selectedCount ? 'success' : 'secondary'"
-                class="ot-status-tag"
+                class="ot-status-tag ot-selected-count-tag"
               />
 
               <Tag
@@ -2022,13 +1932,6 @@ onBeforeUnmount(() => {
                 :value="t('ot.requests.create.employeePicker.manualOnly')"
                 severity="warning"
                 class="ot-status-tag"
-              />
-
-              <Checkbox
-                binary
-                :model-value="isLineGroupSelected(group)"
-                :disabled="!group.selectableCount"
-                @update:model-value="(checked) => toggleLineGroup(group, checked)"
               />
             </div>
           </div>
@@ -2204,16 +2107,6 @@ onBeforeUnmount(() => {
 .ot-search-field {
   flex: 1 1 320px;
   min-width: 240px;
-}
-
-.ot-scope-filter {
-  flex: 0 0 150px;
-  width: 150px;
-}
-
-.ot-line-filter {
-  flex: 0 0 170px;
-  width: 170px;
 }
 
 .ot-table-shell {
@@ -2485,6 +2378,16 @@ onBeforeUnmount(() => {
   white-space: nowrap !important;
 }
 
+:deep(.p-tag.ot-selected-count-tag) {
+  min-width: 2.05rem !important;
+  min-height: 1.58rem !important;
+  justify-content: center !important;
+  padding: 0.16rem 0.58rem !important;
+  font-size: 0.82rem !important;
+  font-weight: 700 !important;
+  font-variant-numeric: tabular-nums;
+}
+
 :deep(.p-button.p-button-sm) {
   min-height: 1.85rem !important;
   padding: 0.3rem 0.52rem !important;
@@ -2517,9 +2420,7 @@ onBeforeUnmount(() => {
   }
 
   .ot-title-block,
-  .ot-search-field,
-  .ot-scope-filter,
-  .ot-line-filter {
+  .ot-search-field {
     width: 100%;
     flex: 1 1 auto;
     min-width: 0;

@@ -88,6 +88,35 @@ function uniqueStrings(values = []) {
   ]
 }
 
+function getPermissionCodes(user = {}) {
+  return Array.isArray(user?.effectivePermissionCodes)
+    ? user.effectivePermissionCodes.map((item) => upper(item)).filter(Boolean)
+    : []
+}
+
+function hasAnyPermission(user = {}, codes = []) {
+  const permissionSet = new Set(getPermissionCodes(user))
+
+  return codes.some((code) => permissionSet.has(upper(code)))
+}
+
+function canUseGlobalOTRequestEmployeePicker(user = {}) {
+  return (
+    user?.isRootAdmin === true ||
+    hasAnyPermission(user, [
+      'OT_REQUEST_CREATE',
+      'OT_REQUEST_UPDATE',
+      'OT_REQUEST_VIEW_ALL',
+      'OT_REQUEST_APPROVE',
+      'EMPLOYEE_LOOKUP_ALL',
+      'EMPLOYEE_VIEW_ALL',
+      'ORG_EMPLOYEE_VIEW_ALL',
+      'ORG.EMPLOYEE_VIEW_ALL',
+      'OT_ADD_OTHER_LINE_EMPLOYEE',
+    ])
+  )
+}
+
 function cleanupOldImportProgressJobs() {
   const now = Date.now()
 
@@ -910,8 +939,6 @@ function buildEmployeeListFilter(
     positionId = '',
     lineId = '',
     shiftId = '',
-    managerEmployeeId = '',
-    reportsToEmployeeId = '',
     isActive,
     otEligibleOnly = false,
   } = {},
@@ -962,19 +989,6 @@ function buildEmployeeListFilter(
 
   if (shiftId && isObjectId(shiftId)) {
     filter.shiftId = objectId(shiftId)
-  }
-
-  const effectiveManagerEmployeeId = managerEmployeeId || reportsToEmployeeId
-
-  if (effectiveManagerEmployeeId && isObjectId(effectiveManagerEmployeeId)) {
-    const managerObjectId = objectId(effectiveManagerEmployeeId)
-
-    addAndFilter(filter, {
-      $or: [
-        { reportsToEmployeeId: managerObjectId },
-        { lineManagerIds: managerObjectId },
-      ],
-    })
   }
 
   if (typeof isActive === 'boolean') {
@@ -1632,8 +1646,81 @@ async function assertReadableEmployee(currentUser, employeeId) {
   }
 }
 
+
+async function buildOTManagedPickerScopeFilter(currentUser) {
+  if (currentUser?.isRootAdmin === true) {
+    return {}
+  }
+
+  const orConditions = []
+
+  const scopedFilter = await employeeScopeService.buildEmployeeScopeFilter(currentUser, {
+    allowAll: false,
+  })
+
+  const scopedIds = Array.isArray(scopedFilter?._id?.$in)
+    ? scopedFilter._id.$in
+    : []
+
+  if (scopedIds.length) {
+    orConditions.push({
+      _id: {
+        $in: scopedIds,
+      },
+    })
+  }
+
+  const currentEmployeeId = await employeeScopeService.resolveCurrentUserEmployeeId(currentUser)
+
+  if (currentEmployeeId && isObjectId(currentEmployeeId)) {
+    const requester = await Employee.findById(
+      currentEmployeeId,
+      {
+        lineId: 1,
+        lineIds: 1,
+      },
+    ).lean()
+
+    const requesterLineIds = uniqueIds([
+      requester?.lineId,
+      ...(Array.isArray(requester?.lineIds) ? requester.lineIds : []),
+    ])
+      .filter(isObjectId)
+      .map(objectId)
+
+    if (requesterLineIds.length) {
+      orConditions.push(
+        {
+          lineId: {
+            $in: requesterLineIds,
+          },
+        },
+        {
+          lineIds: {
+            $in: requesterLineIds,
+          },
+        },
+      )
+    }
+  }
+
+  if (orConditions.length) {
+    return {
+      $or: orConditions,
+    }
+  }
+
+  return scopedFilter
+}
+
 async function buildEmployeeLookupScopeFilter(query, currentUser) {
+  const isOTRequestPicker = upper(query.purpose) === 'OT_REQUEST_PICKER'
+
   if (query.scope === 'ALL') {
+    if (isOTRequestPicker && canUseGlobalOTRequestEmployeePicker(currentUser)) {
+      return {}
+    }
+
     if (!employeeScopeService.canLookupAllEmployees(currentUser)) {
       throw appError({
         statusCode: 403,
@@ -1647,6 +1734,10 @@ async function buildEmployeeLookupScopeFilter(query, currentUser) {
     }
 
     return {}
+  }
+
+  if (isOTRequestPicker) {
+    return buildOTManagedPickerScopeFilter(currentUser)
   }
 
   return employeeScopeService.buildEmployeeScopeFilter(currentUser)
@@ -1719,13 +1810,15 @@ async function lookup(query = {}, currentUser = null) {
       positionId: query.positionId,
       lineId: query.lineId,
       shiftId: query.shiftId,
-      managerEmployeeId: query.managerEmployeeId || query.reportsToEmployeeId,
-      reportsToEmployeeId: query.reportsToEmployeeId,
       isActive: query.isActive,
       otEligibleOnly: query.otEligibleOnly === true,
     },
     scopeFilter,
   )
+
+  if (query.reportsToEmployeeId && isObjectId(query.reportsToEmployeeId)) {
+    filter.reportsToEmployeeId = objectId(query.reportsToEmployeeId)
+  }
 
   const skip = (query.page - 1) * query.limit
 

@@ -1338,7 +1338,7 @@ onBeforeUnmount(() => {
         :title="tr('ot.requests.loading', 'Loading my OT requests')"
         :message="tr('ot.requests.fetchingRecords', 'Fetching my OT request records')"
         :rows="8"
-        :columns="9"
+        :columns="7"
         icon="pi pi-clock"
       />
 
@@ -1358,7 +1358,7 @@ onBeforeUnmount(() => {
           scroll-height="calc(100vh - 260px)"
           :sort-field="filters.sortBy"
           :sort-order="filters.sortOrder"
-          table-style="min-width: 64rem; table-layout: auto;"
+          table-style="min-width: 44rem; table-layout: auto;"
           class="ot-request-table ot-data-table ot-data-table-compact"
           @sort="onSort"
         >
@@ -1388,22 +1388,10 @@ onBeforeUnmount(() => {
             style="width: 2.1rem; min-width: 2.1rem; max-width: 2.1rem"
           />
 
-          <Column
-            field="requestNo"
-            :header="tr('ot.requests.requestNo', 'Request No')"
-            sortable
-            style="width: 8.2rem; min-width: 8.2rem"
-          >
-            <template #body="{ data }">
-              <span class="ot-request-no-text">
-                {{ data.requestNo || data.otRequestNo || '-' }}
-              </span>
-            </template>
-          </Column>
 
           <Column
             :header="tr('ot.requests.requester', 'Requester')"
-            style="width: 10.2rem; min-width: 10.2rem"
+            style="width: 9.2rem; min-width: 8.8rem"
           >
             <template #body="{ data }">
               <div class="requester-cell">
@@ -1419,28 +1407,20 @@ onBeforeUnmount(() => {
           </Column>
 
           <Column
-            field="status"
-            :header="tr('ot.requests.approvalStatus', 'Approval Status')"
-            sortable
-            style="width: 11rem; min-width: 11rem"
+            :header="tr('ot.requests.otTime', 'OT Time')"
+            style="width: 5.4rem; min-width: 5.2rem"
           >
             <template #body="{ data }">
-              <div class="approval-status-cell">
-                <Tag
-                  :value="displayApproval(data).label"
-                  :class="[
-                    'ot-request-rgb-tag',
-                    'approval-display-tag',
-                    displayApprovalTagClass(data),
-                  ]"
-                />
-              </div>
+              <Tag
+                :value="displayPaidTime(data)"
+                class="ot-request-rgb-tag ot-request-tag-info"
+              />
             </template>
           </Column>
 
           <Column
-            :header="tr('ot.approval.requestedStaff', 'Staff')"
-            style="width: 5.8rem; min-width: 5.8rem"
+            :header="tr('ot.requests.requestStaff', 'Request Staff')"
+            style="width: 5.8rem; min-width: 5.6rem"
           >
             <template #body="{ data }">
               <Tag
@@ -1458,7 +1438,7 @@ onBeforeUnmount(() => {
             field="otDate"
             :header="tr('ot.requests.otDate', 'OT Date')"
             sortable
-            style="width: 6.5rem; min-width: 6.5rem"
+            style="width: 6rem; min-width: 5.8rem"
           >
             <template #body="{ data }">
               <span class="ot-request-meta-text">
@@ -1468,35 +1448,31 @@ onBeforeUnmount(() => {
           </Column>
 
           <Column
-            :header="tr('ot.requests.otTime', 'OT Time')"
-            style="width: 6.2rem; min-width: 6.2rem"
+            field="status"
+            :header="tr('ot.requests.approvalStatus', 'Approval Status')"
+            sortable
+            style="width: 9.4rem; min-width: 9rem"
           >
             <template #body="{ data }">
-              <Tag
-                :value="displayPaidTime(data)"
-                class="ot-request-rgb-tag ot-request-tag-info"
-              />
+              <div class="approval-status-cell">
+                <Tag
+                  :value="displayApproval(data).label"
+                  :class="[
+                    'ot-request-rgb-tag',
+                    'approval-display-tag',
+                    displayApprovalTagClass(data),
+                  ]"
+                />
+              </div>
             </template>
           </Column>
 
-          <Column
-            field="createdAt"
-            :header="tr('common.createdAt', 'Created At')"
-            sortable
-            style="width: 8.6rem; min-width: 8.6rem"
-          >
-            <template #body="{ data }">
-              <span class="ot-request-meta-text">
-                {{ formatDateTimeDMY(data.createdAt) }}
-              </span>
-            </template>
-          </Column>
 
           <Column
             :header="tr('common.action', 'Action')"
             header-class="ot-action-column-header"
             body-class="ot-action-column-body"
-            style="width: 9.4rem; min-width: 9.4rem"
+            style="width: 7.8rem; min-width: 7.4rem"
           >
             <template #body="{ data }">
               <div
@@ -1645,10 +1621,6 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="ot-cancel-summary">
-          <div>
-            <span>{{ tr('ot.requests.requestNo', 'Request No') }}</span>
-            <strong>{{ cancelTargetRequestNo || '-' }}</strong>
-          </div>
 
           <div>
             <span>{{ tr('ot.requests.approvalStatus', 'Approval Status') }}</span>
@@ -1714,10 +1686,6 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="ot-cancel-summary">
-          <div>
-            <span>{{ tr('ot.requests.requestNo', 'Request No') }}</span>
-            <strong>{{ deleteTargetRequestNo || '-' }}</strong>
-          </div>
 
           <div>
             <span>{{ tr('ot.requests.approvalStatus', 'Approval Status') }}</span>
@@ -2251,7 +2219,7 @@ onBeforeUnmount(() => {
 }
 
 .ot-request-main-text {
-  max-width: 9.2rem;
+  max-width: 8rem;
   overflow: hidden;
   color: var(--ot-request-text);
   font-family: var(--ot-font-km) !important;
@@ -2264,7 +2232,7 @@ onBeforeUnmount(() => {
 }
 
 .ot-request-sub-text {
-  max-width: 8.8rem;
+  max-width: 7.6rem;
   overflow: hidden;
   color: var(--ot-request-text-muted);
   font-size: 0.7rem;
@@ -2314,7 +2282,7 @@ onBeforeUnmount(() => {
 }
 
 .approval-display-tag {
-  max-width: 12rem;
+  max-width: 9rem;
 }
 
 .ot-request-tag-approved {
@@ -2848,7 +2816,7 @@ onBeforeUnmount(() => {
   }
 
   :deep(.ot-request-table.p-datatable .p-datatable-table) {
-    min-width: 54rem !important;
+    min-width: 42rem !important;
     table-layout: auto !important;
   }
 

@@ -2090,9 +2090,9 @@ export default {
         timingType: '3. ប្រភេទពេលវេលា',
         presetOption: 'ជម្រើស Preset',
         customFixedTime: 'ពេលវេលា Custom fixed',
-        otOptionPolicy: '4. ជម្រើស OT / គោលការណ៍',
+        otOptionPolicy: '2. ជ្រើសរើសម៉ោង',
         selectTimingType: 'ជ្រើសប្រភេទពេលវេលា',
-        selectOtOption: 'ជ្រើសជម្រើស OT',
+        selectOtOption: 'រើសម៉ោង',
 
         customDefaultTime: 'ពេល OT លំនាំដើម Custom',
         customDefaultTimeHelp:
@@ -2201,7 +2201,7 @@ export default {
         },
 
         employeePicker: {
-          title: '2. ជ្រើសបុគ្គលិក',
+          title: '3. ជ្រើសបុគ្គលិក',
           searchPlaceholder: 'ស្វែងរក ID, ឈ្មោះ, ខ្សែ, មុខតំណែង ឬវេន...',
           scopePlaceholder: 'វិសាលភាពបុគ្គលិក',
 

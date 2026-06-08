@@ -149,8 +149,6 @@ const listEmployeeQuerySchema = z.object({
   positionId: z.string().trim().optional().default(''),
   lineId: z.string().trim().optional().default(''),
   shiftId: z.string().trim().optional().default(''),
-  managerEmployeeId: z.string().trim().optional().default(''),
-  reportsToEmployeeId: z.string().trim().optional().default(''),
 
   isActive: booleanLike,
 
@@ -186,7 +184,6 @@ const lookupEmployeeQuerySchema = z.object({
   lineId: z.string().trim().optional().default(''),
   shiftId: z.string().trim().optional().default(''),
   reportsToEmployeeId: z.string().trim().optional().default(''),
-  managerEmployeeId: z.string().trim().optional().default(''),
 
   // Used by OT employee multipicker only.
   // true = return only employees that belong to at least one production line.
@@ -205,6 +202,16 @@ const lookupEmployeeQuerySchema = z.object({
 
       return ['MANAGED', 'ALL'].includes(scope) ? scope : 'MANAGED'
     }),
+
+  // Used by OT request employee picker. It allows the backend to keep global
+  // search scoped to the OT create/edit workflow instead of changing every
+  // employee lookup in the system.
+  purpose: z
+    .string()
+    .trim()
+    .optional()
+    .default('')
+    .transform((value) => s(value).toUpperCase()),
 })
 
 const createEmployeeSchema = z.object({
