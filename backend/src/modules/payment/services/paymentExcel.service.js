@@ -5,6 +5,8 @@ const ExcelJS = require('exceljs')
 const DEFAULT_DENOMINATIONS = [50000, 20000, 10000, 5000, 1000, 500, 100]
 const COMPANY_NAME = 'Trax Apparel (Cambodia) Co., Ltd'
 const WORKBOOK_FONT = 'Arial'
+const SIGNATURE_LINE_OFFSET = 5
+const MAX_DETAIL_EMPLOYEE_ROWS_PER_SHEET = 20
 
 function s(value) {
   return String(value ?? '').trim()
@@ -23,6 +25,13 @@ function roundAmount(value, decimals = 2) {
   const safeDecimals = Math.min(Math.max(Number(decimals || 0), 0), 6)
   const factor = 10 ** safeDecimals
   return Math.round((Number(value || 0) + Number.EPSILON) * factor) / factor
+}
+
+function formatHourValue(value) {
+  const rounded = roundAmount(value, 2)
+  if (!rounded) return null
+
+  return Number.isInteger(rounded) ? Math.trunc(rounded) : rounded
 }
 
 function getDenominations(data) {
@@ -140,6 +149,23 @@ function formatSheetDate(value, fallback = '') {
   }).format(date)
 
   return `${day}${month}`
+}
+
+function formatDateHeader(value, fallback = '') {
+  const date = parseYmd(value)
+  if (!date) return s(fallback || value)
+
+  const day = new Intl.DateTimeFormat('en-US', {
+    day: '2-digit',
+    timeZone: 'UTC',
+  }).format(date)
+
+  const month = new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    timeZone: 'UTC',
+  }).format(date)
+
+  return `${day}-${month}`
 }
 
 function formatDayOnly(value, fallback = '') {
@@ -266,6 +292,10 @@ function lineGroupLabel(item = {}) {
   return s(item.lineName || item.lineCode || 'No Line')
 }
 
+function lineDisplayValue(group = {}) {
+  return s(group.lineCode || group.lineName || 'No Line')
+}
+
 function buildLineGroups(data = {}, denominations = []) {
   const items = Array.isArray(data.items) ? data.items : []
   const groups = new Map()
@@ -322,6 +352,7 @@ function buildLineGroups(data = {}, denominations = []) {
         monthlySalary: n(item.monthlySalary, 0),
         bankAccount: s(item.bankAccount || item.bankAccountNo || item.bankAccountNumber),
         hoursByDateRate: new Map(),
+        hoursByDate: new Map(),
         items: [],
         otUsd: 0,
         allowanceUsd: 0,
@@ -341,6 +372,10 @@ function buildLineGroups(data = {}, denominations = []) {
       employee.hoursByDateRate.set(
         dateRateKey,
         roundAmount(n(employee.hoursByDateRate.get(dateRateKey), 0) + n(item.payableHours, 0), 2),
+      )
+      employee.hoursByDate.set(
+        otDate,
+        roundAmount(n(employee.hoursByDate.get(otDate), 0) + n(item.payableHours, 0), 2),
       )
       employee.otUsd += n(item.amountUsd, 0)
       employee.allowanceUsd += n(item.allowanceAmountUsd, 0)
@@ -408,10 +443,9 @@ function getPeriodLabel(data = {}) {
   return `${formatShortDate(dates[0])} - ${formatShortDate(dates[dates.length - 1])}`
 }
 
-function reportTitle(data = {}, group = {}) {
+function reportTitle(data = {}) {
   const period = getPeriodLabel(data)
-  const line = s(group.lineName)
-  return `(Name List Worker Working Extra OT On ${period})${line ? ` (${line})` : ''}`
+  return `(Name List Worker Working Extra OT On ${period})`
 }
 
 function colLetter(colNumber) {
@@ -442,13 +476,13 @@ function applyWorkbookProperties(workbook) {
   workbook.modified = new Date()
 }
 
-function setSheetPrintLayout(worksheet, printTitleRows = '1:4') {
+function setSheetPrintLayout(worksheet, printTitleRows = '1:4', options = {}) {
   worksheet.pageSetup = {
     paperSize: 9,
     orientation: 'landscape',
     fitToPage: true,
     fitToWidth: 1,
-    fitToHeight: 0,
+    fitToHeight: options.fitToHeight ?? 0,
     horizontalCentered: true,
     verticalCentered: false,
     printTitlesRow: printTitleRows,
@@ -526,8 +560,9 @@ function styleTitleRow(row, size = 12) {
     size,
   }
   row.alignment = {
-    horizontal: 'left',
+    horizontal: 'center',
     vertical: 'middle',
+    wrapText: true,
   }
 }
 
@@ -538,7 +573,7 @@ function styleNumberColumn(worksheet, colNumbers = [], numberFormat = '#,##0') {
 }
 
 function setDetailColumns(worksheet, dateRateCount, denominations = []) {
-  const widths = [4.5, 10, 18, 13, 13, 8]
+  const widths = [4.5, 10, 18, 13, 22]
   for (let i = 0; i < dateRateCount; i += 1) widths.push(5.5)
   widths.push(10, 10, 10, 11)
   denominations.forEach(() => widths.push(6))
@@ -550,7 +585,7 @@ function setDetailColumns(worksheet, dateRateCount, denominations = []) {
 }
 
 function setSummaryColumns(worksheet, denominations = []) {
-  const widths = [4.5, 18, 18, 10, 9, 11, 11, 11, 12]
+  const widths = [4.5, 30, 10, 9, 11, 11, 11, 12]
   denominations.forEach(() => widths.push(7))
   widths.push(10)
 
@@ -565,35 +600,65 @@ function mergeIfNeeded(worksheet, startRow, startCol, endRow, endCol) {
 }
 
 function buildDateColumnPlan(group = {}) {
-  const columns = []
-  const dateSpans = []
-  let offset = 0
+  const columns = group.dates.map((date) => ({
+    key: date.otDate,
+    otDate: date.otDate,
+    label: formatDateHeader(date.otDate, date.display || date.label),
+  }))
 
-  for (const date of group.dates) {
-    const rateColumns = group.rateLabels.filter((rate) => rate.otDate === date.otDate)
-    const safeRates = rateColumns.length
-      ? rateColumns
-      : [
-          {
-            key: `${date.otDate}|OT`,
-            otDate: date.otDate,
-            rateLabel: 'OT',
-          },
-        ]
+  return { columns, dateSpans: [] }
+}
 
-    dateSpans.push({
-      date,
-      startOffset: offset,
-      endOffset: offset + safeRates.length - 1,
-    })
+function getEmployeeHoursForDate(employee = {}, otDate) {
+  if (employee.hoursByDate && typeof employee.hoursByDate.get === 'function') {
+    return n(employee.hoursByDate.get(otDate), 0)
+  }
 
-    safeRates.forEach((rate) => {
-      columns.push(rate)
-      offset += 1
+  let total = 0
+  if (employee.hoursByDateRate && typeof employee.hoursByDateRate.forEach === 'function') {
+    employee.hoursByDateRate.forEach((hours, key) => {
+      if (String(key).startsWith(`${otDate}|`)) total += n(hours, 0)
     })
   }
 
-  return { columns, dateSpans }
+  return roundAmount(total, 2)
+}
+
+function getSignatureRegions(lastCol) {
+  const totalCols = Math.max(3, n(lastCol, 3))
+  const regionWidth = Math.max(4, Math.floor(totalCols / 3))
+
+  return [
+    { start: 1, end: Math.min(totalCols, regionWidth), label: 'Prepared By Payroll Leader' },
+    { start: Math.min(totalCols, regionWidth + 1), end: Math.min(totalCols, regionWidth * 2), label: 'Checked By Sup HR' },
+    { start: Math.min(totalCols, regionWidth * 2 + 1), end: totalCols, label: 'Verified By HRM' },
+  ].filter((region) => region.start <= region.end)
+}
+
+function styleSignatureBlockText(worksheet, signatureRowNumber, lastCol) {
+  worksheet.getRow(signatureRowNumber).height = 22
+  worksheet.getRow(signatureRowNumber + SIGNATURE_LINE_OFFSET).height = 22
+
+  getSignatureRegions(lastCol).forEach((region) => {
+    const labelCell = worksheet.getCell(signatureRowNumber, region.start)
+    labelCell.value = region.label
+    labelCell.font = { name: WORKBOOK_FONT, size: 9, bold: true }
+    labelCell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }
+
+    const lineCell = worksheet.getCell(signatureRowNumber + SIGNATURE_LINE_OFFSET, region.start)
+    lineCell.value = '______________________________'
+    lineCell.font = { name: WORKBOOK_FONT, size: 9, bold: false }
+    lineCell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: false }
+  })
+}
+
+function addSignatureBlock(worksheet, signatureRowNumber, lastCol) {
+  getSignatureRegions(lastCol).forEach((region) => {
+    mergeIfNeeded(worksheet, signatureRowNumber, region.start, signatureRowNumber, region.end)
+    mergeIfNeeded(worksheet, signatureRowNumber + SIGNATURE_LINE_OFFSET, region.start, signatureRowNumber + SIGNATURE_LINE_OFFSET, region.end)
+  })
+
+  styleSignatureBlockText(worksheet, signatureRowNumber, lastCol)
 }
 
 function addDetailHeader(worksheet, data = {}, group = {}, plan = {}, lastCol) {
@@ -606,33 +671,18 @@ function addDetailHeader(worksheet, data = {}, group = {}, plan = {}, lastCol) {
   worksheet.getRow(1).height = 18
   worksheet.getRow(2).height = 18
 
-  const fixedHeaders = ['No', 'ID', 'Name', 'Position', 'Department', 'Basic']
+  const fixedHeaders = ['No', 'ID', 'Name', 'Position', 'Line']
   fixedHeaders.forEach((header, index) => {
     const col = index + 1
-    mergeIfNeeded(worksheet, 3, col, 4, col)
     const cell = worksheet.getCell(3, col)
     cell.value = header
     styleHeaderCell(cell)
-    styleHeaderCell(worksheet.getCell(4, col))
   })
 
-  const firstDateCol = 7
-  plan.dateSpans.forEach((span) => {
-    const startCol = firstDateCol + span.startOffset
-    const endCol = firstDateCol + span.endOffset
-    mergeIfNeeded(worksheet, 3, startCol, 3, endCol)
-    const cell = worksheet.getCell(3, startCol)
-    cell.value = span.date.label
-    styleHeaderCell(cell)
-
-    for (let col = startCol; col <= endCol; col += 1) {
-      styleHeaderCell(worksheet.getCell(3, col))
-    }
-  })
-
+  const firstDateCol = 6
   plan.columns.forEach((column, index) => {
-    const cell = worksheet.getCell(4, firstDateCol + index)
-    cell.value = column.rateLabel
+    const cell = worksheet.getCell(3, firstDateCol + index)
+    cell.value = column.label
     styleHeaderCell(cell)
   })
 
@@ -640,40 +690,33 @@ function addDetailHeader(worksheet, data = {}, group = {}, plan = {}, lastCol) {
   const moneyHeaders = ['OT Amount\n$', 'Allowance\n$', 'Total\n$', 'Total KHR']
   moneyHeaders.forEach((header, index) => {
     const col = afterDateCol + index
-    mergeIfNeeded(worksheet, 3, col, 4, col)
     const cell = worksheet.getCell(3, col)
     cell.value = header
     styleHeaderCell(cell)
-    styleHeaderCell(worksheet.getCell(4, col))
   })
 
   const denominationStartCol = afterDateCol + moneyHeaders.length
   ;(data.__denominations || []).forEach((denomination, index) => {
     const col = denominationStartCol + index
-    mergeIfNeeded(worksheet, 3, col, 4, col)
     const cell = worksheet.getCell(3, col)
     cell.value = denomination
     styleHeaderCell(cell)
-    styleHeaderCell(worksheet.getCell(4, col))
   })
 
   const signatureCol = denominationStartCol + (data.__denominations || []).length
   ;['Signature', 'Bank Account'].forEach((header, index) => {
     const col = signatureCol + index
-    mergeIfNeeded(worksheet, 3, col, 4, col)
     const cell = worksheet.getCell(3, col)
     cell.value = header
     styleHeaderCell(cell)
-    styleHeaderCell(worksheet.getCell(4, col))
   })
 
-  worksheet.getRow(3).height = 16
-  worksheet.getRow(4).height = 16
+  worksheet.getRow(3).height = 22
 }
 
 function addDetailRows(worksheet, group = {}, plan = {}, denominations = []) {
-  const firstDataRow = 5
-  const firstDateCol = 7
+  const firstDataRow = 4
+  const firstDateCol = 6
   const moneyStartCol = firstDateCol + plan.columns.length
   const denominationStartCol = moneyStartCol + 4
   const signatureCol = denominationStartCol + denominations.length
@@ -686,12 +729,11 @@ function addDetailRows(worksheet, group = {}, plan = {}, denominations = []) {
     row.getCell(2).value = employee.employeeNo
     row.getCell(3).value = employee.employeeName
     row.getCell(4).value = employee.positionName
-    row.getCell(5).value = employee.departmentName
-    row.getCell(6).value = employee.monthlySalary || null
+    row.getCell(5).value = lineDisplayValue(group)
 
     plan.columns.forEach((column, columnIndex) => {
-      const hours = n(employee.hoursByDateRate.get(column.key), 0)
-      row.getCell(firstDateCol + columnIndex).value = hours > 0 ? hours : null
+      const hours = getEmployeeHoursForDate(employee, column.otDate)
+      row.getCell(firstDateCol + columnIndex).value = formatHourValue(hours)
     })
 
     row.getCell(moneyStartCol).value = roundAmount(employee.otUsd, 2)
@@ -715,17 +757,15 @@ function addDetailRows(worksheet, group = {}, plan = {}, denominations = []) {
   totalRow.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' }
   totalRow.getCell(1).font = { name: WORKBOOK_FONT, bold: true, size: 9 }
 
-  totalRow.getCell(6).value = ''
 
   plan.columns.forEach((_, columnIndex) => {
     const col = firstDateCol + columnIndex
     const letter = columnLetter(col)
     totalRow.getCell(col).value = {
       formula: `SUM(${letter}${firstDataRow}:${letter}${Math.max(firstDataRow, totalRowNumber - 1)})`,
-      result: roundAmount(
-        group.employees.reduce((sum, employee) => sum + n(employee.hoursByDateRate.get(plan.columns[columnIndex].key), 0), 0),
-        2,
-      ),
+      result: formatHourValue(
+        group.employees.reduce((sum, employee) => sum + getEmployeeHoursForDate(employee, plan.columns[columnIndex].otDate), 0),
+      ) || 0,
     }
   })
 
@@ -764,34 +804,39 @@ function addDetailRows(worksheet, group = {}, plan = {}, denominations = []) {
     }
   })
 
-  const signatureRowNumber = totalRowNumber + 3
-  worksheet.getCell(signatureRowNumber, 1).value = 'Prepared By Payroll Leader'
-  worksheet.getCell(signatureRowNumber, Math.max(1, Math.floor(signatureCol / 2) - 2)).value = 'Checked By Sup HR'
-  worksheet.getCell(signatureRowNumber, Math.max(1, signatureCol - 3)).value = 'Verified By HRM'
-
-  ;[1, Math.max(1, Math.floor(signatureCol / 2) - 2), Math.max(1, signatureCol - 3)].forEach((col) => {
-    const cell = worksheet.getCell(signatureRowNumber, col)
-    cell.font = { name: WORKBOOK_FONT, size: 9, bold: true }
-    cell.alignment = { horizontal: 'left', vertical: 'middle' }
-  })
-
-  const lineRowNumber = signatureRowNumber + 2
-  worksheet.getCell(lineRowNumber, 1).value = '________________________'
-  worksheet.getCell(lineRowNumber, Math.max(1, Math.floor(signatureCol / 2) - 2)).value = '________________________'
-  worksheet.getCell(lineRowNumber, Math.max(1, signatureCol - 3)).value = '________________________'
+  const signatureRowNumber = totalRowNumber + 5
+  const lineRowNumber = signatureRowNumber + SIGNATURE_LINE_OFFSET
+  addSignatureBlock(worksheet, signatureRowNumber, signatureCol + 1)
 
   return {
     firstDataRow,
     totalRowNumber,
     lastTableRow: totalRowNumber,
     lastUsedRow: lineRowNumber,
+    signatureRowNumber,
     moneyStartCol,
     denominationStartCol,
     signatureCol,
   }
 }
 
-function finishDetailSheet(worksheet, metrics, plan, denominations = []) {
+function styleSubtotalRows(worksheet, rowNumbers = [], lastCol) {
+  rowNumbers.forEach((rowNumber) => {
+    const row = worksheet.getRow(rowNumber)
+    row.height = 20
+    row.eachCell({ includeEmpty: true }, (cell) => {
+      cell.font = { name: WORKBOOK_FONT, bold: true, size: 8 }
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFE5E7EB' },
+      }
+    })
+  })
+}
+
+function finishDetailSheet(worksheet, metrics, plan, denominations = [], options = {}) {
   const lastCol = metrics.signatureCol + 1
   applyBaseSheetStyle(worksheet)
   styleRangeBorder(worksheet, 3, metrics.lastTableRow, 1, lastCol)
@@ -807,24 +852,28 @@ function finishDetailSheet(worksheet, metrics, plan, denominations = []) {
     })
   }
 
-  styleNumberColumn(worksheet, [6], '#,##0.00')
+  styleSubtotalRows(worksheet, metrics.subtotalRows || [metrics.totalRowNumber], lastCol)
+  styleNumberColumn(worksheet, [5], '@')
 
   const hourColumns = []
-  for (let index = 0; index < plan.columns.length; index += 1) hourColumns.push(7 + index)
-  styleNumberColumn(worksheet, hourColumns, '0.##')
+  for (let index = 0; index < plan.columns.length; index += 1) hourColumns.push(6 + index)
+  styleNumberColumn(worksheet, hourColumns, 'General')
   styleNumberColumn(worksheet, [metrics.moneyStartCol, metrics.moneyStartCol + 1, metrics.moneyStartCol + 2], '$#,##0.00')
   styleNumberColumn(worksheet, [metrics.moneyStartCol + 3], '#,##0')
 
   const denominationColumns = denominations.map((_, index) => metrics.denominationStartCol + index)
   styleNumberColumn(worksheet, denominationColumns, '#,##0')
+  styleSignatureBlockText(worksheet, metrics.signatureRowNumber, lastCol)
 
-  worksheet.views = [{ state: 'frozen', xSplit: 2, ySplit: 4 }]
+  worksheet.views = [{ state: 'frozen', xSplit: 2, ySplit: 3 }]
   worksheet.autoFilter = {
-    from: { row: 4, column: 1 },
-    to: { row: 4, column: lastCol },
+    from: { row: 3, column: 1 },
+    to: { row: 3, column: lastCol },
   }
 
-  setSheetPrintLayout(worksheet, '1:4')
+  setSheetPrintLayout(worksheet, '1:3', {
+    fitToHeight: options.fitOnePage ? 1 : 0,
+  })
 }
 
 function addLineDetailSheet(workbook, data = {}, group = {}, denominations = []) {
@@ -834,7 +883,7 @@ function addLineDetailSheet(workbook, data = {}, group = {}, denominations = [])
   })
 
   const plan = buildDateColumnPlan(group)
-  const lastCol = 6 + plan.columns.length + 4 + denominations.length + 2
+  const lastCol = 5 + plan.columns.length + 4 + denominations.length + 2
 
   data.__denominations = denominations
   setDetailColumns(worksheet, plan.columns.length, denominations)
@@ -855,6 +904,243 @@ function addLineDetailSheet(workbook, data = {}, group = {}, denominations = [])
   }
 }
 
+
+function groupEmployeeCount(group = {}) {
+  return Array.isArray(group.employees) ? group.employees.length : 0
+}
+
+function sortGroupsByLineName(groups = []) {
+  return [...groups].sort((a, b) => s(a.lineName).localeCompare(s(b.lineName), undefined, { numeric: true }))
+}
+
+function packLineGroups(groups = [], maxRows = MAX_DETAIL_EMPLOYEE_ROWS_PER_SHEET) {
+  const largeGroups = []
+  const smallGroups = []
+
+  sortGroupsByLineName(groups).forEach((group) => {
+    const employeeRows = groupEmployeeCount(group)
+    if (employeeRows > maxRows) {
+      largeGroups.push({ groups: [group], employeeRows, isSingleLargeLine: true })
+    } else {
+      smallGroups.push(group)
+    }
+  })
+
+  // Best-fit decreasing keeps small lines together and prevents many half-empty sheets.
+  // A line with more than maxRows employees stays alone and can continue to page 2+.
+  smallGroups.sort((a, b) => {
+    const byRows = groupEmployeeCount(b) - groupEmployeeCount(a)
+    if (byRows) return byRows
+    return s(a.lineName).localeCompare(s(b.lineName), undefined, { numeric: true })
+  })
+
+  const packs = []
+  for (const group of smallGroups) {
+    const employeeRows = groupEmployeeCount(group)
+    let bestPack = null
+    let bestRemaining = Number.POSITIVE_INFINITY
+
+    for (const pack of packs) {
+      const remaining = maxRows - pack.employeeRows
+      if (employeeRows <= remaining && remaining < bestRemaining) {
+        bestPack = pack
+        bestRemaining = remaining
+      }
+    }
+
+    if (bestPack) {
+      bestPack.groups.push(group)
+      bestPack.employeeRows += employeeRows
+    } else {
+      packs.push({ groups: [group], employeeRows, isSingleLargeLine: false })
+    }
+  }
+
+  return [...largeGroups, ...packs].map((pack, index) => ({
+    ...pack,
+    index: index + 1,
+    groups: sortGroupsByLineName(pack.groups),
+  }))
+}
+
+function buildPackedDateColumnPlan(groups = []) {
+  const dateMap = new Map()
+
+  groups.forEach((group) => {
+    ;(group.dates || []).forEach((date) => {
+      if (!dateMap.has(date.otDate)) {
+        dateMap.set(date.otDate, {
+          key: date.otDate,
+          otDate: date.otDate,
+          label: formatDateHeader(date.otDate, date.display || date.label),
+        })
+      }
+    })
+  })
+
+  return {
+    columns: Array.from(dateMap.values()).sort((a, b) => s(a.otDate).localeCompare(s(b.otDate))),
+    dateSpans: [],
+  }
+}
+
+function packSheetName(pack = {}) {
+  const groups = pack.groups || []
+  if (groups.length === 1) return groups[0].lineName || `Line ${pack.index}`
+
+  const names = groups.map((group) => s(group.lineName || group.lineCode)).filter(Boolean)
+  if (names.length <= 3) return `Lines ${names.join(', ')}`
+
+  return `Lines Pack ${String(pack.index).padStart(2, '0')}`
+}
+
+function addPackedDetailRows(worksheet, pack = {}, plan = {}, denominations = []) {
+  const groups = pack.groups || []
+  const firstDataRow = 4
+  const firstDateCol = 6
+  const moneyStartCol = firstDateCol + plan.columns.length
+  const denominationStartCol = moneyStartCol + 4
+  const signatureCol = denominationStartCol + denominations.length
+  const lineDetails = []
+  const subtotalRows = []
+
+  let rowNumber = firstDataRow
+  let runningNo = 1
+
+  groups.forEach((group) => {
+    const groupFirstRow = rowNumber
+
+    group.employees.forEach((employee) => {
+      const row = worksheet.getRow(rowNumber)
+
+      row.getCell(1).value = runningNo
+      row.getCell(2).value = employee.employeeNo
+      row.getCell(3).value = employee.employeeName
+      row.getCell(4).value = employee.positionName
+      row.getCell(5).value = lineDisplayValue(group)
+
+      plan.columns.forEach((column, columnIndex) => {
+        const hours = getEmployeeHoursForDate(employee, column.otDate)
+        row.getCell(firstDateCol + columnIndex).value = formatHourValue(hours)
+      })
+
+      row.getCell(moneyStartCol).value = roundAmount(employee.otUsd, 2)
+      row.getCell(moneyStartCol + 1).value = roundAmount(employee.allowanceUsd, 2)
+      row.getCell(moneyStartCol + 2).value = roundAmount(employee.totalUsd, 2)
+      row.getCell(moneyStartCol + 3).value = Math.round(employee.totalKhrRounded)
+
+      denominations.forEach((denomination, columnIndex) => {
+        row.getCell(denominationStartCol + columnIndex).value = n(employee.breakdown[String(denomination)], 0) || null
+      })
+
+      row.getCell(signatureCol).value = ''
+      row.getCell(signatureCol + 1).value = employee.bankAccount || ''
+      row.height = 18
+
+      rowNumber += 1
+      runningNo += 1
+    })
+
+    const subtotalRowNumber = rowNumber
+    const subtotalRow = worksheet.getRow(subtotalRowNumber)
+    const lastEmployeeRow = Math.max(groupFirstRow, subtotalRowNumber - 1)
+
+    worksheet.mergeCells(subtotalRowNumber, 1, subtotalRowNumber, 5)
+    subtotalRow.getCell(1).value = `${lineDisplayValue(group)} Total`
+
+    plan.columns.forEach((_, columnIndex) => {
+      const col = firstDateCol + columnIndex
+      const letter = columnLetter(col)
+      subtotalRow.getCell(col).value = {
+        formula: `SUM(${letter}${groupFirstRow}:${letter}${lastEmployeeRow})`,
+        result: formatHourValue(
+          group.employees.reduce((sum, employee) => sum + getEmployeeHoursForDate(employee, plan.columns[columnIndex].otDate), 0),
+        ) || 0,
+      }
+    })
+
+    ;[
+      { col: moneyStartCol, result: group.summary.otUsd },
+      { col: moneyStartCol + 1, result: group.summary.allowanceUsd },
+      { col: moneyStartCol + 2, result: group.summary.totalUsd },
+      { col: moneyStartCol + 3, result: group.summary.totalKhrRounded },
+    ].forEach(({ col, result }) => {
+      const letter = columnLetter(col)
+      subtotalRow.getCell(col).value = {
+        formula: `SUM(${letter}${groupFirstRow}:${letter}${lastEmployeeRow})`,
+        result,
+      }
+    })
+
+    denominations.forEach((denomination, columnIndex) => {
+      const col = denominationStartCol + columnIndex
+      const letter = columnLetter(col)
+      subtotalRow.getCell(col).value = {
+        formula: `SUM(${letter}${groupFirstRow}:${letter}${lastEmployeeRow})`,
+        result: group.summary.breakdown[String(denomination)] || 0,
+      }
+    })
+
+    subtotalRow.height = 20
+    subtotalRows.push(subtotalRowNumber)
+
+    lineDetails.push({
+      group,
+      totalRowNumber: subtotalRowNumber,
+      firstDataRow: groupFirstRow,
+      moneyStartCol,
+      denominationStartCol,
+      denominationColumns: denominations.map((_, index) => denominationStartCol + index),
+      employeeCount: group.employees.length,
+    })
+
+    rowNumber += 1
+  })
+
+  const signatureRowNumber = rowNumber + 4
+  const lineRowNumber = signatureRowNumber + SIGNATURE_LINE_OFFSET
+  addSignatureBlock(worksheet, signatureRowNumber, signatureCol + 1)
+
+  return {
+    firstDataRow,
+    totalRowNumber: subtotalRows[subtotalRows.length - 1] || firstDataRow,
+    subtotalRows,
+    lastTableRow: Math.max(firstDataRow, rowNumber - 1),
+    lastUsedRow: lineRowNumber,
+    signatureRowNumber,
+    moneyStartCol,
+    denominationStartCol,
+    signatureCol,
+    lineDetails,
+  }
+}
+
+function addPackedDetailSheet(workbook, data = {}, pack = {}, denominations = []) {
+  const requestedName = packSheetName(pack)
+  const sheetName = ensureUniqueSheetName(workbook, requestedName)
+  const worksheet = workbook.addWorksheet(sheetName, {
+    properties: { defaultRowHeight: 15 },
+  })
+
+  const plan = buildPackedDateColumnPlan(pack.groups || [])
+  const lastCol = 5 + plan.columns.length + 4 + denominations.length + 2
+
+  data.__denominations = denominations
+  setDetailColumns(worksheet, plan.columns.length, denominations)
+  addDetailHeader(worksheet, data, { lineName: requestedName }, plan, lastCol)
+  const metrics = addPackedDetailRows(worksheet, pack, plan, denominations)
+  finishDetailSheet(worksheet, metrics, plan, denominations, {
+    fitOnePage: n(pack.employeeRows, 0) <= MAX_DETAIL_EMPLOYEE_ROWS_PER_SHEET,
+  })
+
+  return metrics.lineDetails.map((detail) => ({
+    ...detail,
+    worksheet,
+    sheetName,
+    packedLineCount: (pack.groups || []).length,
+  }))
+}
+
 function addSummaryHeader(worksheet, data = {}, lastCol) {
   worksheet.getCell(1, 1).value = COMPANY_NAME
   worksheet.getCell(2, 1).value = `Payment Summary by Line (${getPeriodLabel(data)})`
@@ -866,7 +1152,6 @@ function addSummaryHeader(worksheet, data = {}, lastCol) {
   const headers = [
     'No',
     'Line',
-    'Sheet',
     'Employees',
     'OT Hours',
     'OT Amount\n$',
@@ -903,7 +1188,7 @@ function addSummaryHeader(worksheet, data = {}, lastCol) {
 }
 
 function addSummaryRows(worksheet, data = {}, detailSheets = [], denominations = []) {
-  const lastCol = 9 + denominations.length + 1
+  const lastCol = 8 + denominations.length + 1
   const headerInfo = addSummaryHeader(worksheet, data, lastCol)
   const firstDataRow = 5
 
@@ -917,28 +1202,27 @@ function addSummaryRows(worksheet, data = {}, detailSheets = [], denominations =
 
     row.getCell(1).value = index + 1
     row.getCell(2).value = detail.group.lineName
-    row.getCell(3).value = detail.sheetName
-    row.getCell(4).value = detail.employeeCount
+    row.getCell(3).value = detail.employeeCount
 
-    const firstHourCol = 7
+    const firstHourCol = 6
     const lastHourCol = moneyStartCol - 1
-    row.getCell(5).value = {
+    row.getCell(4).value = {
       formula: `SUM(${quotedSheet}!${columnLetter(firstHourCol)}${totalRow}:${columnLetter(lastHourCol)}${totalRow})`,
       result: detail.group.summary.payableHours,
     }
-    row.getCell(6).value = {
+    row.getCell(5).value = {
       formula: `${quotedSheet}!${columnLetter(moneyStartCol)}${totalRow}`,
       result: detail.group.summary.otUsd,
     }
-    row.getCell(7).value = {
+    row.getCell(6).value = {
       formula: `${quotedSheet}!${columnLetter(moneyStartCol + 1)}${totalRow}`,
       result: detail.group.summary.allowanceUsd,
     }
-    row.getCell(8).value = {
+    row.getCell(7).value = {
       formula: `${quotedSheet}!${columnLetter(moneyStartCol + 2)}${totalRow}`,
       result: detail.group.summary.totalUsd,
     }
-    row.getCell(9).value = {
+    row.getCell(8).value = {
       formula: `${quotedSheet}!${columnLetter(moneyStartCol + 3)}${totalRow}`,
       result: detail.group.summary.totalKhrRounded,
     }
@@ -958,17 +1242,17 @@ function addSummaryRows(worksheet, data = {}, detailSheets = [], denominations =
 
   const totalRowNumber = firstDataRow + detailSheets.length
   const totalRow = worksheet.getRow(totalRowNumber)
-  worksheet.mergeCells(totalRowNumber, 1, totalRowNumber, 3)
+  worksheet.mergeCells(totalRowNumber, 1, totalRowNumber, 2)
   totalRow.getCell(1).value = 'Grand Total'
   totalRow.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' }
 
   const grandResults = {
-    4: detailSheets.reduce((sum, detail) => sum + n(detail.employeeCount, 0), 0),
-    5: roundAmount(detailSheets.reduce((sum, detail) => sum + n(detail.group.summary.payableHours, 0), 0), 2),
-    6: roundAmount(detailSheets.reduce((sum, detail) => sum + n(detail.group.summary.otUsd, 0), 0), 2),
-    7: roundAmount(detailSheets.reduce((sum, detail) => sum + n(detail.group.summary.allowanceUsd, 0), 0), 2),
-    8: roundAmount(detailSheets.reduce((sum, detail) => sum + n(detail.group.summary.totalUsd, 0), 0), 2),
-    9: detailSheets.reduce((sum, detail) => sum + n(detail.group.summary.totalKhrRounded, 0), 0),
+    3: detailSheets.reduce((sum, detail) => sum + n(detail.employeeCount, 0), 0),
+    4: roundAmount(detailSheets.reduce((sum, detail) => sum + n(detail.group.summary.payableHours, 0), 0), 2),
+    5: roundAmount(detailSheets.reduce((sum, detail) => sum + n(detail.group.summary.otUsd, 0), 0), 2),
+    6: roundAmount(detailSheets.reduce((sum, detail) => sum + n(detail.group.summary.allowanceUsd, 0), 0), 2),
+    7: roundAmount(detailSheets.reduce((sum, detail) => sum + n(detail.group.summary.totalUsd, 0), 0), 2),
+    8: detailSheets.reduce((sum, detail) => sum + n(detail.group.summary.totalKhrRounded, 0), 0),
     [headerInfo.varianceCol]: detailSheets.reduce((sum, detail) => sum + n(detail.group.summary.variance, 0), 0),
   }
 
@@ -980,7 +1264,7 @@ function addSummaryRows(worksheet, data = {}, detailSheets = [], denominations =
     )
   })
 
-  for (let col = 4; col <= lastCol; col += 1) {
+  for (let col = 3; col <= lastCol; col += 1) {
     const letter = columnLetter(col)
     totalRow.getCell(col).value = {
       formula: `SUM(${letter}${firstDataRow}:${letter}${Math.max(firstDataRow, totalRowNumber - 1)})`,
@@ -999,21 +1283,9 @@ function addSummaryRows(worksheet, data = {}, detailSheets = [], denominations =
     }
   })
 
-  const signatureRowNumber = totalRowNumber + 3
-  worksheet.getCell(signatureRowNumber, 1).value = 'Prepared By Payroll Leader'
-  worksheet.getCell(signatureRowNumber, 5).value = 'Checked By Sup HR'
-  worksheet.getCell(signatureRowNumber, Math.max(8, lastCol - 2)).value = 'Verified By HRM'
-
-  ;[1, 5, Math.max(8, lastCol - 2)].forEach((col) => {
-    const cell = worksheet.getCell(signatureRowNumber, col)
-    cell.font = { name: WORKBOOK_FONT, size: 9, bold: true }
-    cell.alignment = { horizontal: 'left', vertical: 'middle' }
-  })
-
-  const lineRowNumber = signatureRowNumber + 2
-  worksheet.getCell(lineRowNumber, 1).value = '________________________'
-  worksheet.getCell(lineRowNumber, 5).value = '________________________'
-  worksheet.getCell(lineRowNumber, Math.max(8, lastCol - 2)).value = '________________________'
+  const signatureRowNumber = totalRowNumber + 5
+  const lineRowNumber = signatureRowNumber + SIGNATURE_LINE_OFFSET
+  addSignatureBlock(worksheet, signatureRowNumber, lastCol)
 
   applyBaseSheetStyle(worksheet)
   styleRangeBorder(worksheet, 4, totalRowNumber, 1, lastCol)
@@ -1023,21 +1295,22 @@ function addSummaryRows(worksheet, data = {}, detailSheets = [], denominations =
     row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
       cell.alignment = {
         vertical: 'middle',
-        horizontal: [2, 3].includes(colNumber) ? 'left' : 'center',
+        horizontal: colNumber === 2 ? 'left' : 'center',
         wrapText: true,
       }
     })
   }
 
-  styleNumberColumn(worksheet, [5], '0.##')
-  styleNumberColumn(worksheet, [6, 7, 8], '$#,##0.00')
-  styleNumberColumn(worksheet, [9], '#,##0')
+  styleNumberColumn(worksheet, [4], 'General')
+  styleNumberColumn(worksheet, [5, 6, 7], '$#,##0.00')
+  styleNumberColumn(worksheet, [8], '#,##0')
   styleNumberColumn(
     worksheet,
     denominations.map((_, index) => headerInfo.denominationStartCol + index),
     '#,##0',
   )
   styleNumberColumn(worksheet, [headerInfo.varianceCol], '#,##0')
+  styleSignatureBlockText(worksheet, signatureRowNumber, lastCol)
 
   worksheet.views = [{ state: 'frozen', ySplit: 4 }]
   worksheet.autoFilter = {
@@ -1062,15 +1335,17 @@ async function buildPaymentWorkbook(data) {
   })
 
   const detailSheets = []
+  const packedLineGroups = packLineGroups(groups)
 
-  // One detail sheet per production line. Each line sheet combines all OT dates
-  // in the selected period, so payroll does not need to align/design manually.
-  for (const group of groups) {
-    detailSheets.push(addLineDetailSheet(workbook, data, group, denominations))
+  // Detail sheets are packed by line to save paper. Small lines share one sheet
+  // up to MAX_DETAIL_EMPLOYEE_ROWS_PER_SHEET employee records. Large lines stay
+  // alone and can continue to page 2+ with the header repeated.
+  for (const pack of packedLineGroups) {
+    detailSheets.push(...addPackedDetailSheet(workbook, data, pack, denominations))
   }
 
   // The summary is built after detail sheets exist so it can pull each line
-  // total from the finished line sheet instead of listing employees again.
+  // total from the finished packed sheet instead of listing employees again.
   addSummaryRows(summarySheet, data, detailSheets, denominations)
 
   if (!groups.length) {
