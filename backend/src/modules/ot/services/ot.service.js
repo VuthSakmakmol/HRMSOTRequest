@@ -1807,35 +1807,101 @@ function makeOTDateSheetName(dateValue) {
   return dateText === 'No Date' ? 'No Date Request' : `${dateText} Request`
 }
 
+function numberOrZero(value) {
+  const numberValue = Number(value)
+  return Number.isFinite(numberValue) ? numberValue : 0
+}
+
+function formatExportHoursFromMinutes(minutes) {
+  const hours = numberOrZero(minutes) / 60
+
+  if (Number.isInteger(hours)) return hours
+
+  return Number(hours.toFixed(2))
+}
+
+function exportRequestOtTime(doc = {}) {
+  const minutes = numberOrZero(doc.totalRequestPaidMinutes ?? doc.totalMinutes)
+
+  if (minutes > 0) return `${formatExportHoursFromMinutes(minutes)}h`
+
+  const start = s(doc.requestStartTime || doc.startTime)
+  const end = s(doc.requestEndTime || doc.endTime)
+
+  return [start, end].filter(Boolean).join(' - ')
+}
+
+function requestEmployeeRowsForExport(doc = {}) {
+  const requestedEmployees = Array.isArray(doc.requestedEmployees)
+    ? doc.requestedEmployees
+    : []
+
+  if (requestedEmployees.length) return requestedEmployees
+
+  return [null]
+}
+
 function makeSimpleEmployeeExportRow(doc = {}, item = {}, rowNo = 1) {
   const paidMinutes = Number(
-    item.totalRequestPaidMinutes ??
-      item.totalMinutes ??
+    item?.totalRequestPaidMinutes ??
+      item?.totalMinutes ??
       doc.totalRequestPaidMinutes ??
       doc.totalMinutes ??
       0,
   )
 
   const requestedMinutes = Number(
-    item.requestedMinutes ?? doc.requestedMinutes ?? 0,
+    item?.requestedMinutes ?? doc.requestedMinutes ?? 0,
   )
 
-  const breakMinutes = Number(item.breakMinutes ?? doc.breakMinutes ?? 0)
+  const breakMinutes = Number(item?.breakMinutes ?? doc.breakMinutes ?? 0)
 
   return [
     rowNo,
-    s(item.employeeId),
-    s(item.employeeCode),
-    s(item.employeeName),
-    s(item.departmentName),
-    s(item.positionName),
-    firstText(item.lineLabel, item.lineName, item.lineCode),
-    s(item.startTime || doc.requestStartTime || doc.startTime),
-    s(item.endTime || doc.requestEndTime || doc.endTime),
+    s(item?.employeeId),
+    s(item?.employeeCode),
+    s(item?.employeeName),
+    s(item?.departmentName),
+    s(item?.positionName),
+    firstText(item?.lineLabel, item?.lineName, item?.lineCode),
+    s(item?.startTime || doc.requestStartTime || doc.startTime),
+    s(item?.endTime || doc.requestEndTime || doc.endTime),
     breakMinutes,
     requestedMinutes,
     paidMinutes,
-    Number((paidMinutes / 60).toFixed(2)),
+    formatExportHoursFromMinutes(paidMinutes),
+  ]
+}
+
+function makeAllRequestsExportRow(doc = {}, item = {}, rowNo = 1) {
+  const employeeRow = makeSimpleEmployeeExportRow(doc, item, rowNo)
+
+  return [
+    rowNo,
+    s(doc.requestNo),
+    formatDateTime(doc.createdAt),
+    s(doc.requesterEmployeeCode),
+    s(doc.requesterName),
+    exportRequestOtTime(doc),
+    Number(doc.requestedEmployeeCount || requestEmployeeRowsForExport(doc).length || 0),
+    formatOTExportDate(doc.otDate),
+    upper(doc.status),
+    upper(doc.dayType),
+    firstText(doc.shiftName, doc.shiftCode, doc.shiftType),
+    employeeRow[1],
+    employeeRow[2],
+    employeeRow[3],
+    employeeRow[4],
+    employeeRow[5],
+    employeeRow[6],
+    employeeRow[7],
+    employeeRow[8],
+    employeeRow[9],
+    employeeRow[10],
+    employeeRow[11],
+    employeeRow[12],
+    firstText(doc.currentApproverName, doc.currentApproverCode),
+    s(doc.reason),
   ]
 }
 
@@ -1890,6 +1956,115 @@ function groupRequestsByOTDate(items = []) {
   }
 
   return grouped
+}
+
+function applyAllRequestsSheetLayout(worksheet, lastRow = 4) {
+  worksheet['!cols'] = [
+    { wch: 6 },
+    { wch: 18 },
+    { wch: 20 },
+    { wch: 16 },
+    { wch: 24 },
+    { wch: 12 },
+    { wch: 12 },
+    { wch: 12 },
+    { wch: 16 },
+    { wch: 14 },
+    { wch: 22 },
+    { wch: 18 },
+    { wch: 16 },
+    { wch: 26 },
+    { wch: 22 },
+    { wch: 22 },
+    { wch: 28 },
+    { wch: 12 },
+    { wch: 12 },
+    { wch: 14 },
+    { wch: 16 },
+    { wch: 14 },
+    { wch: 12 },
+    { wch: 24 },
+    { wch: 30 },
+  ]
+
+  worksheet['!merges'] = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 24 } },
+  ]
+
+  worksheet['!autofilter'] = {
+    ref: `A4:Y${Math.max(lastRow, 4)}`,
+  }
+}
+
+function buildAllRequestsWorkbook(items = [], query = {}, sheetName = 'OT Requests') {
+  const workbook = XLSX.utils.book_new()
+  const list = Array.isArray(items) ? items : []
+  const generatedAt = formatDateTime(new Date())
+  const totalEmployeeRows = list.reduce(
+    (total, doc) => total + requestEmployeeRowsForExport(doc).length,
+    0,
+  )
+
+  const rows = [
+    ['OT REQUEST LIST EXPORT'],
+    [
+      'Generated At',
+      generatedAt,
+      'Total Requests',
+      Number(list.length || 0),
+      'Total Employee Rows',
+      totalEmployeeRows,
+    ],
+    [],
+    [
+      'No',
+      'Request No',
+      'Created At',
+      'Requester ID',
+      'Requester',
+      'OT Time',
+      'Request Staff',
+      'OT Date',
+      'Approval Status',
+      'Day Type',
+      'Shift',
+      'Employee ID',
+      'Employee Code',
+      'Employee Name',
+      'Department',
+      'Position',
+      'Line',
+      'Start Time',
+      'End Time',
+      'Break Minutes',
+      'Requested Minutes',
+      'Paid Minutes',
+      'Paid Hours',
+      'Current Approver',
+      'Reason',
+    ],
+  ]
+
+  let rowNo = 1
+
+  for (const doc of list) {
+    const employeeRows = requestEmployeeRowsForExport(doc)
+
+    for (const item of employeeRows) {
+      rows.push(makeAllRequestsExportRow(doc, item, rowNo))
+      rowNo += 1
+    }
+  }
+
+  if (rowNo === 1) {
+    rows.push(['No data found'])
+  }
+
+  const worksheet = XLSX.utils.aoa_to_sheet(rows)
+  applyAllRequestsSheetLayout(worksheet, rows.length)
+  XLSX.utils.book_append_sheet(workbook, worksheet, makeSafeSheetName(sheetName))
+
+  return workbook
 }
 
 function buildRequestsByDateWorkbook(items = [], query = {}, emptySheetName = 'OT Requests') {
@@ -2372,10 +2547,10 @@ async function exportRequestsExcel(query = {}, authUser = {}) {
   const sort = buildSort(query)
 
   const items = await OTRequest.find(filter).sort(sort).lean()
-  const workbook = buildRequestsByDateWorkbook(items, query, 'OT Requests')
+  const workbook = buildAllRequestsWorkbook(items, query, 'OT Requests')
 
   return {
-    filename: `ot-requests-by-date-${new Date().toISOString().slice(0, 10)}.xlsx`,
+    filename: `ot-requests-all-${new Date().toISOString().slice(0, 10)}.xlsx`,
     buffer: XLSX.write(workbook, {
       type: 'buffer',
       bookType: 'xlsx',
