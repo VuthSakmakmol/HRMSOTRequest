@@ -594,6 +594,7 @@ function buildPaymentIssueRow(issue = {}) {
       detail.otDateDisplay ||
       (issue.otDate ? formatDateDMY(issue.otDate) : ''),
     requestNo: issue.requestNo || detail.requestNo || '',
+    requestStatus: issue.requestStatus || detail.requestStatus || detail.status || '',
 
     employeeNo: issue.employeeNo || issue.employeeCode || detail.employeeNo || '',
     employeeName: issue.employeeName || issue.name || detail.employeeName || '',
@@ -793,6 +794,35 @@ function dayTypeTagClass(value) {
   if (normalized === 'HOLIDAY') return 'payment-day-holiday'
   if (normalized === 'SUNDAY') return 'payment-day-sunday'
   if (normalized === 'WORKING_DAY') return 'payment-day-working'
+
+  return 'payment-tag-muted'
+}
+
+function requestStatusLabel(value) {
+  const normalized = upper(value)
+
+  const labels = {
+    APPROVED: 'Approved',
+    PENDING: 'Pending',
+    PENDING_REQUESTER_CONFIRMATION: 'Pending requester',
+    REJECTED: 'Rejected',
+    REQUESTER_DISAGREED: 'Requester disagreed',
+    CANCELLED: 'Cancelled',
+  }
+
+  return labels[normalized] || normalized || '—'
+}
+
+function requestStatusTagClass(value) {
+  const normalized = upper(value)
+
+  if (normalized === 'APPROVED') return 'payment-status-active'
+  if (normalized === 'PENDING' || normalized === 'PENDING_REQUESTER_CONFIRMATION') {
+    return 'payment-tag-warning'
+  }
+  if (normalized === 'REJECTED' || normalized === 'REQUESTER_DISAGREED') {
+    return 'payment-status-inactive'
+  }
 
   return 'payment-tag-muted'
 }
@@ -1621,12 +1651,12 @@ onBeforeUnmount(() => {
             </Column>
 
             <Column
-              header="Multiplier"
-              style="width: 8rem; min-width: 8rem"
+              header="Formula"
+              style="width: 13rem; min-width: 13rem"
             >
               <template #body="{ data }">
                 <Tag
-                  :value="`${formatNumber(data.multiplier, 4)}x`"
+                  :value="data.progressiveHourFormulaText || `${formatNumber(data.multiplier, 4)}x`"
                   class="payment-rgb-tag payment-tag-purple"
                 />
               </template>
@@ -1865,6 +1895,19 @@ onBeforeUnmount(() => {
             </Column>
 
             <Column
+              header="Request status"
+              style="width: 11rem; min-width: 11rem"
+            >
+              <template #body="{ data }">
+                <Tag
+                  :value="requestStatusLabel(data.requestStatus || data.status)"
+                  class="payment-rgb-tag"
+                  :class="requestStatusTagClass(data.requestStatus || data.status)"
+                />
+              </template>
+            </Column>
+
+            <Column
               header="Day type"
               style="width: 10rem; min-width: 10rem"
             >
@@ -2018,12 +2061,12 @@ onBeforeUnmount(() => {
             </Column>
 
             <Column
-              header="Multiplier"
-              style="width: 8rem; min-width: 8rem"
+              header="Formula"
+              style="width: 13rem; min-width: 13rem"
             >
               <template #body="{ data }">
                 <Tag
-                  :value="`${formatNumber(data.multiplier, 4)}x`"
+                  :value="data.progressiveHourFormulaText || `${formatNumber(data.multiplier, 4)}x`"
                   class="payment-rgb-tag payment-tag-purple"
                 />
               </template>

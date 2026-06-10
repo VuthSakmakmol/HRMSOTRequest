@@ -112,6 +112,7 @@ function defaultForm() {
       SUNDAY: 2,
       HOLIDAY: 3,
     },
+    hourRules: [],
     roundingDecimals: 2,
     currency: 'USD',
     payoutCurrency: 'KHR',
@@ -132,6 +133,86 @@ function s(value) {
 
 function upper(value) {
   return s(value).toUpperCase()
+}
+
+function toNullableNumber(value) {
+  if (value === null || value === undefined || value === '') return null
+
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
+}
+
+function normalizeHourRules(value) {
+  const source = Array.isArray(value) ? value : []
+
+  return source
+    .map((rule) => {
+      const minHours = toNullableNumber(rule?.minHours)
+      const maxHours = toNullableNumber(rule?.maxHours)
+      const multiplier = toNullableNumber(rule?.multiplier)
+
+      return {
+        label: s(rule?.label),
+        minHours,
+        maxHours: maxHours !== null && minHours !== null && maxHours > minHours ? maxHours : null,
+        multiplier,
+        allowanceEligible: rule?.allowanceEligible === true,
+      }
+    })
+    .filter((rule) => {
+      return (
+        rule.label ||
+        rule.minHours !== null ||
+        rule.maxHours !== null ||
+        rule.multiplier !== null ||
+        rule.allowanceEligible === true
+      )
+    })
+    .sort((a, b) => Number(a.minHours ?? 0) - Number(b.minHours ?? 0))
+}
+
+function formatHourValue(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return '—'
+  if (Number.isInteger(number)) return String(number)
+  return number.toFixed(2).replace(/\.?0+$/, '')
+}
+
+function formatHourRuleRange(rule = {}) {
+  if (rule.minHours === null || rule.minHours === undefined || rule.minHours === '') {
+    return 'Set hour range'
+  }
+
+  const min = formatHourValue(rule.minHours)
+  const max = rule.maxHours
+
+  if (max === null || max === undefined || max === '') return `${min}h+`
+
+  return `${min}h - ${formatHourValue(max)}h`
+}
+
+function formatHourRuleSummary(rule = {}) {
+  const allowance = rule.allowanceEligible ? ' + allowance' : ''
+  const multiplier = rule.multiplier === null || rule.multiplier === undefined ? '—' : formatMultiplier(rule.multiplier)
+
+  return `${formatHourRuleRange(rule)} · ${multiplier}x${allowance}`
+}
+
+function addHourRule() {
+  const lastRule = form.hourRules[form.hourRules.length - 1]
+  const nextMinHours = toNullableNumber(lastRule?.maxHours ?? null)
+
+  form.hourRules.push({
+    label: '',
+    minHours: nextMinHours,
+    maxHours: null,
+    multiplier: null,
+    allowanceEligible: false,
+  })
+}
+
+function removeHourRule(index) {
+  form.hourRules.splice(index, 1)
 }
 
 function normalizePayload(res) {
@@ -196,6 +277,7 @@ function normalizeRow(row) {
     cashRoundingUnit: Number(row.cashRoundingUnit || 100),
     cashRoundingMode: upper(row.cashRoundingMode || 'ROUND'),
     cashDenominations: normalizeDenominations(row.cashDenominations),
+    hourRules: normalizeHourRules(row.hourRules),
   }
 }
 
@@ -429,6 +511,7 @@ function openEditDialog(row) {
       SUNDAY: Number(row.multipliers?.SUNDAY ?? 2),
       HOLIDAY: Number(row.multipliers?.HOLIDAY ?? 3),
     },
+    hourRules: normalizeHourRules(row.hourRules),
     roundingDecimals: Number(row.roundingDecimals ?? 2),
     currency: upper(row.currency || 'USD'),
     payoutCurrency: upper(row.payoutCurrency || 'KHR'),
@@ -454,6 +537,7 @@ function normalizeSavePayload() {
       SUNDAY: Number(form.multipliers.SUNDAY || 0),
       HOLIDAY: Number(form.multipliers.HOLIDAY || 0),
     },
+    hourRules: normalizeHourRules(form.hourRules),
     roundingDecimals: Number(form.roundingDecimals ?? 2),
     currency: upper(form.currency || 'USD'),
     payoutCurrency: upper(form.payoutCurrency || 'KHR'),
@@ -472,6 +556,23 @@ function validateBeforeSave(payload = {}) {
   }
   if (!payload.hoursPerDay || payload.hoursPerDay <= 0) {
     return 'Hours per day must be greater than 0'
+  }
+  if (!Array.isArray(payload.hourRules) || !payload.hourRules.length) {
+    return 'At least one OT hour rule is required'
+  }
+  const invalidHourRule = payload.hourRules.find((rule) => {
+    const minHours = toNullableNumber(rule.minHours)
+    const maxHours = toNullableNumber(rule.maxHours)
+    const multiplier = toNullableNumber(rule.multiplier)
+
+    if (minHours === null || minHours < 0) return true
+    if (maxHours !== null && maxHours <= minHours) return true
+    if (multiplier === null || multiplier < 0) return true
+
+    return false
+  })
+  if (invalidHourRule) {
+    return 'Please check OT hour rules. From hours and multiplier are required. Up to hours must be greater than From hours.'
   }
   if (!payload.currency) return 'Base currency is required'
   if (!payload.payoutCurrency) return 'Payout currency is required'
@@ -786,6 +887,32 @@ onBeforeUnmount(() => {
           </Column>
 
           <Column
+            header="Hour formula"
+            style="width: 22rem; min-width: 22rem"
+          >
+            <template #body="{ data }">
+              <div
+                v-if="data"
+                class="payment-hour-rule-list"
+              >
+                <Tag
+                  v-if="!normalizeHourRules(data.hourRules).length"
+                  value="No hour formula"
+                  class="payment-rgb-tag payment-tag-muted"
+                />
+
+                <Tag
+                  v-for="(rule, index) in normalizeHourRules(data.hourRules)"
+                  :key="`${data.id || data._id || 'formula'}-hour-${index}`"
+                  :value="formatHourRuleSummary(rule)"
+                  class="payment-rgb-tag"
+                  :class="rule.allowanceEligible ? 'payment-tag-purple' : 'payment-tag-blue'"
+                />
+              </div>
+            </template>
+          </Column>
+
+          <Column
             :header="t('payment.formulas.round')"
             style="width: 8rem; min-width: 8rem"
           >
@@ -1071,6 +1198,135 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="ot-panel">
+          <div class="payment-hour-rule-header">
+            <div>
+              <div class="payment-panel-title mb-0">
+                OT hour formula
+              </div>
+
+              <div class="payment-field-help">
+                Enter the next break point. Example: Up to 4 means this rate covers the first 4h; only hours above 4 continue to the next rule.
+              </div>
+            </div>
+
+            <div class="payment-hour-rule-actions">
+              <Button
+                label="Add rule"
+                icon="pi pi-plus"
+                size="small"
+                :disabled="saving"
+                @click="addHourRule"
+              />
+            </div>
+          </div>
+
+          <div class="payment-hour-rule-editor">
+            <div
+              v-if="!form.hourRules.length"
+              class="payment-hour-rule-empty"
+            >
+              No OT hour formula yet. Click Add rule and enter your hour ranges.
+            </div>
+
+            <div
+              v-for="(rule, index) in form.hourRules"
+              :key="`hour-rule-${index}`"
+              class="payment-hour-rule-row"
+            >
+              <div class="ot-field">
+                <label class="ot-field-label">Label</label>
+
+                <InputText
+                  v-model="rule.label"
+                  class="w-full"
+                  placeholder="1h - 4h"
+                  :disabled="saving"
+                />
+              </div>
+
+              <div class="ot-field">
+                <label class="ot-field-label">From hours</label>
+
+                <InputNumber
+                  v-model="rule.minHours"
+                  class="w-full"
+                  input-class="w-full"
+                  :min="0"
+                  :max-fraction-digits="2"
+                  :disabled="saving"
+                />
+              </div>
+
+              <div class="ot-field">
+                <label class="ot-field-label">Up to hours</label>
+
+                <InputNumber
+                  v-model="rule.maxHours"
+                  class="w-full"
+                  input-class="w-full"
+                  :min="0"
+                  :max-fraction-digits="2"
+                  placeholder="No max"
+                  :disabled="saving"
+                />
+              </div>
+
+              <div class="ot-field">
+                <label class="ot-field-label">Multiplier</label>
+
+                <InputNumber
+                  v-model="rule.multiplier"
+                  class="w-full"
+                  input-class="w-full"
+                  :min="0"
+                  :max-fraction-digits="4"
+                  :disabled="saving"
+                />
+              </div>
+
+              <div class="payment-hour-allowance-cell">
+                <label class="payment-hour-allowance-toggle">
+                  <Checkbox
+                    v-model="rule.allowanceEligible"
+                    binary
+                    :disabled="saving"
+                  />
+                  <span>Allowance</span>
+                </label>
+              </div>
+
+              <div class="payment-hour-rule-remove">
+                <Button
+                  icon="pi pi-trash"
+                  severity="danger"
+                  text
+                  rounded
+                  size="small"
+                  :disabled="saving"
+                  @click="removeHourRule(index)"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div class="payment-hour-rule-preview">
+            <Tag
+              v-if="!normalizeHourRules(form.hourRules).length"
+              value="No hour formula configured"
+              class="payment-rgb-tag payment-tag-muted"
+            />
+
+            <Tag
+              v-for="(rule, index) in normalizeHourRules(form.hourRules)"
+              :key="`hour-rule-preview-${index}`"
+              :value="formatHourRuleSummary(rule)"
+              class="payment-rgb-tag"
+              :class="rule.allowanceEligible ? 'payment-tag-purple' : 'payment-tag-blue'"
+            />
+          </div>
+        </div>
+
+        <div class="ot-panel">
           <div class="payment-panel-title">
             Cash payout policy
           </div>
@@ -1295,7 +1551,8 @@ onBeforeUnmount(() => {
   font-variant-numeric: tabular-nums;
 }
 
-.payment-multiplier-list {
+.payment-multiplier-list,
+.payment-hour-rule-list {
   display: inline-flex;
   max-width: 100%;
   flex-wrap: wrap;
@@ -1353,6 +1610,85 @@ onBeforeUnmount(() => {
   font-size: 0.82rem;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
+}
+
+.payment-hour-rule-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.payment-hour-rule-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.payment-hour-rule-editor {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.payment-hour-rule-empty {
+  border: 1px dashed rgb(var(--payment-info-rgb) / 0.32);
+  border-radius: 0.85rem;
+  background: rgb(var(--payment-info-rgb) / 0.06);
+  padding: 0.8rem;
+  color: var(--ot-text-muted);
+  font-size: 0.78rem;
+  font-weight: 650;
+  text-align: center;
+}
+
+.payment-hour-rule-row {
+  display: grid;
+  grid-template-columns:
+    minmax(150px, 1.4fr)
+    minmax(110px, 0.75fr)
+    minmax(130px, 0.8fr)
+    minmax(110px, 0.75fr)
+    minmax(105px, auto)
+    2.4rem;
+  align-items: end;
+  gap: 0.55rem;
+  border: 1px solid var(--ot-border);
+  border-radius: 0.85rem;
+  background: var(--ot-surface);
+  padding: 0.6rem;
+}
+
+.payment-hour-allowance-cell,
+.payment-hour-rule-remove {
+  display: flex;
+  min-height: 2.35rem;
+  align-items: center;
+  justify-content: center;
+}
+
+.payment-hour-allowance-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  color: var(--ot-text);
+  font-size: 0.78rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.payment-hour-rule-preview {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+  border: 1px dashed rgb(var(--payment-info-rgb) / 0.3);
+  border-radius: 0.85rem;
+  background: rgb(var(--payment-info-rgb) / 0.06);
+  padding: 0.65rem;
 }
 
 .payment-active-box {
@@ -1436,8 +1772,16 @@ onBeforeUnmount(() => {
   --payment-tag-rgb: var(--payment-muted-rgb);
 }
 
+.payment-tag-blue {
+  --payment-tag-rgb: var(--payment-info-rgb);
+}
+
 .payment-tag-purple {
   --payment-tag-rgb: var(--payment-purple-rgb);
+}
+
+.payment-tag-muted {
+  --payment-tag-rgb: var(--payment-muted-rgb);
 }
 
 /* =========================
@@ -1608,6 +1952,28 @@ onBeforeUnmount(() => {
 
   .payment-formula-filter-actions > * {
     flex: 1 1 100%;
+  }
+
+  .payment-hour-rule-header {
+    flex-direction: column;
+  }
+
+  .payment-hour-rule-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .payment-hour-rule-actions > * {
+    flex: 1 1 auto;
+  }
+
+  .payment-hour-rule-row {
+    grid-template-columns: 1fr;
+  }
+
+  .payment-hour-allowance-cell,
+  .payment-hour-rule-remove {
+    justify-content: flex-start;
   }
 }
 

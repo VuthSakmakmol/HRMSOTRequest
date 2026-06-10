@@ -22,6 +22,12 @@ const {
   formatDateTimeToDmyHm,
 } = require('../../../shared/utils/dateFormat')
 
+const PAYMENT_PROCESS_OT_STATUSES = [
+  'PENDING',
+  'PENDING_REQUESTER_CONFIRMATION',
+  'APPROVED',
+]
+
 function s(value) {
   return String(value ?? '').trim()
 }
@@ -197,6 +203,306 @@ function normalizeDenominations(value) {
   ].sort((a, b) => b - a)
 }
 
+function normalizeHourRules(value, fallback = []) {
+  const source = Array.isArray(value) ? value : fallback
+
+  const normalized = source
+    .map((item, index) => {
+      const minHours = safeNonNegativeNumber(item?.minHours, index === 0 ? 0 : index)
+      const rawMaxHours = item?.maxHours
+      const maxHours =
+        rawMaxHours === null || rawMaxHours === undefined || rawMaxHours === ''
+          ? null
+          : safeNonNegativeNumber(rawMaxHours, 0)
+
+      return {
+        label: s(item?.label),
+        minHours,
+        maxHours: maxHours !== null && maxHours > minHours ? maxHours : null,
+        multiplier: safeNonNegativeNumber(item?.multiplier, 1),
+        allowanceEligible: item?.allowanceEligible === true,
+      }
+    })
+    .filter((item) => Number.isFinite(item.minHours) && Number.isFinite(item.multiplier))
+    .sort((a, b) => a.minHours - b.minHours)
+
+  return normalized
+}
+
+function resolvePaymentHourRule(formula = {}, payableMinutes = 0) {
+  const payableHours = safeNonNegativeNumber(payableMinutes, 0) / 60
+  const rules = normalizeHourRules(formula.hourRules)
+
+  return (
+    rules.find((rule) => {
+      if (payableHours < safeNonNegativeNumber(rule.minHours, 0)) return false
+
+      const maxHours = rule.maxHours
+      if (maxHours === null || maxHours === undefined || maxHours === '') return true
+
+      return payableHours < safeNonNegativeNumber(maxHours, 0)
+    }) || null
+  )
+}
+
+function resolveFormulaMultiplier({ formula = {}, dayType = 'WORKING_DAY', payableMinutes = 0 }) {
+  const hourRule = resolvePaymentHourRule(formula, payableMinutes)
+
+  if (hourRule) {
+    return {
+      multiplier: safeNonNegativeNumber(hourRule.multiplier, 0),
+      multiplierSource: 'HOUR_RULE',
+      hourRule,
+    }
+  }
+
+  return {
+    multiplier: getMultiplier(formula, dayType),
+    multiplierSource: 'DAY_TYPE',
+    hourRule: null,
+  }
+}
+
+function formatHourRuleLabel(rule = {}) {
+  const label = s(rule.label)
+  if (label) return label
+
+  const minHours = safeNonNegativeNumber(rule.minHours, 0)
+  const maxHours = rule.maxHours
+
+  if (maxHours === null || maxHours === undefined || maxHours === '') {
+    return `${minHours}h up`
+  }
+
+  return `${minHours}h - ${safeNonNegativeNumber(maxHours, 0)}h`
+}
+
+function buildPaymentAmountSegment({ label, hours, multiplier, hourlyRate }) {
+  const safeHours = safeNonNegativeNumber(hours, 0)
+  const safeMultiplier = safeNonNegativeNumber(multiplier, 0)
+  const rawAmount = safeNonNegativeNumber(hourlyRate, 0) * safeHours * safeMultiplier
+
+  return {
+    label: s(label),
+    hours: roundAmount(safeHours, 4),
+    multiplier: safeMultiplier,
+    amount: rawAmount,
+    amountRounded: roundAmount(rawAmount, 6),
+  }
+}
+
+function getRuleMaxHours(rule = {}) {
+  const maxHours = rule.maxHours
+
+  if (maxHours === null || maxHours === undefined || maxHours === '') {
+    return Number.POSITIVE_INFINITY
+  }
+
+  const safeMaxHours = safeNonNegativeNumber(maxHours, 0)
+
+  return safeMaxHours > safeNonNegativeNumber(rule.minHours, 0)
+    ? safeMaxHours
+    : Number.POSITIVE_INFINITY
+}
+
+function pushProgressiveAmountSegment(segments, { rule, hours, multiplier, hourlyRate }) {
+  const safeHours = safeNonNegativeNumber(hours, 0)
+  const safeMultiplier = safeNonNegativeNumber(multiplier, 0)
+
+  if (safeHours <= 0 || safeMultiplier <= 0) return
+
+  const previous = segments[segments.length - 1]
+
+  // Keep the exported formula clean. Adjacent ranges with the same multiplier
+  // should display as one calculation, e.g. 4h × 1.5x instead of
+  // 3h × 1.5x + 1h × 1.5x.
+  if (previous && safeNonNegativeNumber(previous.multiplier, 0) === safeMultiplier) {
+    const combinedHours = safeNonNegativeNumber(previous.hours, 0) + safeHours
+    const combinedAmount = safeNonNegativeNumber(previous.amount, 0) + safeNonNegativeNumber(hourlyRate, 0) * safeHours * safeMultiplier
+
+    previous.hours = roundAmount(combinedHours, 4)
+    previous.amount = combinedAmount
+    previous.amountRounded = roundAmount(combinedAmount, 6)
+    return
+  }
+
+  segments.push(
+    buildPaymentAmountSegment({
+      label: formatHourRuleLabel(rule),
+      hours: safeHours,
+      multiplier: safeMultiplier,
+      hourlyRate,
+    }),
+  )
+}
+
+function calculateProgressiveHourRuleAmount({ hourlyRate = 0, formula = {}, dayType = 'WORKING_DAY', payableMinutes = 0 }) {
+  const payableHours = safeNonNegativeNumber(payableMinutes, 0) / 60
+  const rules = normalizeHourRules(formula.hourRules)
+  const matchedRule = resolvePaymentHourRule(formula, payableMinutes)
+
+  if (payableHours <= 0) {
+    return {
+      rawAmount: 0,
+      effectiveMultiplier: 0,
+      multiplierSource: matchedRule ? 'HOUR_RULE_PROGRESSIVE' : 'DAY_TYPE',
+      hourRule: matchedRule,
+      segments: [],
+    }
+  }
+
+  if (!matchedRule || !rules.length) {
+    const multiplier = getMultiplier(formula, dayType)
+    const segment = buildPaymentAmountSegment({
+      label: normalizeDayType(dayType).replace(/_/g, ' '),
+      hours: payableHours,
+      multiplier,
+      hourlyRate,
+    })
+
+    return {
+      rawAmount: segment.amount,
+      effectiveMultiplier: multiplier,
+      multiplierSource: 'DAY_TYPE',
+      hourRule: null,
+      segments: [segment],
+    }
+  }
+
+  const sortedRules = [...rules].sort((a, b) => {
+    const byMin = safeNonNegativeNumber(a.minHours, 0) - safeNonNegativeNumber(b.minHours, 0)
+    if (byMin) return byMin
+
+    return getRuleMaxHours(a) - getRuleMaxHours(b)
+  })
+
+  const segments = []
+  let coveredUntil = 0
+
+  sortedRules.forEach((rule) => {
+    const minHours = safeNonNegativeNumber(rule.minHours, 0)
+    const maxHours = getRuleMaxHours(rule)
+
+    if (payableHours <= minHours) return
+
+    // If the first configured rule starts after 0, pay the missing gap by
+    // the normal day-type multiplier so no approved payable hour disappears.
+    if (minHours > coveredUntil && coveredUntil < payableHours) {
+      const gapEnd = Math.min(minHours, payableHours)
+      pushProgressiveAmountSegment(segments, {
+        rule: { label: normalizeDayType(dayType).replace(/_/g, ' ') },
+        hours: gapEnd - coveredUntil,
+        multiplier: getMultiplier(formula, dayType),
+        hourlyRate,
+      })
+      coveredUntil = gapEnd
+    }
+
+    const segmentStart = Math.max(minHours, coveredUntil)
+    const segmentEnd = Math.min(maxHours, payableHours)
+
+    if (segmentEnd <= segmentStart) return
+
+    pushProgressiveAmountSegment(segments, {
+      rule,
+      hours: segmentEnd - segmentStart,
+      multiplier: rule.multiplier,
+      hourlyRate,
+    })
+
+    coveredUntil = Math.max(coveredUntil, segmentEnd)
+  })
+
+  // If payable hours exceed the last configured max, use the last rule that
+  // starts before the remaining hours. This protects payroll from losing hours
+  // when the final rule was entered with a high fixed max like 16.
+  if (coveredUntil < payableHours) {
+    const fallbackRule = [...sortedRules]
+      .reverse()
+      .find((rule) => safeNonNegativeNumber(rule.minHours, 0) <= coveredUntil)
+
+    const fallbackMultiplier = fallbackRule
+      ? safeNonNegativeNumber(fallbackRule.multiplier, getMultiplier(formula, dayType))
+      : getMultiplier(formula, dayType)
+
+    pushProgressiveAmountSegment(segments, {
+      rule: fallbackRule || { label: normalizeDayType(dayType).replace(/_/g, ' ') },
+      hours: payableHours - coveredUntil,
+      multiplier: fallbackMultiplier,
+      hourlyRate,
+    })
+  }
+
+  const rawAmount = segments.reduce(
+    (total, segment) => total + safeNonNegativeNumber(segment.amount, 0),
+    0,
+  )
+
+  const effectiveMultiplier =
+    hourlyRate > 0 && payableHours > 0 ? rawAmount / hourlyRate / payableHours : 0
+
+  return {
+    rawAmount,
+    effectiveMultiplier,
+    multiplierSource: 'HOUR_RULE_PROGRESSIVE',
+    hourRule: matchedRule,
+    segments,
+  }
+}
+
+function hasAllowanceEligibleHourRuleSegment({ formula = {}, payableMinutes = 0 }) {
+  const payableHours = safeNonNegativeNumber(payableMinutes, 0) / 60
+  const rules = normalizeHourRules(formula.hourRules)
+
+  if (payableHours <= 0) return false
+  if (!rules.length) return true
+
+  const sortedRules = [...rules].sort((a, b) => {
+    const byMin = safeNonNegativeNumber(a.minHours, 0) - safeNonNegativeNumber(b.minHours, 0)
+    if (byMin) return byMin
+
+    return getRuleMaxHours(a) - getRuleMaxHours(b)
+  })
+
+  let coveredUntil = 0
+
+  for (const rule of sortedRules) {
+    const minHours = safeNonNegativeNumber(rule.minHours, 0)
+    const maxHours = getRuleMaxHours(rule)
+
+    if (payableHours <= minHours) continue
+
+    const segmentStart = Math.max(minHours, coveredUntil)
+    const segmentEnd = Math.min(maxHours, payableHours)
+
+    if (segmentEnd > segmentStart && rule.allowanceEligible === true) {
+      return true
+    }
+
+    if (segmentEnd > segmentStart) {
+      coveredUntil = Math.max(coveredUntil, segmentEnd)
+    }
+  }
+
+  if (coveredUntil < payableHours) {
+    const fallbackRule = [...sortedRules]
+      .reverse()
+      .find((rule) => safeNonNegativeNumber(rule.minHours, 0) <= coveredUntil)
+
+    return fallbackRule ? fallbackRule.allowanceEligible === true : true
+  }
+
+  return false
+}
+
+function isAllowanceAllowedByFormula({ formula = {}, payableMinutes = 0, item = null }) {
+  if (item && upper(item.multiplierSource).startsWith('HOUR_RULE')) {
+    return item.allowanceEligibleByFormula === true
+  }
+
+  return hasAllowanceEligibleHourRuleSegment({ formula, payableMinutes })
+}
+
 function mapFormula(doc = {}) {
   return {
     id: doc._id ? String(doc._id) : null,
@@ -213,6 +519,8 @@ function mapFormula(doc = {}) {
       SUNDAY: safeNonNegativeNumber(doc.multipliers?.SUNDAY, 2),
       HOLIDAY: safeNonNegativeNumber(doc.multipliers?.HOLIDAY, 3),
     },
+
+    hourRules: normalizeHourRules(doc.hourRules),
 
     roundingDecimals: Math.min(Math.max(Number(doc.roundingDecimals || 2), 0), 6),
     currency: upper(doc.currency || 'USD'),
@@ -287,9 +595,11 @@ async function getFormulaOrThrow(formulaId) {
   return mapFormula(doc)
 }
 
-function buildApprovedOTFilter(fromDate, toDate) {
+function buildPaymentOTFilter(fromDate, toDate) {
   return {
-    status: 'APPROVED',
+    status: {
+      $in: PAYMENT_PROCESS_OT_STATUSES,
+    },
     otDate: {
       $gte: s(fromDate),
       $lte: s(toDate),
@@ -297,8 +607,8 @@ function buildApprovedOTFilter(fromDate, toDate) {
   }
 }
 
-async function fetchApprovedOTRequests(fromDate, toDate) {
-  return OTRequest.find(buildApprovedOTFilter(fromDate, toDate))
+async function fetchPaymentOTRequests(fromDate, toDate) {
+  return OTRequest.find(buildPaymentOTFilter(fromDate, toDate))
     .sort({
       otDate: 1,
       requestNo: 1,
@@ -1272,7 +1582,7 @@ function emptyAllowanceFields(exchangeRate = {}) {
   }
 }
 
-function applyAllowancePoliciesToItems(items = [], policies = [], exchangeRate = {}) {
+function applyAllowancePoliciesToItems(items = [], policies = [], exchangeRate = {}, formula = {}) {
   const normalizedPolicies = (Array.isArray(policies) ? policies : [])
     .map(normalizeAllowancePolicy)
     .filter((policy) => policy.id && policy.triggerType === 'OT_MINUTES')
@@ -1312,23 +1622,12 @@ function applyAllowancePoliciesToItems(items = [], policies = [], exchangeRate =
     dayGroups.set(key, existing)
   })
 
+  const allowanceAppliedDayKeys = new Set()
+
   normalizedPolicies.forEach((policy) => {
-    if (policy.applyPer === 'EMPLOYEE_PER_REQUEST') {
-      nextItems.forEach((item, index) => {
-        const payableMinutes = safeNonNegativeNumber(item.payableMinutes, 0)
-
-        if (payableMinutes < policy.minOtMinutes) return
-
-        const allowance = buildAllowanceMatch(policy, exchangeRate)
-        const current = nextItems[index]
-
-        nextItems[index] = mergeItemAllowance(current, allowance, exchangeRate)
-      })
-
-      return
-    }
-
     dayGroups.forEach((group) => {
+      if (allowanceAppliedDayKeys.has(group.key)) return
+      if (!isAllowanceAllowedByFormula({ formula, payableMinutes: group.totalPayableMinutes })) return
       if (group.totalPayableMinutes < policy.minOtMinutes) return
       if (!group.indexes.length) return
 
@@ -1337,6 +1636,7 @@ function applyAllowancePoliciesToItems(items = [], policies = [], exchangeRate =
       const current = nextItems[firstIndex]
 
       nextItems[firstIndex] = mergeItemAllowance(current, allowance, exchangeRate)
+      allowanceAppliedDayKeys.add(group.key)
     })
   })
 
@@ -1403,7 +1703,6 @@ function buildPaymentItem({ otRequest, employee, formula, salaryInfo, exchangeRa
   const employeeName = s(employee.employeeName || employee.name)
 
   const dayType = normalizeDayType(otRequest.dayType)
-  const multiplier = getMultiplier(formula, dayType)
 
   const monthlySalary = safeNonNegativeNumber(salaryInfo.monthlySalary, 0)
   const hourlyRate = getHourlyRate(monthlySalary, formula)
@@ -1416,9 +1715,17 @@ function buildPaymentItem({ otRequest, employee, formula, salaryInfo, exchangeRa
 
   const payableMinutes = resolveEmployeePaidMinutes(employee, otRequest)
   const hasAttendancePolicyPayable = payableMinutes > 0
+  const amountInfo = calculateProgressiveHourRuleAmount({
+    hourlyRate,
+    formula,
+    dayType,
+    payableMinutes,
+  })
+  const multiplier = amountInfo.effectiveMultiplier
+  const hourRule = amountInfo.hourRule
 
   const payableHours = payableMinutes / 60
-  const rawAmount = hourlyRate * multiplier * payableHours
+  const rawAmount = amountInfo.rawAmount
 
   const amount = salaryInfo.hasSalary
     ? roundAmount(rawAmount, formula.roundingDecimals)
@@ -1508,7 +1815,22 @@ function buildPaymentItem({ otRequest, employee, formula, salaryInfo, exchangeRa
 
     monthlySalary,
     hourlyRate: roundAmount(hourlyRate, formula.roundingDecimals + 4),
-    multiplier,
+    multiplier: roundAmount(multiplier, 6),
+    multiplierSource: amountInfo.multiplierSource,
+    amountCalculationMode: amountInfo.multiplierSource,
+    progressiveHourSegments: amountInfo.segments.map((segment) => ({
+      label: segment.label,
+      hours: segment.hours,
+      multiplier: segment.multiplier,
+      amount: roundAmount(segment.amount, formula.roundingDecimals),
+    })),
+    progressiveHourFormulaText: amountInfo.segments
+      .map((segment) => `${segment.hours}h × ${segment.multiplier}x`)
+      .join(' + '),
+    hourRuleLabel: s(hourRule?.label),
+    hourRuleMinHours: hourRule ? safeNonNegativeNumber(hourRule.minHours, 0) : null,
+    hourRuleMaxHours: hourRule?.maxHours ?? null,
+    allowanceEligibleByFormula: isAllowanceAllowedByFormula({ formula, payableMinutes }),
 
     currency: formula.currency,
     amount,
@@ -1567,6 +1889,7 @@ function buildPayableWarningIssue(otRequest = {}, employee = {}) {
     departmentName: s(employee.departmentName),
     positionName: s(employee.positionName),
     lineName: s(employee.lineName),
+    requestStatus: normalizeStatus(otRequest.status),
     otResult: upper(employee.otResult),
     payableMinutes: resolveEmployeePaidMinutes(employee),
     reason: s(
@@ -1574,6 +1897,28 @@ function buildPayableWarningIssue(otRequest = {}, employee = {}) {
         'Payable minutes were calculated, but verification result is not exact MATCH',
     ),
   }
+}
+
+function buildUnapprovedRequestPaymentIssue(otRequest = {}, employee = {}) {
+  const requestStatus = normalizeStatus(otRequest.status) || 'UNKNOWN'
+
+  return {
+    requestNo: s(otRequest.requestNo),
+    otDate: s(otRequest.otDate),
+    employeeNo: normalizeEmployeeNo(employee.employeeNo || employee.employeeCode),
+    employeeName: s(employee.employeeName || employee.name),
+    departmentName: s(employee.departmentName),
+    positionName: s(employee.positionName),
+    lineName: s(employee.lineName),
+    requestStatus,
+    otResult: upper(employee.otResult),
+    payableMinutes: resolveEmployeePaidMinutes(employee),
+    reason: `OT request status is ${requestStatus}. Payment is allowed by current setup without final approval.`,
+  }
+}
+
+function shouldWarnPaymentWithoutApproval(otRequest = {}) {
+  return normalizeStatus(otRequest.status) !== 'APPROVED'
 }
 
 async function buildPaymentItems({
@@ -1644,8 +1989,19 @@ async function buildPaymentItems({
         continue
       }
 
+      if (shouldWarnPaymentWithoutApproval(otRequest)) {
+        const key = `${s(otRequest.requestNo)}:${employeeNo}:REQUEST_NOT_APPROVED`
+
+        if (!payableWarningEmployeesMap.has(key)) {
+          payableWarningEmployeesMap.set(
+            key,
+            buildUnapprovedRequestPaymentIssue(otRequest, employee),
+          )
+        }
+      }
+
       if (upper(employee.otResult) !== 'MATCH') {
-        const key = `${s(otRequest.requestNo)}:${employeeNo}`
+        const key = `${s(otRequest.requestNo)}:${employeeNo}:OT_RESULT`
 
         if (!payableWarningEmployeesMap.has(key)) {
           payableWarningEmployeesMap.set(
@@ -1693,7 +2049,7 @@ async function buildPaymentItems({
   )
 
   return {
-    items: applyAllowancePoliciesToItems(items, allowancePolicies, exchangeRate),
+    items: applyAllowancePoliciesToItems(items, allowancePolicies, exchangeRate, formula),
     missingSalaryEmployees: Array.from(missingSalaryEmployeesMap.values()),
     missingPayableEmployees: Array.from(missingPayableEmployeesMap.values()),
     payableWarningEmployees: Array.from(payableWarningEmployeesMap.values()),
@@ -2002,12 +2358,12 @@ async function buildPaymentPreview({
     },
   )
 
-  const otRequests = await fetchApprovedOTRequests(fromDate, toDate)
+  const otRequests = await fetchPaymentOTRequests(fromDate, toDate)
   await reportPaymentProgress(
     onProgress,
     35,
     'OT_REQUESTS',
-    `Loaded ${otRequests.length} approved OT requests`,
+    `Loaded ${otRequests.length} OT requests for payment`,
     {
       totalRequests: otRequests.length,
     },

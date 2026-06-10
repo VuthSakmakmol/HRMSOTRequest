@@ -81,6 +81,32 @@ function normalizeDenominations(value) {
   return normalized.length ? normalized : DEFAULT_CASH_DENOMINATIONS
 }
 
+function normalizeHourRules(value, fallback = []) {
+  const source = Array.isArray(value) ? value : fallback
+
+  const normalized = source
+    .map((item, index) => {
+      const minHours = safeNumber(item?.minHours, index === 0 ? 0 : index)
+      const rawMaxHours = item?.maxHours
+      const maxHours =
+        rawMaxHours === null || rawMaxHours === undefined || rawMaxHours === ''
+          ? null
+          : safeNumber(rawMaxHours, 0)
+
+      return {
+        label: s(item?.label).slice(0, 120),
+        minHours: Math.max(0, minHours),
+        maxHours: maxHours !== null && maxHours > minHours ? maxHours : null,
+        multiplier: Math.max(0, safeNumber(item?.multiplier, 1)),
+        allowanceEligible: item?.allowanceEligible === true,
+      }
+    })
+    .filter((item) => Number.isFinite(item.minHours) && Number.isFinite(item.multiplier))
+    .sort((a, b) => a.minHours - b.minHours)
+
+  return normalized
+}
+
 function normalizeFormulaPayload(payload = {}) {
   const data = { ...payload }
 
@@ -124,6 +150,10 @@ function normalizeFormulaPayload(payload = {}) {
     data.multipliers = {
       ...(data.multipliers || {}),
     }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(data, 'hourRules')) {
+    data.hourRules = normalizeHourRules(data.hourRules)
   }
 
   return data
@@ -216,6 +246,7 @@ function mapFormulaItem(doc = {}) {
     hoursPerDay: safeNumber(doc.hoursPerDay, 8),
 
     multipliers,
+    hourRules: normalizeHourRules(doc.hourRules),
 
     roundingDecimals: safeNumber(doc.roundingDecimals, 2),
     currency: upper(doc.currency || 'USD'),
@@ -255,6 +286,7 @@ function mapFormulaLookupItem(doc = {}) {
     monthlyWorkingDays: item.monthlyWorkingDays,
     hoursPerDay: item.hoursPerDay,
     multipliers: item.multipliers,
+    hourRules: item.hourRules,
     roundingDecimals: item.roundingDecimals,
     currency: item.currency,
 

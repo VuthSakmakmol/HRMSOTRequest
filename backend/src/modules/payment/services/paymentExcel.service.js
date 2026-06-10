@@ -195,6 +195,13 @@ function formatPercentFromMultiplier(value) {
   return 'OT'
 }
 
+function formatItemRateLabel(item = {}) {
+  const progressiveText = s(item.progressiveHourFormulaText)
+  if (progressiveText) return progressiveText
+
+  return formatPercentFromMultiplier(item.multiplier)
+}
+
 function getItemTotalUsd(item = {}) {
   return roundAmount(n(item.amountUsd, 0) + n(item.allowanceAmountUsd, 0), 2)
 }
@@ -241,6 +248,7 @@ function summarizeItems(items = [], denominations = []) {
     payableHours: 0,
     otUsd: 0,
     allowanceUsd: 0,
+    allowanceKhrRounded: 0,
     totalUsd: 0,
     totalKhrRaw: 0,
     totalKhrRounded: 0,
@@ -251,6 +259,7 @@ function summarizeItems(items = [], denominations = []) {
     result.payableHours += n(item.payableHours, 0)
     result.otUsd += n(item.amountUsd, 0)
     result.allowanceUsd += n(item.allowanceAmountUsd, 0)
+    result.allowanceKhrRounded += n(item.allowanceAmountKhrRounded, 0)
     result.totalUsd += getItemTotalUsd(item)
     result.totalKhrRaw += getItemTotalKhrRaw(item)
     result.totalKhrRounded += getItemTotalKhrRounded(item)
@@ -260,6 +269,7 @@ function summarizeItems(items = [], denominations = []) {
   result.payableHours = roundAmount(result.payableHours, 2)
   result.otUsd = roundAmount(result.otUsd, 2)
   result.allowanceUsd = roundAmount(result.allowanceUsd, 2)
+  result.allowanceKhrRounded = Math.round(result.allowanceKhrRounded)
   result.totalUsd = roundAmount(result.totalUsd, 2)
   result.totalKhrRaw = Math.round(result.totalKhrRaw)
   result.totalKhrRounded = Math.round(result.totalKhrRounded)
@@ -321,7 +331,7 @@ function buildLineGroups(data = {}, denominations = []) {
 
     const otDate = s(item.otDate)
     const dateLabel = formatDayOnly(otDate, item.otDateDisplay)
-    const rateLabel = formatPercentFromMultiplier(item.multiplier)
+    const rateLabel = formatItemRateLabel(item)
     const dateRateKey = `${otDate}|${rateLabel}`
 
     if (otDate && !existing.dates.has(otDate)) {
@@ -356,6 +366,7 @@ function buildLineGroups(data = {}, denominations = []) {
         items: [],
         otUsd: 0,
         allowanceUsd: 0,
+        allowanceKhrRounded: 0,
         totalUsd: 0,
         totalKhrRaw: 0,
         totalKhrRounded: 0,
@@ -379,6 +390,7 @@ function buildLineGroups(data = {}, denominations = []) {
       )
       employee.otUsd += n(item.amountUsd, 0)
       employee.allowanceUsd += n(item.allowanceAmountUsd, 0)
+      employee.allowanceKhrRounded += n(item.allowanceAmountKhrRounded, 0)
       employee.totalUsd += getItemTotalUsd(item)
       employee.totalKhrRaw += getItemTotalKhrRaw(item)
       employee.totalKhrRounded += getItemTotalKhrRounded(item)
@@ -1097,14 +1109,79 @@ function addPackedDetailRows(worksheet, pack = {}, plan = {}, denominations = []
     rowNumber += 1
   })
 
+  let sheetTotalRowNumber = null
+  const lineSubtotalRows = [...subtotalRows]
+
+  if (groups.length > 1 && lineSubtotalRows.length > 1) {
+    sheetTotalRowNumber = rowNumber
+    const sheetTotalRow = worksheet.getRow(sheetTotalRowNumber)
+    const packSummary = summarizeItems(
+      groups.flatMap((group) => (Array.isArray(group.items) ? group.items : [])),
+      denominations,
+    )
+
+    const subtotalSumFormula = (col) => {
+      const letter = columnLetter(col)
+      return `SUM(${lineSubtotalRows.map((subtotalRow) => `${letter}${subtotalRow}`).join(',')})`
+    }
+
+    worksheet.mergeCells(sheetTotalRowNumber, 1, sheetTotalRowNumber, 5)
+    sheetTotalRow.getCell(1).value = 'Sheet Total'
+
+    plan.columns.forEach((_, columnIndex) => {
+      const col = firstDateCol + columnIndex
+      sheetTotalRow.getCell(col).value = {
+        formula: subtotalSumFormula(col),
+        result:
+          formatHourValue(
+            groups.reduce(
+              (sum, group) =>
+                sum +
+                (group.employees || []).reduce(
+                  (employeeSum, employee) =>
+                    employeeSum + getEmployeeHoursForDate(employee, plan.columns[columnIndex].otDate),
+                  0,
+                ),
+              0,
+            ),
+          ) || 0,
+      }
+    })
+
+    ;[
+      { col: moneyStartCol, result: packSummary.otUsd },
+      { col: moneyStartCol + 1, result: packSummary.allowanceUsd },
+      { col: moneyStartCol + 2, result: packSummary.totalUsd },
+      { col: moneyStartCol + 3, result: packSummary.totalKhrRounded },
+    ].forEach(({ col, result }) => {
+      sheetTotalRow.getCell(col).value = {
+        formula: subtotalSumFormula(col),
+        result,
+      }
+    })
+
+    denominations.forEach((denomination, columnIndex) => {
+      const col = denominationStartCol + columnIndex
+      sheetTotalRow.getCell(col).value = {
+        formula: subtotalSumFormula(col),
+        result: packSummary.breakdown[String(denomination)] || 0,
+      }
+    })
+
+    sheetTotalRow.height = 20
+    subtotalRows.push(sheetTotalRowNumber)
+    rowNumber += 1
+  }
+
   const signatureRowNumber = rowNumber + 4
   const lineRowNumber = signatureRowNumber + SIGNATURE_LINE_OFFSET
   addSignatureBlock(worksheet, signatureRowNumber, signatureCol + 1)
 
   return {
     firstDataRow,
-    totalRowNumber: subtotalRows[subtotalRows.length - 1] || firstDataRow,
+    totalRowNumber: sheetTotalRowNumber || subtotalRows[subtotalRows.length - 1] || firstDataRow,
     subtotalRows,
+    sheetTotalRowNumber,
     lastTableRow: Math.max(firstDataRow, rowNumber - 1),
     lastUsedRow: lineRowNumber,
     signatureRowNumber,
@@ -1201,7 +1278,7 @@ function addSummaryRows(worksheet, data = {}, detailSheets = [], denominations =
     const denominationStartCol = detail.denominationStartCol
 
     row.getCell(1).value = index + 1
-    row.getCell(2).value = detail.group.lineName
+    row.getCell(2).value = lineDisplayValue(detail.group)
     row.getCell(3).value = detail.employeeCount
 
     const firstHourCol = 6

@@ -171,6 +171,32 @@ const multiplierSchema = z.object({
   HOLIDAY: numberField('Holiday multiplier', 0),
 })
 
+const hourRuleSchema = z
+  .object({
+    label: optionalTrimmedString(120).default(''),
+    minHours: numberField('Minimum OT hours', 0),
+    maxHours: z.preprocess(
+      (value) => {
+        if (value === '' || value === null || value === undefined) return null
+        return Number(value)
+      },
+      z.number().min(0, 'Maximum OT hours must be at least 0').nullable().optional(),
+    ),
+    multiplier: numberField('Hour rule multiplier', 0),
+    allowanceEligible: z.boolean().optional().default(false),
+  })
+  .superRefine((data, ctx) => {
+    if (data.maxHours !== null && data.maxHours !== undefined && data.maxHours <= data.minHours) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['maxHours'],
+        message: 'Maximum OT hours must be greater than minimum OT hours',
+      })
+    }
+  })
+
+const hourRulesSchema = z.array(hourRuleSchema).min(1, 'At least one hour rule is required')
+
 const createPaymentFormulaSchema = z.object({
   code: requiredUpperString('Code', 50),
   name: requiredTrimmedString('Name', 150),
@@ -186,6 +212,8 @@ const createPaymentFormulaSchema = z.object({
     SUNDAY: 2,
     HOLIDAY: 3,
   }),
+
+  hourRules: hourRulesSchema,
 
   roundingDecimals: z.coerce.number().int().min(0).max(6).default(2),
   currency: optionalUpperString(10).default('USD'),
@@ -210,6 +238,7 @@ const updatePaymentFormulaSchema = z
     hoursPerDay: optionalNumberField('Hours per day', 1),
 
     multipliers: multiplierSchema.partial().optional(),
+    hourRules: hourRulesSchema.optional(),
 
     roundingDecimals: z.coerce.number().int().min(0).max(6).optional(),
     currency: optionalUpperString(10),

@@ -51,6 +51,32 @@ function normalizeCashDenominations(value) {
   return normalized.length ? normalized : DEFAULT_CASH_DENOMINATIONS
 }
 
+function normalizeHourRules(value, fallback = []) {
+  const source = Array.isArray(value) ? value : fallback
+
+  const normalized = source
+    .map((item, index) => {
+      const minHours = safeNonNegativeNumber(item?.minHours, index === 0 ? 0 : index)
+      const rawMaxHours = item?.maxHours
+      const maxHours =
+        rawMaxHours === null || rawMaxHours === undefined || rawMaxHours === ''
+          ? null
+          : safeNonNegativeNumber(rawMaxHours, 0)
+
+      return {
+        label: s(item?.label).slice(0, 120),
+        minHours,
+        maxHours: maxHours !== null && maxHours > minHours ? maxHours : null,
+        multiplier: safeNonNegativeNumber(item?.multiplier, 1),
+        allowanceEligible: item?.allowanceEligible === true,
+      }
+    })
+    .filter((item) => item.multiplier >= 0)
+    .sort((a, b) => a.minHours - b.minHours)
+
+  return normalized
+}
+
 const DayTypeMultiplierSchema = new Schema(
   {
     WORKING_DAY: {
@@ -72,6 +98,49 @@ const DayTypeMultiplierSchema = new Schema(
       required: true,
       min: 0,
       default: 3,
+    },
+  },
+  {
+    _id: false,
+  },
+)
+
+
+const HourRuleSchema = new Schema(
+  {
+    label: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 120,
+    },
+
+    // Inclusive lower bound. Example: minHours 3 means OT >= 3h.
+    minHours: {
+      type: Number,
+      required: true,
+      min: 0,
+      default: 0,
+    },
+
+    // Exclusive upper bound. Empty means no maximum.
+    // Example: maxHours 5 means OT < 5h.
+    maxHours: {
+      type: Number,
+      min: 0,
+      default: null,
+    },
+
+    multiplier: {
+      type: Number,
+      required: true,
+      min: 0,
+      default: 1,
+    },
+
+    allowanceEligible: {
+      type: Boolean,
+      default: false,
     },
   },
   {
@@ -132,6 +201,11 @@ const PaymentFormulaSchema = new Schema(
         SUNDAY: 2,
         HOLIDAY: 3,
       }),
+    },
+
+    hourRules: {
+      type: [HourRuleSchema],
+      default: () => [],
     },
 
     // USD/base-currency rounding before exchange.
@@ -249,6 +323,7 @@ PaymentFormulaSchema.pre('validate', function preValidate(next) {
   }
 
   this.multipliers = multipliers
+  this.hourRules = normalizeHourRules(this.hourRules)
 
   next()
 })
