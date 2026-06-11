@@ -30,10 +30,15 @@ function upper(value) {
   return s(value).toUpperCase()
 }
 
-function createHttpError(message, status = 400) {
+function createHttpError(message, status = 400, extra = {}) {
   const err = new Error(message)
   err.status = status
   err.statusCode = status
+
+  if (extra && typeof extra === 'object') {
+    Object.assign(err, extra)
+  }
+
   return err
 }
 
@@ -173,6 +178,10 @@ function resolveShiftMatchStatus({ shiftMatched, shiftTimeMatched }) {
 function buildAttendanceImportSampleWorkbook() {
   const workbook = XLSX.utils.book_new()
 
+  // Keep this sample intentionally simple.
+  // The import dialog supplies Attendance Date, so users only need these 3 columns.
+  // Parser support is aligned with these exact headers:
+  // Employee ID, Clock In, Clock Out.
   const sampleRows = [
     ['Employee ID', 'Clock In', 'Clock Out'],
     ['52520351', '06:45', '16:00'],
@@ -187,6 +196,14 @@ function buildAttendanceImportSampleWorkbook() {
     { wch: 14 },
     { wch: 14 },
   ]
+
+  // Make the sample safer when opened/edited in Excel.
+  // Employee IDs and HH:mm times should stay as text, not auto-converted.
+  for (const cellAddress of Object.keys(sampleSheet)) {
+    if (cellAddress.startsWith('!')) continue
+    sampleSheet[cellAddress].t = 's'
+    sampleSheet[cellAddress].z = '@'
+  }
 
   XLSX.utils.book_append_sheet(workbook, sampleSheet, 'Sample')
 
@@ -509,6 +526,139 @@ async function overrideExistingAttendanceRecords(recordsPayload = [], currentImp
   return existingCount
 }
 
+function getAttendanceDatesFromRecords(recordsPayload = []) {
+  return Array.from(
+    new Set(
+      (Array.isArray(recordsPayload) ? recordsPayload : [])
+        .map((item) => s(item?.attendanceDate))
+        .filter(Boolean),
+    ),
+  ).sort()
+}
+
+function buildReplaceDateDeleteFilter(recordsPayload = [], currentImportId = null) {
+  const attendanceDates = getAttendanceDatesFromRecords(recordsPayload)
+
+  if (!attendanceDates.length) return null
+
+  const filter = {
+    attendanceDate: { $in: attendanceDates },
+  }
+
+  if (currentImportId && mongoose.isValidObjectId(currentImportId)) {
+    filter.importId = { $ne: currentImportId }
+  }
+
+  return filter
+}
+
+async function replaceAttendanceRecordsByImportedDates(recordsPayload = [], currentImportId = null) {
+  const filter = buildReplaceDateDeleteFilter(recordsPayload, currentImportId)
+  if (!filter) return 0
+
+  const existingCount = await AttendanceRecord.countDocuments(filter)
+  if (!existingCount) return 0
+
+  await AttendanceRecord.deleteMany(filter)
+
+  return existingCount
+}
+
+function buildCriticalRecordValidationRows(recordsPayload = []) {
+  const rows = []
+
+  for (const item of Array.isArray(recordsPayload) ? recordsPayload : []) {
+    const issues = []
+
+    if (item?.employeeMatched !== true) {
+      issues.push('Employee not found by Employee ID')
+    }
+
+    if (upper(item?.status) === 'UNKNOWN') {
+      issues.push(s(item?.derivedStatusReason) || 'Unable to derive attendance result')
+    }
+
+    const uniqueIssues = Array.from(new Set(issues.map((issue) => s(issue)).filter(Boolean)))
+
+    if (uniqueIssues.length) {
+      rows.push({
+        rawRowNo: Number(item?.rawRowNo || 0),
+        message: uniqueIssues.join('; '),
+        rawData: item?.rawData || {},
+      })
+    }
+  }
+
+  return rows
+}
+
+function normalizeImportIssueRows(rows = []) {
+  return (Array.isArray(rows) ? rows : [])
+    .map((row) => ({
+      rawRowNo: Number(row?.rawRowNo || row?.rowNo || row?.row || 0),
+      message: s(row?.message || row?.reason || row?.detail),
+      rawData: row?.rawData || {},
+    }))
+    .filter((row) => row.rawRowNo || row.message)
+}
+
+async function failImportBeforeSavingRecords({
+  importDoc,
+  payload,
+  authUser,
+  parsed,
+  recordsPayload,
+  failedRows,
+}) {
+  const attendanceDate = toYmd(payload.attendanceDate) || s(payload.attendanceDate)
+  const normalizedFailedRows = normalizeImportIssueRows(failedRows)
+
+  importDoc.periodFrom = attendanceDate
+  importDoc.periodTo = attendanceDate
+
+  importDoc.rowCount = Number(parsed?.rowCount || 0)
+  importDoc.successRowCount = 0
+  importDoc.failedRowCount = Number(normalizedFailedRows.length || 0)
+  importDoc.duplicateRowCount = Number(parsed?.duplicateRowCount || 0)
+  importDoc.overriddenRowCount = 0
+  importDoc.status = 'FAILED'
+  importDoc.updatedBy = getActorAccountId(authUser)
+
+  const duplicateText = importDoc.duplicateRowCount
+    ? `${importDoc.duplicateRowCount} duplicate row(s)`
+    : ''
+  const failedText = normalizedFailedRows.length
+    ? `${normalizedFailedRows.length} error row(s)`
+    : ''
+
+  importDoc.remark = buildImportRemark(payload.remark, [
+    'Import rejected. No attendance records were saved.',
+    [duplicateText, failedText].filter(Boolean).join(', '),
+  ])
+
+  await importDoc.save()
+
+  const previewIssues = normalizedFailedRows.slice(0, 50)
+  const totalIssueCount = normalizedFailedRows.length
+
+  throw createHttpError(
+    'Attendance import failed. Please fix all duplicate/error rows and import again. No attendance records were updated.',
+    400,
+    {
+      code: 'ATTENDANCE_IMPORT_VALIDATION_FAILED',
+      messageKey: 'attendance.import.validationFailed',
+      issues: previewIssues,
+      params: {
+        rowCount: Number(parsed?.rowCount || 0),
+        duplicateRowCount: Number(parsed?.duplicateRowCount || 0),
+        failedRowCount: totalIssueCount,
+        validRowCount: Number(recordsPayload?.length || 0),
+      },
+      attendanceImportHandled: true,
+    },
+  )
+}
+
 function buildImportRemark(baseRemark, extraRemarks = []) {
   return [s(baseRemark), ...extraRemarks.map((item) => s(item))]
     .filter(Boolean)
@@ -780,41 +930,58 @@ async function importExcel(file, payload, authUser) {
       ),
     )
 
+    const criticalValidationRows = buildCriticalRecordValidationRows(recordsPayload)
+    const allFailedRows = [
+      ...(parsed.failedRows || []),
+      ...criticalValidationRows,
+    ]
+
+    if (!recordsPayload.length || allFailedRows.length || parsed.duplicateRowCount) {
+      await failImportBeforeSavingRecords({
+        importDoc,
+        payload,
+        authUser,
+        parsed,
+        recordsPayload,
+        failedRows: !recordsPayload.length && !allFailedRows.length
+          ? [{ rawRowNo: 0, message: 'No valid attendance rows found', rawData: {} }]
+          : allFailedRows,
+      })
+    }
+
     let overriddenRowCount = 0
 
     if (recordsPayload.length) {
-      overriddenRowCount = await overrideExistingAttendanceRecords(recordsPayload, importDoc._id)
+      overriddenRowCount = await replaceAttendanceRecordsByImportedDates(recordsPayload, importDoc._id)
       await insertAttendanceRecordsInChunks(recordsPayload)
     }
 
     const attendanceDate = toYmd(payload.attendanceDate) || s(payload.attendanceDate)
+    const importedDates = getAttendanceDatesFromRecords(recordsPayload)
 
     importDoc.periodFrom = attendanceDate
     importDoc.periodTo = attendanceDate
 
     importDoc.rowCount = Number(parsed.rowCount || 0)
     importDoc.successRowCount = Number(recordsPayload.length || 0)
-    importDoc.failedRowCount = Number((parsed.failedRows || []).length || 0)
-    importDoc.duplicateRowCount = Number(parsed.duplicateRowCount || 0)
+    importDoc.failedRowCount = 0
+    importDoc.duplicateRowCount = 0
     importDoc.overriddenRowCount = Number(overriddenRowCount || 0)
 
-    importDoc.status = recordsPayload.length
-      ? parsed.failedRows.length || parsed.duplicateRowCount
-        ? 'PARTIAL_SUCCESS'
-        : 'SUCCESS'
-      : 'FAILED'
-
+    importDoc.status = 'SUCCESS'
     importDoc.updatedBy = getActorAccountId(authUser)
 
     const extraRemarks = []
 
     if (overriddenRowCount > 0) {
-      extraRemarks.push(`Overrode ${overriddenRowCount} existing attendance record(s) by employee/date`)
+      extraRemarks.push(
+        `Replaced ${overriddenRowCount} existing attendance record(s) for date(s): ${importedDates.join(', ')}`,
+      )
     }
 
-    if (!recordsPayload.length) {
-      extraRemarks.push('No valid attendance rows found')
-    }
+    extraRemarks.push(
+      `Import mode: replace whole attendance date. Missing employees from the new file were removed for date(s): ${importedDates.join(', ')}`,
+    )
 
     importDoc.remark = buildImportRemark(payload.remark, extraRemarks)
 
@@ -823,16 +990,20 @@ async function importExcel(file, payload, authUser) {
     return {
       import: mapImportItem(importDoc.toObject()),
       overriddenRowCount,
-      failedRows: parsed.failedRows || [],
+      failedRows: [],
       detectedColumns: parsed.detectedColumns || {},
       sheetName: s(parsed.sheetName),
+      replaceMode: 'REPLACE_WHOLE_DATE',
+      replacedDates: importedDates,
     }
   } catch (error) {
-    importDoc.status = 'FAILED'
-    importDoc.updatedBy = getActorAccountId(authUser)
-    importDoc.remark = s(error.message || importDoc.remark)
+    if (!error?.attendanceImportHandled) {
+      importDoc.status = 'FAILED'
+      importDoc.updatedBy = getActorAccountId(authUser)
+      importDoc.remark = s(error.message || importDoc.remark)
 
-    await importDoc.save()
+      await importDoc.save()
+    }
 
     throw error
   }

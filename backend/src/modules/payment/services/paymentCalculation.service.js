@@ -1125,15 +1125,37 @@ function buildVerificationPaymentMap(verification = {}) {
 
 function getVerificationPayableMinutes(verificationRow = {}) {
   const result = upper(verificationRow.otResult)
+  const attendanceStatus = upper(verificationRow.attendanceStatus)
+  const hasAnyPunch =
+    verificationRow.hasClockIn === true ||
+    verificationRow.hasClockOut === true ||
+    Boolean(s(verificationRow.clockIn)) ||
+    Boolean(s(verificationRow.clockOut))
 
   if (result === 'PENDING_REVIEW') return 0
 
-  return safeNonNegativeInt(
-    verificationRow.roundedOtMinutes ??
-      verificationRow.payableMinutes ??
-      verificationRow.approvedPaidMinutes,
-    0,
+  // Never pay employees who are absent/leave/off or have no attendance punch.
+  // This prevents requested/approved minutes from being used as a fallback when
+  // the verification row is a generated ABSENT row.
+  if (['ABSENT', 'LEAVE', 'OFF'].includes(attendanceStatus) || !hasAnyPunch) {
+    return 0
+  }
+
+  const directVerifiedMinutes = firstNonNegativeNumber(
+    verificationRow.roundedOtMinutes,
+    verificationRow.payableMinutes,
+    verificationRow.verifiedPayableMinutes,
+    verificationRow.finalPayableMinutes,
+    verificationRow.paymentPayableMinutes,
+    verificationRow.policyPaidMinutes,
+    verificationRow.policyPayableMinutes,
+    verificationRow.calculatedPaidMinutes,
+    verificationRow.calculatedPayableMinutes,
+    verificationRow.attendancePaidMinutes,
+    verificationRow.attendancePayableMinutes,
   )
+
+  return safeNonNegativeInt(directVerifiedMinutes, 0)
 }
 
 function mergeEmployeeWithVerification(originalEmployee = {}, verificationRow = {}) {
@@ -1734,6 +1756,7 @@ function buildPaymentItem({ otRequest, employee, formula, salaryInfo, exchangeRa
   const exchange = calculateExchangeAmount(amount, exchangeRate)
 
   return {
+    paymentRowKey: buildPaymentRowKey(otRequest, employee),
     otRequestId: getObjectIdString(otRequest._id || otRequest.id),
     requestNo: s(otRequest.requestNo),
 
@@ -1917,6 +1940,167 @@ function buildUnapprovedRequestPaymentIssue(otRequest = {}, employee = {}) {
   }
 }
 
+
+function buildPaymentRowKey(otRequest = {}, employee = {}) {
+  const requestKey = s(otRequest.requestNo || otRequest.id || otRequest._id)
+  const dateKey = s(otRequest.otDate)
+  const employeeNo = normalizeEmployeeNo(employee.employeeNo || employee.employeeCode)
+  const employeeId = getObjectIdString(employee.employeeId)
+  const employeeKey = employeeId || employeeNo
+
+  return [requestKey, dateKey, employeeKey].filter(Boolean).join('::')
+}
+
+function minutesToHours(minutes = 0) {
+  return roundAmount(safeNonNegativeNumber(minutes, 0) / 60, 4)
+}
+
+function resolveAuditPaymentStatus({ requestedMinutes = 0, payableMinutes = 0, hasSalary = true }) {
+  const requested = safeNonNegativeInt(requestedMinutes, 0)
+  const payable = safeNonNegativeInt(payableMinutes, 0)
+
+  if (!hasSalary || payable <= 0) return 'Not paid'
+  if (requested > 0 && payable < requested) return 'Partial paid'
+
+  return 'Paid'
+}
+
+function buildAuditIssueText({ otRequest = {}, employee = {}, salaryInfo = {}, requestedMinutes = 0, payableMinutes = 0 }) {
+  const issues = []
+  const requestStatus = normalizeStatus(otRequest.status)
+  const otResult = upper(employee.otResult)
+  const requested = safeNonNegativeInt(requestedMinutes, 0)
+  const payable = safeNonNegativeInt(payableMinutes, 0)
+
+  if (salaryInfo?.hasSalary === false) {
+    issues.push('Salary not found in uploaded salary Excel')
+  }
+
+  if (shouldWarnPaymentWithoutApproval(otRequest)) {
+    issues.push(`OT request status is ${requestStatus || 'UNKNOWN'}. Payment is allowed by current setup without final approval.`)
+  }
+
+  if (payable <= 0) {
+    issues.push(
+      s(
+        employee.paymentBlockedReason ||
+          employee.otResultReason ||
+          employee.attendanceStatus ||
+          'No payable OT minutes found',
+      ),
+    )
+  } else {
+    if (requested > 0 && payable < requested) {
+      issues.push('Worked less than requested. Paid hours were capped by attendance/policy result.')
+    }
+
+    if (otResult && otResult !== 'MATCH') {
+      issues.push(
+        s(
+          employee.otResultReason ||
+            'Payable minutes were calculated, but attendance verification result is not exact MATCH',
+        ),
+      )
+    }
+  }
+
+  return Array.from(new Set(issues.filter(Boolean))).join(' | ')
+}
+
+function buildPaymentAuditRow({ otRequest = {}, employee = {}, salaryInfo = {}, item = null }) {
+  const requestedMinutes = resolveEmployeeRequestedMinutes(employee, otRequest)
+  const payableMinutes = item
+    ? safeNonNegativeInt(item.payableMinutes, 0)
+    : resolveEmployeePaidMinutes(employee, otRequest)
+
+  const hasSalary = item ? item.hasSalary === true : salaryInfo?.hasSalary === true
+  const paymentStatus = resolveAuditPaymentStatus({
+    requestedMinutes,
+    payableMinutes,
+    hasSalary,
+  })
+
+  return {
+    paymentRowKey: buildPaymentRowKey(otRequest, employee),
+
+    requestNo: s(otRequest.requestNo),
+    otRequestId: getObjectIdString(otRequest._id || otRequest.id),
+    otDate: s(otRequest.otDate),
+    otDateDisplay: formatYmdToDmy(otRequest.otDate),
+    requestStatus: normalizeStatus(otRequest.status),
+
+    employeeId: getObjectIdString(employee.employeeId),
+    employeeNo: normalizeEmployeeNo(employee.employeeNo || employee.employeeCode),
+    employeeName: s(employee.employeeName || employee.name),
+
+    departmentName: s(employee.departmentName),
+    positionName: s(employee.positionName),
+    lineCode: upper(employee.lineCode),
+    lineName: s(employee.lineName),
+
+    requestedMinutes,
+    requestedHours: minutesToHours(requestedMinutes),
+
+    attendanceStatus: upper(employee.attendanceStatus),
+    clockIn: s(employee.clockIn),
+    clockOut: s(employee.clockOut),
+    actualOtMinutes: safeNonNegativeInt(employee.actualOtMinutes, 0),
+    actualOtHours: minutesToHours(employee.actualOtMinutes),
+    eligibleOtMinutes: safeNonNegativeInt(employee.eligibleOtMinutes, 0),
+    roundedOtMinutes: safeNonNegativeInt(employee.roundedOtMinutes, 0),
+
+    payableMinutes,
+    payableHours: minutesToHours(payableMinutes),
+
+    otResult: upper(employee.otResult),
+    otResultReason: s(employee.otResultReason),
+
+    hasSalary,
+    monthlySalary: item ? safeNonNegativeNumber(item.monthlySalary, 0) : safeNonNegativeNumber(salaryInfo.monthlySalary, 0),
+    hourlyRate: item ? safeNonNegativeNumber(item.hourlyRate, 0) : 0,
+
+    rateFormula: s(item?.progressiveHourFormulaText),
+    amountUsd: item ? safeNonNegativeNumber(item.amountUsd, 0) : 0,
+    allowanceAmountUsd: item ? safeNonNegativeNumber(item.allowanceAmountUsd, 0) : 0,
+    totalUsd: item ? roundAmount(safeNonNegativeNumber(item.amountUsd, 0) + safeNonNegativeNumber(item.allowanceAmountUsd, 0), 2) : 0,
+    totalKhr: item ? safeNonNegativeNumber(item.totalPayableKhrRounded, 0) : 0,
+
+    paymentStatus,
+    issueReason: buildAuditIssueText({
+      otRequest,
+      employee,
+      salaryInfo: { ...salaryInfo, hasSalary },
+      requestedMinutes,
+      payableMinutes,
+    }),
+  }
+}
+
+function mergeAuditRowWithPaymentItem(row = {}, item = {}) {
+  const requestedMinutes = safeNonNegativeInt(row.requestedMinutes, 0)
+  const payableMinutes = safeNonNegativeInt(item.payableMinutes, row.payableMinutes)
+  const hasSalary = item.hasSalary === true
+
+  return {
+    ...row,
+    payableMinutes,
+    payableHours: minutesToHours(payableMinutes),
+    hasSalary,
+    monthlySalary: safeNonNegativeNumber(item.monthlySalary, row.monthlySalary),
+    hourlyRate: safeNonNegativeNumber(item.hourlyRate, row.hourlyRate),
+    rateFormula: s(item.progressiveHourFormulaText || row.rateFormula),
+    amountUsd: safeNonNegativeNumber(item.amountUsd, 0),
+    allowanceAmountUsd: safeNonNegativeNumber(item.allowanceAmountUsd, 0),
+    totalUsd: roundAmount(safeNonNegativeNumber(item.amountUsd, 0) + safeNonNegativeNumber(item.allowanceAmountUsd, 0), 2),
+    totalKhr: safeNonNegativeNumber(item.totalPayableKhrRounded, 0),
+    paymentStatus: resolveAuditPaymentStatus({
+      requestedMinutes,
+      payableMinutes,
+      hasSalary,
+    }),
+  }
+}
+
 function shouldWarnPaymentWithoutApproval(otRequest = {}) {
   return normalizeStatus(otRequest.status) !== 'APPROVED'
 }
@@ -1930,6 +2114,7 @@ async function buildPaymentItems({
   onProgress,
 }) {
   const items = []
+  const auditRows = []
   const missingSalaryEmployeesMap = new Map()
   const missingPayableEmployeesMap = new Map()
   const payableWarningEmployeesMap = new Map()
@@ -1975,6 +2160,7 @@ async function buildPaymentItems({
       if (!employeeNo) continue
 
       const payableMinutes = resolveEmployeePaidMinutes(employee, otRequest)
+      const salaryInfo = buildSalaryInfo(salaryMap, employeeNo)
 
       if (payableMinutes <= 0) {
         const key = `${s(otRequest.requestNo)}:${employeeNo}`
@@ -1985,6 +2171,14 @@ async function buildPaymentItems({
             buildMissingPayableIssue(otRequest, employee),
           )
         }
+
+        auditRows.push(
+          buildPaymentAuditRow({
+            otRequest,
+            employee,
+            salaryInfo,
+          }),
+        )
 
         continue
       }
@@ -2011,8 +2205,6 @@ async function buildPaymentItems({
         }
       }
 
-      const salaryInfo = buildSalaryInfo(salaryMap, employeeNo)
-
       const item = buildPaymentItem({
         otRequest,
         employee,
@@ -2022,6 +2214,14 @@ async function buildPaymentItems({
       })
 
       items.push(item)
+      auditRows.push(
+        buildPaymentAuditRow({
+          otRequest,
+          employee,
+          salaryInfo,
+          item,
+        }),
+      )
 
       if (!salaryInfo.hasSalary && !missingSalaryEmployeesMap.has(employeeNo)) {
         missingSalaryEmployeesMap.set(employeeNo, {
@@ -2048,8 +2248,22 @@ async function buildPaymentItems({
     },
   )
 
+  const itemsWithAllowance = applyAllowancePoliciesToItems(items, allowancePolicies, exchangeRate, formula)
+  const itemByAuditKey = new Map(
+    itemsWithAllowance
+      .map((item) => [s(item.paymentRowKey), item])
+      .filter(([key]) => Boolean(key)),
+  )
+
+  const finalizedAuditRows = auditRows.map((row) => {
+    const item = itemByAuditKey.get(s(row.paymentRowKey))
+
+    return item ? mergeAuditRowWithPaymentItem(row, item) : row
+  })
+
   return {
-    items: applyAllowancePoliciesToItems(items, allowancePolicies, exchangeRate, formula),
+    items: itemsWithAllowance,
+    auditRows: finalizedAuditRows,
     missingSalaryEmployees: Array.from(missingSalaryEmployeesMap.values()),
     missingPayableEmployees: Array.from(missingPayableEmployeesMap.values()),
     payableWarningEmployees: Array.from(payableWarningEmployeesMap.values()),
@@ -2375,6 +2589,7 @@ async function buildPaymentPreview({
     missingPayableEmployees,
     payableWarningEmployees,
     verificationSummaries,
+    auditRows,
   } = await buildPaymentItems({
     otRequests,
     salaryMap: parsedSalary.salaryMap,
@@ -2438,6 +2653,7 @@ async function buildPaymentPreview({
 
     summary,
     items,
+    auditRows,
 
     issues: {
       invalidSalaryRows: parsedSalary.invalidRows,

@@ -925,7 +925,45 @@ function sortGroupsByLineName(groups = []) {
   return [...groups].sort((a, b) => s(a.lineName).localeCompare(s(b.lineName), undefined, { numeric: true }))
 }
 
-function packLineGroups(groups = [], maxRows = MAX_DETAIL_EMPLOYEE_ROWS_PER_SHEET) {
+function extractLineNumberFromText(value) {
+  const text = s(value)
+  if (!text) return null
+
+  const matches = text.matchAll(/(?:^|\D)(\d{1,2})(?=$|\D)/g)
+  for (const match of matches) {
+    const lineNumber = Number(match[1])
+    if (Number.isInteger(lineNumber) && lineNumber >= 1 && lineNumber <= 62) return lineNumber
+  }
+
+  return null
+}
+
+function getLineNumber(group = {}) {
+  const candidates = [group.lineCode, group.lineName, group.key]
+
+  for (const candidate of candidates) {
+    const lineNumber = extractLineNumberFromText(candidate)
+    if (lineNumber) return lineNumber
+  }
+
+  return null
+}
+
+function getLinePackBucket(group = {}) {
+  const lineNumber = getLineNumber(group)
+
+  if (lineNumber >= 1 && lineNumber <= 30) {
+    return { key: 'LINE_01_30', label: 'Lines 01-30', order: 1 }
+  }
+
+  if (lineNumber >= 31 && lineNumber <= 62) {
+    return { key: 'LINE_31_62', label: 'Lines 31-62', order: 2 }
+  }
+
+  return { key: 'OTHER_LINES', label: 'Other Lines', order: 3 }
+}
+
+function packGroupsWithinBucket(groups = [], maxRows = MAX_DETAIL_EMPLOYEE_ROWS_PER_SHEET) {
   const largeGroups = []
   const smallGroups = []
 
@@ -968,11 +1006,38 @@ function packLineGroups(groups = [], maxRows = MAX_DETAIL_EMPLOYEE_ROWS_PER_SHEE
     }
   }
 
-  return [...largeGroups, ...packs].map((pack, index) => ({
-    ...pack,
-    index: index + 1,
-    groups: sortGroupsByLineName(pack.groups),
-  }))
+  return [...largeGroups, ...packs]
+}
+
+function packLineGroups(groups = [], maxRows = MAX_DETAIL_EMPLOYEE_ROWS_PER_SHEET) {
+  const buckets = new Map()
+
+  sortGroupsByLineName(groups).forEach((group) => {
+    const bucket = getLinePackBucket(group)
+    const existing = buckets.get(bucket.key) || { ...bucket, groups: [] }
+    existing.groups.push(group)
+    buckets.set(bucket.key, existing)
+  })
+
+  const bucketList = Array.from(buckets.values()).sort((a, b) => a.order - b.order)
+  const result = []
+
+  bucketList.forEach((bucket) => {
+    const bucketPacks = packGroupsWithinBucket(bucket.groups, maxRows)
+
+    bucketPacks.forEach((pack, index) => {
+      result.push({
+        ...pack,
+        index: result.length + 1,
+        bucketIndex: index + 1,
+        bucketKey: bucket.key,
+        bucketLabel: bucket.label,
+        groups: sortGroupsByLineName(pack.groups),
+      })
+    })
+  })
+
+  return result
 }
 
 function buildPackedDateColumnPlan(groups = []) {
@@ -1002,6 +1067,9 @@ function packSheetName(pack = {}) {
 
   const names = groups.map((group) => s(group.lineName || group.lineCode)).filter(Boolean)
   if (names.length <= 3) return `Lines ${names.join(', ')}`
+
+  const bucketLabel = s(pack.bucketLabel)
+  if (bucketLabel) return `${bucketLabel} P${String(pack.bucketIndex || pack.index || 1).padStart(2, '0')}`
 
   return `Lines Pack ${String(pack.index).padStart(2, '0')}`
 }
@@ -1399,6 +1467,202 @@ function addSummaryRows(worksheet, data = {}, detailSheets = [], denominations =
   setSheetPrintLayout(worksheet, '1:4')
 }
 
+
+function setAuditColumns(worksheet) {
+  const widths = [4.5, 12, 13, 12, 20, 10, 16, 13, 10, 13, 10, 10, 11, 10, 18, 11, 11, 11, 12, 12, 35]
+
+  widths.forEach((width, index) => {
+    worksheet.getColumn(index + 1).width = width
+  })
+}
+
+function auditLineValue(row = {}) {
+  return s(row.lineCode || row.lineName || 'No Line')
+}
+
+function auditAttendanceStatus(row = {}) {
+  const status = upper(row.attendanceStatus)
+  if (status) return status.replace(/_/g, ' ')
+
+  const otResult = upper(row.otResult)
+  if (otResult === 'MATCH') return 'PRESENT'
+  if (otResult === 'MISMATCH') return 'ABSENT / MISMATCH'
+  if (otResult === 'PENDING_REVIEW') return 'PENDING REVIEW'
+
+  return ''
+}
+
+function auditIssueText(row = {}) {
+  return s(row.issueReason || row.otResultReason || row.paymentBlockedReason)
+}
+
+function sortedAuditRows(data = {}) {
+  return (Array.isArray(data.auditRows) ? data.auditRows : [])
+    .slice()
+    .sort((a, b) => {
+      const byLine = auditLineValue(a).localeCompare(auditLineValue(b), undefined, { numeric: true })
+      if (byLine) return byLine
+
+      const byEmployee = s(a.employeeNo).localeCompare(s(b.employeeNo), undefined, { numeric: true })
+      if (byEmployee) return byEmployee
+
+      const byDate = s(a.otDate).localeCompare(s(b.otDate))
+      if (byDate) return byDate
+
+      return s(a.requestNo).localeCompare(s(b.requestNo), undefined, { numeric: true })
+    })
+}
+
+function addAllRequestAuditSheet(workbook, data = {}) {
+  const rows = sortedAuditRows(data)
+  const worksheet = workbook.addWorksheet('All Request Check', {
+    properties: { defaultRowHeight: 15 },
+  })
+
+  const headers = [
+    'No',
+    'Request No',
+    'OT Request Date',
+    'Employee ID',
+    'Employee Name',
+    'Line Code',
+    'Position',
+    'Request Status',
+    'Requested H',
+    'Attendance',
+    'Scan In',
+    'Scan Out',
+    'Actual OT H',
+    'Paid H',
+    'Formula',
+    'OT Amount\n$',
+    'Allowance\n$',
+    'Total\n$',
+    'Total KHR',
+    'Payment Status',
+    'Issue / Reason',
+  ]
+
+  const lastCol = headers.length
+
+  worksheet.getCell(1, 1).value = COMPANY_NAME
+  worksheet.getCell(2, 1).value = `All OT Request Check (${getPeriodLabel(data)})`
+  worksheet.mergeCells(1, 1, 1, lastCol)
+  worksheet.mergeCells(2, 1, 2, lastCol)
+  styleTitleRow(worksheet.getRow(1), 12)
+  styleTitleRow(worksheet.getRow(2), 11)
+
+  headers.forEach((header, index) => {
+    const cell = worksheet.getCell(4, index + 1)
+    cell.value = header
+    styleHeaderCell(cell)
+  })
+  worksheet.getRow(4).height = 24
+
+  const firstDataRow = 5
+
+  if (!rows.length) {
+    worksheet.mergeCells(firstDataRow, 1, firstDataRow, lastCol)
+    worksheet.getCell(firstDataRow, 1).value = 'No OT request rows found for this payment period.'
+    worksheet.getCell(firstDataRow, 1).alignment = { horizontal: 'center', vertical: 'middle' }
+  }
+
+  rows.forEach((item, index) => {
+    const rowNumber = firstDataRow + index
+    const row = worksheet.getRow(rowNumber)
+
+    row.getCell(1).value = index + 1
+    row.getCell(2).value = s(item.requestNo)
+    row.getCell(3).value = formatShortDate(item.otDate, item.otDateDisplay)
+    row.getCell(4).value = upper(item.employeeNo)
+    row.getCell(5).value = s(item.employeeName)
+    row.getCell(6).value = auditLineValue(item)
+    row.getCell(7).value = s(item.positionName)
+    row.getCell(8).value = upper(item.requestStatus)
+    row.getCell(9).value = formatHourValue(item.requestedHours)
+    row.getCell(10).value = auditAttendanceStatus(item)
+    row.getCell(11).value = s(item.clockIn)
+    row.getCell(12).value = s(item.clockOut)
+    row.getCell(13).value = formatHourValue(item.actualOtHours)
+    row.getCell(14).value = formatHourValue(item.payableHours)
+    row.getCell(15).value = s(item.rateFormula)
+    row.getCell(16).value = roundAmount(item.amountUsd, 2)
+    row.getCell(17).value = roundAmount(item.allowanceAmountUsd, 2)
+    row.getCell(18).value = roundAmount(item.totalUsd, 2)
+    row.getCell(19).value = Math.round(n(item.totalKhr, 0))
+    row.getCell(20).value = s(item.paymentStatus)
+    row.getCell(21).value = auditIssueText(item)
+    row.height = 18
+  })
+
+  const lastDataRow = rows.length ? firstDataRow + rows.length - 1 : firstDataRow
+  const totalRowNumber = lastDataRow + 1
+
+  if (rows.length) {
+    const totalRow = worksheet.getRow(totalRowNumber)
+    worksheet.mergeCells(totalRowNumber, 1, totalRowNumber, 8)
+    totalRow.getCell(1).value = 'Total'
+    totalRow.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' }
+
+    ;[9, 13, 14, 16, 17, 18, 19].forEach((col) => {
+      const letter = columnLetter(col)
+      totalRow.getCell(col).value = {
+        formula: `SUM(${letter}${firstDataRow}:${letter}${lastDataRow})`,
+        result: rows.reduce((sum, item) => {
+          if (col === 9) return sum + n(item.requestedHours, 0)
+          if (col === 13) return sum + n(item.actualOtHours, 0)
+          if (col === 14) return sum + n(item.payableHours, 0)
+          if (col === 16) return sum + n(item.amountUsd, 0)
+          if (col === 17) return sum + n(item.allowanceAmountUsd, 0)
+          if (col === 18) return sum + n(item.totalUsd, 0)
+          if (col === 19) return sum + n(item.totalKhr, 0)
+          return sum
+        }, 0),
+      }
+    })
+
+    totalRow.height = 20
+    totalRow.eachCell({ includeEmpty: true }, (cell) => {
+      cell.font = { name: WORKBOOK_FONT, bold: true, size: 8 }
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFE5E7EB' },
+      }
+    })
+  }
+
+  applyBaseSheetStyle(worksheet)
+  styleRangeBorder(worksheet, 4, rows.length ? totalRowNumber : firstDataRow, 1, lastCol)
+
+  for (let rowNumber = firstDataRow; rowNumber <= (rows.length ? totalRowNumber : firstDataRow); rowNumber += 1) {
+    const row = worksheet.getRow(rowNumber)
+    row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+      cell.alignment = {
+        vertical: 'middle',
+        horizontal: [5, 7, 15, 21].includes(colNumber) ? 'left' : 'center',
+        wrapText: true,
+      }
+    })
+  }
+
+  styleNumberColumn(worksheet, [9, 13, 14], 'General')
+  styleNumberColumn(worksheet, [16, 17, 18], '$#,##0.00')
+  styleNumberColumn(worksheet, [19], '#,##0')
+  setAuditColumns(worksheet)
+
+  worksheet.views = [{ state: 'frozen', ySplit: 4 }]
+  worksheet.autoFilter = {
+    from: { row: 4, column: 1 },
+    to: { row: 4, column: lastCol },
+  }
+
+  setSheetPrintLayout(worksheet, '1:4')
+
+  return worksheet
+}
+
 async function buildPaymentWorkbook(data) {
   const workbook = new ExcelJS.Workbook()
   applyWorkbookProperties(workbook)
@@ -1410,6 +1674,11 @@ async function buildPaymentWorkbook(data) {
   const summarySheet = workbook.addWorksheet('Summary All Lines', {
     properties: { defaultRowHeight: 15 },
   })
+
+  // Sheet 2 is a request-level audit/check sheet. It lists every employee/date
+  // from an OT request, including absent or partial-pay rows that do not appear
+  // in the bank/payment detail sheets.
+  addAllRequestAuditSheet(workbook, data)
 
   const detailSheets = []
   const packedLineGroups = packLineGroups(groups)

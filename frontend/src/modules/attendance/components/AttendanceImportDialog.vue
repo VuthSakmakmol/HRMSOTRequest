@@ -14,6 +14,7 @@ import {
 } from '@/modules/attendance/attendance.api'
 import {
   getApiErrorMessage,
+  getApiErrorPayload,
   getApiErrorStatus,
 } from '@/shared/utils/apiError'
 
@@ -148,27 +149,133 @@ function getErrorTitle(error) {
   return t('attendance.importDialog.importFailed')
 }
 
+function getImportErrorIssues(error) {
+  const payload = getApiErrorPayload(error)
+  const nested = payload?.error || {}
+
+  if (Array.isArray(payload?.issues)) return payload.issues
+  if (Array.isArray(payload?.errors)) return payload.errors
+  if (Array.isArray(nested?.issues)) return nested.issues
+  if (Array.isArray(nested?.errors)) return nested.errors
+
+  return []
+}
+
+function getIssueRawValue(issue, keys = []) {
+  const rawData = issue?.rawData || issue?.rowData || issue?.data || {}
+
+  for (const key of keys) {
+    const directValue = issue?.[key]
+
+    if (directValue !== null && directValue !== undefined && String(directValue).trim()) {
+      return String(directValue).trim()
+    }
+  }
+
+  for (const [rawKey, rawValue] of Object.entries(rawData)) {
+    const normalizedKey = String(rawKey || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '')
+
+    if (keys.some((key) => normalizedKey === String(key).toLowerCase().replace(/[^a-z0-9]/g, ''))) {
+      return String(rawValue ?? '').trim()
+    }
+  }
+
+  return ''
+}
+
+function formatImportErrorIssue(issue) {
+  const rowNo = issue?.rawRowNo || issue?.rowNo || issue?.row || ''
+  const employeeId = getIssueRawValue(issue, [
+    'employeeId',
+    'employeeNo',
+    'employeeCode',
+    'Employee ID',
+    'EmployeeID',
+  ])
+  const clockIn = getIssueRawValue(issue, ['clockIn', 'Clock In', 'ClockIn'])
+  const clockOut = getIssueRawValue(issue, ['clockOut', 'Clock Out', 'ClockOut'])
+  const message = String(
+    issue?.message ||
+      issue?.reason ||
+      issue?.detail ||
+      issue?.description ||
+      '',
+  ).trim()
+
+  const rowPrefix = rowNo ? `Row ${rowNo}` : 'Row error'
+  const context = [
+    employeeId ? `Employee ID: ${employeeId}` : '',
+    clockIn ? `Clock In: ${clockIn}` : '',
+    clockOut ? `Clock Out: ${clockOut}` : '',
+  ].filter(Boolean)
+
+  if (message && context.length) return `${rowPrefix}: ${message} (${context.join(', ')})`
+  if (message) return `${rowPrefix}: ${message}`
+  if (context.length) return `${rowPrefix}: Invalid row (${context.join(', ')})`
+  if (rowNo) return `Row ${rowNo}: Invalid row`
+
+  return ''
+}
+
+function buildImportValidationSummary(error, issueCount) {
+  const payload = getApiErrorPayload(error)
+  const nested = payload?.error || {}
+  const duplicateCount = Number(
+    payload?.params?.duplicateRowCount ||
+      nested?.params?.duplicateRowCount ||
+      0,
+  )
+  const failedCount = Number(
+    payload?.params?.failedRowCount ||
+      nested?.params?.failedRowCount ||
+      issueCount ||
+      0,
+  )
+  const parts = []
+
+  if (duplicateCount) parts.push(`${duplicateCount} duplicate row(s)`)
+  if (failedCount) parts.push(`${failedCount} error row(s)`)
+
+  const issueText = parts.length
+    ? parts.join(', ')
+    : `${issueCount} row issue(s)`
+
+  return `Import rejected: ${issueText}. No attendance records were updated.`
+}
+
 function makeFriendlyImportMessage(error) {
-  const text = getApiErrorMessage(error, t('attendance.importDialog.failedImportFile'))
+  const payload = getApiErrorPayload(error)
+  const nested = payload?.error || {}
+  const issues = getImportErrorIssues(error)
+  const issueLines = issues
+    .map(formatImportErrorIssue)
+    .filter(Boolean)
 
-  if (/attendanceDate|attendance date/i.test(text)) {
-    return `${text}. ${t('attendance.importDialog.selectAttendanceDate')}`
+  if (issueLines.length) {
+    const previewLines = issueLines.slice(0, 50)
+    const moreText = issueLines.length > previewLines.length
+      ? `\n...and ${issueLines.length - previewLines.length} more row(s).`
+      : ''
+
+    return `${buildImportValidationSummary(error, issueLines.length)}\n\n${previewLines.join('\n')}${moreText}`
   }
 
-  if (/employee|employeeNo|employee code/i.test(text)) {
-    return `${text}. ${t('attendance.importDialog.checkEmployeeMaster')}`
-  }
+  let text =
+    String(payload?.message || nested?.message || '').trim() ||
+    getApiErrorMessage(error, t('attendance.importDialog.failedImportFile'))
 
-  if (/shift|shift code/i.test(text)) {
-    return `${text}. ${t('attendance.importDialog.checkShiftMaster')}`
-  }
-
-  if (/date|Invalid Date/i.test(text)) {
-    return `${text}. ${t('attendance.importDialog.dateFormatHelp')}`
-  }
-
-  if (/clock|time|HH:mm/i.test(text)) {
-    return `${text}. ${t('attendance.importDialog.timeFormatHelp')}`
+  if (/attendance\s*date|attendanceDate/i.test(text)) {
+    text = `${text}. ${t('attendance.importDialog.selectAttendanceDate')}`
+  } else if (/employee\s*(id|no|code)|employeeNo|employeeCode/i.test(text)) {
+    text = `${text}. ${t('attendance.importDialog.checkEmployeeMaster')}`
+  } else if (/shift\s*(id|code|name)?/i.test(text)) {
+    text = `${text}. ${t('attendance.importDialog.checkShiftMaster')}`
+  } else if (/date\s*format|invalid\s*date/i.test(text)) {
+    text = `${text}. ${t('attendance.importDialog.dateFormatHelp')}`
+  } else if (/clock|time|HH:mm/i.test(text)) {
+    text = `${text}. ${t('attendance.importDialog.timeFormatHelp')}`
   }
 
   return text

@@ -1635,6 +1635,28 @@ function verifyAttendanceAgainstOT({
       attendanceStatusKey: MESSAGE_KEYS.ATTENDANCE.ABSENT,
       attendanceMessageKey: MESSAGE_KEYS.ATTENDANCE.ABSENT,
 
+      // Critical for payment: an approved/requested employee with no
+      // attendance record must never inherit approvedPaidMinutes from the
+      // requested employee snapshot. Keep every payable/OT minute field at 0
+      // so payment and the All Request Check sheet show Not paid.
+      actualOtMinutes: 0,
+      eligibleOtMinutes: 0,
+      roundedOtMinutes: 0,
+      payableMinutes: 0,
+      paidMinutes: 0,
+      verifiedPayableMinutes: 0,
+      finalPayableMinutes: 0,
+      paymentPayableMinutes: 0,
+      policyPaidMinutes: 0,
+      policyPayableMinutes: 0,
+      calculatedPaidMinutes: 0,
+      calculatedPayableMinutes: 0,
+      attendancePaidMinutes: 0,
+      attendancePayableMinutes: 0,
+
+      rawOtDecision: 'ATTENDANCE_NOT_PRESENT',
+      rawOtDecisionKey: MESSAGE_KEYS.ATTENDANCE.ABSENT,
+
       otResult: 'MISMATCH',
       otResultLabelKey: MESSAGE_KEYS.VERIFICATION.MISMATCH,
       otResultReason: 'No attendance record found for approved employee',

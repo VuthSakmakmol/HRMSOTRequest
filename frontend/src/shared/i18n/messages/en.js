@@ -1499,10 +1499,10 @@ export default {
       guideTitle: 'Import guide',
       guideStep1: 'Select attendance date from the holiday-aware calendar.',
       guideStep2: 'Download the sample file.',
-      guideStep3: 'Fill Employee ID, Clock In, and Clock Out.',
-      guideStep4: 'Choose the completed Excel file and click Import.',
+      guideStep3: 'Fill only Employee ID, Clock In, and Clock Out exactly like the sample.',
+      guideStep4: 'Choose the file and import. Duplicate/error rows will reject the whole import, and the file replaces that attendance date.',
       note:
-        'Attendance date is required. The backend will classify the day type from the holiday calendar.',
+        'Attendance date is selected in the dialog. The Excel sample does not need a date column. Import replaces the selected attendance date, so employees missing from the new file are removed for that date.',
 
       downloadSample: 'Download Sample',
       sampleDownloaded: 'Sample file downloaded successfully.',

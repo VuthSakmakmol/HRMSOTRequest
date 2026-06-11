@@ -507,6 +507,11 @@ function parseAttendanceWorkbook(buffer, options = {}) {
 
     if (duplicateKeySet.has(duplicateKey)) {
       duplicateRowCount += 1
+      failedRows.push({
+        rawRowNo,
+        message: `Duplicate attendance row for employee ${importedEmployeeId} on ${attendanceDate}`,
+        rawData,
+      })
       continue
     }
 
