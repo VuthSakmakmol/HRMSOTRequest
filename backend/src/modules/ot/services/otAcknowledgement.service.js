@@ -4,6 +4,7 @@ const mongoose = require('mongoose')
 
 const AppError = require('../../../shared/errors/AppError')
 const OTRequest = require('../models/OTRequest')
+const { getTotalEmployeesForFilter } = require('./otRequestListSummary.service')
 
 function s(value) {
   return String(value ?? '').trim()
@@ -393,6 +394,33 @@ function buildAcknowledgementDisplay(step = null) {
   }
 }
 
+function buildApprovedByOutput(doc = {}) {
+  if (upper(doc.status) !== 'APPROVED') {
+    return {
+      approvedByEmployeeId: null,
+      approvedByCode: '',
+      approvedByName: '',
+    }
+  }
+
+  const finalApprovedStep = [...(Array.isArray(doc.approvalSteps) ? doc.approvalSteps : [])]
+    .filter(
+      (step) =>
+        upper(step?.stepType) === 'APPROVER' &&
+        upper(step?.status) === 'APPROVED',
+    )
+    .sort((a, b) => Number(a?.stepNo || 0) - Number(b?.stepNo || 0))
+    .pop()
+
+  return {
+    approvedByEmployeeId: finalApprovedStep?.approverEmployeeId
+      ? String(finalApprovedStep.approverEmployeeId)
+      : null,
+    approvedByCode: s(finalApprovedStep?.approverCode),
+    approvedByName: s(finalApprovedStep?.approverName),
+  }
+}
+
 function buildOtOptionOutput(doc = {}) {
   const requestedMinutes = Number(doc.requestedMinutes || 0)
   const breakMinutes = Number(doc.breakMinutes || 0)
@@ -424,6 +452,7 @@ function buildOtOptionOutput(doc = {}) {
 function mapListItem(doc = {}, authUser = {}) {
   const acknowledgementStep = findAcknowledgementStep(doc, authUser)
   const acknowledgementDisplay = buildAcknowledgementDisplay(acknowledgementStep)
+  const approvedBy = buildApprovedByOutput(doc)
   const employees = effectiveEmployeesForDoc(doc)
 
   const totalRequestPaidMinutes = Number(
@@ -508,6 +537,11 @@ function mapListItem(doc = {}, authUser = {}) {
     acknowledgementStatusKey: acknowledgementDisplay.statusKey,
     acknowledgementSeverity: acknowledgementDisplay.severity,
 
+    // Matches the request and approval inbox response contract.
+    approvedByEmployeeId: approvedBy.approvedByEmployeeId,
+    approvedByCode: approvedBy.approvedByCode,
+    approvedByName: approvedBy.approvedByName,
+
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   }
@@ -521,9 +555,10 @@ async function list(query = {}, authUser = {}) {
   const filter = buildFilter(query, authUser)
   const sort = buildSort(query)
 
-  const [items, total] = await Promise.all([
+  const [items, total, totalEmployees] = await Promise.all([
     OTRequest.find(filter).sort(sort).skip(skip).limit(limit).lean(),
     OTRequest.countDocuments(filter),
+    getTotalEmployeesForFilter(filter),
   ])
 
   return {
@@ -532,6 +567,7 @@ async function list(query = {}, authUser = {}) {
       page,
       limit,
       total,
+      totalEmployees,
       totalPages: Math.max(1, Math.ceil(total / limit)),
       hasMore: page * limit < total,
     },

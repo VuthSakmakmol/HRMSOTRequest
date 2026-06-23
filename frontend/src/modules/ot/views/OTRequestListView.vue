@@ -30,6 +30,7 @@ import {
 } from '@/modules/ot/ot.api'
 
 import {
+  getApprovedByDisplay,
   getApprovalDisplay,
   getApprovalTagClass,
   getEmployeeCount,
@@ -54,6 +55,7 @@ const FILTER_STACK_WIDTH = 1460
 
 const rows = ref([])
 const totalRecords = ref(0)
+const totalEmployees = ref(0)
 const loadedPages = ref(new Set())
 const loadingPages = ref(new Set())
 const expandedRows = ref({})
@@ -192,6 +194,12 @@ const loadedLabel = computed(() =>
   }),
 )
 
+const totalEmployeesLabel = computed(() =>
+  tr('ot.summary.totalEmployees', '{count} employees', {
+    count: totalEmployees.value,
+  }),
+)
+
 const statusOptions = computed(() => [
   { label: tr('common.allStatus', 'All Status'), value: '' },
   { label: tr('ot.status.pending', 'Pending'), value: 'PENDING' },
@@ -234,6 +242,24 @@ function normalizeTotal(payload) {
       payload?.count ||
       0,
   )
+}
+
+function normalizeTotalEmployees(payload) {
+  const candidates = [
+    payload?.pagination?.totalEmployees,
+    payload?.summary?.totalEmployees,
+    payload?.totalEmployees,
+  ]
+
+  for (const candidate of candidates) {
+    const total = Number(candidate)
+
+    if (Number.isFinite(total) && total >= 0) {
+      return Math.floor(total)
+    }
+  }
+
+  return 0
 }
 
 function normalizeRow(row) {
@@ -310,6 +336,10 @@ function formatDateTimeDMY(value) {
 
 function displayRequester(row) {
   return getRequesterDisplay(row)
+}
+
+function displayApprovedBy(row) {
+  return getApprovedByDisplay(row)
 }
 
 function displayApproval(row) {
@@ -460,8 +490,10 @@ async function fetchPage(page, { replace = false, silent = false, version = quer
     const payload = normalizePayload(res)
     const items = normalizeItems(payload).map(normalizeRow).filter((row) => row?.id)
     const total = normalizeTotal(payload)
+    const employeeTotal = normalizeTotalEmployees(payload)
 
     totalRecords.value = total
+    totalEmployees.value = employeeTotal
 
     if (replace) {
       rows.value = items
@@ -500,6 +532,7 @@ async function reloadFirstPage({ keepVisible = true } = {}) {
   if (!keepVisible) {
     rows.value = []
     totalRecords.value = 0
+    totalEmployees.value = 0
     expandedRows.value = {}
     bootstrapped.value = false
   }
@@ -1203,6 +1236,14 @@ onBeforeUnmount(() => {
             {{ loadedLabel }}
           </span>
 
+          <span
+            class="ot-loaded-badge ot-total-employees-badge"
+            :title="tr('ot.summary.totalEmployeesHint', 'Total employees in all requests matching the current filters')"
+          >
+            <i class="pi pi-users" aria-hidden="true" />
+            {{ totalEmployeesLabel }}
+          </span>
+
           <Button
             :label="filterButtonLabel"
             icon="pi pi-filter"
@@ -1358,7 +1399,7 @@ onBeforeUnmount(() => {
           scroll-height="calc(100vh - 260px)"
           :sort-field="filters.sortBy"
           :sort-order="filters.sortOrder"
-          table-style="min-width: 44rem; table-layout: auto;"
+          table-style="min-width: 53rem; table-layout: auto;"
           class="ot-request-table ot-data-table ot-data-table-compact"
           @sort="onSort"
         >
@@ -1467,6 +1508,26 @@ onBeforeUnmount(() => {
             </template>
           </Column>
 
+
+          <Column
+            :header="tr('ot.requests.approvedBy', 'Approved By')"
+            style="width: 9.4rem; min-width: 9rem"
+          >
+            <template #body="{ data }">
+              <div class="requester-cell">
+                <div class="ot-request-main-text">
+                  {{ displayApprovedBy(data).name }}
+                </div>
+
+                <div
+                  v-if="displayApprovedBy(data).employeeNo"
+                  class="ot-request-sub-text"
+                >
+                  {{ displayApprovedBy(data).employeeNo }}
+                </div>
+              </div>
+            </template>
+          </Column>
 
           <Column
             :header="tr('common.action', 'Action')"
@@ -1943,6 +2004,16 @@ onBeforeUnmount(() => {
   border-color: color-mix(in srgb, var(--ot-info) 35%, transparent) !important;
   background: var(--ot-info-soft) !important;
   color: var(--ot-info) !important;
+}
+
+.ot-total-employees-badge {
+  border-color: color-mix(in srgb, var(--ot-info) 35%, var(--ot-request-border));
+  background: var(--ot-info-soft);
+  color: var(--ot-info);
+}
+
+.ot-total-employees-badge .pi {
+  font-size: 0.78rem;
 }
 
 .ot-loaded-badge {

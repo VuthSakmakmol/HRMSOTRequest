@@ -6,6 +6,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
+import Checkbox from 'primevue/checkbox'
 import Column from 'primevue/column'
 import DataTable from 'primevue/datatable'
 import InputNumber from 'primevue/inputnumber'
@@ -40,6 +41,7 @@ const generating = ref(false)
 
 const loadingCalendar = ref(false)
 const periodHolidayRows = ref([])
+const selectedPaymentDates = ref([])
 
 const salaryFile = ref(null)
 const salaryFileInput = ref(null)
@@ -223,6 +225,21 @@ const periodCalendarSummary = computed(() => {
   }
 })
 
+const selectedPaymentDateSet = computed(() => new Set(selectedPaymentDates.value))
+
+const selectedPaymentDateCount = computed(() => selectedPaymentDates.value.length)
+
+const excludedPaymentDateCount = computed(() =>
+  Math.max(periodCalendarRows.value.length - selectedPaymentDateCount.value, 0),
+)
+
+const selectedPaymentCalendarRows = computed(() =>
+  periodCalendarRows.value.map((row) => ({
+    ...row,
+    isSelected: selectedPaymentDateSet.value.has(row.date),
+  })),
+)
+
 const denominationColumns = computed(() => {
   const source =
     previewResult.value?.exchangeRate?.denominations ||
@@ -258,6 +275,7 @@ const canPreview = computed(() => {
   return Boolean(
     periodStartYMD.value &&
       periodEndYMD.value &&
+      selectedPaymentDateCount.value > 0 &&
       form.formulaId &&
       manualExchangeRate.value > 0 &&
       salaryFile.value,
@@ -363,6 +381,7 @@ watch(
   () => [periodStartYMD.value, periodEndYMD.value],
   () => {
     resetPreview()
+    resetSelectedPaymentDatesToPeriod()
     scheduleCalendarLoad()
   },
 )
@@ -372,6 +391,14 @@ watch(
   () => {
     resetPreview()
   },
+)
+
+watch(
+  selectedPaymentDates,
+  () => {
+    resetPreview()
+  },
+  { deep: true },
 )
 
 function asArray(value) {
@@ -463,6 +490,23 @@ function parseYMD(value) {
 
   const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
   return Number.isNaN(date.getTime()) ? null : date
+}
+
+function getYmdDatesInRange(fromYMD, toYMD) {
+  const start = parseYMD(fromYMD)
+  const end = parseYMD(toYMD)
+
+  if (!start || !end || start > end) return []
+
+  const dates = []
+  const cursor = new Date(start)
+
+  while (cursor <= end) {
+    dates.push(normalizeYMD(cursor))
+    cursor.setDate(cursor.getDate() + 1)
+  }
+
+  return dates
 }
 
 function formatDateDMY(value) {
@@ -737,6 +781,7 @@ function buildProcessPayload() {
   return {
     fromDate: periodStartYMD.value,
     toDate: periodEndYMD.value,
+    selectedDates: [...selectedPaymentDates.value].sort((a, b) => a.localeCompare(b)),
     formulaId: form.formulaId,
     exchangeRate: manualExchangeRate.value,
     salaryFile: salaryFile.value,
@@ -940,6 +985,21 @@ async function loadInternalCalendarForPeriod() {
   }
 }
 
+function resetSelectedPaymentDatesToPeriod() {
+  selectedPaymentDates.value = getYmdDatesInRange(
+    periodStartYMD.value,
+    periodEndYMD.value,
+  )
+}
+
+function selectAllPaymentDates() {
+  resetSelectedPaymentDatesToPeriod()
+}
+
+function clearSelectedPaymentDates() {
+  selectedPaymentDates.value = []
+}
+
 function chooseFile() {
   salaryFileInput.value?.click()
 }
@@ -988,6 +1048,7 @@ function clearForm() {
   form.formulaId = ''
   form.exchangeRate = 4000
   periodHolidayRows.value = []
+  selectedPaymentDates.value = []
 
   clearFile()
   resetPreview()
@@ -1017,6 +1078,7 @@ async function handleDownloadTemplate() {
 function validateBeforeProcess() {
   if (!periodStartYMD.value) return 'From date is required'
   if (!periodEndYMD.value) return 'To date is required'
+  if (!selectedPaymentDateCount.value) return 'Select at least one payment date'
   if (!form.formulaId) return 'Payment formula is required'
   if (manualExchangeRate.value <= 0) return 'Manual exchange rate is required'
   if (!salaryFile.value) return 'Salary Excel file is required'
@@ -1379,6 +1441,90 @@ onBeforeUnmount(() => {
               {{ periodCalendarSummary.holidays }}
             </div>
           </div>
+        </div>
+      </div>
+
+      <div class="payment-date-selection-panel">
+        <div class="payment-date-selection-header">
+          <div>
+            <h3 class="payment-date-selection-title">
+              Payment dates to calculate
+            </h3>
+
+            <p class="payment-date-selection-text">
+              Keep one period above, then untick any date that must not be calculated.
+            </p>
+          </div>
+
+          <div class="payment-date-selection-actions">
+            <Tag
+              :value="`${selectedPaymentDateCount} selected · ${excludedPaymentDateCount} excluded`"
+              class="payment-rgb-tag payment-tag-info"
+            />
+
+            <Button
+              label="All days"
+              icon="pi pi-check-square"
+              severity="secondary"
+              outlined
+              size="small"
+              :disabled="paymentProcessRunning || !periodCalendarRows.length"
+              @click="selectAllPaymentDates"
+            />
+
+            <Button
+              label="Clear days"
+              icon="pi pi-times"
+              severity="secondary"
+              outlined
+              size="small"
+              :disabled="paymentProcessRunning || !selectedPaymentDateCount"
+              @click="clearSelectedPaymentDates"
+            />
+          </div>
+        </div>
+
+        <div
+          v-if="selectedPaymentCalendarRows.length"
+          class="payment-date-selection-grid"
+        >
+          <label
+            v-for="row in selectedPaymentCalendarRows"
+            :key="row.date"
+            class="payment-date-choice"
+            :class="{ 'is-excluded': !row.isSelected }"
+            :for="`payment-date-${row.date}`"
+          >
+            <Checkbox
+              v-model="selectedPaymentDates"
+              :input-id="`payment-date-${row.date}`"
+              :value="row.date"
+              :disabled="paymentProcessRunning"
+            />
+
+            <span class="payment-date-choice-main">
+              <span class="payment-date-choice-date">
+                {{ formatDateDMY(row.date) }}
+              </span>
+
+              <span class="payment-date-choice-meta">
+                {{ row.isSelected ? 'Will calculate' : 'Excluded from payment' }}
+              </span>
+            </span>
+
+            <Tag
+              :value="dayTypeLabel(row.dayType)"
+              class="payment-rgb-tag"
+              :class="dayTypeTagClass(row.dayType)"
+            />
+          </label>
+        </div>
+
+        <div
+          v-else
+          class="payment-date-selection-empty"
+        >
+          Select a valid From date and To date to choose payment dates.
         </div>
       </div>
     </section>
@@ -2401,6 +2547,105 @@ onBeforeUnmount(() => {
 }
 
 /* =========================
+   Payment date selection
+   ========================= */
+
+.payment-date-selection-panel {
+  border-top: 1px solid var(--ot-border);
+  padding: 0.8rem;
+}
+
+.payment-date-selection-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.7rem;
+}
+
+.payment-date-selection-title {
+  margin: 0;
+  color: var(--ot-text);
+  font-size: 0.84rem;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.payment-date-selection-text {
+  margin: 0.2rem 0 0;
+  color: var(--ot-text-muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.payment-date-selection-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
+.payment-date-selection-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 215px), 1fr));
+  gap: 0.55rem;
+}
+
+.payment-date-choice {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.55rem;
+  border: 1px solid var(--ot-border);
+  border-radius: 0.72rem;
+  background: var(--ot-surface);
+  padding: 0.56rem 0.62rem;
+  cursor: pointer;
+}
+
+.payment-date-choice.is-excluded {
+  opacity: 0.58;
+}
+
+.payment-date-choice-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.12rem;
+}
+
+.payment-date-choice-date {
+  overflow: hidden;
+  color: var(--ot-text);
+  font-size: 0.76rem;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.payment-date-choice-meta {
+  overflow: hidden;
+  color: var(--ot-text-muted);
+  font-size: 0.66rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.payment-date-selection-empty {
+  border: 1px dashed var(--ot-border);
+  border-radius: 0.72rem;
+  color: var(--ot-text-muted);
+  padding: 0.7rem;
+  text-align: center;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+/* =========================
    Text helpers
    ========================= */
 
@@ -2648,6 +2893,17 @@ onBeforeUnmount(() => {
 
 :deep(.payment-action-button .p-button-icon) {
   font-size: 0.76rem;
+}
+
+@media (max-width: 640px) {
+  .payment-date-selection-header {
+    flex-direction: column;
+  }
+
+  .payment-date-selection-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
 }
 
 /* =========================

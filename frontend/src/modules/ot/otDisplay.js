@@ -288,6 +288,23 @@ export function getEmployeeCount(row = {}) {
   )
 }
 
+export function getApprovedByDisplay(row = {}) {
+  const name = firstText(row?.approvedByName)
+  const employeeNo = firstText(row?.approvedByCode)
+
+  return {
+    name: name || '—',
+    employeeNo,
+    label: firstText(
+      row?.approvedByLabel,
+      employeeNo && name ? `${employeeNo} · ${name}` : '',
+      name,
+      employeeNo,
+      '—',
+    ),
+  }
+}
+
 export function getApprovalDisplay(row = {}) {
   const display = row?.approvalDisplay || {}
 

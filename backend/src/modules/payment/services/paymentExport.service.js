@@ -29,11 +29,12 @@ async function downloadSalaryTemplate() {
   }
 }
 
-async function previewPayment({ salaryFile, fromDate, toDate, formulaId, exchangeRate }) {
+async function previewPayment({ salaryFile, fromDate, toDate, selectedDates, formulaId, exchangeRate }) {
   return buildPaymentPreview({
     salaryFile,
     fromDate,
     toDate,
+    selectedDates,
     formulaId,
     exchangeRate,
   })
@@ -43,6 +44,7 @@ async function calculateAndExportPayment({
   salaryFile,
   fromDate,
   toDate,
+  selectedDates,
   formulaId,
   exchangeRate,
   actor,
@@ -51,6 +53,7 @@ async function calculateAndExportPayment({
     salaryFile,
     fromDate,
     toDate,
+    selectedDates,
     formulaId,
     exchangeRate,
   })

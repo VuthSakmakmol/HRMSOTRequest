@@ -16,6 +16,20 @@ const ymdSchema = z
   .trim()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format')
 
+const selectedDatesSchema = z.preprocess(
+  (value) => {
+    if (value === undefined || value === null || value === '') return undefined
+    if (Array.isArray(value)) return value
+
+    try {
+      return JSON.parse(s(value))
+    } catch (error) {
+      return value
+    }
+  },
+  z.array(ymdSchema).min(1, 'Select at least one payment date').optional(),
+)
+
 const manualExchangeRateSchema = z.preprocess(
   (value) => {
     if (value === '' || value === null || value === undefined) return undefined
@@ -33,6 +47,7 @@ const paymentExportBodySchema = z
   .object({
     fromDate: ymdSchema,
     toDate: ymdSchema,
+    selectedDates: selectedDatesSchema,
     formulaId: objectIdSchema,
     exchangeRate: manualExchangeRateSchema,
   })
@@ -44,6 +59,29 @@ const paymentExportBodySchema = z
         message: 'To date must be greater than or equal to from date',
       })
     }
+
+    const selectedDates = Array.isArray(data.selectedDates) ? data.selectedDates : []
+    const seenDates = new Set()
+
+    selectedDates.forEach((date, index) => {
+      if (seenDates.has(date)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['selectedDates', index],
+          message: 'Payment dates must not contain duplicates',
+        })
+      }
+
+      seenDates.add(date)
+
+      if (data.fromDate && data.toDate && (date < data.fromDate || date > data.toDate)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['selectedDates', index],
+          message: 'Each payment date must be inside the selected period',
+        })
+      }
+    })
   })
 
 const paymentPreviewBodySchema = paymentExportBodySchema

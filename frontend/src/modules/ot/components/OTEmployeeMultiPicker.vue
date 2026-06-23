@@ -870,10 +870,17 @@ function mergeEmployeeWithEditableRequest(employee = {}) {
 
   if (!editableRequestRecord) return employee
 
+  // In edit mode, `editableRequestRecord` is the immutable snapshot loaded from
+  // the request. The incoming `employee` can be the newly changed picker row.
+  // Keep the saved snapshot only as a fallback, then let the current row win.
+  // Otherwise a duration change is replaced by its original saved hours before
+  // `employeeTimeOverrides` is emitted to the update request.
   return {
-    ...employee,
     ...editableRequestRecord,
-    isOutsideManaged: employee?.isOutsideManaged === true || editableRequestRecord?.isOutsideManaged === true,
+    ...employee,
+    isOutsideManaged:
+      employee?.isOutsideManaged === true ||
+      editableRequestRecord?.isOutsideManaged === true,
   }
 }
 

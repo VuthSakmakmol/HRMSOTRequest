@@ -595,20 +595,73 @@ async function getFormulaOrThrow(formulaId) {
   return mapFormula(doc)
 }
 
-function buildPaymentOTFilter(fromDate, toDate) {
+function isYmd(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(s(value))
+}
+
+function normalizeSelectedDates(selectedDates = []) {
+  const source = Array.isArray(selectedDates) ? selectedDates : []
+
+  return Array.from(
+    new Set(
+      source
+        .map((value) => s(value))
+        .filter((value) => isYmd(value)),
+    ),
+  ).sort((a, b) => a.localeCompare(b))
+}
+
+function getDatesInRange(fromDate, toDate) {
+  const from = s(fromDate)
+  const to = s(toDate)
+
+  if (!isYmd(from) || !isYmd(to) || from > to) return []
+
+  const [fromYear, fromMonth, fromDay] = from.split('-').map(Number)
+  const [toYear, toMonth, toDay] = to.split('-').map(Number)
+  const cursor = new Date(Date.UTC(fromYear, fromMonth - 1, fromDay))
+  const end = new Date(Date.UTC(toYear, toMonth - 1, toDay))
+  const dates = []
+
+  while (cursor <= end) {
+    const year = cursor.getUTCFullYear()
+    const month = String(cursor.getUTCMonth() + 1).padStart(2, '0')
+    const day = String(cursor.getUTCDate()).padStart(2, '0')
+    dates.push(`${year}-${month}-${day}`)
+    cursor.setUTCDate(cursor.getUTCDate() + 1)
+  }
+
+  return dates
+}
+
+function resolveSelectedPaymentDates(fromDate, toDate, selectedDates = []) {
+  const normalized = normalizeSelectedDates(selectedDates).filter(
+    (date) => date >= s(fromDate) && date <= s(toDate),
+  )
+
+  // Backward compatibility: existing callers that do not send selectedDates
+  // keep calculating every date inside the period.
+  return normalized.length ? normalized : getDatesInRange(fromDate, toDate)
+}
+
+function buildPaymentOTFilter(fromDate, toDate, selectedDates = []) {
+  const dates = resolveSelectedPaymentDates(fromDate, toDate, selectedDates)
+
   return {
     status: {
       $in: PAYMENT_PROCESS_OT_STATUSES,
     },
-    otDate: {
-      $gte: s(fromDate),
-      $lte: s(toDate),
-    },
+    otDate: dates.length
+      ? { $in: dates }
+      : {
+          $gte: s(fromDate),
+          $lte: s(toDate),
+        },
   }
 }
 
-async function fetchPaymentOTRequests(fromDate, toDate) {
-  return OTRequest.find(buildPaymentOTFilter(fromDate, toDate))
+async function fetchPaymentOTRequests(fromDate, toDate, selectedDates = []) {
+  return OTRequest.find(buildPaymentOTFilter(fromDate, toDate, selectedDates))
     .sort({
       otDate: 1,
       requestNo: 1,
@@ -2538,6 +2591,7 @@ async function buildPaymentPreview({
   salaryFile,
   fromDate,
   toDate,
+  selectedDates,
   formulaId,
   exchangeRate,
   onProgress,
@@ -2572,7 +2626,8 @@ async function buildPaymentPreview({
     },
   )
 
-  const otRequests = await fetchPaymentOTRequests(fromDate, toDate)
+  const effectiveSelectedDates = resolveSelectedPaymentDates(fromDate, toDate, selectedDates)
+  const otRequests = await fetchPaymentOTRequests(fromDate, toDate, effectiveSelectedDates)
   await reportPaymentProgress(
     onProgress,
     35,
@@ -2629,6 +2684,12 @@ async function buildPaymentPreview({
       fromDateDisplay: formatYmdToDmy(fromDate),
       toDate: s(toDate),
       toDateDisplay: formatYmdToDmy(toDate),
+      selectedDates: effectiveSelectedDates,
+      selectedDateCount: effectiveSelectedDates.length,
+      excludedDateCount: Math.max(
+        getDatesInRange(fromDate, toDate).length - effectiveSelectedDates.length,
+        0,
+      ),
     },
 
     generatedAt,

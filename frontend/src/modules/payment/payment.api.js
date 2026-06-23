@@ -30,6 +30,12 @@ function buildPaymentProcessFormData(input = {}) {
     formData.append('toDate', input.toDate)
   }
 
+  // Keep one reporting period while allowing selected dates inside that period.
+  // Example: Monday–Sunday period, with Wednesday excluded from payment.
+  if (Array.isArray(input.selectedDates)) {
+    formData.append('selectedDates', JSON.stringify(input.selectedDates))
+  }
+
   if (hasValue(input.formulaId)) {
     formData.append('formulaId', input.formulaId)
   }

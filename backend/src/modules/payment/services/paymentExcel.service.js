@@ -455,9 +455,18 @@ function getPeriodLabel(data = {}) {
   return `${formatShortDate(dates[0])} - ${formatShortDate(dates[dates.length - 1])}`
 }
 
+function getSelectedDateNote(data = {}) {
+  const selectedDateCount = n(data?.period?.selectedDateCount, 0)
+  const excludedDateCount = n(data?.period?.excludedDateCount, 0)
+
+  if (!selectedDateCount || !excludedDateCount) return ''
+
+  return ` · ${selectedDateCount} selected day${selectedDateCount === 1 ? '' : 's'}, ${excludedDateCount} excluded`
+}
+
 function reportTitle(data = {}) {
   const period = getPeriodLabel(data)
-  return `(Name List Worker Working Extra OT On ${period})`
+  return `(Name List Worker Working Extra OT On ${period}${getSelectedDateNote(data)})`
 }
 
 function colLetter(colNumber) {
@@ -1288,7 +1297,7 @@ function addPackedDetailSheet(workbook, data = {}, pack = {}, denominations = []
 
 function addSummaryHeader(worksheet, data = {}, lastCol) {
   worksheet.getCell(1, 1).value = COMPANY_NAME
-  worksheet.getCell(2, 1).value = `Payment Summary by Line (${getPeriodLabel(data)})`
+  worksheet.getCell(2, 1).value = `Payment Summary by Line (${getPeriodLabel(data)}${getSelectedDateNote(data)})`
   worksheet.mergeCells(1, 1, 1, lastCol)
   worksheet.mergeCells(2, 1, 2, lastCol)
   styleTitleRow(worksheet.getRow(1), 12)
@@ -1546,7 +1555,7 @@ function addAllRequestAuditSheet(workbook, data = {}) {
   const lastCol = headers.length
 
   worksheet.getCell(1, 1).value = COMPANY_NAME
-  worksheet.getCell(2, 1).value = `All OT Request Check (${getPeriodLabel(data)})`
+  worksheet.getCell(2, 1).value = `All OT Request Check (${getPeriodLabel(data)}${getSelectedDateNote(data)})`
   worksheet.mergeCells(1, 1, 1, lastCol)
   worksheet.mergeCells(2, 1, 2, lastCol)
   styleTitleRow(worksheet.getRow(1), 12)

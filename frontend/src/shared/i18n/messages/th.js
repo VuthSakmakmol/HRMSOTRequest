@@ -1832,6 +1832,11 @@ export default {
   },
 
   ot: {
+    summary: {
+      totalEmployees: 'พนักงานทั้งหมด {count} คน',
+      totalEmployeesHint: 'จำนวนพนักงานรวมในคำขอทั้งหมดที่ตรงกับตัวกรองปัจจุบัน',
+    },
+
     common: {
       min: 'นาที',
       minShort: 'น.',
@@ -2002,6 +2007,7 @@ export default {
       exportFailed: 'ส่งออกไม่สำเร็จ',
 
       approvalStatus: 'สถานะการอนุมัติ',
+      approvedBy: 'อนุมัติโดย',
       staff: 'พนักงาน',
       staffCount: '{count} คน',
       timing: 'เวลา',

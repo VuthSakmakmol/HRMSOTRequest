@@ -16,6 +16,7 @@ const Shift = require('../../shift/models/Shift')
 
 const employeeScopeService = require('../../org/services/employeeScope.service')
 const otTimingService = require('./otTiming.service')
+const { getTotalEmployeesForFilter } = require('./otRequestListSummary.service')
 
 // One employee can only appear in one active/payable OT request per date.
 // Final/closed requests such as CANCELLED must not block the employee from
@@ -1092,6 +1093,34 @@ function approverDisplayName(step = {}) {
   return s(step.approverName) || 'Unknown approver'
 }
 
+// This is intentionally final-approval only. A request can have several
+// approver steps, but the table column must show the person who completed the
+// request approval, not a pending approver or an earlier intermediate step.
+function buildApprovedByOutput(doc = {}) {
+  if (upper(doc.status) !== 'APPROVED') {
+    return {
+      approvedByEmployeeId: null,
+      approvedByCode: '',
+      approvedByName: '',
+    }
+  }
+
+  const finalApprovedStep = findLastStepByStatus(
+    (Array.isArray(doc.approvalSteps) ? doc.approvalSteps : []).filter(
+      (step) => upper(step?.stepType) === 'APPROVER',
+    ),
+    'APPROVED',
+  )
+
+  return {
+    approvedByEmployeeId: finalApprovedStep?.approverEmployeeId
+      ? String(finalApprovedStep.approverEmployeeId)
+      : null,
+    approvedByCode: s(finalApprovedStep?.approverCode),
+    approvedByName: s(finalApprovedStep?.approverName),
+  }
+}
+
 function buildApprovalDisplay(doc = {}) {
   const status = upper(doc.status)
   const steps = sortApprovalSteps(doc.approvalSteps)
@@ -1236,6 +1265,7 @@ function mapListItem(doc = {}, authUser = {}) {
   const effectiveEmployees = effectiveEmployeesForDoc(doc)
   const approvalContext = buildApprovalActionContext(doc, authUser)
   const approvalDisplay = buildApprovalDisplay(doc)
+  const approvedBy = buildApprovedByOutput(doc)
   const totalRequestPaidMinutes = Number(
     doc.totalRequestPaidMinutes ?? doc.totalMinutes ?? 0,
   )
@@ -1327,6 +1357,12 @@ function mapListItem(doc = {}, authUser = {}) {
     approvalDisplayApproverName: approvalDisplay.approverName,
     approvalDisplayApproverCode: approvalDisplay.approverCode,
     approvalDisplayActedAt: approvalDisplay.actedAt,
+
+    // A separate stable field for all table pages. It is blank until the
+    // whole request reaches APPROVED and then contains the final approver.
+    approvedByEmployeeId: approvedBy.approvedByEmployeeId,
+    approvedByCode: approvedBy.approvedByCode,
+    approvedByName: approvedBy.approvedByName,
 
     currentApprovalStepStatus: approvalContext.currentApprovalStepStatus,
     currentApproverName: approvalContext.currentApproverName,
@@ -2466,9 +2502,10 @@ async function list(query = {}, authUser = {}) {
   const filter = buildMyRequestListFilter(query, authUser)
   const sort = buildSort(query)
 
-  const [items, total] = await Promise.all([
+  const [items, total, totalEmployees] = await Promise.all([
     OTRequest.find(filter).sort(sort).skip(skip).limit(limit).lean(),
     OTRequest.countDocuments(filter),
+    getTotalEmployeesForFilter(filter),
   ])
 
   return {
@@ -2477,6 +2514,7 @@ async function list(query = {}, authUser = {}) {
       page,
       limit,
       total,
+      totalEmployees,
       totalPages: Math.max(1, Math.ceil(total / limit)),
       hasMore: page * limit < total,
     },
@@ -2491,9 +2529,10 @@ async function listApprovalInbox(query = {}, authUser = {}) {
   const filter = buildApprovalInboxFilter(query, authUser)
   const sort = buildSort(query)
 
-  const [items, total] = await Promise.all([
+  const [items, total, totalEmployees] = await Promise.all([
     OTRequest.find(filter).sort(sort).skip(skip).limit(limit).lean(),
     OTRequest.countDocuments(filter),
+    getTotalEmployeesForFilter(filter),
   ])
 
   return {
@@ -2502,6 +2541,7 @@ async function listApprovalInbox(query = {}, authUser = {}) {
       page,
       limit,
       total,
+      totalEmployees,
       totalPages: Math.max(1, Math.ceil(total / limit)),
       hasMore: page * limit < total,
     },

@@ -1850,6 +1850,11 @@ export default {
   },
 
   ot: {
+    summary: {
+      totalEmployees: '{count} employees',
+      totalEmployeesHint: 'Total employees in all requests matching the current filters',
+    },
+
     common: {
       min: 'min',
       minShort: 'm',
@@ -2022,6 +2027,7 @@ export default {
       exportFailed: 'Export failed',
 
       approvalStatus: 'Approval Status',
+      approvedBy: 'Approved By',
       staff: 'Staff',
       staffCount: '{count} staff',
       timing: 'Timing',
