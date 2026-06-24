@@ -28,6 +28,7 @@ import OTApprovalInboxView from '@/modules/ot/views/OTApprovalInboxView.vue'
 import OTAcknowledgeInboxView from '@/modules/ot/views/OTAcknowledgeInboxView.vue'
 import OTCalculationPolicyListView from '@/modules/ot/views/OTCalculationPolicyListView.vue'
 import ShiftOTOptionListView from '@/modules/ot/views/ShiftOTOptionListView.vue'
+import OTExecutionSettingsView from '@/modules/ot/views/OTExecutionSettingsView.vue'
 
 import PaymentFormulaView from '@/modules/payment/views/PaymentFormulaView.vue'
 import PaymentProcessView from '@/modules/payment/views/PaymentProcessView.vue'
@@ -383,6 +384,16 @@ const routes = [
             'SHIFT_OT_OPTION_CREATE',
             'SHIFT_OT_OPTION_UPDATE',
           ],
+        },
+      },
+      {
+        path: 'ot/execution-controls',
+        name: 'ot-execution-controls',
+        component: OTExecutionSettingsView,
+        meta: {
+          requiresAuth: true,
+          title: 'OT Execution Control',
+          requiredAnyPermissions: ['OT_EXECUTION_VIEW', 'OT_EXECUTION_UPDATE'],
         },
       },
 

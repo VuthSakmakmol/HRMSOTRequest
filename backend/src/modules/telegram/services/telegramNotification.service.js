@@ -70,9 +70,6 @@ function notificationTypeLabel(type) {
     OT_APPROVAL_REQUIRED: 'OT approval required',
     OT_APPROVED: 'OT request approved',
     OT_REJECTED: 'OT request rejected',
-    OT_REQUESTER_CONFIRMATION_REQUIRED: 'OT confirmation required',
-    OT_REQUESTER_CONFIRMED: 'Requester confirmed OT',
-    OT_REQUESTER_DISAGREED: 'Requester disagreed OT',
     OT_ACKNOWLEDGEMENT_REQUIRED: 'OT acknowledgement required',
   }
 

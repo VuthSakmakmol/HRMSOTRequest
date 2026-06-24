@@ -21,11 +21,7 @@ const { getTotalEmployeesForFilter } = require('./otRequestListSummary.service')
 // One employee can only appear in one active/payable OT request per date.
 // Final/closed requests such as CANCELLED must not block the employee from
 // creating a new request for the same date.
-const OT_DUPLICATE_BLOCKING_STATUSES = [
-  'PENDING',
-  'PENDING_REQUESTER_CONFIRMATION',
-  'APPROVED',
-]
+const OT_DUPLICATE_BLOCKING_STATUSES = ['PENDING', 'APPROVED']
 
 function s(value) {
   return String(value ?? '').trim()
@@ -152,10 +148,8 @@ function statusKey(status) {
 
   const map = {
     PENDING: 'ot.status.pending',
-    PENDING_REQUESTER_CONFIRMATION: 'ot.status.pendingRequesterConfirmation',
     APPROVED: 'ot.status.approved',
     REJECTED: 'ot.status.rejected',
-    REQUESTER_DISAGREED: 'ot.status.requesterDisagreed',
     CANCELLED: 'ot.status.cancelled',
   }
 
@@ -167,8 +161,6 @@ function statusSeverity(status) {
 
   if (value === 'APPROVED') return 'success'
   if (value === 'REJECTED') return 'danger'
-  if (value === 'REQUESTER_DISAGREED') return 'danger'
-  if (value === 'PENDING_REQUESTER_CONFIRMATION') return 'info'
   if (value === 'CANCELLED') return 'secondary'
 
   return 'warning'
@@ -196,7 +188,6 @@ function otUnavailableStatusLabel(status) {
   const normalized = upper(status)
 
   if (normalized === 'PENDING') return 'Pending for approval'
-  if (normalized === 'PENDING_REQUESTER_CONFIRMATION') return 'Waiting requester confirmation'
   if (normalized === 'APPROVED') return 'Already approved'
 
   return normalized || 'Unavailable'
@@ -364,9 +355,6 @@ function collectEmployeeSnapshotsFromRequest(doc) {
   return [
     ...(Array.isArray(doc?.requestedEmployees) ? doc.requestedEmployees : []),
     ...(Array.isArray(doc?.approvedEmployees) ? doc.approvedEmployees : []),
-    ...(Array.isArray(doc?.proposedApprovedEmployees)
-      ? doc.proposedApprovedEmployees
-      : []),
   ]
 }
 
@@ -422,7 +410,6 @@ async function ensureNoDuplicateOTEmployeesForDate({
     $or: [
       { 'requestedEmployees.employeeId': { $in: employeeObjectIds } },
       { 'approvedEmployees.employeeId': { $in: employeeObjectIds } },
-      { 'proposedApprovedEmployees.employeeId': { $in: employeeObjectIds } },
     ],
   }
 
@@ -444,7 +431,6 @@ async function ensureNoDuplicateOTEmployeesForDate({
       status: 1,
       requestedEmployees: 1,
       approvedEmployees: 1,
-      proposedApprovedEmployees: 1,
     })
     .lean()
 
@@ -590,7 +576,6 @@ async function listUnavailableEmployeesForDate(query = {}) {
       status: 1,
       requestedEmployees: 1,
       approvedEmployees: 1,
-      proposedApprovedEmployees: 1,
     })
     .lean()
 
@@ -862,14 +847,6 @@ function buildOtOptionOutput(doc = {}) {
 }
 
 function effectiveEmployeesForDoc(doc = {}) {
-  if (
-    upper(doc.status) === 'PENDING_REQUESTER_CONFIRMATION' &&
-    Array.isArray(doc.proposedApprovedEmployees) &&
-    doc.proposedApprovedEmployees.length
-  ) {
-    return doc.proposedApprovedEmployees
-  }
-
   if (Array.isArray(doc.approvedEmployees) && doc.approvedEmployees.length) {
     return doc.approvedEmployees
   }
@@ -983,19 +960,6 @@ function canDeleteOTRequest(doc = {}, authUser = {}) {
   return authUser?.isRootAdmin === true || hasPermission(authUser, 'OT_REQUEST_DELETE')
 }
 
-function canRequesterConfirm(doc = {}, authUser = {}) {
-  const actorEmployeeId = s(authUser.employeeId)
-  const ownerEmployeeId = s(doc.requesterEmployeeId)
-  const status = upper(doc.status)
-  const confirmation = upper(doc.requesterConfirmationStatus)
-
-  if (!actorEmployeeId || !ownerEmployeeId) return false
-  if (actorEmployeeId !== ownerEmployeeId) return false
-  if (status !== 'PENDING_REQUESTER_CONFIRMATION') return false
-  if (confirmation !== 'PENDING') return false
-
-  return true
-}
 
 function assertCanEditOTRequest(doc = {}, authUser = {}) {
   if (!canEditOTRequest(doc, authUser)) {
@@ -1030,16 +994,6 @@ function assertCanDeleteOTRequest(doc = {}, authUser = {}) {
   }
 }
 
-function assertCanRequesterConfirm(doc = {}, authUser = {}) {
-  if (!canRequesterConfirm(doc, authUser)) {
-    throw appError({
-      statusCode: 403,
-      code: 'OT_REQUEST_CONFIRM_NOT_ALLOWED',
-      messageKey: 'ot.request.error.confirmNotAllowed',
-      message: 'Requester confirmation is not available for this OT request',
-    })
-  }
-}
 
 function buildApprovalActionContext(doc = {}, authUser = {}) {
   const requestStatus = upper(doc.status)
@@ -1170,33 +1124,6 @@ function buildApprovalDisplay(doc = {}) {
     }
   }
 
-  if (status === 'PENDING_REQUESTER_CONFIRMATION') {
-    return {
-      type: 'REQUESTER_CONFIRMATION',
-      severity: 'warning',
-      labelKey: 'ot.approvalDisplay.waitingRequesterConfirmation',
-      label: 'Waiting for requester confirmation',
-      subLabel: 'Approver adjusted employee list',
-      stepNo: Number(doc.currentApprovalStep || 0) || null,
-      approverName: '',
-      approverCode: '',
-      actedAt: null,
-    }
-  }
-
-  if (status === 'REQUESTER_DISAGREED') {
-    return {
-      type: 'REQUESTER_DISAGREED',
-      severity: 'danger',
-      labelKey: 'ot.approvalDisplay.requesterDisagreed',
-      label: 'Requester disagreed',
-      subLabel: 'Adjusted employee list was not accepted',
-      stepNo: Number(doc.currentApprovalStep || 0) || null,
-      approverName: '',
-      approverCode: '',
-      actedAt: doc.requesterConfirmedAt || null,
-    }
-  }
 
   if (status === 'CANCELLED') {
     return {
@@ -1236,27 +1163,14 @@ function buildComparisonSummary(doc = {}) {
   const approvedEmployees = Array.isArray(doc.approvedEmployees)
     ? doc.approvedEmployees
     : []
-  const proposedApprovedEmployees = Array.isArray(doc.proposedApprovedEmployees)
-    ? doc.proposedApprovedEmployees
-    : []
-
   const approvedIdSet = new Set(approvedEmployees.map((item) => s(item.employeeId)))
-  const proposedIdSet = new Set(
-    proposedApprovedEmployees.map((item) => s(item.employeeId)),
-  )
 
   return {
     requestedEmployeeCount: requestedEmployees.length,
     approvedEmployeeCount: approvedEmployees.length,
-    proposedApprovedEmployeeCount: proposedApprovedEmployees.length,
-
     removedFromOriginalCount: requestedEmployees.filter(
       (item) => !approvedIdSet.has(s(item.employeeId)),
     ).length,
-
-    pendingRemovedCount: proposedApprovedEmployees.length
-      ? approvedEmployees.filter((item) => !proposedIdSet.has(s(item.employeeId))).length
-      : 0,
   }
 }
 
@@ -1332,10 +1246,6 @@ function mapListItem(doc = {}, authUser = {}) {
     employeeCount: effectiveEmployeeCountForDoc(doc),
     requestedEmployeeCount: Number(doc.requestedEmployeeCount || 0),
     approvedEmployeeCount: Number(doc.approvedEmployeeCount || 0),
-    proposedApprovedEmployeeCount: Number(doc.proposedApprovedEmployeeCount || 0),
-
-    requesterConfirmationStatus: upper(doc.requesterConfirmationStatus),
-
     currentApprovalStep: Number(doc.currentApprovalStep || 1),
     currentApproverEmployeeId: doc.currentApproverEmployeeId
       ? String(doc.currentApproverEmployeeId)
@@ -1379,8 +1289,6 @@ function mapListItem(doc = {}, authUser = {}) {
     canEdit: canEditOTRequest(doc, authUser),
     canCancel: canCancelOTRequest(doc, authUser),
     canDelete: canDeleteOTRequest(doc, authUser),
-    canRequesterConfirm: canRequesterConfirm(doc, authUser),
-
     employees: effectiveEmployees.map(mapEmployeeOutput),
 
     createdAt: doc.createdAt,
@@ -1395,21 +1303,13 @@ function mapDetail(doc = {}, authUser = {}) {
   const approvedEmployees = Array.isArray(doc.approvedEmployees)
     ? doc.approvedEmployees
     : []
-  const proposedApprovedEmployees = Array.isArray(doc.proposedApprovedEmployees)
-    ? doc.proposedApprovedEmployees
-    : []
 
   return {
     ...mapListItem(doc, authUser),
 
     requestedEmployees: requestedEmployees.map(mapEmployeeOutput),
     approvedEmployees: approvedEmployees.map(mapEmployeeOutput),
-    proposedApprovedEmployees: proposedApprovedEmployees.map(mapEmployeeOutput),
-
     comparisonSummary: buildComparisonSummary(doc),
-
-    requesterConfirmedAt: doc.requesterConfirmedAt || null,
-    requesterConfirmationRemark: s(doc.requesterConfirmationRemark),
 
     lastAdjustmentByEmployeeId: doc.lastAdjustmentByEmployeeId
       ? String(doc.lastAdjustmentByEmployeeId)
@@ -1461,8 +1361,6 @@ function buildSearchFilter(search) {
       { 'approvedEmployees.lineCode': regex },
       { 'approvedEmployees.lineName': regex },
 
-      { 'proposedApprovedEmployees.employeeCode': regex },
-      { 'proposedApprovedEmployees.employeeName': regex },
 
       { reason: regex },
       { 'otCalculationPolicySnapshot.code': regex },
@@ -1478,7 +1376,6 @@ function pushMembershipFilter(filter, fieldName, value) {
     $or: [
       { [`requestedEmployees.${fieldName}`]: value },
       { [`approvedEmployees.${fieldName}`]: value },
-      { [`proposedApprovedEmployees.${fieldName}`]: value },
     ],
   })
 }
@@ -1704,9 +1601,6 @@ function buildRequestSheetRows(doc = {}) {
   const approvedEmployees = Array.isArray(doc.approvedEmployees)
     ? doc.approvedEmployees
     : []
-  const proposedApprovedEmployees = Array.isArray(doc.proposedApprovedEmployees)
-    ? doc.proposedApprovedEmployees
-    : []
   const approvalSteps = Array.isArray(doc.approvalSteps) ? doc.approvalSteps : []
   const totalRequestPaidMinutes = Number(
     doc.totalRequestPaidMinutes ?? doc.totalMinutes ?? 0,
@@ -1758,7 +1652,6 @@ function buildRequestSheetRows(doc = {}) {
     [],
     ['Requested Staff', Number(doc.requestedEmployeeCount || requestedEmployees.length)],
     ['Approved Staff', Number(doc.approvedEmployeeCount || approvedEmployees.length)],
-    ['Requester Confirmation', s(doc.requesterConfirmationStatus)],
     ['Last Adjustment By', s(doc.lastAdjustmentByEmployeeName)],
     ['Last Adjustment Remark', s(doc.lastAdjustmentRemark)],
     ['Created At', formatDateTime(doc.createdAt)],
@@ -1769,9 +1662,6 @@ function buildRequestSheetRows(doc = {}) {
   appendEmployeeSection(rows, 'REQUESTED EMPLOYEES', requestedEmployees)
   appendEmployeeSection(rows, 'CURRENT APPROVED EMPLOYEES', approvedEmployees)
 
-  if (proposedApprovedEmployees.length) {
-    appendEmployeeSection(rows, 'PROPOSED APPROVED EMPLOYEES', proposedApprovedEmployees)
-  }
 
   rows.push(['APPROVAL WORKFLOW'])
   rows.push([
@@ -2206,9 +2096,6 @@ async function create(payload, authUser) {
     approvedEmployees: requestedEmployees,
     approvedEmployeeCount: requestedEmployees.length,
 
-    proposedApprovedEmployees: [],
-    proposedApprovedEmployeeCount: 0,
-
     otDate: s(payload.otDate),
     dayType,
     dayTypeKey: dayTypeInfo.dayTypeKey,
@@ -2252,10 +2139,6 @@ async function create(payload, authUser) {
     currentApprovalStep: approvalFlow.currentApprovalStep,
     currentApproverEmployeeId: approvalFlow.currentApproverEmployeeId,
     finalApproverEmployeeId: approvalFlow.finalApproverEmployeeId,
-
-    requesterConfirmationStatus: 'NOT_REQUIRED',
-    requesterConfirmedAt: null,
-    requesterConfirmationRemark: '',
 
     status: 'PENDING',
     createdBy: actorAccountId(authUser),
@@ -2346,9 +2229,6 @@ async function update(requestId, payload, authUser) {
   doc.approvedEmployees = requestedEmployees
   doc.approvedEmployeeCount = requestedEmployees.length
 
-  doc.proposedApprovedEmployees = []
-  doc.proposedApprovedEmployeeCount = 0
-
   doc.otDate = s(payload.otDate)
   doc.dayType = dayType
   doc.dayTypeKey = dayTypeInfo.dayTypeKey
@@ -2392,10 +2272,6 @@ async function update(requestId, payload, authUser) {
   doc.currentApprovalStep = approvalFlow.currentApprovalStep
   doc.currentApproverEmployeeId = approvalFlow.currentApproverEmployeeId
   doc.finalApproverEmployeeId = approvalFlow.finalApproverEmployeeId
-
-  doc.requesterConfirmationStatus = 'NOT_REQUIRED'
-  doc.requesterConfirmedAt = null
-  doc.requesterConfirmationRemark = ''
 
   doc.lastAdjustmentByEmployeeId = null
   doc.lastAdjustmentByEmployeeCode = ''
@@ -2744,13 +2620,6 @@ async function decide(requestId, payload = {}, authUser = {}) {
     doc.approvedEmployees = requestedEmployees
     doc.approvedEmployeeCount = requestedEmployees.length
 
-    doc.proposedApprovedEmployees = []
-    doc.proposedApprovedEmployeeCount = 0
-
-    doc.requesterConfirmationStatus = 'NOT_REQUIRED'
-    doc.requesterConfirmedAt = null
-    doc.requesterConfirmationRemark = ''
-
     doc.lastAdjustmentByEmployeeId = null
     doc.lastAdjustmentByEmployeeCode = ''
     doc.lastAdjustmentByEmployeeName = ''
@@ -2776,13 +2645,6 @@ async function decide(requestId, payload = {}, authUser = {}) {
     currentStep.actedBy = actorAccountId(authUser)
     currentStep.remark = remark
 
-    doc.proposedApprovedEmployees = []
-    doc.proposedApprovedEmployeeCount = 0
-
-    doc.requesterConfirmationStatus = 'NOT_REQUIRED'
-    doc.requesterConfirmedAt = null
-    doc.requesterConfirmationRemark = ''
-
     doc.currentApproverEmployeeId = null
     doc.status = 'REJECTED'
   } else {
@@ -2791,92 +2653,6 @@ async function decide(requestId, payload = {}, authUser = {}) {
       code: 'INVALID_APPROVAL_ACTION',
       messageKey: 'ot.request.validation.approvalActionInvalid',
       message: 'Invalid approval action',
-      field: 'action',
-    })
-  }
-
-  doc.updatedBy = actorAccountId(authUser)
-
-  await doc.save()
-
-  return getById(doc._id, authUser)
-}
-
-async function requesterConfirm(requestId, payload = {}, authUser = {}) {
-  if (!isObjectId(requestId)) {
-    throw appError({
-      statusCode: 400,
-      code: 'INVALID_OT_REQUEST_ID',
-      messageKey: 'common.error.invalidId',
-      message: 'Invalid OT request id',
-      field: 'id',
-    })
-  }
-
-  const doc = await OTRequest.findById(requestId)
-
-  if (!doc) {
-    throw appError({
-      statusCode: 404,
-      code: 'OT_REQUEST_NOT_FOUND',
-      messageKey: 'ot.request.error.notFound',
-      message: 'OT request not found',
-    })
-  }
-
-  assertCanRequesterConfirm(doc, authUser)
-
-  const action = upper(payload.action)
-  const remark = s(payload.remark)
-
-  if (action === 'AGREE') {
-    if (!Array.isArray(doc.proposedApprovedEmployees) || !doc.proposedApprovedEmployees.length) {
-      throw appError({
-        statusCode: 400,
-        code: 'NO_ADJUSTED_EMPLOYEE_LIST',
-        messageKey: 'ot.request.error.noAdjustedEmployeeList',
-        message: 'There is no adjusted employee list to confirm',
-      })
-    }
-
-    doc.approvedEmployees = doc.proposedApprovedEmployees
-    doc.approvedEmployeeCount = doc.proposedApprovedEmployees.length
-
-    doc.proposedApprovedEmployees = []
-    doc.proposedApprovedEmployeeCount = 0
-
-    doc.requesterConfirmationStatus = 'AGREED'
-    doc.requesterConfirmedAt = new Date()
-    doc.requesterConfirmationRemark = remark
-
-    const currentStepNo = Number(doc.currentApprovalStep || 1)
-    const stepIndex = doc.approvalSteps.findIndex(
-      (step) => Number(step.stepNo) === currentStepNo,
-    )
-
-    if (stepIndex === -1) {
-      throw appError({
-        statusCode: 400,
-        code: 'CURRENT_APPROVAL_STEP_NOT_FOUND',
-        messageKey: 'ot.request.error.currentApprovalStepNotFound',
-        message: 'Current approval step not found',
-      })
-    }
-
-    moveToNextApproverOrApprove(doc, stepIndex)
-  } else if (action === 'DISAGREE') {
-    doc.requesterConfirmationStatus = 'DISAGREED'
-    doc.requesterConfirmedAt = new Date()
-    doc.requesterConfirmationRemark = remark
-
-    doc.currentApproverEmployeeId = null
-    doc.status = 'REQUESTER_DISAGREED'
-  } else {
-    throw appError({
-      statusCode: 400,
-      code: 'INVALID_REQUESTER_CONFIRMATION_ACTION',
-      messageKey: 'ot.request.validation.requesterConfirmationActionInvalid',
-      message: 'Invalid requester confirmation action',
       field: 'action',
     })
   }
@@ -2920,7 +2696,6 @@ module.exports = {
   exportApprovalInboxExcel,
   getById,
   decide,
-  requesterConfirm,
   getAllowedApproverChain,
   getShiftOTOptionsByShift,
   listUnavailableEmployeesForDate,

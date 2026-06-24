@@ -203,19 +203,8 @@ const totalEmployeesLabel = computed(() =>
 const statusOptions = computed(() => [
   { label: tr('common.allStatus', 'All Status'), value: '' },
   { label: tr('ot.status.pending', 'Pending'), value: 'PENDING' },
-  {
-    label: tr(
-      'ot.status.pendingRequesterConfirmation',
-      'Waiting Requester Confirmation',
-    ),
-    value: 'PENDING_REQUESTER_CONFIRMATION',
-  },
   { label: tr('ot.status.approved', 'Approved'), value: 'APPROVED' },
   { label: tr('ot.status.rejected', 'Rejected'), value: 'REJECTED' },
-  {
-    label: tr('ot.status.requesterDisagreed', 'Requester Disagreed'),
-    value: 'REQUESTER_DISAGREED',
-  },
   { label: tr('ot.status.cancelled', 'Cancelled'), value: 'CANCELLED' },
 ])
 
@@ -927,7 +916,6 @@ function isClosedOTRequest(row = {}) {
       'REJECTED',
       'CANCELLED',
       'CANCELED',
-      'REQUESTER_DISAGREED',
     ].includes(status)
   ) {
     return true

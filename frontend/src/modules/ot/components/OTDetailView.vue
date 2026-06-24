@@ -80,6 +80,19 @@ const props = defineProps({
     type: Object,
     default: null,
   },
+
+  // Used only for the New OT Request screen. The backend remains the source of truth.
+  // In edit mode the parent passes true so an existing historical request can still be edited.
+  allowBackdatedRequests: {
+    type: Boolean,
+    default: true,
+  },
+
+  // Today as YYYY-MM-DD in the OT execution time zone (normally Asia/Phnom_Penh).
+  currentRequestDate: {
+    type: String,
+    default: '',
+  },
 })
 
 const CUSTOM_OPTION_VALUE = '__OTHER_CUSTOM_TIME__'
@@ -118,6 +131,10 @@ const selectedOption = computed(() => {
 })
 
 const selectedDateYMD = computed(() => formatYMD(props.form.otDate))
+const requestCurrentDateYMD = computed(() => normalizeDateKey(props.currentRequestDate))
+const isBackdateRestrictionActive = computed(() => (
+  props.allowBackdatedRequests === false && Boolean(requestCurrentDateYMD.value)
+))
 
 const selectedTimingSource = computed(() => {
   return String(props.form.otTimingSource || 'SHIFT_OPTION').trim().toUpperCase()
@@ -384,6 +401,7 @@ function buildCalendarCell(date, inCurrentMonth) {
     isSelected: isSameDate(date, props.form.otDate),
     isHoliday: isHolidayDate(date),
     isSunday: date.getDay() === 0,
+    isBackdateBlocked: isBackdateRestrictionActive.value && formatYMD(date) < requestCurrentDateYMD.value,
   }
 }
 
@@ -555,7 +573,19 @@ function normalizeHolidayItems(payload) {
   return []
 }
 
+function parseYmdToLocalDate(value) {
+  const ymd = normalizeDateKey(value)
+  const match = ymd.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+
+  if (!match) return null
+
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
 function selectDate(cell) {
+  if (cell?.isBackdateBlocked) return
+
   props.form.otDate = new Date(cell.date)
 
   if (!cell.inCurrentMonth) {
@@ -585,7 +615,7 @@ function nextMonth() {
 }
 
 function setToday() {
-  const now = new Date()
+  const now = parseYmdToLocalDate(requestCurrentDateYMD.value) || new Date()
 
   props.form.otDate = now
   currentMonth.value = new Date(now.getFullYear(), now.getMonth(), 1)
@@ -646,6 +676,24 @@ async function fetchMonthHolidays() {
     loadingCalendar.value = false
   }
 }
+
+watch(
+  () => [props.allowBackdatedRequests, requestCurrentDateYMD.value],
+  () => {
+    if (!isBackdateRestrictionActive.value) return
+
+    const selectedDate = selectedDateYMD.value
+    if (!selectedDate || selectedDate >= requestCurrentDateYMD.value) return
+
+    const today = parseYmdToLocalDate(requestCurrentDateYMD.value)
+    if (today) {
+      props.form.otDate = today
+      currentMonth.value = new Date(today.getFullYear(), today.getMonth(), 1)
+      fetchMonthHolidays()
+    }
+  },
+  { immediate: true },
+)
 
 watch(
   () => selectedDateYMD.value,
@@ -785,7 +833,9 @@ onMounted(() => {
                   'is-today': cell.isToday,
                   'is-holiday': cell.isHoliday,
                   'is-sunday': cell.isSunday,
+                  'is-backdate-blocked': cell.isBackdateBlocked,
                 }"
+                :disabled="cell.isBackdateBlocked"
                 @click="selectDate(cell)"
               >
                 <span class="calendar-number">{{ cell.day }}</span>
@@ -797,6 +847,15 @@ onMounted(() => {
               </button>
             </div>
           </div>
+
+          <Message
+            v-if="isBackdateRestrictionActive"
+            severity="info"
+            :closable="false"
+            class="ot-backdate-limit-message"
+          >
+            Past OT dates are not available for a new request. Select {{ requestCurrentDateYMD }} or a future date.
+          </Message>
         </section>
 
         <section class="ot-detail-panel">
@@ -997,6 +1056,11 @@ onMounted(() => {
   padding: 0.9rem;
 }
 
+.ot-backdate-limit-message {
+  margin: 0.75rem 0 0;
+  font-size: 0.76rem;
+}
+
 .ot-calendar-header {
   display: flex;
   align-items: center;
@@ -1062,6 +1126,14 @@ onMounted(() => {
 .calendar-cell.is-outside {
   color: var(--ot-text-muted);
   opacity: 0.42;
+}
+
+.calendar-cell.is-backdate-blocked,
+.calendar-cell.is-backdate-blocked:hover {
+  cursor: not-allowed;
+  opacity: 0.3;
+  background: transparent;
+  color: var(--ot-text-muted);
 }
 
 .calendar-cell.is-today {

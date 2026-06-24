@@ -46,3 +46,17 @@ export function createShiftOTOption(payload) {
 export function updateShiftOTOption(id, payload) {
   return api.patch(`/ot/shift-options/${id}`, payload)
 }
+// =========================
+// OT Execution Controls
+// =========================
+export function getOTExecutionSettings() {
+  return api.get('/ot/execution-settings')
+}
+
+export function updateOTExecutionSettings(payload) {
+  return api.patch('/ot/execution-settings', payload)
+}
+
+export function getOTRequestAccess() {
+  return api.get('/ot/execution-settings/request-access')
+}

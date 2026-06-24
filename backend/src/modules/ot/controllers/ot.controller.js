@@ -19,7 +19,6 @@ const {
 const {
   notifyOTCreated,
   notifyOTAfterDecision,
-  notifyOTAfterRequesterConfirmation,
 } = require('../services/otNotification.service')
 
 const {
@@ -33,12 +32,16 @@ const {
   shiftOptionsByShiftParamSchema,
   shiftOptionsByShiftQuerySchema,
   otApprovalDecisionSchema,
-  otRequesterConfirmationSchema,
 } = require('../validators/ot.validation')
 
 const {
   emitOTChanged,
 } = require('../services/otRealtime.service')
+
+const {
+  assertOTRequestSubmissionAllowed,
+  assertNewOTRequestAllowed,
+} = require('../services/otExecutionSettings.service')
 
 function parse(schema, data) {
   const result = schema.safeParse(data)
@@ -123,6 +126,11 @@ async function safeRealtime(task) {
 async function createOTRequest(req, res, next) {
   try {
     const payload = parse(createOTRequestSchema, req.body || {})
+
+    // New OT requests may optionally be restricted to today/future OT dates. The
+    // backend check is the source of truth; the calendar restriction is UX only.
+    await assertNewOTRequestAllowed(payload.otDate)
+
     const trustedPayload = await buildTrustedCreatePayload(payload)
 
     const createdItem = await otService.create(trustedPayload, req.user)
@@ -145,6 +153,8 @@ async function createOTRequest(req, res, next) {
 
 async function updateOTRequest(req, res, next) {
   try {
+    await assertOTRequestSubmissionAllowed()
+
     const params = parse(otRequestIdParamSchema, req.params || {})
     const payload = parse(updateOTRequestSchema, req.body || {})
     const trustedPayload = await buildTrustedUpdatePayload(params.id, payload)
@@ -326,25 +336,6 @@ async function decideOTRequest(req, res, next) {
   }
 }
 
-async function requesterConfirmOTRequest(req, res, next) {
-  try {
-    const params = parse(otRequestIdParamSchema, req.params || {})
-    const payload = parse(otRequesterConfirmationSchema, req.body || {})
-
-    const confirmedItem = await otService.requesterConfirm(params.id, payload, req.user)
-    const item = await normalizeSavedOTRequestTiming(confirmedItem)
-
-    await safeNotify(() => notifyOTAfterRequesterConfirmation(item, req.user))
-    await safeRealtime(() => emitOTChanged(item, req.user, 'REQUESTER_CONFIRMED'))
-
-    return successResponse(res, {
-      item: presentItem(item, req.user),
-    })
-  } catch (error) {
-    return next(error)
-  }
-}
-
 module.exports = {
   createOTRequest,
   updateOTRequest,
@@ -360,5 +351,4 @@ module.exports = {
   exportOTApprovalInboxExcel,
   listMyAcknowledgementInbox,
   decideOTRequest,
-  requesterConfirmOTRequest,
 }

@@ -9,6 +9,7 @@ const requirePermission = require('../../../middlewares/requirePermission.middle
 const shiftOtOptionRoutes = require('./shiftOtOption.routes')
 const otPolicyRoutes = require('./otPolicy.routes')
 const dashboardRoutes = require('./dashboard.routes')
+const otExecutionSettingsRoutes = require('./otExecutionSettings.routes')
 
 const router = express.Router()
 
@@ -17,6 +18,7 @@ router.use(requireAuth)
 router.use('/dashboard', dashboardRoutes)
 router.use('/policies', otPolicyRoutes)
 router.use('/shift-options', shiftOtOptionRoutes)
+router.use('/execution-settings', otExecutionSettingsRoutes)
 
 // Fixed request routes must stay before '/requests/:id'
 router.get(
@@ -73,11 +75,6 @@ router.post(
   otController.cancelOTRequest,
 )
 
-router.post(
-  '/requests/:id/requester-confirmation',
-  requirePermission('OT_REQUEST_CREATE'),
-  otController.requesterConfirmOTRequest,
-)
 
 // Approval routes
 router.get(

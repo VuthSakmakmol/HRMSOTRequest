@@ -14,34 +14,20 @@ function safeArraySize(fieldPath) {
   }
 }
 
-// Must match the employee list/count shown for every OT request:
-// 1. While requester confirmation is pending, use the proposed employee list.
-// 2. Otherwise, use the approved list when it exists.
-// 3. Otherwise, use the originally requested list.
+// The number must use the same staff list displayed in OT tables:
+// approved staff when available; otherwise, requested staff.
 function effectiveEmployeeCountExpression() {
   return {
     $let: {
       vars: {
         requestedCount: safeArraySize('$requestedEmployees'),
         approvedCount: safeArraySize('$approvedEmployees'),
-        proposedCount: safeArraySize('$proposedApprovedEmployees'),
       },
       in: {
         $cond: [
-          {
-            $and: [
-              { $eq: ['$status', 'PENDING_REQUESTER_CONFIRMATION'] },
-              { $gt: ['$$proposedCount', 0] },
-            ],
-          },
-          '$$proposedCount',
-          {
-            $cond: [
-              { $gt: ['$$approvedCount', 0] },
-              '$$approvedCount',
-              '$$requestedCount',
-            ],
-          },
+          { $gt: ['$$approvedCount', 0] },
+          '$$approvedCount',
+          '$$requestedCount',
         ],
       },
     },

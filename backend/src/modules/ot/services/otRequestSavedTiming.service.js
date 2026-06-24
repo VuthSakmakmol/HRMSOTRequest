@@ -136,11 +136,6 @@ async function normalizeSavedOTRequestTiming(input) {
     patch.approvedEmployees = approvedEmployees.items
   }
 
-  const proposedApprovedEmployees = normalizeEmployeeCollection(doc.proposedApprovedEmployees)
-
-  if (proposedApprovedEmployees.changed) {
-    patch.proposedApprovedEmployees = proposedApprovedEmployees.items
-  }
 
   if (Object.keys(patch).length) {
     await OTRequest.updateOne(

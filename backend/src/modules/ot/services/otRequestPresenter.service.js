@@ -101,9 +101,6 @@ function statusLabel(status) {
   const map = {
     DRAFT: 'Draft',
     PENDING: 'Pending Approval',
-    PENDING_REQUESTER_CONFIRMATION: 'Waiting Requester Confirmation',
-    REQUESTER_CONFIRMED: 'Requester Confirmed',
-    REQUESTER_DISAGREED: 'Requester Disagreed',
     APPROVED: 'Approved',
     REJECTED: 'Rejected',
     CANCELLED: 'Cancelled',
@@ -118,9 +115,6 @@ function statusSeverity(status) {
   const map = {
     DRAFT: 'info',
     PENDING: 'warning',
-    PENDING_REQUESTER_CONFIRMATION: 'warning',
-    REQUESTER_CONFIRMED: 'info',
-    REQUESTER_DISAGREED: 'danger',
     APPROVED: 'success',
     REJECTED: 'danger',
     CANCELLED: 'contrast',
@@ -186,31 +180,6 @@ function timingModeLabel(timingMode) {
   return map[value] || value || ''
 }
 
-function requesterConfirmationLabel(value) {
-  const status = upper(value)
-
-  const map = {
-    NONE: 'Not Required',
-    PENDING: 'Waiting Requester',
-    AGREED: 'Requester Agreed',
-    DISAGREED: 'Requester Disagreed',
-  }
-
-  return map[status] || status || ''
-}
-
-function requesterConfirmationSeverity(value) {
-  const status = upper(value)
-
-  const map = {
-    NONE: 'secondary',
-    PENDING: 'warning',
-    AGREED: 'success',
-    DISAGREED: 'danger',
-  }
-
-  return map[status] || 'secondary'
-}
 
 function approvalStepStatusLabel(status) {
   const value = upper(status)
@@ -414,14 +383,6 @@ function effectiveEmployeesForDoc(doc = {}) {
     return doc.effectiveEmployees
   }
 
-  if (
-    upper(doc.status) === 'PENDING_REQUESTER_CONFIRMATION' &&
-    Array.isArray(doc.proposedApprovedEmployees) &&
-    doc.proposedApprovedEmployees.length
-  ) {
-    return doc.proposedApprovedEmployees
-  }
-
   if (Array.isArray(doc.approvedEmployees) && doc.approvedEmployees.length) {
     return doc.approvedEmployees
   }
@@ -451,19 +412,6 @@ function canDeleteOTRequest(doc = {}, authUser = {}) {
   return hasPermission(authUser, 'OT_REQUEST_DELETE')
 }
 
-function canRequesterConfirm(doc = {}, authUser = {}) {
-  const actorEmployeeId = s(authUser.employeeId)
-  const ownerEmployeeId = s(doc.requesterEmployeeId)
-  const status = upper(doc.status)
-  const confirmation = upper(doc.requesterConfirmationStatus)
-
-  if (!actorEmployeeId || !ownerEmployeeId) return false
-  if (actorEmployeeId !== ownerEmployeeId) return false
-  if (status !== 'PENDING_REQUESTER_CONFIRMATION') return false
-  if (confirmation !== 'PENDING') return false
-
-  return true
-}
 
 function buildApprovalActionContext(doc = {}, authUser = {}) {
   const requestStatus = upper(doc.status)
@@ -559,23 +507,6 @@ function buildApprovalDisplay(doc = {}) {
     }
   }
 
-  if (requestStatus === 'PENDING_REQUESTER_CONFIRMATION') {
-    return {
-      type: 'requester_confirmation',
-      label: 'Waiting Requester Confirmation',
-      subLabel: 'Requester must confirm adjusted employee list',
-      severity: 'warning',
-    }
-  }
-
-  if (requestStatus === 'REQUESTER_DISAGREED') {
-    return {
-      type: 'requester_disagreed',
-      label: 'Requester Disagreed',
-      subLabel: 'Requester disagreed with the adjusted employee list',
-      severity: 'danger',
-    }
-  }
 
   if (requestStatus === 'PENDING') {
     const stepNo = n(currentStep?.stepNo)
@@ -688,7 +619,6 @@ function buildPermissionOutput(doc = {}, authUser = {}) {
     canApprove: approvalContext.canDecide,
     canReject: approvalContext.canDecide,
     canAdjustEmployees: approvalContext.canDecide,
-    canRequesterConfirm: canRequesterConfirm(doc, authUser),
     canAcknowledge: false,
     canCancel: canCancelOTRequest(doc, authUser),
     canDelete: canDeleteOTRequest(doc, authUser),
@@ -713,23 +643,17 @@ function presentOTRequest(doc = {}, authUser = {}) {
     ? doc.approvedEmployees.map(mapEmployeeOutput)
     : []
 
-    const proposedApprovedEmployees = Array.isArray(doc.proposedApprovedEmployees)
-    ? doc.proposedApprovedEmployees.map(mapEmployeeOutput)
-    : []
 
     const effectiveEmployees = effectiveEmployeesForDoc({
     ...doc,
     requestedEmployees,
     approvedEmployees,
-    proposedApprovedEmployees,
     }).map(mapEmployeeOutput)
 
   const approvalSteps = sortApprovalSteps(doc.approvalSteps).map(mapApprovalStepOutput)
 
   const status = upper(doc.status)
   const dayType = upper(doc.dayType)
-  const requesterConfirmationStatus = upper(doc.requesterConfirmationStatus)
-
   return {
     id: toId(doc._id || doc.id),
     _id: toId(doc._id || doc.id),
@@ -804,14 +728,12 @@ function presentOTRequest(doc = {}, authUser = {}) {
 
     requestedEmployees,
     approvedEmployees,
-    proposedApprovedEmployees,
     effectiveEmployees,
 
     requestedEmployeeCount: countOrLength(doc.requestedEmployeeCount, requestedEmployees),
     approvedEmployeeCount: countOrLength(doc.approvedEmployeeCount, approvedEmployees),
     proposedApprovedEmployeeCount: countOrLength(
     doc.proposedApprovedEmployeeCount,
-    proposedApprovedEmployees,
     ),
     effectiveEmployeeCount: countOrLength(doc.effectiveEmployeeCount, effectiveEmployees),
 
@@ -822,12 +744,6 @@ function presentOTRequest(doc = {}, authUser = {}) {
 
     approvalDisplay,
     approvalContext,
-
-    requesterConfirmationStatus,
-    requesterConfirmationLabel: requesterConfirmationLabel(requesterConfirmationStatus),
-    requesterConfirmationSeverity: requesterConfirmationSeverity(requesterConfirmationStatus),
-    requesterConfirmationRemark: s(doc.requesterConfirmationRemark),
-    requesterConfirmedAt: doc.requesterConfirmedAt || null,
 
     permissions: buildPermissionOutput(doc, authUser),
 

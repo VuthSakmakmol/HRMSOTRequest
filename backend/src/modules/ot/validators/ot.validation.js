@@ -16,7 +16,6 @@ const OT_TIMING_SOURCES = ['SHIFT_OPTION', 'CUSTOM_FIXED']
 
 const OT_APPROVAL_ACTIONS = ['APPROVE', 'REJECT']
 
-const OT_REQUESTER_CONFIRMATION_ACTIONS = ['AGREE', 'DISAGREE']
 
 const OT_SORT_FIELDS = [
   'createdAt',
@@ -384,21 +383,12 @@ const otApprovalDecisionSchema = z
     }
   })
 
-const otRequesterConfirmationSchema = z.object({
-  action: upperEnumSchema(
-    OT_REQUESTER_CONFIRMATION_ACTIONS,
-    'ot.request.validation.requesterConfirmationActionInvalid',
-  ),
-
-  remark: optionalTextSchema(1000, 'ot.request.validation.remarkTooLong'),
-})
 
 module.exports = {
   OT_STATUS,
   OT_DAY_TYPES,
   OT_TIMING_SOURCES,
   OT_APPROVAL_ACTIONS,
-  OT_REQUESTER_CONFIRMATION_ACTIONS,
 
   createOTRequestSchema,
   updateOTRequestSchema,
@@ -410,5 +400,4 @@ module.exports = {
   shiftOptionsByShiftParamSchema,
   shiftOptionsByShiftQuerySchema,
   otApprovalDecisionSchema,
-  otRequesterConfirmationSchema,
 }

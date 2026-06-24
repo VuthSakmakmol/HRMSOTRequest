@@ -20,6 +20,7 @@ import {
   getShiftOTOptionsByShift,
   updateOTRequest,
 } from '@/modules/ot/ot.api'
+import { getOTRequestAccess } from '@/modules/ot/otMaster.api'
 
 const route = useRoute()
 const router = useRouter()
@@ -35,6 +36,8 @@ const loadingEditRequest = ref(false)
 const loadingShiftOptions = ref(false)
 const loadingUnavailableEmployees = ref(false)
 const employeePickerLoading = ref(false)
+const loadingRequestAccess = ref(false)
+const requestAccess = ref(null)
 
 const selectedEmployees = ref([])
 const requesterEmployee = ref(null)
@@ -62,6 +65,34 @@ const form = reactive({
 const editRequestId = computed(() => s(route.params.id))
 const isEditMode = computed(() => Boolean(editRequestId.value))
 const pageLoading = computed(() => loadingRequester.value || loadingEditRequest.value)
+const isRequestSubmissionAllowed = computed(() => requestAccess.value?.isAllowed !== false)
+const requestAccessMessage = computed(() => s(requestAccess.value?.message))
+const requestAccessHoursLabel = computed(() => {
+  const state = requestAccess.value
+  if (!state?.dailyTimeLimitEnabled) return ''
+
+  const start = s(state.dailyStartTime)
+  const end = s(state.dailyEndTime)
+  const timeZone = s(state.requestTimeZone) || 'Asia/Phnom_Penh'
+
+  return start && end ? `${start} → ${end} daily (${timeZone})` : ''
+})
+
+// Backdate policy is applied only to new requests. Existing historical requests remain
+// editable whenever their normal canEdit rule permits it.
+const allowBackdatedRequests = computed(() => requestAccess.value?.allowBackdatedRequests !== false)
+const requestCurrentDate = computed(() => {
+  const value = s(requestAccess.value?.currentDate)
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : ''
+})
+const isSelectedPastDateBlocked = computed(() => {
+  if (isEditMode.value || allowBackdatedRequests.value) return false
+
+  const selectedDate = selectedDateYMD.value
+  const currentDate = requestCurrentDate.value
+
+  return Boolean(selectedDate && currentDate && selectedDate < currentDate)
+})
 
 const selectedDateYMD = computed(() => formatYMD(form.otDate))
 
@@ -344,8 +375,11 @@ const submitDisabled = computed(() => {
     loadingShiftOptions.value ||
     loadingUnavailableEmployees.value ||
     employeePickerLoading.value ||
+    loadingRequestAccess.value ||
     submitting.value ||
+    !isRequestSubmissionAllowed.value ||
     !canSubmitEditRequest.value ||
+    isSelectedPastDateBlocked.value ||
     !selectedDateYMD.value ||
     selectedShiftState.value.mode !== 'ready' ||
     !form.shiftOtOptionId ||
@@ -406,6 +440,23 @@ function positiveNumber(...values) {
 function labelOr(key, fallback) {
   const value = t(key)
   return value === key ? fallback : value
+}
+
+
+async function loadOTRequestAccess() {
+  loadingRequestAccess.value = true
+
+  try {
+    const response = await getOTRequestAccess()
+    const payload = response?.data?.data || response?.data || {}
+    requestAccess.value = payload?.item || null
+  } catch (error) {
+    // Never guess that a request is closed because this optional UX lookup failed.
+    // The create/update endpoint still enforces the current rule on the backend.
+    requestAccess.value = null
+  } finally {
+    loadingRequestAccess.value = false
+  }
 }
 
 function showToast(severity, summary, detail, life = 3000) {
@@ -1287,6 +1338,10 @@ function validateBeforeSubmit(payload) {
     return t('ot.requests.create.selectDateFirst')
   }
 
+  if (isSelectedPastDateBlocked.value) {
+    return 'New OT requests for a past date are currently not allowed. Select today or a future date.'
+  }
+
   if (selectedShiftState.value.mode === 'missing') {
     return t('ot.requests.create.missingShift')
   }
@@ -1477,6 +1532,17 @@ function buildApiErrorMessage(error, fallback = '') {
 
   if (code === 'OT_EMPLOYEE_DUPLICATE_DATE') {
     return t('ot.requests.create.duplicateGeneric')
+  }
+
+  if (
+    [
+      'REQUEST_SUBMISSIONS_CLOSED',
+      'REQUEST_WINDOW_NOT_OPEN',
+      'REQUEST_WINDOW_EXPIRED',
+      'REQUEST_WINDOW_INVALID',
+    ].includes(code)
+  ) {
+    return message || 'OT request submission is not available at this time.'
   }
 
   if (code === 'OT_REQUEST_EDIT_NOT_ALLOWED') {
@@ -1742,6 +1808,8 @@ watch(
 )
 
 onMounted(async () => {
+  await loadOTRequestAccess()
+
   if (isEditMode.value) {
     await loadEditRequest()
     return
@@ -1769,6 +1837,25 @@ onMounted(async () => {
     </div>
 
     <template v-else>
+      <Message
+        v-if="requestAccess && !isRequestSubmissionAllowed"
+        severity="warn"
+        :closable="false"
+        class="ot-request-access-message"
+      >
+        <strong>{{ requestAccessMessage || 'OT request submission is currently closed.' }}</strong>
+        <span v-if="requestAccessHoursLabel"> Daily hours: {{ requestAccessHoursLabel }}</span>
+      </Message>
+
+      <Message
+        v-if="!isEditMode && requestAccess && !allowBackdatedRequests"
+        severity="info"
+        :closable="false"
+        class="ot-request-access-message"
+      >
+        Past OT dates are blocked for new requests. Select {{ requestCurrentDate || 'today' }} or a future date.
+      </Message>
+
       <OTDetailView
         :form="form"
         :requester-employee="requesterEmployee"
@@ -1779,6 +1866,8 @@ onMounted(async () => {
         :loading-shift-options="loadingShiftOptions"
         :selected-ot-option="selectedOTOption"
         :request-preview="requestPreview"
+        :allow-backdated-requests="isEditMode || allowBackdatedRequests"
+        :current-request-date="requestCurrentDate"
       />
 
       <OTEmployeeMultiPicker
@@ -1906,6 +1995,15 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+}
+
+.ot-request-access-message {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.ot-request-access-message span {
+  margin-left: 0.3rem;
 }
 
 .ot-loading-panel,

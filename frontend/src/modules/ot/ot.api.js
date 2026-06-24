@@ -83,3 +83,11 @@ export function getOTAcknowledgementInbox(params = {}) {
 export function acknowledgeOTRequest(id, payload = {}) {
   return api.post(`/ot/acknowledgements/${id}/acknowledge`, payload).then(normalize)
 }
+// =========================
+// OT Execution Controls
+// =========================
+// Kept in this API module because OTRequestCreateView uses it together
+// with create/update OT request calls.
+export function getOTRequestAccess() {
+  return api.get('/ot/execution-settings/request-access')
+}

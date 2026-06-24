@@ -283,6 +283,7 @@ export default {
     acknowledgeInbox: 'Acknowledge Inbox',
     otPolicies: 'OT Policies',
     shiftOtOptions: 'Shift OT Options',
+    otExecutionControls: 'OT Execution Control',
 
     payment: 'Payment',
     paymentProcess: 'Payment Process',
@@ -1872,18 +1873,14 @@ export default {
 
     status: {
       pending: 'Pending',
-      pendingRequesterConfirmation: 'Pending Requester Confirmation',
       approved: 'Approved',
       rejected: 'Rejected',
-      requesterDisagreed: 'Requester Disagreed',
       cancelled: 'Cancelled',
     },
 
     approvalDisplay: {
       approved: 'Approved',
       rejected: 'Rejected',
-      waitingRequesterConfirmation: 'Waiting for requester confirmation',
-      requesterDisagreed: 'Requester disagreed',
       cancelled: 'Cancelled',
       waitingApproval: 'Waiting for approval',
     },
@@ -2548,8 +2545,6 @@ export default {
         dayTypeInvalid: 'OT day type is invalid.',
         approvalActionInvalid: 'Approval action is invalid.',
         rejectionReasonRequired: 'Please enter rejection reason.',
-        requesterConfirmationActionInvalid:
-          'Requester confirmation action is invalid.',
       },
 
       error: {
@@ -3041,9 +3036,6 @@ export default {
       otApprovalRequired: 'Approval Required',
       otApproved: 'Approved',
       otRejected: 'Rejected',
-      otRequesterConfirmationRequired: 'Confirmation Required',
-      otRequesterConfirmed: 'Requester Confirmed',
-      otRequesterDisagreed: 'Requester Disagreed',
     },
     error: {
       notFound: 'Notification not found',

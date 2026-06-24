@@ -16,7 +16,6 @@ function normalizeStatus(status) {
   if (value === 'APPROVED') return 'APPROVED'
   if (value === 'REJECTED') return 'REJECTED'
   if (value === 'CANCELLED') return 'CANCELLED'
-  if (value === 'REQUESTER_DISAGREED') return 'REQUESTER_DISAGREED'
 
   if (value.includes('PENDING')) return 'PENDING'
 
@@ -40,7 +39,6 @@ function statusLabel(status) {
   if (value === 'APPROVED') return 'Approved'
   if (value === 'REJECTED') return 'Rejected'
   if (value === 'CANCELLED') return 'Cancelled'
-  if (value === 'REQUESTER_DISAGREED') return 'Requester Disagreed'
 
   return value || 'Unknown'
 }
@@ -126,11 +124,9 @@ async function getOTDashboardSummary() {
   const approved = statusMap.get('APPROVED') || 0
   const rejected = statusMap.get('REJECTED') || 0
   const cancelled = statusMap.get('CANCELLED') || 0
-  const requesterDisagreed = statusMap.get('REQUESTER_DISAGREED') || 0
 
   const statusChartItems = buildOrderedChart(
     statusMap,
-    ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED', 'REQUESTER_DISAGREED'],
     statusLabel,
   )
 
@@ -153,7 +149,6 @@ async function getOTDashboardSummary() {
     approved,
     rejected,
     cancelled,
-    requesterDisagreed,
 
     approvedRate: rate(approved, total),
     pendingRate: rate(pending, total),

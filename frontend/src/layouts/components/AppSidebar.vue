@@ -313,6 +313,13 @@ const navGroups = computed(() => {
             'SHIFT_OT_OPTION_UPDATE',
           ],
         },
+        {
+          key: 'ot-execution-controls',
+          label: t('nav.otExecutionControls'),
+          icon: 'pi pi-power-off',
+          to: '/ot/execution-controls',
+          permissions: ['OT_EXECUTION_VIEW', 'OT_EXECUTION_UPDATE'],
+        },
       ],
     },
     {

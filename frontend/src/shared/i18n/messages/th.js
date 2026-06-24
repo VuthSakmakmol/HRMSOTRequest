@@ -281,6 +281,7 @@ export default {
     acknowledgeInbox: 'กล่องรับทราบ',
     otPolicies: 'นโยบาย OT',
     shiftOtOptions: 'ตัวเลือก OT ตามกะ',
+    otExecutionControls: 'ควบคุมการทำงาน OT',
 
     payment: 'การจ่ายเงิน',
     paymentProcess: 'ประมวลผลการจ่ายเงิน',
@@ -1854,18 +1855,14 @@ export default {
 
     status: {
       pending: 'รอดำเนินการ',
-      pendingRequesterConfirmation: 'รอผู้ขอยืนยัน',
       approved: 'อนุมัติแล้ว',
       rejected: 'ปฏิเสธแล้ว',
-      requesterDisagreed: 'ผู้ขอไม่เห็นด้วย',
       cancelled: 'ยกเลิกแล้ว',
     },
 
     approvalDisplay: {
       approved: 'อนุมัติแล้ว',
       rejected: 'ปฏิเสธแล้ว',
-      waitingRequesterConfirmation: 'รอผู้ขอยืนยัน',
-      requesterDisagreed: 'ผู้ขอไม่เห็นด้วย',
       cancelled: 'ยกเลิกแล้ว',
       waitingApproval: 'รอการอนุมัติ',
     },
@@ -2526,8 +2523,6 @@ export default {
         dayTypeInvalid: 'ประเภทวัน OT ไม่ถูกต้อง',
         approvalActionInvalid: 'การดำเนินการอนุมัติไม่ถูกต้อง',
         rejectionReasonRequired: 'โปรดกรอกเหตุผลการปฏิเสธ',
-        requesterConfirmationActionInvalid:
-          'การยืนยันของผู้ขอไม่ถูกต้อง',
       },
 
       error: {

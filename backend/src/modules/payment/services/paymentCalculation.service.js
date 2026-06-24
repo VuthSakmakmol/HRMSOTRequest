@@ -8,6 +8,9 @@ const OTRequest = require('../../ot/models/OTRequest')
 const OTCalculationPolicy = require('../../ot/models/OTCalculationPolicy')
 const ShiftOTOption = require('../../ot/models/ShiftOTOption')
 const AttendanceRecord = require('../../attendance/models/AttendanceRecord')
+const {
+  getPaymentApprovalRule,
+} = require('../../ot/services/otExecutionSettings.service')
 
 const { classifyDayType } = require('../../calendar/services/dayType.service')
 const { verifyAttendanceAgainstOT } = require('../../attendance/utils/attendanceVerification')
@@ -22,11 +25,7 @@ const {
   formatDateTimeToDmyHm,
 } = require('../../../shared/utils/dateFormat')
 
-const PAYMENT_PROCESS_OT_STATUSES = [
-  'PENDING',
-  'PENDING_REQUESTER_CONFIRMATION',
-  'APPROVED',
-]
+const PAYMENT_PROCESS_OT_STATUSES = ['PENDING', 'APPROVED']
 
 function s(value) {
   return String(value ?? '').trim()
@@ -648,6 +647,9 @@ function buildPaymentOTFilter(fromDate, toDate, selectedDates = []) {
   const dates = resolveSelectedPaymentDates(fromDate, toDate, selectedDates)
 
   return {
+    // Payment first loads every active workflow status. The execution setting
+    // later decides whether pending records are eligible or are recorded as
+    // approval-required exclusions. This keeps the preview/audit transparent.
     status: {
       $in: PAYMENT_PROCESS_OT_STATUSES,
     },
@@ -669,6 +671,24 @@ async function fetchPaymentOTRequests(fromDate, toDate, selectedDates = []) {
       _id: 1,
     })
     .lean()
+}
+
+function splitOTRequestsForPayment(otRequests = [], paymentRequiresFinalApproval = false) {
+  const source = Array.isArray(otRequests) ? otRequests : []
+
+  if (!paymentRequiresFinalApproval) {
+    return {
+      eligibleRequests: source,
+      excludedUnapprovedRequests: [],
+    }
+  }
+
+  return {
+    eligibleRequests: source.filter((item) => normalizeStatus(item?.status) === 'APPROVED'),
+    excludedUnapprovedRequests: source.filter(
+      (item) => normalizeStatus(item?.status) !== 'APPROVED',
+    ),
+  }
 }
 
 function resolveRequestPaidMinutes(otRequest = {}) {
@@ -1993,6 +2013,90 @@ function buildUnapprovedRequestPaymentIssue(otRequest = {}, employee = {}) {
   }
 }
 
+function buildApprovalRequiredPaymentIssue(otRequest = {}, employee = {}) {
+  const requestStatus = normalizeStatus(otRequest.status) || 'UNKNOWN'
+  const requestedMinutes = resolveEmployeeRequestedMinutes(employee, otRequest)
+
+  return {
+    requestNo: s(otRequest.requestNo),
+    otDate: s(otRequest.otDate),
+    employeeNo: normalizeEmployeeNo(employee.employeeNo || employee.employeeCode),
+    employeeName: s(employee.employeeName || employee.name),
+    departmentName: s(employee.departmentName),
+    positionName: s(employee.positionName),
+    lineName: s(employee.lineName),
+    requestStatus,
+    requestedMinutes,
+    requestedHours: minutesToHours(requestedMinutes),
+    reason: `Payment skipped because final OT approval is required. Current request status is ${requestStatus}.`,
+  }
+}
+
+function buildApprovalRequiredAuditRow(otRequest = {}, employee = {}) {
+  const requestedMinutes = resolveEmployeeRequestedMinutes(employee, otRequest)
+
+  return {
+    paymentRowKey: buildPaymentRowKey(otRequest, employee),
+    requestNo: s(otRequest.requestNo),
+    otRequestId: getObjectIdString(otRequest._id || otRequest.id),
+    otDate: s(otRequest.otDate),
+    otDateDisplay: formatYmdToDmy(otRequest.otDate),
+    requestStatus: normalizeStatus(otRequest.status),
+
+    employeeId: getObjectIdString(employee.employeeId),
+    employeeNo: normalizeEmployeeNo(employee.employeeNo || employee.employeeCode),
+    employeeName: s(employee.employeeName || employee.name),
+    departmentName: s(employee.departmentName),
+    positionName: s(employee.positionName),
+    lineCode: s(employee.lineCode),
+    lineName: s(employee.lineName),
+
+    dayType: normalizeDayType(otRequest.dayType),
+    requestedMinutes,
+    requestedHours: minutesToHours(requestedMinutes),
+    attendanceStatus: 'NOT_CALCULATED',
+    clockIn: '',
+    clockOut: '',
+    actualOtMinutes: 0,
+    actualOtHours: 0,
+    eligibleOtMinutes: 0,
+    roundedOtMinutes: 0,
+    payableMinutes: 0,
+    payableHours: 0,
+    otResult: 'NOT_CALCULATED',
+    otResultReason: 'Skipped because final OT approval is required.',
+    hasSalary: false,
+    monthlySalary: 0,
+    hourlyRate: 0,
+    rateFormula: '',
+    amountUsd: 0,
+    allowanceAmountUsd: 0,
+    totalUsd: 0,
+    totalKhr: 0,
+    paymentStatus: 'Not paid',
+    issueReason: `Payment skipped because final OT approval is required. Current request status is ${normalizeStatus(otRequest.status) || 'UNKNOWN'}.`,
+  }
+}
+
+function buildApprovalRequiredExclusions(otRequests = []) {
+  const issues = []
+  const auditRows = []
+
+  for (const otRequest of Array.isArray(otRequests) ? otRequests : []) {
+    const employees = getEffectiveApprovedEmployeesForVerification(otRequest)
+
+    for (const employee of employees) {
+      const employeeNo = normalizeEmployeeNo(employee.employeeNo || employee.employeeCode)
+      if (!employeeNo) continue
+
+      issues.push(buildApprovalRequiredPaymentIssue(otRequest, employee))
+      auditRows.push(buildApprovalRequiredAuditRow(otRequest, employee))
+    }
+  }
+
+  return { issues, auditRows }
+}
+
 
 function buildPaymentRowKey(otRequest = {}, employee = {}) {
   const requestKey = s(otRequest.requestNo || otRequest.id || otRequest._id)
@@ -2627,12 +2731,30 @@ async function buildPaymentPreview({
   )
 
   const effectiveSelectedDates = resolveSelectedPaymentDates(fromDate, toDate, selectedDates)
-  const otRequests = await fetchPaymentOTRequests(fromDate, toDate, effectiveSelectedDates)
+  const paymentApprovalRule = await getPaymentApprovalRule()
+  const candidateOtRequests = await fetchPaymentOTRequests(
+    fromDate,
+    toDate,
+    effectiveSelectedDates,
+  )
+  const {
+    eligibleRequests: otRequests,
+    excludedUnapprovedRequests,
+  } = splitOTRequestsForPayment(
+    candidateOtRequests,
+    paymentApprovalRule.paymentRequiresFinalApproval === true,
+  )
+  const approvalRequiredExclusions = buildApprovalRequiredExclusions(
+    excludedUnapprovedRequests,
+  )
+
   await reportPaymentProgress(
     onProgress,
     35,
     'OT_REQUESTS',
-    `Loaded ${otRequests.length} OT requests for payment`,
+    paymentApprovalRule.paymentRequiresFinalApproval === true
+      ? `Loaded ${candidateOtRequests.length} OT requests; ${excludedUnapprovedRequests.length} require final approval`
+      : `Loaded ${candidateOtRequests.length} OT requests for payment`,
     {
       totalRequests: otRequests.length,
     },
@@ -2711,10 +2833,18 @@ async function buildPaymentPreview({
     },
 
     otRequestCount: otRequests.length,
+    candidateOtRequestCount: candidateOtRequests.length,
+    paymentApproval: {
+      paymentRequiresFinalApproval: paymentApprovalRule.paymentRequiresFinalApproval === true,
+      paymentApprovalMode: paymentApprovalRule.paymentApprovalMode,
+      includedOtRequestCount: otRequests.length,
+      excludedUnapprovedRequestCount: excludedUnapprovedRequests.length,
+      excludedUnapprovedEmployeeCount: approvalRequiredExclusions.issues.length,
+    },
 
     summary,
     items,
-    auditRows,
+    auditRows: [...auditRows, ...approvalRequiredExclusions.auditRows],
 
     issues: {
       invalidSalaryRows: parsedSalary.invalidRows,
@@ -2722,6 +2852,7 @@ async function buildPaymentPreview({
       missingSalaryEmployees,
       missingPayableEmployees,
       payableWarningEmployees,
+      approvalRequiredEmployees: approvalRequiredExclusions.issues,
       notPreparedRequests: [],
       verificationSummaries,
     },

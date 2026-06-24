@@ -14,14 +14,7 @@ function nullableId(value) {
   return s(value) ? value : null
 }
 
-const OT_STATUS = [
-  'PENDING',
-  'PENDING_REQUESTER_CONFIRMATION',
-  'APPROVED',
-  'REJECTED',
-  'REQUESTER_DISAGREED',
-  'CANCELLED',
-]
+const OT_STATUS = ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED']
 
 const OT_DAY_TYPES = ['WORKING_DAY', 'SUNDAY', 'HOLIDAY']
 
@@ -39,12 +32,6 @@ const OT_APPROVAL_STEP_STATUSES = [
   'ACKNOWLEDGED',
 ]
 
-const OT_REQUESTER_CONFIRMATION_STATUSES = [
-  'NOT_REQUIRED',
-  'PENDING',
-  'AGREED',
-  'DISAGREED',
-]
 
 function dayTypeMeta(dayType) {
   const value = upper(dayType)
@@ -506,23 +493,6 @@ const OTRequestSchema = new mongoose.Schema(
       index: true,
     },
 
-    proposedApprovedEmployees: {
-      type: [OTRequestEmployeeSchema],
-      default: [],
-      validate: {
-        validator(value) {
-          return Array.isArray(value) && value.length <= 200
-        },
-        message: 'ot.request.validation.proposedApprovedEmployeesInvalid',
-      },
-    },
-
-    proposedApprovedEmployeeCount: {
-      type: Number,
-      required: true,
-      min: 0,
-      default: 0,
-    },
 
     otDate: {
       type: String,
@@ -759,27 +729,6 @@ const OTRequestSchema = new mongoose.Schema(
       index: true,
     },
 
-    requesterConfirmationStatus: {
-      type: String,
-      enum: OT_REQUESTER_CONFIRMATION_STATUSES,
-      required: true,
-      default: 'NOT_REQUIRED',
-      trim: true,
-      uppercase: true,
-      index: true,
-    },
-
-    requesterConfirmedAt: {
-      type: Date,
-      default: null,
-    },
-
-    requesterConfirmationRemark: {
-      type: String,
-      trim: true,
-      default: '',
-      maxlength: 1000,
-    },
 
     lastAdjustmentByEmployeeId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -902,10 +851,6 @@ OTRequestSchema.pre('validate', function normalize(next) {
   this.reason = s(this.reason)
 
   this.status = upper(this.status || 'PENDING')
-  this.requesterConfirmationStatus = upper(
-    this.requesterConfirmationStatus || 'NOT_REQUIRED',
-  )
-  this.requesterConfirmationRemark = s(this.requesterConfirmationRemark)
 
   this.lastAdjustmentByEmployeeCode = s(this.lastAdjustmentByEmployeeCode)
   this.lastAdjustmentByEmployeeName = s(this.lastAdjustmentByEmployeeName)
@@ -917,10 +862,6 @@ OTRequestSchema.pre('validate', function normalize(next) {
   this.approvedEmployees = normalizeEmployeeCollection(this.approvedEmployees)
   this.approvedEmployeeCount = this.approvedEmployees.length
 
-  this.proposedApprovedEmployees = normalizeEmployeeCollection(
-    this.proposedApprovedEmployees,
-  )
-  this.proposedApprovedEmployeeCount = this.proposedApprovedEmployees.length
 
   if (Array.isArray(this.approvalSteps)) {
     for (const step of this.approvalSteps) {
@@ -966,7 +907,6 @@ OTRequestSchema.index({ requesterEmployeeId: 1, otDate: -1 })
 OTRequestSchema.index({ requesterName: 1 })
 OTRequestSchema.index({ status: 1, otDate: -1 })
 OTRequestSchema.index({ dayType: 1, otDate: -1 })
-OTRequestSchema.index({ requesterConfirmationStatus: 1, otDate: -1 })
 OTRequestSchema.index({ currentApproverEmployeeId: 1, status: 1, otDate: -1 })
 OTRequestSchema.index({ finalApproverEmployeeId: 1, status: 1, otDate: -1 })
 OTRequestSchema.index({ shiftId: 1, otDate: -1 })
@@ -980,11 +920,6 @@ OTRequestSchema.index({ dayType: 1, createdAt: -1, _id: -1 })
 
 OTRequestSchema.index({ otDate: 1, status: 1, 'requestedEmployees.employeeId': 1 })
 OTRequestSchema.index({ otDate: 1, status: 1, 'approvedEmployees.employeeId': 1 })
-OTRequestSchema.index({
-  otDate: 1,
-  status: 1,
-  'proposedApprovedEmployees.employeeId': 1,
-})
 
 OTRequestSchema.index({ 'requestedEmployees.employeeId': 1, otDate: -1 })
 OTRequestSchema.index({ 'requestedEmployees.departmentId': 1, otDate: -1 })
@@ -996,7 +931,6 @@ OTRequestSchema.index({ 'approvedEmployees.departmentId': 1, otDate: -1 })
 OTRequestSchema.index({ 'approvedEmployees.positionId': 1, otDate: -1 })
 OTRequestSchema.index({ 'approvedEmployees.lineId': 1, otDate: -1 })
 
-OTRequestSchema.index({ 'proposedApprovedEmployees.employeeId': 1, otDate: -1 })
 
 const OTRequest =
   mongoose.models.OTRequest || mongoose.model('OTRequest', OTRequestSchema)
@@ -1009,5 +943,3 @@ module.exports.OT_APPROVAL_STEP_TYPES = OT_APPROVAL_STEP_TYPES
 module.exports.OT_TIMING_SOURCES = OT_TIMING_SOURCES
 module.exports.OT_EMPLOYEE_TIME_MODES = OT_EMPLOYEE_TIME_MODES
 module.exports.OT_APPROVAL_STEP_STATUSES = OT_APPROVAL_STEP_STATUSES
-module.exports.OT_REQUESTER_CONFIRMATION_STATUSES =
-  OT_REQUESTER_CONFIRMATION_STATUSES

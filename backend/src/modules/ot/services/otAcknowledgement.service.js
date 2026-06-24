@@ -54,10 +54,8 @@ function statusKey(status) {
 
   const map = {
     PENDING: 'ot.status.pending',
-    PENDING_REQUESTER_CONFIRMATION: 'ot.status.pendingRequesterConfirmation',
     APPROVED: 'ot.status.approved',
     REJECTED: 'ot.status.rejected',
-    REQUESTER_DISAGREED: 'ot.status.requesterDisagreed',
     CANCELLED: 'ot.status.cancelled',
   }
 
@@ -69,8 +67,6 @@ function statusSeverity(status) {
 
   if (value === 'APPROVED') return 'success'
   if (value === 'REJECTED') return 'danger'
-  if (value === 'REQUESTER_DISAGREED') return 'danger'
-  if (value === 'PENDING_REQUESTER_CONFIRMATION') return 'info'
   if (value === 'CANCELLED') return 'secondary'
 
   return 'warning'
@@ -165,14 +161,6 @@ function buildSearchFilter(search) {
       { 'approvedEmployees.lineCode': regex },
       { 'approvedEmployees.lineName': regex },
 
-      { 'proposedApprovedEmployees.employeeCode': regex },
-      { 'proposedApprovedEmployees.employeeName': regex },
-      { 'proposedApprovedEmployees.departmentCode': regex },
-      { 'proposedApprovedEmployees.departmentName': regex },
-      { 'proposedApprovedEmployees.positionCode': regex },
-      { 'proposedApprovedEmployees.positionName': regex },
-      { 'proposedApprovedEmployees.lineCode': regex },
-      { 'proposedApprovedEmployees.lineName': regex },
 
       { 'approvalSteps.approverCode': regex },
       { 'approvalSteps.approverName': regex },
@@ -187,7 +175,6 @@ function pushMembershipFilter(andConditions, fieldName, value) {
     $or: [
       { [`requestedEmployees.${fieldName}`]: value },
       { [`approvedEmployees.${fieldName}`]: value },
-      { [`proposedApprovedEmployees.${fieldName}`]: value },
     ],
   })
 }
@@ -280,14 +267,6 @@ function buildSort(query = {}) {
 }
 
 function effectiveEmployeesForDoc(doc = {}) {
-  if (
-    upper(doc.status) === 'PENDING_REQUESTER_CONFIRMATION' &&
-    Array.isArray(doc.proposedApprovedEmployees) &&
-    doc.proposedApprovedEmployees.length
-  ) {
-    return doc.proposedApprovedEmployees
-  }
-
   if (Array.isArray(doc.approvedEmployees) && doc.approvedEmployees.length) {
     return doc.approvedEmployees
   }

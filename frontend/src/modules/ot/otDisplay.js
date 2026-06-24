@@ -91,9 +91,6 @@ export function statusLabel(status) {
   const map = {
     DRAFT: 'Draft',
     PENDING: 'Pending Approval',
-    PENDING_REQUESTER_CONFIRMATION: 'Waiting Requester Confirmation',
-    REQUESTER_CONFIRMED: 'Requester Confirmed',
-    REQUESTER_DISAGREED: 'Requester Disagreed',
     APPROVED: 'Approved',
     REJECTED: 'Rejected',
     CANCELLED: 'Cancelled',
@@ -108,9 +105,6 @@ export function statusSeverity(status) {
   const map = {
     DRAFT: 'info',
     PENDING: 'warning',
-    PENDING_REQUESTER_CONFIRMATION: 'warning',
-    REQUESTER_CONFIRMED: 'info',
-    REQUESTER_DISAGREED: 'danger',
     APPROVED: 'success',
     REJECTED: 'danger',
     CANCELLED: 'contrast',
@@ -442,8 +436,6 @@ export function getOTPermissions(row = {}) {
     canApprove: permissions.canApprove === true || row?.canApprove === true,
     canReject: permissions.canReject === true || row?.canReject === true,
     canAdjustEmployees: permissions.canAdjustEmployees === true || row?.canAdjustEmployees === true,
-    canRequesterConfirm:
-      permissions.canRequesterConfirm === true || row?.canRequesterConfirm === true,
     canAcknowledge: permissions.canAcknowledge === true || row?.canAcknowledge === true,
     canCancel: permissions.canCancel === true || row?.canCancel === true,
   }
@@ -493,9 +485,6 @@ export function normalizeOTRow(row = {}) {
     ? row.approvedEmployees.map((employee) => normalizeOTEmployee(employee, row))
     : []
 
-  const proposedApprovedEmployees = Array.isArray(row.proposedApprovedEmployees)
-    ? row.proposedApprovedEmployees.map((employee) => normalizeOTEmployee(employee, row))
-    : []
 
   const effectiveEmployees = Array.isArray(row.effectiveEmployees)
     ? row.effectiveEmployees.map((employee) => normalizeOTEmployee(employee, row))
@@ -503,7 +492,6 @@ export function normalizeOTRow(row = {}) {
         ...row,
         requestedEmployees,
         approvedEmployees,
-        proposedApprovedEmployees,
       }).map((employee) => normalizeOTEmployee(employee, row))
 
   return {
@@ -519,15 +507,10 @@ export function normalizeOTRow(row = {}) {
 
     requestedEmployees,
     approvedEmployees,
-    proposedApprovedEmployees,
     effectiveEmployees,
 
     requestedEmployeeCount: firstNumber(row.requestedEmployeeCount, requestedEmployees.length),
     approvedEmployeeCount: firstNumber(row.approvedEmployeeCount, approvedEmployees.length),
-    proposedApprovedEmployeeCount: firstNumber(
-      row.proposedApprovedEmployeeCount,
-      proposedApprovedEmployees.length,
-    ),
     effectiveEmployeeCount: firstNumber(row.effectiveEmployeeCount, effectiveEmployees.length),
 
     requestedMinutes: time.requestedMinutes,

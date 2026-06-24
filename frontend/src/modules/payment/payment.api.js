@@ -169,3 +169,10 @@ export function downloadPaymentProcessJobResult(jobId) {
 
 // Keep old PaymentProcessView import name working.
 export const calculatePaymentExport = calculateAndExportPayment
+// The payment processor can read the active approval rule without receiving
+// permission to edit OT execution controls.
+export function getPaymentApprovalRule() {
+  return api.get('/ot/execution-settings/payment-rule', {
+    timeout: PAYMENT_LOOKUP_TIMEOUT_MS,
+  })
+}

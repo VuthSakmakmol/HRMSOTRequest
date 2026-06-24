@@ -279,6 +279,7 @@ export default {
     acknowledgeInbox: 'ប្រអប់ទទួលដឹង',
     otPolicies: 'គោលការណ៍ OT',
     shiftOtOptions: 'ជម្រើស OT តាមវេន',
+    otExecutionControls: 'គ្រប់គ្រងដំណើរការ OT',
 
     payment: 'ការទូទាត់',
     paymentProcess: 'ដំណើរការទូទាត់',
@@ -1850,18 +1851,14 @@ export default {
 
     status: {
       pending: 'កំពុងរង់ចាំ',
-      pendingRequesterConfirmation: 'រង់ចាំអ្នកស្នើបញ្ជាក់',
       approved: 'បានអនុម័ត',
       rejected: 'បានបដិសេធ',
-      requesterDisagreed: 'អ្នកស្នើមិនយល់ព្រម',
       cancelled: 'បានបោះបង់',
     },
 
     approvalDisplay: {
       approved: 'បានអនុម័ត',
       rejected: 'បានបដិសេធ',
-      waitingRequesterConfirmation: 'កំពុងរង់ចាំអ្នកស្នើបញ្ជាក់',
-      requesterDisagreed: 'អ្នកស្នើមិនយល់ព្រម',
       cancelled: 'បានបោះបង់',
       waitingApproval: 'កំពុងរង់ចាំអនុម័ត',
     },
@@ -2523,8 +2520,6 @@ export default {
         dayTypeInvalid: 'ប្រភេទថ្ងៃ OT មិនត្រឹមត្រូវ។',
         approvalActionInvalid: 'សកម្មភាពអនុម័តមិនត្រឹមត្រូវ។',
         rejectionReasonRequired: 'សូមបញ្ចូលមូលហេតុបដិសេធ។',
-        requesterConfirmationActionInvalid:
-          'សកម្មភាពបញ្ជាក់របស់អ្នកស្នើមិនត្រឹមត្រូវ។',
       },
 
       error: {

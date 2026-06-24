@@ -536,20 +536,6 @@ async function notifyOTAfterDecision(otRequest = {}, actor = {}) {
     })
   }
 
-  if (status === 'PENDING_REQUESTER_CONFIRMATION') {
-    return createOTEmployeeNotification({
-      type: NOTIFICATION_TYPES.OT_REQUESTER_CONFIRMATION_REQUIRED,
-      recipientEmployeeId: requesterEmployeeId(otRequest),
-      actor,
-      otRequest,
-      title: 'OT confirmation required',
-      message: `OT request ${no} was adjusted and needs your confirmation.`,
-      payload: {
-        action: 'REQUESTER_CONFIRMATION_REQUIRED',
-      },
-    })
-  }
-
   if (status === 'APPROVED') {
     const step = finalApprovedStep(otRequest)
 
@@ -595,47 +581,8 @@ async function notifyOTAfterDecision(otRequest = {}, actor = {}) {
   return []
 }
 
-async function notifyOTAfterRequesterConfirmation(otRequest = {}, actor = {}) {
-  const status = requestStatus(otRequest)
-  const no = requestNo(otRequest)
-  const approverEmployeeId = currentApproverEmployeeId(otRequest)
-
-  if (status === 'PENDING' && approverEmployeeId) {
-    return createOTEmployeeNotification({
-      type: NOTIFICATION_TYPES.OT_REQUESTER_CONFIRMED,
-      recipientEmployeeId: approverEmployeeId,
-      actor,
-      otRequest,
-      title: 'Requester confirmed OT',
-      message: `Requester confirmed adjusted OT request ${no}.`,
-      payload: {
-        action: 'REQUESTER_CONFIRMED',
-        recipientEmployeeId: approverEmployeeId,
-      },
-    })
-  }
-
-  if (status === 'REQUESTER_DISAGREED' && approverEmployeeId) {
-    return createOTEmployeeNotification({
-      type: NOTIFICATION_TYPES.OT_REQUESTER_DISAGREED,
-      recipientEmployeeId: approverEmployeeId,
-      actor,
-      otRequest,
-      title: 'Requester disagreed OT',
-      message: `Requester disagreed with adjusted OT request ${no}.`,
-      payload: {
-        action: 'REQUESTER_DISAGREED',
-        recipientEmployeeId: approverEmployeeId,
-      },
-    })
-  }
-
-  return []
-}
-
 module.exports = {
   notifyOTCreated,
   notifyOTAfterDecision,
-  notifyOTAfterRequesterConfirmation,
   notifyAcknowledgementRequired,
 }

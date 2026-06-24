@@ -219,6 +219,18 @@ const PERMISSIONS = [
     'OT',
     'Allow adding employees from other production lines to an OT request with a required reason',
   ),
+  permission(
+    'OT_EXECUTION_VIEW',
+    'View OT Execution Controls',
+    'OT',
+    'Allow viewing OT request-window and payment approval controls',
+  ),
+  permission(
+    'OT_EXECUTION_UPDATE',
+    'Update OT Execution Controls',
+    'OT',
+    'Allow opening or closing OT requests, setting the request time window, and changing the payment approval rule',
+  ),
 
   // =========================
   // Attendance

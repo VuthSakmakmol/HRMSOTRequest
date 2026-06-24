@@ -60,9 +60,8 @@ function formatDateTime(value) {
 function severityOf(item = {}) {
   const type = String(item.type || '').toUpperCase()
 
-  if (type.includes('REJECTED') || type.includes('DISAGREED')) return 'danger'
+  if (type.includes('REJECTED')) return 'danger'
   if (type.includes('APPROVED')) return 'success'
-  if (type.includes('CONFIRMATION')) return 'warning'
   if (type.includes('APPROVAL_REQUIRED')) return 'success'
 
   return 'info'
@@ -75,12 +74,6 @@ function typeLabel(item = {}) {
     OT_APPROVAL_REQUIRED: labelOr('notification.type.otApprovalRequired', 'Approval Required'),
     OT_APPROVED: labelOr('notification.type.otApproved', 'Approved'),
     OT_REJECTED: labelOr('notification.type.otRejected', 'Rejected'),
-    OT_REQUESTER_CONFIRMATION_REQUIRED: labelOr(
-      'notification.type.otRequesterConfirmationRequired',
-      'Confirmation Required',
-    ),
-    OT_REQUESTER_CONFIRMED: labelOr('notification.type.otRequesterConfirmed', 'Requester Confirmed'),
-    OT_REQUESTER_DISAGREED: labelOr('notification.type.otRequesterDisagreed', 'Requester Disagreed'),
   }
 
   return map[type] || String(item.module || 'Info')

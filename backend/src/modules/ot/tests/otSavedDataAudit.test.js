@@ -88,7 +88,6 @@ async function main() {
       totalMinutes: 1,
       requestedEmployees: 1,
       approvedEmployees: 1,
-      proposedApprovedEmployees: 1,
       createdAt: 1,
     })
     .sort({ createdAt: -1 })
@@ -139,12 +138,6 @@ async function main() {
       errors,
     })
 
-    auditEmployeeCollection({
-      requestNo,
-      collectionName: 'proposedApprovedEmployees',
-      employees: request.proposedApprovedEmployees,
-      errors,
-    })
   }
 
   if (errors.length) {

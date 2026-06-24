@@ -20,6 +20,7 @@ import {
   downloadPaymentProcessJobResult,
   downloadSalaryTemplate,
   getPaymentFormulaLookupOptions,
+  getPaymentApprovalRule,
   getPaymentProcessJobStatus,
   startPaymentExportJob,
   startPaymentPreviewJob,
@@ -34,6 +35,8 @@ const DEFAULT_DENOMINATIONS = [50000, 20000, 10000, 5000, 1000, 500, 100]
 
 const formulaOptions = ref([])
 const loadingFormulas = ref(false)
+const paymentApprovalRule = ref(null)
+const loadingPaymentApprovalRule = ref(false)
 
 const downloadingTemplate = ref(false)
 const previewing = ref(false)
@@ -121,6 +124,28 @@ const paymentDetailLookup = computed(() => {
   return map
 })
 
+const currentPaymentApproval = computed(() => {
+  return previewResult.value?.paymentApproval || paymentApprovalRule.value || {
+    paymentRequiresFinalApproval: false,
+    paymentApprovalMode: 'ALLOW_WITHOUT_FINAL_APPROVAL',
+  }
+})
+
+const paymentRequiresFinalApproval = computed(() =>
+  currentPaymentApproval.value?.paymentRequiresFinalApproval === true,
+)
+
+const paymentApprovalRuleLabel = computed(() =>
+  paymentRequiresFinalApproval.value
+    ? 'Final approval required'
+    : 'Payment without approval allowed',
+)
+
+const approvalRequiredRows = computed(() => {
+  const rows = previewResult.value?.issues?.approvalRequiredEmployees || []
+  return Array.isArray(rows) ? rows : []
+})
+
 const missingSalaryRows = computed(() => {
   const rows = previewResult.value?.issues?.missingSalaryEmployees || []
   return Array.isArray(rows) ? rows : []
@@ -134,6 +159,9 @@ const warningRows = computed(() => {
   )
   const payableWarningRows = asArray(
     previewResult.value?.issues?.payableWarningEmployees,
+  )
+  const approvalRequiredRows = asArray(
+    previewResult.value?.issues?.approvalRequiredEmployees,
   )
 
   return [
@@ -169,6 +197,15 @@ const warningRows = computed(() => {
       employeeNo: row.employeeNo || '',
       employeeName: row.employeeName || '',
       reason: row.reason || 'Payable minutes calculated with warning',
+    })),
+
+    ...approvalRequiredRows.map((row) => ({
+      ...row,
+      type: 'Approval required',
+      rowNo: '',
+      employeeNo: row.employeeNo || '',
+      employeeName: row.employeeName || '',
+      reason: row.reason || 'Payment skipped because final OT approval is required.',
     })),
   ]
 })
@@ -373,6 +410,14 @@ const summaryCards = computed(() => {
       value: warningRows.value.length,
       icon: 'pi pi-info-circle',
       className: 'card-red',
+    },
+    {
+      label: 'Approval required',
+      value: previewResult.value
+        ? Number(currentPaymentApproval.value?.excludedUnapprovedEmployeeCount || approvalRequiredRows.value.length || 0)
+        : '—',
+      icon: 'pi pi-lock',
+      className: 'card-orange',
     },
   ]
 })
@@ -849,9 +894,7 @@ function requestStatusLabel(value) {
   const labels = {
     APPROVED: 'Approved',
     PENDING: 'Pending',
-    PENDING_REQUESTER_CONFIRMATION: 'Pending requester',
     REJECTED: 'Rejected',
-    REQUESTER_DISAGREED: 'Requester disagreed',
     CANCELLED: 'Cancelled',
   }
 
@@ -862,10 +905,10 @@ function requestStatusTagClass(value) {
   const normalized = upper(value)
 
   if (normalized === 'APPROVED') return 'payment-status-active'
-  if (normalized === 'PENDING' || normalized === 'PENDING_REQUESTER_CONFIRMATION') {
+  if (normalized === 'PENDING') {
     return 'payment-tag-warning'
   }
-  if (normalized === 'REJECTED' || normalized === 'REQUESTER_DISAGREED') {
+  if (normalized === 'REJECTED') {
     return 'payment-status-inactive'
   }
 
@@ -906,6 +949,21 @@ async function loadFormulaOptions() {
     )
   } finally {
     loadingFormulas.value = false
+  }
+}
+
+async function loadPaymentApprovalRule() {
+  loadingPaymentApprovalRule.value = true
+
+  try {
+    const response = await getPaymentApprovalRule()
+    paymentApprovalRule.value = normalizePayload(response)?.item || null
+  } catch (error) {
+    // The backend remains the source of truth at preview/export time. Do not block
+    // payment merely because this optional explanatory badge could not load.
+    paymentApprovalRule.value = null
+  } finally {
+    loadingPaymentApprovalRule.value = false
   }
 }
 
@@ -1180,6 +1238,7 @@ async function handleGenerate() {
 
 onMounted(() => {
   loadFormulaOptions()
+  loadPaymentApprovalRule()
   loadInternalCalendarForPeriod()
 })
 
@@ -1311,6 +1370,28 @@ onBeforeUnmount(() => {
           @click="handleGenerate"
         />
       </div>
+    </section>
+
+    <section class="payment-approval-rule-banner">
+      <div class="payment-approval-rule-icon">
+        <i :class="paymentRequiresFinalApproval ? 'pi pi-lock' : 'pi pi-lock-open'" />
+      </div>
+
+      <div>
+        <strong>{{ loadingPaymentApprovalRule ? 'Loading payment rule...' : paymentApprovalRuleLabel }}</strong>
+        <span v-if="paymentRequiresFinalApproval">
+          Only final Approved OT requests can be calculated. Pending requests will be skipped and listed in warnings.
+        </span>
+        <span v-else>
+          Pending OT may be calculated and will remain visible as warnings in the payment preview.
+        </span>
+      </div>
+
+      <Tag
+        :value="paymentRequiresFinalApproval ? 'Strict approval' : 'Flexible approval'"
+        class="payment-rgb-tag"
+        :class="paymentRequiresFinalApproval ? 'payment-tag-info' : 'payment-tag-warning'"
+      />
     </section>
 
     <section
@@ -2992,6 +3073,57 @@ onBeforeUnmount(() => {
 
   .payment-process-filter-actions {
     grid-column: 1 / -1;
+  }
+}
+
+
+.payment-approval-rule-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  border: 1px solid var(--ot-border);
+  border-radius: 0.8rem;
+  background: var(--ot-surface);
+  padding: 0.7rem 0.85rem;
+  color: var(--ot-text);
+}
+
+.payment-approval-rule-icon {
+  display: inline-flex;
+  width: 2rem;
+  height: 2rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.55rem;
+  background: rgba(59, 130, 246, 0.12);
+  color: rgb(29, 78, 216);
+}
+
+.payment-approval-rule-banner > div:nth-child(2) {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.payment-approval-rule-banner strong {
+  font-size: 0.78rem;
+}
+
+.payment-approval-rule-banner span {
+  color: var(--ot-text-muted);
+  font-size: 0.73rem;
+  line-height: 1.35;
+}
+
+@media (max-width: 680px) {
+  .payment-approval-rule-banner {
+    align-items: flex-start;
+  }
+
+  .payment-approval-rule-banner :deep(.p-tag) {
+    display: none;
   }
 }
 </style>
