@@ -20,6 +20,14 @@ const ATTENDANCE_MATCHED_BY = ['EMPLOYEE_NO', 'MANUAL', 'NONE']
 const SHIFT_MATCH_STATUS = ['MATCHED', 'MISMATCH', 'UNKNOWN']
 const IMPORT_STATUS = ['PROCESSING', 'SUCCESS', 'PARTIAL_SUCCESS', 'FAILED']
 const SOURCE_TYPE = ['EXCEL', 'CSV', 'MANUAL']
+const ATTENDANCE_SOURCE = ['IMPORT', 'SCAN_STATION']
+const SCAN_RESULT = [
+  'SUCCESS',
+  'INVALID_FORMAT',
+  'EMPLOYEE_NOT_FOUND',
+  'EMPLOYEE_INACTIVE',
+  'SYSTEM_ERROR',
+]
 
 const IMPORT_SORT_FIELDS = [
   'createdAt',
@@ -53,6 +61,7 @@ const RECORD_SORT_FIELDS = [
   'lateMinutes',
   'earlyOutMinutes',
   'rawRowNo',
+  'attendanceSource',
 ]
 
 function s(value) {
@@ -232,6 +241,7 @@ const listAttendanceRecordsQuerySchema = z
     dayType: optionalUpperEnum(ATTENDANCE_DAY_TYPE),
     matchedBy: optionalUpperEnum(ATTENDANCE_MATCHED_BY),
     shiftMatchStatus: optionalUpperEnum(SHIFT_MATCH_STATUS),
+    attendanceSource: optionalUpperEnum(ATTENDANCE_SOURCE),
 
     employeeMatched: optionalBoolean(),
     nameMatched: optionalBoolean(),
@@ -290,6 +300,27 @@ const searchOTVerificationQuerySchema = z
     }
   })
 
+
+const submitAttendanceScanSchema = z.object({
+  scannedValue: z.preprocess(
+    (value) => s(value),
+    z.string().min(1, 'Scanned Employee ID is required').max(100),
+  ),
+  stationName: optionalTrimmedString(100),
+})
+
+const listAttendanceScanLogsQuerySchema = z.object({
+  page: pageSchema,
+  limit: limitSchema,
+  search: optionalTrimmedString(200),
+  attendanceDate: optionalYmdSchema,
+  result: optionalUpperEnum(SCAN_RESULT),
+})
+
+const attendanceScanSummaryQuerySchema = z.object({
+  attendanceDate: optionalYmdSchema,
+})
+
 const attendanceImportIdParamSchema = z.object({
   id: objectIdSchema,
 })
@@ -310,6 +341,9 @@ module.exports = {
   attendanceImportIdParamSchema,
   attendanceRecordIdParamSchema,
   verifyOTAttendanceParamSchema,
+  submitAttendanceScanSchema,
+  listAttendanceScanLogsQuerySchema,
+  attendanceScanSummaryQuerySchema,
 
   ATTENDANCE_STATUS,
   ATTENDANCE_IMPORTED_STATUS,
@@ -318,6 +352,8 @@ module.exports = {
   SHIFT_MATCH_STATUS,
   IMPORT_STATUS,
   SOURCE_TYPE,
+  ATTENDANCE_SOURCE,
+  SCAN_RESULT,
   IMPORT_SORT_FIELDS,
   RECORD_SORT_FIELDS,
 }

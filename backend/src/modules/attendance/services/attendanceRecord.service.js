@@ -125,6 +125,7 @@ function buildRecordSearchFilter(search) {
       { matchedBy: regex },
       { matchRemark: regex },
       { shiftMatchStatus: regex },
+      { attendanceSource: regex },
       { validationIssues: regex },
 
       { 'rawData.Employee ID': regex },
@@ -175,6 +176,21 @@ function buildRecordFilter(query = {}) {
   addUpperTextFilter(filter, 'dayType', query.dayType)
   addUpperTextFilter(filter, 'matchedBy', query.matchedBy)
   addUpperTextFilter(filter, 'shiftMatchStatus', query.shiftMatchStatus)
+
+  const attendanceSource = upper(query.attendanceSource)
+  if (attendanceSource === 'IMPORT') {
+    // Historical records created before Scan Station do not have the field.
+    filter.$and = filter.$and || []
+    filter.$and.push({
+      $or: [
+        { attendanceSource: 'IMPORT' },
+        { attendanceSource: { $exists: false } },
+        { attendanceSource: null },
+      ],
+    })
+  } else if (attendanceSource) {
+    filter.attendanceSource = attendanceSource
+  }
 
   addBooleanFilter(filter, 'employeeMatched', query.employeeMatched)
   addBooleanFilter(filter, 'nameMatched', query.nameMatched)
@@ -294,6 +310,9 @@ function mapRecordItem(doc = {}) {
 
     clockIn: s(doc.clockIn),
     clockOut: s(doc.clockOut),
+    attendanceSource: upper(doc.attendanceSource || 'IMPORT'),
+    lastScanAt: doc.lastScanAt || null,
+    lastScanValue: upper(doc.lastScanValue),
 
     status,
     statusKey: messageKey,

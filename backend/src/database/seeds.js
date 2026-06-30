@@ -231,6 +231,18 @@ const PERMISSIONS = [
     'OT',
     'Allow opening or closing OT requests, setting the request time window, and changing the payment approval rule',
   ),
+  permission(
+    'OT_APPROVAL_RULE_VIEW',
+    'View OT Approval Calendar Rules',
+    'OT',
+    'Allow viewing calendar day-type approval roles and final approver setup',
+  ),
+  permission(
+    'OT_APPROVAL_RULE_UPDATE',
+    'Update OT Approval Calendar Rules',
+    'OT',
+    'Allow setting employee OT roles by Working Day, Sunday, and Holiday',
+  ),
 
   // =========================
   // Attendance

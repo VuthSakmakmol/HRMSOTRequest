@@ -71,10 +71,10 @@ function toUtcMidnight(ymd) {
 
 const attendanceRecordSchema = new Schema(
   {
+    // Excel import link is optional because Scan Station records are created directly.
     importId: {
       type: Schema.Types.ObjectId,
       ref: 'AttendanceImport',
-      required: true,
       default: null,
     },
 
@@ -274,6 +274,29 @@ const attendanceRecordSchema = new Schema(
       maxlength: 5,
     },
 
+    // Identifies how the final official record was most recently created/updated.
+    // Existing historical records are treated as IMPORT by the presenter fallback.
+    attendanceSource: {
+      type: String,
+      enum: ['IMPORT', 'SCAN_STATION'],
+      default: 'IMPORT',
+      trim: true,
+    },
+
+    // Only Scan Station writes these fields. They allow a clean audit without
+    // creating duplicate official attendance records.
+    lastScanAt: {
+      type: Date,
+      default: null,
+    },
+
+    lastScanValue: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 50,
+    },
+
     status: {
       type: String,
       enum: ATTENDANCE_STATUS,
@@ -457,6 +480,8 @@ attendanceRecordSchema.pre('validate', function preValidate(next) {
 
   this.clockIn = s(this.clockIn)
   this.clockOut = s(this.clockOut)
+  this.attendanceSource = upper(this.attendanceSource || 'IMPORT')
+  this.lastScanValue = upper(this.lastScanValue)
 
   this.status = upper(this.status || 'UNKNOWN')
   this.derivedStatusReason = s(this.derivedStatusReason)
@@ -531,6 +556,8 @@ attendanceRecordSchema.pre('validate', function preValidate(next) {
 // Keep indexes here only. Do not duplicate with `index: true` on fields.
 attendanceRecordSchema.index({ importId: 1, rawRowNo: 1 })
 attendanceRecordSchema.index({ attendanceDate: -1, employeeNo: 1 })
+attendanceRecordSchema.index({ attendanceSource: 1, attendanceDate: -1 })
+attendanceRecordSchema.index({ lastScanAt: -1 })
 
 // Optimized for Attendance Records first-page and virtual-scroll loading after large imports.
 attendanceRecordSchema.index({ attendanceDate: -1, employeeNo: 1, rawRowNo: 1, createdAt: -1, _id: -1 })

@@ -8,11 +8,13 @@ const importRoutes = require('./import.routes')
 const recordRoutes = require('./record.routes')
 const verificationRoutes = require('./verification.routes')
 const dashboardRoutes = require('./dashboard.routes')
+const scanRoutes = require('./scan.routes')
 
 const router = express.Router()
 
 router.use(requireAuth)
 
+router.use('/scan', scanRoutes)
 router.use('/', importRoutes)
 router.use('/records', recordRoutes)
 router.use('/verification', verificationRoutes)

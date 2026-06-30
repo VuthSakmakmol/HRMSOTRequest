@@ -60,3 +60,23 @@ export function updateOTExecutionSettings(payload) {
 export function getOTRequestAccess() {
   return api.get('/ot/execution-settings/request-access')
 }
+
+
+// =========================
+// OT Approval Calendar Rules
+// =========================
+export function getOTApprovalCalendarRules() {
+  return api.get('/ot/approval-calendar-rules')
+}
+
+export function getOTApprovalCalendarRuleEmployees(params = {}) {
+  return api.get('/ot/approval-calendar-rules/employees', { params })
+}
+
+export function updateOTApprovalCalendarRule(employeeId, payload) {
+  return api.put(`/ot/approval-calendar-rules/${employeeId}`, payload)
+}
+
+export function resetOTApprovalCalendarRule(employeeId) {
+  return api.delete(`/ot/approval-calendar-rules/${employeeId}`)
+}

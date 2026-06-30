@@ -939,6 +939,7 @@ function buildEmployeeListFilter(
     positionId = '',
     lineId = '',
     shiftId = '',
+    managerEmployeeId = '',
     isActive,
     otEligibleOnly = false,
   } = {},
@@ -989,6 +990,15 @@ function buildEmployeeListFilter(
 
   if (shiftId && isObjectId(shiftId)) {
     filter.shiftId = objectId(shiftId)
+  }
+
+  // The Employee View manager selector sends managerEmployeeId. Employees are
+  // considered under a manager only when their direct Reports To value points
+  // to that selected manager. Do not use lineManagerIds here: it represents
+  // OT/line workflow managers and can include people who are not the employee's
+  // reporting manager.
+  if (managerEmployeeId && isObjectId(managerEmployeeId)) {
+    filter.reportsToEmployeeId = objectId(managerEmployeeId)
   }
 
   if (typeof isActive === 'boolean') {

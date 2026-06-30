@@ -150,6 +150,11 @@ const listEmployeeQuerySchema = z.object({
   lineId: z.string().trim().optional().default(''),
   shiftId: z.string().trim().optional().default(''),
 
+  // Employee View manager filter. This is the employee selected in the
+  // "Manager" filter and matches employees whose direct Reports To value
+  // points to that manager.
+  managerEmployeeId: z.string().trim().optional().default(''),
+
   isActive: booleanLike,
 
   sortBy: z
@@ -351,6 +356,7 @@ function normalizeListQuery(raw = {}) {
     positionId: parsed.positionId,
     lineId: parsed.lineId,
     shiftId: parsed.shiftId,
+    managerEmployeeId: parsed.managerEmployeeId,
     isActive: toBoolean(parsed.isActive),
     sortBy: parsed.sortBy,
     sortOrder: parsed.sortOrder,
@@ -366,6 +372,7 @@ function normalizeExportQuery(raw = {}) {
     positionId: parsed.positionId,
     lineId: parsed.lineId,
     shiftId: parsed.shiftId,
+    managerEmployeeId: parsed.managerEmployeeId,
     isActive: toBoolean(parsed.isActive),
     sortBy: parsed.sortBy,
     sortOrder: parsed.sortOrder,

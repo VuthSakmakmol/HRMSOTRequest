@@ -536,25 +536,53 @@ function getAttendanceDatesFromRecords(recordsPayload = []) {
   ).sort()
 }
 
-function buildReplaceDateDeleteFilter(recordsPayload = [], currentImportId = null) {
-  const attendanceDates = getAttendanceDatesFromRecords(recordsPayload)
+function attendanceRecordKey(item = {}) {
+  const employeeId = s(item?.employeeId)
+  const employeeNo = upper(item?.employeeNo)
+  const attendanceDate = s(item?.attendanceDate)
 
-  if (!attendanceDates.length) return null
-
-  const filter = {
-    attendanceDate: { $in: attendanceDates },
+  if (!attendanceDate) return ''
+  if (employeeId && mongoose.isValidObjectId(employeeId)) {
+    return `ID:${employeeId}|${attendanceDate}`
   }
 
-  if (currentImportId && mongoose.isValidObjectId(currentImportId)) {
-    filter.importId = { $ne: currentImportId }
+  return employeeNo ? `NO:${employeeNo}|${attendanceDate}` : ''
+}
+
+async function splitRecordsProtectedByScanStation(recordsPayload = []) {
+  const rows = Array.isArray(recordsPayload) ? recordsPayload : []
+  const candidateFilter = buildOverrideDeleteFilter(rows)
+
+  if (!candidateFilter || !rows.length) {
+    return {
+      recordsToInsert: rows,
+      skippedScanRowCount: 0,
+    }
   }
 
-  return filter
+  const scanRows = await AttendanceRecord.find({
+    ...candidateFilter,
+    attendanceSource: 'SCAN_STATION',
+  })
+    .select({ employeeId: 1, employeeNo: 1, attendanceDate: 1 })
+    .lean()
+
+  const protectedKeys = new Set(scanRows.map(attendanceRecordKey).filter(Boolean))
+  const recordsToInsert = rows.filter((item) => !protectedKeys.has(attendanceRecordKey(item)))
+
+  return {
+    recordsToInsert,
+    skippedScanRowCount: rows.length - recordsToInsert.length,
+  }
 }
 
 async function replaceAttendanceRecordsByImportedDates(recordsPayload = [], currentImportId = null) {
-  const filter = buildReplaceDateDeleteFilter(recordsPayload, currentImportId)
+  // Manual Excel is a fallback. It replaces only the incoming employee/day rows
+  // and never removes valid Scan Station attendance from the same date.
+  const filter = buildOverrideDeleteFilter(recordsPayload, currentImportId)
   if (!filter) return 0
+
+  filter.attendanceSource = { $ne: 'SCAN_STATION' }
 
   const existingCount = await AttendanceRecord.countDocuments(filter)
   if (!existingCount) return 0
@@ -819,6 +847,7 @@ async function buildRecordPayloadFromParsedRow({
 
     clockIn: s(parsedRow.clockIn),
     clockOut: s(parsedRow.clockOut),
+    attendanceSource: 'IMPORT',
 
     status: upper(derivedResult.derivedStatus || 'UNKNOWN'),
     derivedStatusReason: s(derivedResult.derivedStatusReason),
@@ -950,10 +979,18 @@ async function importExcel(file, payload, authUser) {
     }
 
     let overriddenRowCount = 0
+    let skippedScanRowCount = 0
+    let recordsToInsert = recordsPayload
 
     if (recordsPayload.length) {
-      overriddenRowCount = await replaceAttendanceRecordsByImportedDates(recordsPayload, importDoc._id)
-      await insertAttendanceRecordsInChunks(recordsPayload)
+      const protectedResult = await splitRecordsProtectedByScanStation(recordsPayload)
+      recordsToInsert = protectedResult.recordsToInsert
+      skippedScanRowCount = Number(protectedResult.skippedScanRowCount || 0)
+
+      if (recordsToInsert.length) {
+        overriddenRowCount = await replaceAttendanceRecordsByImportedDates(recordsToInsert, importDoc._id)
+        await insertAttendanceRecordsInChunks(recordsToInsert)
+      }
     }
 
     const attendanceDate = toYmd(payload.attendanceDate) || s(payload.attendanceDate)
@@ -975,12 +1012,18 @@ async function importExcel(file, payload, authUser) {
 
     if (overriddenRowCount > 0) {
       extraRemarks.push(
-        `Replaced ${overriddenRowCount} existing attendance record(s) for date(s): ${importedDates.join(', ')}`,
+        `Replaced ${overriddenRowCount} existing imported attendance record(s) for matching employee/date rows.`,
+      )
+    }
+
+    if (skippedScanRowCount > 0) {
+      extraRemarks.push(
+        `Skipped ${skippedScanRowCount} row(s) because Scan Station attendance already exists.`,
       )
     }
 
     extraRemarks.push(
-      `Import mode: replace whole attendance date. Missing employees from the new file were removed for date(s): ${importedDates.join(', ')}`,
+      `Import mode: fill/replace matching employee-day rows only. Valid Scan Station attendance is protected.`,
     )
 
     importDoc.remark = buildImportRemark(payload.remark, extraRemarks)
@@ -993,8 +1036,9 @@ async function importExcel(file, payload, authUser) {
       failedRows: [],
       detectedColumns: parsed.detectedColumns || {},
       sheetName: s(parsed.sheetName),
-      replaceMode: 'REPLACE_WHOLE_DATE',
+      replaceMode: 'MERGE_SKIP_SCAN_STATION',
       replacedDates: importedDates,
+      skippedScanRowCount,
     }
   } catch (error) {
     if (!error?.attendanceImportHandled) {

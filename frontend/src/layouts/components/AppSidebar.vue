@@ -320,6 +320,13 @@ const navGroups = computed(() => {
           to: '/ot/execution-controls',
           permissions: ['OT_EXECUTION_VIEW', 'OT_EXECUTION_UPDATE'],
         },
+        {
+          key: 'ot-approval-calendar-rules',
+          label: t('nav.otApprovalCalendarRules'),
+          icon: 'pi pi-calendar-plus',
+          to: '/ot/approval-calendar-rules',
+          permissions: ['OT_APPROVAL_RULE_VIEW', 'OT_APPROVAL_RULE_UPDATE'],
+        },
       ],
     },
     {

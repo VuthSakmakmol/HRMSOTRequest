@@ -39,6 +39,7 @@ const filters = reactive({
   employeeNo: '',
   status: '',
   importedStatus: '',
+  attendanceSource: '',
   shiftMatchStatus: '',
   dayType: '',
   attendanceDateFrom: '',
@@ -65,6 +66,12 @@ const importedStatusOptions = computed(() => [
   { label: t('attendance.statusLabel.leave'), value: 'LEAVE' },
   { label: t('attendance.statusLabel.off'), value: 'OFF' },
   { label: t('attendance.statusLabel.unknown'), value: 'UNKNOWN' },
+])
+
+const attendanceSourceOptions = computed(() => [
+  { label: t('attendance.option.allSources'), value: '' },
+  { label: t('attendance.source.scanStation'), value: 'SCAN_STATION' },
+  { label: t('attendance.source.import'), value: 'IMPORT' },
 ])
 
 const shiftMatchStatusOptions = computed(() => [
@@ -168,6 +175,7 @@ function buildQuery(page) {
     employeeNo: s(filters.employeeNo) || undefined,
     status: filters.status || undefined,
     importedStatus: filters.importedStatus || undefined,
+    attendanceSource: filters.attendanceSource || undefined,
     shiftMatchStatus: filters.shiftMatchStatus || undefined,
     dayType: filters.dayType || undefined,
     attendanceDateFrom: toApiDate(filters.attendanceDateFrom, '') || undefined,
@@ -296,6 +304,7 @@ function clearFilters() {
   filters.employeeNo = ''
   filters.status = ''
   filters.importedStatus = ''
+  filters.attendanceSource = ''
   filters.shiftMatchStatus = ''
   filters.dayType = ''
   filters.attendanceDateFrom = ''
@@ -306,6 +315,19 @@ function clearFilters() {
 
 function refresh() {
   reloadFirstPage({ keepVisible: true })
+}
+
+function attendanceSourceLabel(value) {
+  const normalized = upper(value || 'IMPORT')
+
+  if (normalized === 'SCAN_STATION') return t('attendance.source.scanStation')
+  return t('attendance.source.import')
+}
+
+function attendanceSourceTagClass(value) {
+  return upper(value || 'IMPORT') === 'SCAN_STATION'
+    ? ['attendance-rgb-tag', 'attendance-tag-present']
+    : ['attendance-rgb-tag', 'attendance-tag-info']
 }
 
 function statusTagClass(value) {
@@ -481,6 +503,7 @@ watch(
   () => [
     filters.status,
     filters.importedStatus,
+    filters.attendanceSource,
     filters.shiftMatchStatus,
     filters.dayType,
     filters.attendanceDateFrom,
@@ -568,6 +591,22 @@ onBeforeUnmount(() => {
           option-label="label"
           option-value="value"
           :placeholder="t('attendance.field.importedStatus')"
+          class="w-full"
+          size="small"
+        />
+      </div>
+
+      <div class="ot-field attendance-filter-select">
+        <label class="ot-field-label">
+          {{ t('attendance.field.source') }}
+        </label>
+
+        <Select
+          v-model="filters.attendanceSource"
+          :options="attendanceSourceOptions"
+          option-label="label"
+          option-value="value"
+          :placeholder="t('attendance.field.source')"
           class="w-full"
           size="small"
         />
@@ -843,6 +882,20 @@ onBeforeUnmount(() => {
               >
                 {{ scanTimeLabel(displayTime(data.clockOut)) }}
               </span>
+            </template>
+          </Column>
+
+          <Column
+            field="attendanceSource"
+            :header="t('attendance.field.source')"
+            style="width: 10rem; min-width: 10rem"
+          >
+            <template #body="{ data }">
+              <Tag
+                v-if="data"
+                :value="attendanceSourceLabel(data.attendanceSource)"
+                :class="attendanceSourceTagClass(data.attendanceSource)"
+              />
             </template>
           </Column>
 

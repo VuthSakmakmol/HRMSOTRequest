@@ -29,6 +29,7 @@ import OTAcknowledgeInboxView from '@/modules/ot/views/OTAcknowledgeInboxView.vu
 import OTCalculationPolicyListView from '@/modules/ot/views/OTCalculationPolicyListView.vue'
 import ShiftOTOptionListView from '@/modules/ot/views/ShiftOTOptionListView.vue'
 import OTExecutionSettingsView from '@/modules/ot/views/OTExecutionSettingsView.vue'
+import OTApprovalCalendarRulesView from '@/modules/ot/views/OTApprovalCalendarRulesView.vue'
 
 import PaymentFormulaView from '@/modules/payment/views/PaymentFormulaView.vue'
 import PaymentProcessView from '@/modules/payment/views/PaymentProcessView.vue'
@@ -394,6 +395,17 @@ const routes = [
           requiresAuth: true,
           title: 'OT Execution Control',
           requiredAnyPermissions: ['OT_EXECUTION_VIEW', 'OT_EXECUTION_UPDATE'],
+        },
+      },
+      {
+        path: 'ot/approval-calendar-rules',
+        name: 'ot-approval-calendar-rules',
+        component: OTApprovalCalendarRulesView,
+        meta: {
+          requiresAuth: true,
+          title: 'OT Approval Calendar Rules',
+          titleKey: 'nav.otApprovalCalendarRules',
+          requiredAnyPermissions: ['OT_APPROVAL_RULE_VIEW', 'OT_APPROVAL_RULE_UPDATE'],
         },
       },
 

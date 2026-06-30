@@ -289,6 +289,22 @@ const OTApprovalStepSchema = new mongoose.Schema(
       uppercase: true,
     },
 
+    // Snapshot of the calendar-rule role used when this OT request was created.
+    // `stepType` keeps the action behavior stable; this field explains whether
+    // the approver is ordinary or the final approver for the selected day type.
+    workflowRole: {
+      type: String,
+      enum: ['APPROVER', 'FINAL_APPROVER', 'ACKNOWLEDGE'],
+      default: 'APPROVER',
+      trim: true,
+      uppercase: true,
+    },
+
+    isFinalApprover: {
+      type: Boolean,
+      default: false,
+    },
+
     approverEmployeeId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Employee',
@@ -867,6 +883,13 @@ OTRequestSchema.pre('validate', function normalize(next) {
     for (const step of this.approvalSteps) {
       step.stepNo = Number(step.stepNo || 0)
       step.stepType = upper(step.stepType || 'APPROVER')
+      step.workflowRole = upper(
+        step.workflowRole || (step.isFinalApprover ? 'FINAL_APPROVER' : step.stepType),
+      )
+      if (!['APPROVER', 'FINAL_APPROVER', 'ACKNOWLEDGE'].includes(step.workflowRole)) {
+        step.workflowRole = step.stepType === 'ACKNOWLEDGE' ? 'ACKNOWLEDGE' : 'APPROVER'
+      }
+      step.isFinalApprover = step.workflowRole === 'FINAL_APPROVER' || step.isFinalApprover === true
       step.approverCode = s(step.approverCode)
       step.approverName = s(step.approverName)
       step.status = upper(step.status || 'WAITING')

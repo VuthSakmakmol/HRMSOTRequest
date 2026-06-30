@@ -10,6 +10,7 @@ const shiftOtOptionRoutes = require('./shiftOtOption.routes')
 const otPolicyRoutes = require('./otPolicy.routes')
 const dashboardRoutes = require('./dashboard.routes')
 const otExecutionSettingsRoutes = require('./otExecutionSettings.routes')
+const otApprovalCalendarRuleRoutes = require('./otApprovalCalendarRule.routes')
 
 const router = express.Router()
 
@@ -19,6 +20,7 @@ router.use('/dashboard', dashboardRoutes)
 router.use('/policies', otPolicyRoutes)
 router.use('/shift-options', shiftOtOptionRoutes)
 router.use('/execution-settings', otExecutionSettingsRoutes)
+router.use('/approval-calendar-rules', otApprovalCalendarRuleRoutes)
 
 // Fixed request routes must stay before '/requests/:id'
 router.get(

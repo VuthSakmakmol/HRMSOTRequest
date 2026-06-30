@@ -16,6 +16,7 @@ const Shift = require('../../shift/models/Shift')
 
 const employeeScopeService = require('../../org/services/employeeScope.service')
 const otTimingService = require('./otTiming.service')
+const otApprovalCalendarRuleService = require('./otApprovalCalendarRule.service')
 const { getTotalEmployeesForFilter } = require('./otRequestListSummary.service')
 
 // One employee can only appear in one active/payable OT request per date.
@@ -687,8 +688,9 @@ async function getUpwardApproverChain(employeeId, options = {}) {
   return chain
 }
 
-async function resolveApprovalFlow(requesterEmployeeId) {
+async function resolveApprovalFlow(requesterEmployeeId, dayType = 'WORKING_DAY') {
   const requesterId = s(requesterEmployeeId)
+  const normalizedDayType = upper(dayType || 'WORKING_DAY')
 
   if (!isObjectId(requesterId)) {
     throw appError({
@@ -701,19 +703,37 @@ async function resolveApprovalFlow(requesterEmployeeId) {
   }
 
   const upwardChain = await getUpwardApproverChain(requesterId)
-
-  const workflowEmployees = upwardChain
-    .map((employee) => ({
-      employee,
-      role: upper(employee.otWorkflowRole || 'NONE'),
-    }))
-    .filter((item) => ['APPROVER', 'ACKNOWLEDGE'].includes(item.role))
-
-  const approverEmployees = workflowEmployees.filter(
-    (item) => item.role === 'APPROVER',
+  const explicitRoles = await otApprovalCalendarRuleService.getExplicitRolesByEmployeeIds(
+    upwardChain.map((employee) => employee._id),
+    normalizedDayType,
   )
 
-  if (!approverEmployees.length) {
+  function legacyRoleForEmployee(employee = {}) {
+    const value = upper(employee.otWorkflowRole || 'NONE')
+    if (value === 'APPROVER') return 'APPROVER'
+    if (value === 'ACKNOWLEDGE') return 'ACKNOWLEDGE'
+    return 'SKIP'
+  }
+
+  // Calendar rules override an employee's existing OT workflow role only for
+  // the selected day type. Missing rules still use the current flexible
+  // organization workflow, so existing setup remains compatible.
+  const workflowEmployees = upwardChain
+    .map((employee) => {
+      const explicitRole = explicitRoles.get(String(employee._id)) || 'USE_DEFAULT'
+      const role = explicitRole === 'USE_DEFAULT'
+        ? legacyRoleForEmployee(employee)
+        : explicitRole
+
+      return { employee, role: upper(role) }
+    })
+    .filter((item) => ['APPROVER', 'FINAL_APPROVER', 'ACKNOWLEDGE'].includes(item.role))
+
+  const approverIndexes = workflowEmployees
+    .map((item, index) => (['APPROVER', 'FINAL_APPROVER'].includes(item.role) ? index : -1))
+    .filter((index) => index >= 0)
+
+  if (!approverIndexes.length) {
     throw appError({
       statusCode: 400,
       code: 'OT_APPROVER_NOT_FOUND',
@@ -722,28 +742,76 @@ async function resolveApprovalFlow(requesterEmployeeId) {
     })
   }
 
-  const firstApproverIndex = workflowEmployees.findIndex(
-    (item) => item.role === 'APPROVER',
-  )
+  const configuredFinalIndexes = workflowEmployees
+    .map((item, index) => (item.role === 'FINAL_APPROVER' ? index : -1))
+    .filter((index) => index >= 0)
+
+  if (configuredFinalIndexes.length > 1) {
+    throw appError({
+      statusCode: 400,
+      code: 'OT_MULTIPLE_FINAL_APPROVERS',
+      messageKey: 'ot.approvalCalendarRules.error.multipleFinalApprovers',
+      message: 'Only one final approver may exist in the requester approval chain for this OT day type',
+      params: { dayType: normalizedDayType },
+    })
+  }
+
+  // If no day-type rule marks a final approver, preserve the legacy behavior:
+  // the last ordinary approver in the upward chain remains final.
+  const finalWorkflowIndex = configuredFinalIndexes.length
+    ? configuredFinalIndexes[0]
+    : approverIndexes[approverIndexes.length - 1]
+
+  // A final approver must be the last approval action. Acknowledgement users
+  // may remain after that step because they are notified only after approval.
+  const laterApprover = workflowEmployees
+    .slice(finalWorkflowIndex + 1)
+    .find((item) => ['APPROVER', 'FINAL_APPROVER'].includes(item.role))
+
+  if (laterApprover) {
+    throw appError({
+      statusCode: 400,
+      code: 'OT_FINAL_APPROVER_NOT_LAST',
+      messageKey: 'ot.approvalCalendarRules.error.finalApproverNotLast',
+      message: 'The final approver must be the last approval step. Change later managers to Acknowledge or Skip for this day type.',
+      params: {
+        dayType: normalizedDayType,
+        laterApproverEmployeeId: String(laterApprover.employee._id),
+        laterApproverName: employeeName(laterApprover.employee),
+      },
+    })
+  }
+
+  let firstPendingAssigned = false
 
   const steps = workflowEmployees.map((item, index) => {
     const employee = item.employee
-    const isApprover = item.role === 'APPROVER'
+    const isApprover = ['APPROVER', 'FINAL_APPROVER'].includes(item.role)
+    const isFinalApprover = index === finalWorkflowIndex
+
+    let status = 'ACKNOWLEDGED'
+    let actedAt = new Date()
+    let remark = 'Auto acknowledged by workflow'
+
+    if (isApprover) {
+      status = firstPendingAssigned ? 'WAITING' : 'PENDING'
+      actedAt = null
+      remark = ''
+      firstPendingAssigned = true
+    }
 
     return {
       stepNo: index + 1,
-      stepType: item.role,
+      stepType: isApprover ? 'APPROVER' : 'ACKNOWLEDGE',
+      workflowRole: isFinalApprover ? 'FINAL_APPROVER' : item.role,
+      isFinalApprover,
       approverEmployeeId: employee._id,
       approverCode: employeeCode(employee),
       approverName: employeeName(employee),
-      status: isApprover
-        ? index === firstApproverIndex
-          ? 'PENDING'
-          : 'WAITING'
-        : 'ACKNOWLEDGED',
-      actedAt: isApprover ? null : new Date(),
+      status,
+      actedAt,
       actedBy: null,
-      remark: isApprover ? '' : 'Auto acknowledged by workflow',
+      remark,
     }
   })
 
@@ -751,9 +819,7 @@ async function resolveApprovalFlow(requesterEmployeeId) {
     (step) => step.stepType === 'APPROVER' && step.status === 'PENDING',
   )
 
-  const finalApproverStep = [...steps]
-    .reverse()
-    .find((step) => step.stepType === 'APPROVER')
+  const finalApproverStep = steps.find((step) => step.isFinalApprover === true)
 
   return {
     approvalSteps: steps,
@@ -809,6 +875,10 @@ function mapApprovalStepOutput(step = {}) {
   return {
     stepNo: Number(step.stepNo || 0),
     stepType: upper(step.stepType || 'APPROVER'),
+    workflowRole: upper(
+      step.workflowRole || (step.isFinalApprover ? 'FINAL_APPROVER' : step.stepType || 'APPROVER'),
+    ),
+    isFinalApprover: step.isFinalApprover === true || upper(step.workflowRole) === 'FINAL_APPROVER',
     approverEmployeeId: step.approverEmployeeId ? String(step.approverEmployeeId) : null,
     approverCode: s(step.approverCode),
     approverName: s(step.approverName),
@@ -2081,7 +2151,7 @@ async function create(payload, authUser) {
     payload,
   )
 
-  const approvalFlow = await resolveApprovalFlow(requesterEmployeeId)
+  const approvalFlow = await resolveApprovalFlow(requesterEmployeeId, dayType)
 
   const doc = await OTRequest.create({
     requestNo: await generateRequestNo(),
@@ -2217,7 +2287,7 @@ async function update(requestId, payload, authUser) {
     payload,
   )
 
-  const approvalFlow = await resolveApprovalFlow(requesterEmployeeId)
+  const approvalFlow = await resolveApprovalFlow(requesterEmployeeId, dayType)
 
   doc.requesterEmployeeId = requesterSnapshot.employee._id
   doc.requesterEmployeeCode = employeeCode(requesterSnapshot.employee)

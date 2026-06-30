@@ -61,6 +61,7 @@ function normalizeAttendanceRecordParams(params = {}) {
     ...params,
     attendanceDateFrom: normalizeDateParam(params.attendanceDateFrom),
     attendanceDateTo: normalizeDateParam(params.attendanceDateTo),
+    attendanceSource: params.attendanceSource || undefined,
   }
 }
 
@@ -175,6 +176,35 @@ export function getAttendanceRecordById(id) {
 }
 
 // =========================
+// Attendance Scan Station
+// =========================
+export function submitAttendanceScan(payload = {}) {
+  return api.post('/attendance/scan', payload, {
+    timeout: ATTENDANCE_LIST_TIMEOUT_MS,
+  })
+}
+
+export function getAttendanceScanLogs(params = {}) {
+  return api.get('/attendance/scan/logs', {
+    params: {
+      ...params,
+      attendanceDate: normalizeDateParam(params.attendanceDate),
+    },
+    timeout: ATTENDANCE_LIST_TIMEOUT_MS,
+  })
+}
+
+export function getAttendanceScanSummary(params = {}) {
+  return api.get('/attendance/scan/summary', {
+    params: {
+      ...params,
+      attendanceDate: normalizeDateParam(params.attendanceDate),
+    },
+    timeout: ATTENDANCE_LIST_TIMEOUT_MS,
+  })
+}
+
+// =========================
 // OT Attendance Verification
 // =========================
 export function searchOTRequestsForVerification(params = {}) {
@@ -222,6 +252,10 @@ const attendanceService = {
 
   getAttendanceRecords,
   getAttendanceRecordById,
+
+  submitAttendanceScan,
+  getAttendanceScanLogs,
+  getAttendanceScanSummary,
 
   searchOTRequestsForVerification,
   searchOTVerificationRequests,

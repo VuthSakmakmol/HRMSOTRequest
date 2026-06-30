@@ -272,11 +272,26 @@ function mapEmployeeOutput(item = {}) {
 function mapApprovalStepOutput(step = {}) {
   const stepStatus = upper(step.status)
   const stepType = upper(step.stepType || 'APPROVER')
+  const isFinalApprover = step.isFinalApprover === true || upper(step.workflowRole) === 'FINAL_APPROVER'
+  const workflowRole = upper(
+    step.workflowRole || (isFinalApprover ? 'FINAL_APPROVER' : stepType),
+  )
 
   return {
     stepNo: n(step.stepNo),
     stepType,
-    stepTypeLabel: stepType === 'ACKNOWLEDGE' ? 'Acknowledge' : 'Approver',
+    workflowRole,
+    workflowRoleLabel: isFinalApprover
+      ? 'Final Approver'
+      : stepType === 'ACKNOWLEDGE'
+        ? 'Acknowledge'
+        : 'Approver',
+    isFinalApprover,
+    stepTypeLabel: isFinalApprover
+      ? 'Final Approver'
+      : stepType === 'ACKNOWLEDGE'
+        ? 'Acknowledge'
+        : 'Approver',
 
     approverEmployeeId: toId(step.approverEmployeeId),
     approverCode: s(step.approverCode),
