@@ -9,12 +9,15 @@ const recordRoutes = require('./record.routes')
 const verificationRoutes = require('./verification.routes')
 const dashboardRoutes = require('./dashboard.routes')
 const scanRoutes = require('./scan.routes')
+const dailyVerificationRoutes = require('./dailyVerification.routes')
 
 const router = express.Router()
 
 router.use(requireAuth)
 
 router.use('/scan', scanRoutes)
+// Keep daily reconciliation before legacy /verification routes.
+router.use('/verification/daily', dailyVerificationRoutes)
 router.use('/', importRoutes)
 router.use('/records', recordRoutes)
 router.use('/verification', verificationRoutes)

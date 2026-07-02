@@ -72,6 +72,7 @@ const attendanceSourceOptions = computed(() => [
   { label: t('attendance.option.allSources'), value: '' },
   { label: t('attendance.source.scanStation'), value: 'SCAN_STATION' },
   { label: t('attendance.source.import'), value: 'IMPORT' },
+  { label: 'OT Verification', value: 'OT_VERIFICATION' },
 ])
 
 const shiftMatchStatusOptions = computed(() => [
@@ -321,13 +322,15 @@ function attendanceSourceLabel(value) {
   const normalized = upper(value || 'IMPORT')
 
   if (normalized === 'SCAN_STATION') return t('attendance.source.scanStation')
+  if (normalized === 'OT_VERIFICATION') return 'OT Verification'
   return t('attendance.source.import')
 }
 
 function attendanceSourceTagClass(value) {
-  return upper(value || 'IMPORT') === 'SCAN_STATION'
-    ? ['attendance-rgb-tag', 'attendance-tag-present']
-    : ['attendance-rgb-tag', 'attendance-tag-info']
+  const source = upper(value || 'IMPORT')
+  if (source === 'SCAN_STATION') return ['attendance-rgb-tag', 'attendance-tag-present']
+  if (source === 'OT_VERIFICATION') return ['attendance-rgb-tag', 'attendance-tag-late']
+  return ['attendance-rgb-tag', 'attendance-tag-info']
 }
 
 function statusTagClass(value) {

@@ -20,7 +20,7 @@ const ATTENDANCE_MATCHED_BY = ['EMPLOYEE_NO', 'MANUAL', 'NONE']
 const SHIFT_MATCH_STATUS = ['MATCHED', 'MISMATCH', 'UNKNOWN']
 const IMPORT_STATUS = ['PROCESSING', 'SUCCESS', 'PARTIAL_SUCCESS', 'FAILED']
 const SOURCE_TYPE = ['EXCEL', 'CSV', 'MANUAL']
-const ATTENDANCE_SOURCE = ['IMPORT', 'SCAN_STATION']
+const ATTENDANCE_SOURCE = ['IMPORT', 'SCAN_STATION', 'OT_VERIFICATION']
 const SCAN_RESULT = [
   'SUCCESS',
   'INVALID_FORMAT',
@@ -333,6 +333,46 @@ const verifyOTAttendanceParamSchema = z.object({
   otRequestId: objectIdSchema,
 })
 
+
+// Daily OT/attendance reconciliation. One date is intentionally required so
+// the screen stays a clear employee-level daily verification view.
+const dailyOTVerificationQuerySchema = z.object({
+  attendanceDate: ymdSchema,
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(5000).default(50),
+  search: optionalTrimmedString(200),
+  requester: optionalTrimmedString(200),
+  employee: optionalTrimmedString(200),
+  line: optionalTrimmedString(200),
+  status: optionalUpperString(50),
+  result: optionalUpperEnum([
+    'MATCHED',
+    'MISSING_ATTENDANCE',
+    'MISSING_OT_REQUEST',
+    'ATTENDANCE_ONLY',
+  ]),
+})
+
+const createVerificationAttendanceSchema = z.object({
+  otRequestId: objectIdSchema,
+  employeeId: objectIdSchema,
+})
+
+const createVerificationOTRequestSchema = z.object({
+  attendanceRecordId: objectIdSchema,
+})
+
+const recoverVerificationAttendanceSchema = z.object({
+  attendanceRecordId: objectIdSchema,
+})
+
+const verificationHistoryQuerySchema = z.object({
+  attendanceDate: optionalYmdSchema,
+  attendanceRecordId: optionalObjectIdSchema,
+  otRequestId: optionalObjectIdSchema,
+  limit: z.coerce.number().int().min(1).max(500).default(100),
+})
+
 module.exports = {
   createAttendanceImportSchema,
   listAttendanceImportsQuerySchema,
@@ -341,6 +381,11 @@ module.exports = {
   attendanceImportIdParamSchema,
   attendanceRecordIdParamSchema,
   verifyOTAttendanceParamSchema,
+  dailyOTVerificationQuerySchema,
+  createVerificationAttendanceSchema,
+  createVerificationOTRequestSchema,
+  recoverVerificationAttendanceSchema,
+  verificationHistoryQuerySchema,
   submitAttendanceScanSchema,
   listAttendanceScanLogsQuerySchema,
   attendanceScanSummaryQuerySchema,

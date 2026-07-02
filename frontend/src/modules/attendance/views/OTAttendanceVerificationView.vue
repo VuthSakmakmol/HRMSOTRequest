@@ -1,321 +1,143 @@
 <!-- frontend/src/modules/attendance/views/OTAttendanceVerificationView.vue -->
 <script setup>
-// frontend/src/modules/attendance/views/OTAttendanceVerificationView.vue
-
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
 
 import Button from 'primevue/button'
 import Column from 'primevue/column'
 import DataTable from 'primevue/datatable'
+import Dialog from 'primevue/dialog'
 import IconField from 'primevue/iconfield'
 import InputIcon from 'primevue/inputicon'
 import InputText from 'primevue/inputtext'
-import Message from 'primevue/message'
 import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 
 import HolidayDatePicker from '@/modules/calendar/components/HolidayDatePicker.vue'
 import AppTableLoading from '@/shared/components/AppTableLoading.vue'
-
 import {
-  searchOTVerificationRequests,
-  verifyOTAttendance,
+  createAttendanceFromOTVerification,
+  createOTRequestFromAttendanceVerification,
+  exportDailyOTAttendanceVerification,
+  getDailyOTAttendanceVerification,
+  getOTAttendanceVerificationHistory,
+  recoverAttendanceFromOTVerification,
 } from '@/modules/attendance/attendance.api'
+import { getApiErrorMessage } from '@/shared/utils/apiError'
+import { formatDate, formatDateTime, toApiDate } from '@/shared/utils/dateFormat'
 
-const route = useRoute()
 const toast = useToast()
 const { t } = useI18n()
 
+const PAGE_SIZE = 50
+const SEARCH_DELAY_MS = 300
+
+// The verification list uses the same lazy-scroll strategy as Attendance Import.
+// `rows` has one slot for every backend row; unloaded slots stay null until scrolled into view.
+const rows = ref([])
+const totalRecords = ref(0)
+const loadedPages = ref(new Set())
 const loading = ref(false)
-const searchLoading = ref(false)
-const payload = ref(null)
+const backgroundLoading = ref(false)
+const exporting = ref(false)
+const actionRowId = ref('')
+const hasLoaded = ref(false)
+const requestSequence = ref(0)
 
-const verificationDate = ref('')
-const requestOptions = ref([])
-const selectedOtRequestId = ref('')
-const selectedRequestStatus = ref('')
-const tableSearch = ref('')
-const tableCategory = ref('')
+const historyVisible = ref(false)
+const historyRows = ref([])
+const historyLoading = ref(false)
 
-let requestSearchTimer = null
-let suppressRequestSearch = false
-let currentVerifyRequestId = 0
+const summary = ref(emptySummary())
+const filters = reactive({
+  attendanceDate: toApiDate(new Date(), ''),
+  search: '',
+  requester: '',
+  employee: '',
+  line: '',
+  result: '',
+  status: '',
+})
 
-const requestStatusOptions = computed(() => [
-  { label: t('common.allStatus'), value: '' },
-  { label: t('attendance.statusLabel.pending'), value: 'PENDING' },
-  { label: t('ot.status.approved'), value: 'APPROVED' },
-  { label: t('ot.status.rejected'), value: 'REJECTED' },
-  { label: t('attendance.statusLabel.cancelled'), value: 'CANCELLED' },
+function tx(key, fallback, params = {}) {
+  const translated = t(key, params)
+  return translated === key ? fallback : translated
+}
+
+const resultOptions = computed(() => [
+  { label: tx('attendance.verification.allResults', 'All results'), value: '' },
+  { label: tx('attendance.verification.result.matched', 'Matched'), value: 'MATCHED' },
+  { label: tx('attendance.verification.result.missingAttendance', 'Missing attendance'), value: 'MISSING_ATTENDANCE' },
+  { label: tx('attendance.verification.result.missingOtRequest', 'Missing OT request'), value: 'MISSING_OT_REQUEST' },
+  { label: tx('attendance.verification.result.attendanceOnly', 'Attendance only'), value: 'ATTENDANCE_ONLY' },
 ])
 
-const categoryOptions = computed(() => [
-  { label: t('attendance.verification.allResults'), value: '' },
-  { label: t('attendance.verification.matched'), value: 'MATCH' },
-  { label: t('attendance.verification.acceptedByPolicy'), value: 'MATCH_WITHOUT_EXACT_OUT' },
-  { label: t('attendance.verification.needsCheck'), value: 'MISMATCH' },
-  { label: t('attendance.verification.forgetScanIn'), value: 'FORGET_SCAN_IN' },
-  { label: t('attendance.verification.forgetScanOut'), value: 'FORGET_SCAN_OUT' },
-  { label: t('attendance.verification.otStaffAbsent'), value: 'ABSENT_APPROVED' },
-  { label: t('attendance.verification.wrongShift'), value: 'SHIFT_MISMATCH' },
-  { label: t('attendance.verification.notInOtStaff'), value: 'NOT_APPROVED' },
-  { label: t('attendance.verification.notEligible'), value: 'NOT_ELIGIBLE' },
+const statusOptions = computed(() => [
+  { label: tx('attendance.verification.allRequestStatuses', 'All request statuses'), value: '' },
+  { label: tx('ot.status.pending', 'Pending'), value: 'PENDING' },
+  { label: tx('ot.status.approved', 'Approved'), value: 'APPROVED' },
+  { label: tx('ot.status.rejected', 'Rejected'), value: 'REJECTED' },
+  { label: tx('ot.status.cancelled', 'Cancelled'), value: 'CANCELLED' },
 ])
 
-const routeOtRequestId = computed(() => {
-  return (
-    String(route.params.otRequestId || '').trim() ||
-    String(route.params.id || '').trim() ||
-    String(route.query.otRequestId || '').trim() ||
-    String(route.query.id || '').trim()
-  )
-})
-
-const activeOtRequestId = computed(() => {
-  return String(selectedOtRequestId.value || routeOtRequestId.value || '').trim()
-})
-
-const otRequest = computed(() => payload.value?.otRequest || {})
-const verification = computed(() => payload.value?.verification || {})
-
-const requestStatus = computed(() => upper(otRequest.value?.status))
-const isFinalApprovedRequest = computed(() => requestStatus.value === 'APPROVED')
-
-const attendedEmployees = computed(() => asArray(verification.value?.attendedEmployees))
-const absentFromApproved = computed(() => asArray(verification.value?.absentFromApproved))
-const attendedButNotApproved = computed(() => asArray(verification.value?.attendedButNotApproved))
-const shiftMismatchEmployees = computed(() => asArray(verification.value?.shiftMismatchEmployees))
-const pendingReviewEmployees = computed(() => asArray(verification.value?.pendingReviewEmployees))
-const notEligibleEmployees = computed(() => asArray(verification.value?.notEligibleEmployees))
-
-const requestTimingMode = computed(() => {
-  return upper(
-    verification.value?.shiftOtOptionTimingMode ||
-      otRequest.value?.shiftOtOptionTimingMode ||
-      '',
-  )
-})
-
-const requestRequestedOtLabel = computed(() =>
-  formatMinutesLabel(
-    verification.value?.requestedMinutes ??
-      otRequest.value?.requestedMinutes ??
-      otRequest.value?.totalMinutes ??
-      0,
+const apiDate = computed(() => toApiDate(filters.attendanceDate, ''))
+const selectedDateLabel = computed(() => formatDate(apiDate.value) || tx('attendance.verification.selectDate', 'Select date'))
+const loadedCount = computed(() => rows.value.filter(Boolean).length)
+const loadedLabel = computed(() =>
+  tx(
+    'common.loaded',
+    `Loaded ${loadedCount.value} of ${totalRecords.value}`,
+    { loaded: loadedCount.value, total: totalRecords.value },
   ),
 )
-
-const requestShiftTime = computed(() => {
-  const start = displayTime(otRequest.value?.shiftStartTime)
-  const end = displayTime(otRequest.value?.shiftEndTime)
-
-  return `${start} - ${end}`
-})
-
-const requestExpectedOtTime = computed(() => {
-  const start = displayTime(
-    verification.value?.expectedOtStartTime,
-    otRequest.value?.expectedOtStartTime,
-    otRequest.value?.requestStartTime,
-    otRequest.value?.startTime,
-  )
-
-  const end = displayTime(
-    verification.value?.expectedOtEndTime,
-    otRequest.value?.expectedOtEndTime,
-    otRequest.value?.requestEndTime,
-    otRequest.value?.endTime,
-  )
-
-  return `${start} - ${end}`
-})
-
-const requestPolicyLabel = computed(() => {
-  const code = String(
-    verification.value?.policyCode ||
-      otRequest.value?.otCalculationPolicySnapshot?.code ||
-      '',
-  ).trim()
-
-  const name = String(
-    verification.value?.policyName ||
-      otRequest.value?.otCalculationPolicySnapshot?.name ||
-      '',
-  ).trim()
-
-  if (code && name) return name
-
-  return code || name || '-'
-})
-
-const verificationRows = computed(() => {
-  const map = new Map()
-
-  function put(row, category, fallbackResult = '') {
-    const key = getEmployeeKey(row)
-    if (!key) return
-
-    const normalized = normalizeVerificationRow(row, category, fallbackResult)
-
-    const existing = map.get(key)
-    if (!existing) {
-      map.set(key, normalized)
-      return
-    }
-
-    const existingPriority = categoryPriority(existing.category)
-    const nextPriority = categoryPriority(normalized.category)
-
-    if (nextPriority >= existingPriority) {
-      map.set(key, {
-        ...existing,
-        ...normalized,
-      })
-    }
-  }
-
-  for (const row of attendedEmployees.value) {
-    put(row, row?.otResult === 'MATCH' ? 'MATCH' : 'MISMATCH', row?.otResult)
-  }
-
-  for (const row of attendedButNotApproved.value) {
-    put(row, 'NOT_APPROVED', 'MISMATCH')
-  }
-
-  for (const row of shiftMismatchEmployees.value) {
-    put(row, 'SHIFT_MISMATCH', 'MISMATCH')
-  }
-
-  for (const row of pendingReviewEmployees.value) {
-    const status = upper(row?.attendanceStatus || row?.status)
-
-    if (status === 'FORGET_SCAN_IN') {
-      put(row, 'FORGET_SCAN_IN', 'MISMATCH')
-    } else if (status === 'FORGET_SCAN_OUT') {
-      put(row, 'FORGET_SCAN_OUT', 'MISMATCH')
-    } else {
-      put(row, 'FORGET_SCAN_OUT', 'MISMATCH')
-    }
-  }
-
-  for (const row of notEligibleEmployees.value) {
-    put(row, 'NOT_ELIGIBLE', 'MISMATCH')
-  }
-
-  for (const row of absentFromApproved.value) {
-    put(row, 'ABSENT_APPROVED', 'MISMATCH')
-  }
-
-  return Array.from(map.values())
-})
-
-const forgetScanInRows = computed(() => {
-  return verificationRows.value.filter((row) => row.category === 'FORGET_SCAN_IN')
-})
-
-const forgetScanOutRows = computed(() => {
-  return verificationRows.value.filter((row) => row.category === 'FORGET_SCAN_OUT')
-})
-
-const needsCheckVerificationRows = computed(() => {
-  return verificationRows.value.filter((row) => {
-    return (
-      row.result === 'MISMATCH' &&
-      row.category !== 'FORGET_SCAN_IN' &&
-      row.category !== 'FORGET_SCAN_OUT'
-    )
-  })
-})
+const hasAnyData = computed(() => rows.value.some(Boolean))
+const isFirstLoading = computed(() => loading.value && !hasLoaded.value)
+const useVirtualScroll = computed(() => totalRecords.value > PAGE_SIZE)
 
 const summaryCards = computed(() => [
   {
-    label: t('attendance.verification.requestStaff'),
-    value: Number(
-      verification.value?.approvedEmployeeCount ||
-        verification.value?.requestedEmployeeCount ||
-        0,
-    ),
-    tone: 'info',
+    label: tx('attendance.verification.summary.requests', 'Requests'),
+    value: summary.value.requestCount,
+    icon: 'pi pi-file-edit',
+    className: 'card-blue',
+  },
+  {
+    label: tx('attendance.verification.summary.employees', 'Employees'),
+    value: summary.value.employeeCount,
     icon: 'pi pi-users',
+    className: 'card-slate',
   },
   {
-    label: t('attendance.verification.matched'),
-    value: verificationRows.value.filter((row) => row.result === 'MATCH').length,
-    tone: 'match',
+    label: tx('attendance.verification.summary.matched', 'Matched'),
+    value: summary.value.matchedCount,
     icon: 'pi pi-check-circle',
+    className: 'card-green',
   },
   {
-    label: t('attendance.verification.needsCheck'),
-    value: needsCheckVerificationRows.value.length,
-    tone: 'danger',
-    icon: 'pi pi-exclamation-triangle',
+    label: tx('attendance.verification.summary.missingAttendance', 'No attendance'),
+    value: summary.value.missingAttendanceCount,
+    icon: 'pi pi-clock',
+    className: 'card-amber',
   },
   {
-    label: t('attendance.verification.forgetIn'),
-    value: forgetScanInRows.value.length,
-    tone: 'purple',
-    icon: 'pi pi-sign-in',
-  },
-  {
-    label: t('attendance.verification.forgetOut'),
-    value: forgetScanOutRows.value.length,
-    tone: 'purple',
-    icon: 'pi pi-sign-out',
-  },
-  {
-    label: t('attendance.verification.absent'),
-    value: Number(verification.value?.absentFromApprovedCount || 0),
-    tone: 'danger',
-    icon: 'pi pi-times-circle',
-  },
-  {
-    label: t('attendance.verification.notInOt'),
-    value: Number(verification.value?.attendedButNotApprovedCount || 0),
-    tone: 'warning',
-    icon: 'pi pi-info-circle',
+    label: tx('attendance.verification.summary.missingOtRequest', 'No OT request'),
+    value: summary.value.missingRequestCount,
+    icon: 'pi pi-file-plus',
+    className: 'card-red',
   },
 ])
 
-const filteredVerificationRows = computed(() => {
-  const keyword = String(tableSearch.value || '').trim().toLowerCase()
-  const category = String(tableCategory.value || '').trim()
-
-  return verificationRows.value.filter((row) => {
-    if (!rowMatchesCategory(row, category)) return false
-
-    if (!keyword) return true
-
-    return [
-      row.employeeNo,
-      row.employeeName,
-      row.categoryLabel,
-      row.result,
-      resultMeaningLabel(row),
-      attendanceStatusLabel(row.attendanceStatus),
-      row.attendanceStatus,
-      row.rawDecision,
-      row.reason,
-      row.clockIn,
-      row.clockOut,
-    ]
-      .join(' ')
-      .toLowerCase()
-      .includes(keyword)
-  })
-})
-
-const resultLoadedLabel = computed(() =>
-  t('common.loaded', {
-    loaded: filteredVerificationRows.value.length,
-    total: verificationRows.value.length,
-  }),
-)
-
-function asArray(value) {
-  return Array.isArray(value) ? value : []
+function emptySummary() {
+  return {
+    requestCount: 0,
+    employeeCount: 0,
+    totalRows: 0,
+    matchedCount: 0,
+    missingAttendanceCount: 0,
+    missingRequestCount: 0,
+    attendanceOnlyCount: 0,
+  }
 }
 
 function s(value) {
@@ -326,677 +148,568 @@ function upper(value) {
   return s(value).toUpperCase()
 }
 
-function normalizePayload(res) {
-  return res?.data?.data || res?.data || {}
+function normalizePayload(response) {
+  return response?.data?.data || response?.data || {}
 }
 
-function normalizeItems(payloadValue) {
-  return Array.isArray(payloadValue?.items) ? payloadValue.items : []
-}
-
-function formatDateYMD(value) {
-  const raw = s(value)
-
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw
-
-  if (!value) return ''
-
-  const date = value instanceof Date ? value : new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-
-  const yyyy = date.getFullYear()
-  const mm = String(date.getMonth() + 1).padStart(2, '0')
-  const dd = String(date.getDate()).padStart(2, '0')
-
-  return `${yyyy}-${mm}-${dd}`
-}
-
-function normalizeTimeValue(value) {
-  const raw = s(value)
-  if (!raw) return ''
-
-  const timeMatch = raw.match(/(\d{1,2}):(\d{2})(?::\d{2})?$/)
-  if (timeMatch) {
-    const hh = String(Number(timeMatch[1])).padStart(2, '0')
-    const mm = String(Number(timeMatch[2])).padStart(2, '0')
-
-    return `${hh}:${mm}`
-  }
-
-  const date = new Date(raw)
-  if (Number.isNaN(date.getTime())) return raw
-
-  const hh = String(date.getHours()).padStart(2, '0')
-  const mm = String(date.getMinutes()).padStart(2, '0')
-
-  return `${hh}:${mm}`
-}
-
-function displayTime(...values) {
-  for (const value of values) {
-    const normalized = normalizeTimeValue(value)
-    if (normalized) return normalized
-  }
-
-  return '-'
-}
-
-function isMissingTime(value) {
-  const raw = s(value)
-  return !raw || raw === '-'
-}
-
-function scanTimeLabel(value) {
-  return isMissingTime(value) ? t('attendance.statusLabel.missing') : value
-}
-
-function scanTimeTone(value) {
-  return isMissingTime(value) ? 'is-missing' : 'is-complete'
-}
-
-function formatMinutesLabel(value) {
-  const minutes = Math.max(0, Number(value || 0))
-
-  if (!minutes) return '0m'
+function formatMinutes(value) {
+  const minutes = Math.max(0, Math.round(Number(value || 0)))
+  if (!minutes) return '—'
 
   const hours = Math.floor(minutes / 60)
-  const mins = minutes % 60
+  const rest = minutes % 60
 
-  if (hours && mins) return `${hours}h ${mins}m`
-  if (hours) return `${hours}h`
-
-  return `${mins}m`
+  if (!hours) return `${rest}m`
+  if (!rest) return `${hours}h`
+  return `${hours}h ${rest}m`
 }
 
-function getEmployeeKey(row) {
-  return (
-    s(row?.employeeId) ||
-    upper(row?.employeeCode) ||
-    upper(row?.employeeNo) ||
-    s(row?.id)
-  )
+function displayEmployee(row) {
+  return [s(row?.employee?.employeeNo), s(row?.employee?.employeeName)].filter(Boolean).join(' · ') || '—'
 }
 
-function categoryPriority(category) {
-  const priority = {
-    MATCH: 1,
-    MATCH_WITHOUT_EXACT_OUT: 2,
-    FORGET_SCAN_IN: 3,
-    FORGET_SCAN_OUT: 3,
-    MISMATCH: 4,
-    NOT_APPROVED: 5,
-    NOT_ELIGIBLE: 6,
-    SHIFT_MISMATCH: 7,
-    ABSENT_APPROVED: 8,
+function displayRequester(row) {
+  return [s(row?.request?.requesterEmployeeCode), s(row?.request?.requesterName)].filter(Boolean).join(' · ') || '—'
+}
+
+function displayLine(row) {
+  return s(row?.employee?.lineName || row?.employee?.lineCode) || '—'
+}
+
+function displayShift(row) {
+  return s(row?.request?.shiftName || row?.attendance?.shiftName) || '—'
+}
+
+function attendanceText(row) {
+  if (!row?.attendance?.id) return '—'
+
+  const clockIn = s(row.attendance.clockIn) || '—'
+  const clockOut = s(row.attendance.clockOut) || '—'
+  return `${clockIn} – ${clockOut}`
+}
+
+function sourceLabel(value) {
+  const source = upper(value || 'IMPORT')
+
+  if (source === 'SCAN_STATION') {
+    return tx('attendance.source.scanStation', 'Scan Station')
   }
 
-  return priority[category] || 0
+  if (source === 'OT_VERIFICATION') {
+    return tx('attendance.source.otVerification', 'OT Verification')
+  }
+
+  return tx('attendance.source.import', 'Excel Import')
 }
 
-function categoryLabel(category) {
+function sourceTagClass(value) {
+  const source = upper(value || 'IMPORT')
+  if (source === 'SCAN_STATION') return 'attendance-source-scan'
+  if (source === 'OT_VERIFICATION') return 'attendance-source-verification'
+  return 'attendance-source-import'
+}
+
+function resultLabel(value) {
   const labels = {
-    MATCH: t('attendance.verification.matched'),
-    MATCH_WITHOUT_EXACT_OUT: t('attendance.verification.acceptedByPolicy'),
-    FORGET_SCAN_IN: t('attendance.verification.forgetScanIn'),
-    FORGET_SCAN_OUT: t('attendance.verification.forgetScanOut'),
-    MISMATCH: t('attendance.verification.needsCheck'),
-    ABSENT_APPROVED: t('attendance.verification.otStaffAbsent'),
-    SHIFT_MISMATCH: t('attendance.verification.wrongShift'),
-    NOT_APPROVED: t('attendance.verification.notInOtStaff'),
-    NOT_ELIGIBLE: t('attendance.verification.notEligible'),
+    MATCHED: tx('attendance.verification.result.matched', 'Matched'),
+    MISSING_ATTENDANCE: tx('attendance.verification.result.missingAttendance', 'Missing attendance'),
+    MISSING_OT_REQUEST: tx('attendance.verification.result.missingOtRequest', 'Missing OT request'),
+    ATTENDANCE_ONLY: tx('attendance.verification.result.attendanceOnly', 'Attendance only'),
   }
 
-  return labels[category] || category || '-'
+  return labels[upper(value)] || '—'
 }
 
-function rowMatchesCategory(row, category) {
-  const normalizedCategory = upper(category)
-  if (!normalizedCategory) return true
-
-  const rowCategory = upper(row?.category)
-  const rowResult = upper(row?.result)
-
-  if (normalizedCategory === 'MATCH') {
-    return rowResult === 'MATCH'
+function resultTagClass(value) {
+  const classes = {
+    MATCHED: 'attendance-result-matched',
+    MISSING_ATTENDANCE: 'attendance-result-missing-attendance',
+    MISSING_OT_REQUEST: 'attendance-result-missing-request',
+    ATTENDANCE_ONLY: 'attendance-result-attendance-only',
   }
 
-  if (normalizedCategory === 'MISMATCH') {
-    return (
-      rowResult === 'MISMATCH' &&
-      rowCategory !== 'FORGET_SCAN_IN' &&
-      rowCategory !== 'FORGET_SCAN_OUT'
-    )
-  }
-
-  return rowCategory === normalizedCategory
-}
-
-function statusTagClass(value) {
-  const normalized = upper(value)
-
-  const map = {
-    APPROVED: 'verify-tag-match',
-    PRESENT: 'verify-tag-match',
-    MATCH: 'verify-tag-match',
-    PENDING: 'verify-tag-warning',
-    LATE: 'verify-tag-warning',
-    REJECTED: 'verify-tag-danger',
-    ABSENT: 'verify-tag-danger',
-    SHIFT_MISMATCH: 'verify-tag-danger',
-    MISMATCH: 'verify-tag-danger',
-    FORGET_SCAN_IN: 'verify-tag-info',
-    FORGET_SCAN_OUT: 'verify-tag-info',
-    CANCELLED: 'verify-tag-muted',
-    OFF: 'verify-tag-muted',
-  }
-
-  return ['verify-rgb-tag', map[normalized] || 'verify-tag-muted']
-}
-
-function requestStatusTagClass(value) {
-  const normalized = upper(value)
-
-  const map = {
-    APPROVED: 'verify-tag-match',
-    PENDING: 'verify-tag-warning',
-    REJECTED: 'verify-tag-danger',
-    CANCELLED: 'verify-tag-muted',
-  }
-
-  return ['verify-rgb-tag', map[normalized] || 'verify-tag-muted']
-}
-
-function timingModeLabel(value) {
-  const normalized = upper(value)
-
-  if (normalized === 'FIXED_TIME') return t('attendance.verification.fixedOt')
-  if (normalized === 'AFTER_SHIFT_END') return t('attendance.verification.afterShift')
-
-  return t('attendance.verification.otOption')
-}
-
-function timingModeTagClass(value) {
-  return [
-    'verify-rgb-tag',
-    upper(value) === 'FIXED_TIME' ? 'verify-tag-warning' : 'verify-tag-info',
-  ]
-}
-
-function attendanceStatusLabel(value) {
-  const normalized = upper(value)
-
-  const labels = {
-    PRESENT: t('attendance.statusLabel.present'),
-    LATE: t('attendance.statusLabel.late'),
-    ABSENT: t('attendance.statusLabel.absent'),
-    OFF: t('attendance.statusLabel.off'),
-    FORGET_SCAN_IN: t('attendance.statusLabel.forgetScanIn'),
-    FORGET_SCAN_OUT: t('attendance.statusLabel.forgetScanOut'),
-    SHIFT_MISMATCH: t('attendance.statusLabel.shiftMismatch'),
-    MISMATCH: t('attendance.verification.needsCheck'),
-    PENDING: t('attendance.statusLabel.pending'),
-  }
-
-  return labels[normalized] || normalized || '-'
-}
-
-function isPartialCredited(row) {
-  const result = upper(row?.result)
-  const requested = Number(row?.requestedMinutes || 0)
-  const credited = Number(row?.roundedOtMinutes || 0)
-
-  return result === 'MISMATCH' && requested > 0 && credited > 0 && credited < requested
-}
-
-function resultMeaningTone(row) {
-  if (isPartialCredited(row)) return 'is-warning'
-
-  if (row?.category === 'FORGET_SCAN_IN' || row?.category === 'FORGET_SCAN_OUT') {
-    return 'is-forget'
-  }
-
-  return upper(row?.result) === 'MATCH' ? 'is-match' : 'is-mismatch'
-}
-
-function resultMeaningLabel(row) {
-  const category = upper(row?.category)
-  const result = upper(row?.result)
-  const requested = Number(row?.requestedMinutes || 0)
-  const credited = Number(row?.roundedOtMinutes || 0)
-  const actual = Number(row?.actualOtMinutes || 0)
-  const clockIn = s(row?.clockIn)
-  const clockOut = s(row?.clockOut)
-  const attendanceStatus = upper(row?.attendanceStatus)
-
-  if (category === 'FORGET_SCAN_IN') return t('attendance.verification.meaningLabel.forgetScanIn')
-  if (category === 'FORGET_SCAN_OUT') return t('attendance.verification.meaningLabel.forgetScanOut')
-  if (category === 'MATCH_WITHOUT_EXACT_OUT') return t('attendance.verification.meaningLabel.acceptedByPolicy')
-  if (category === 'ABSENT_APPROVED') return t('attendance.verification.meaningLabel.otStaffAbsent')
-  if (category === 'SHIFT_MISMATCH') return t('attendance.verification.meaningLabel.wrongShift')
-  if (category === 'NOT_APPROVED') return t('attendance.verification.meaningLabel.notInOtStaff')
-  if (category === 'NOT_ELIGIBLE') return t('attendance.verification.meaningLabel.notEligible')
-
-  if (result === 'MATCH') return t('attendance.verification.meaningLabel.otMatchedRequest')
-  if (attendanceStatus === 'ABSENT') return t('attendance.verification.meaningLabel.absent')
-
-  if (!clockIn || !clockOut || clockIn === '-' || clockOut === '-') {
-    return t('attendance.verification.meaningLabel.missingScanTime')
-  }
-
-  if (requested > 0 && credited <= 0) return t('attendance.verification.meaningLabel.noCreditedOt')
-  if (requested > 0 && credited < requested) return t('attendance.verification.meaningLabel.creditedLessThanRequest')
-  if (requested > 0 && credited > requested) return t('attendance.verification.meaningLabel.creditedOverRequest')
-  if (actual > 0 && credited !== actual) return t('attendance.verification.meaningLabel.adjustedByRule')
-
-  return t('attendance.verification.meaningLabel.checkOtRule')
+  return classes[upper(value)] || 'attendance-result-muted'
 }
 
 function requestStatusLabel(value) {
-  const normalized = upper(value)
+  const status = upper(value)
+  const labels = {
+    PENDING: tx('ot.status.pending', 'Pending'),
+    APPROVED: tx('ot.status.approved', 'Approved'),
+    REJECTED: tx('ot.status.rejected', 'Rejected'),
+    CANCELLED: tx('ot.status.cancelled', 'Cancelled'),
+  }
 
-  if (normalized === 'PENDING') return t('attendance.statusLabel.pending')
-  if (normalized === 'APPROVED') return t('ot.status.approved')
-  if (normalized === 'REJECTED') return t('ot.status.rejected')
-  if (normalized === 'CANCELLED') return t('attendance.statusLabel.cancelled')
-  if (normalized === 'DRAFT') return t('attendance.statusLabel.draft')
-
-  return normalized || '-'
+  return labels[status] || status || '—'
 }
 
-function requestOptionLabel(row) {
-  const requestNo = s(row?.requestNo) || t('attendance.verification.noRequestNo')
-  const status = requestStatusLabel(row?.status)
-  const requester = s(row?.requesterName)
-  const option = s(row?.shiftOtOptionLabel)
+function requestStatusTagClass(value) {
+  const classes = {
+    PENDING: 'attendance-status-pending',
+    APPROVED: 'attendance-status-approved',
+    REJECTED: 'attendance-status-rejected',
+    CANCELLED: 'attendance-status-cancelled',
+  }
 
-  const staffCount = Number(
-    row?.employeeCount ||
-      row?.approvedEmployeeCount ||
-      row?.requestedEmployeeCount ||
-      0,
-  )
-
-  return [
-    requestNo,
-    `${t('attendance.verification.statusPrefix')}: ${status}`,
-    requester,
-    option,
-    `${staffCount} ${t('attendance.verification.staff')}`,
-  ]
-    .filter(Boolean)
-    .join(' · ')
+  return classes[upper(value)] || 'attendance-status-muted'
 }
 
-function normalizeRequestOptions(items = []) {
-  return items
-    .map((item) => {
-      const id = s(item?.id || item?._id)
-
-      if (!id) return null
-
-      return {
-        ...item,
-        id,
-        optionLabel: requestOptionLabel(item),
-      }
-    })
-    .filter(Boolean)
-}
-
-function normalizeVerificationRow(row, category, fallbackResult = '') {
-  const rawDecision = upper(row?.rawOtDecision)
-
-  const isNoExactOutMatch = [
-    'APPROVED_WITHOUT_EXACT_CLOCK_OUT',
-    'FIXED_OT_APPROVED_WITHOUT_EXACT_CLOCK_OUT',
-  ].includes(rawDecision)
-
-  const result = upper(
-    row?.otResult ||
-      fallbackResult ||
-      (category === 'MATCH' || category === 'MATCH_WITHOUT_EXACT_OUT'
-        ? 'MATCH'
-        : 'MISMATCH'),
-  )
-
-  const timingMode = upper(
-    row?.shiftOtOptionTimingMode ||
-      verification.value?.shiftOtOptionTimingMode ||
-      requestTimingMode.value,
-  )
-
-  const isFixed = row?.isFixedTimeOt === true || timingMode === 'FIXED_TIME'
-
-  const finalCategory =
-    isNoExactOutMatch && result === 'MATCH'
-      ? 'MATCH_WITHOUT_EXACT_OUT'
-      : category
-
+function buildParams(page = 1) {
   return {
-    rowKey: getEmployeeKey(row),
-    employeeId: s(row?.employeeId),
-    employeeNo: upper(row?.employeeCode || row?.employeeNo),
-    employeeName: s(row?.employeeName),
-
-    category: finalCategory,
-    categoryLabel: categoryLabel(finalCategory),
-
-    result,
-    rawDecision,
-    reason: s(row?.otResultReason || row?.derivedStatusReason),
-    timingMode,
-    isFixed,
-
-    clockIn: displayTime(row?.clockIn),
-    clockOut: displayTime(row?.clockOut),
-    attendanceStatus: upper(row?.attendanceStatus || row?.status),
-
-    shiftName: s(row?.shiftName || otRequest.value?.shiftName),
-    shiftTime: `${displayTime(row?.shiftStartTime, otRequest.value?.shiftStartTime)} - ${displayTime(row?.shiftEndTime, otRequest.value?.shiftEndTime)}`,
-
-    expectedOtTime: `${displayTime(row?.expectedOtStartTime, verification.value?.expectedOtStartTime)} - ${displayTime(row?.expectedOtEndTime, verification.value?.expectedOtEndTime)}`,
-
-    requestedMinutes: Number(
-      row?.requestedMinutes ??
-        row?.requestedOtMinutes ??
-        verification.value?.requestedMinutes ??
-        otRequest.value?.requestedMinutes ??
-        0,
-    ),
-
-    roundedOtMinutes: Number(row?.roundedOtMinutes ?? row?.actualOtMinutes ?? 0),
-    actualOtMinutes: Number(row?.actualOtMinutes ?? 0),
-    eligibleOtMinutes: Number(row?.eligibleOtMinutes ?? 0),
-
-    workedMinutes: Number(row?.workedMinutes || 0),
-    lateMinutes: Number(row?.lateMinutes || 0),
-    earlyOutMinutes: Number(row?.earlyOutMinutes || 0),
-
-    policyAllowNoExactOut: row?.policyAllowApprovedOtWithoutExactClockOut === true,
+    attendanceDate: apiDate.value,
+    page,
+    limit: PAGE_SIZE,
+    search: s(filters.search) || undefined,
+    requester: s(filters.requester) || undefined,
+    employee: s(filters.employee) || undefined,
+    line: s(filters.line) || undefined,
+    result: filters.result || undefined,
+    status: filters.status || undefined,
   }
 }
 
-function clearCurrentResultOnly() {
-  payload.value = null
-  tableSearch.value = ''
-  tableCategory.value = ''
-}
-
-async function loadData() {
-  const otRequestId = activeOtRequestId.value
-
-  if (!otRequestId) {
-    clearCurrentResultOnly()
+async function fetchPage(page, { replace = false, silent = false } = {}) {
+  if (!apiDate.value) {
+    rows.value = []
+    totalRecords.value = 0
+    loadedPages.value = new Set()
+    summary.value = emptySummary()
+    hasLoaded.value = true
     return
   }
 
-  const requestId = ++currentVerifyRequestId
-  loading.value = true
+  if (!replace && loadedPages.value.has(page)) return
+
+  const sequence = ++requestSequence.value
+
+  if (silent) {
+    backgroundLoading.value = true
+  } else {
+    loading.value = true
+  }
 
   try {
-    const response = await verifyOTAttendance(otRequestId)
-    const nextPayload = normalizePayload(response)
+    const payload = normalizePayload(await getDailyOTAttendanceVerification(buildParams(page)))
+    if (sequence !== requestSequence.value) return
 
-    if (requestId !== currentVerifyRequestId) return
+    const items = Array.isArray(payload.items) ? payload.items : []
+    const total = Number(payload?.pagination?.total || 0)
+    const startIndex = (page - 1) * PAGE_SIZE
 
-    payload.value = nextPayload || null
+    totalRecords.value = total
+    summary.value = { ...emptySummary(), ...(payload.summary || {}) }
 
-    if (!payload.value?.otRequest) {
-      toast.add({
-        severity: 'warn',
-        summary: t('attendance.verification.loadFailed'),
-        detail: t('attendance.verification.loadVerificationFailed'),
-        life: 3500,
-      })
-      return
+    if (replace) {
+      const nextRows = total > 0 ? Array.from({ length: total }, () => null) : []
+
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
+      }
+
+      rows.value = nextRows
+      loadedPages.value = new Set([page])
+    } else {
+      const nextRows = rows.value.length === total
+        ? [...rows.value]
+        : Array.from({ length: total }, (_, index) => rows.value[index] || null)
+
+      for (let index = 0; index < items.length; index += 1) {
+        nextRows[startIndex + index] = items[index]
+      }
+
+      rows.value = nextRows
+      loadedPages.value.add(page)
     }
 
-    if (!verificationDate.value && payload.value?.otRequest?.otDate) {
-      suppressRequestSearch = true
-      verificationDate.value = formatDateYMD(payload.value.otRequest.otDate)
-    }
+    hasLoaded.value = true
   } catch (error) {
-    if (requestId !== currentVerifyRequestId) return
+    if (sequence !== requestSequence.value) return
 
-    clearCurrentResultOnly()
+    if (replace) {
+      rows.value = []
+      totalRecords.value = 0
+      loadedPages.value = new Set()
+      summary.value = emptySummary()
+    }
+
+    hasLoaded.value = true
 
     toast.add({
       severity: 'error',
-      summary: t('attendance.verification.loadFailed'),
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        t('attendance.verification.loadVerificationFailed'),
+      summary: tx('attendance.verification.loadFailed', 'Verification could not load'),
+      detail: getApiErrorMessage(error, tx('attendance.verification.loadFailedDetail', 'Please check the selected date and try again.')),
+      life: 4500,
+    })
+  } finally {
+    if (sequence === requestSequence.value) {
+      loading.value = false
+      backgroundLoading.value = false
+    }
+  }
+}
+
+async function reload() {
+  await fetchPage(1, { replace: true, silent: hasLoaded.value })
+}
+
+function clearFilters() {
+  filters.search = ''
+  filters.requester = ''
+  filters.employee = ''
+  filters.line = ''
+  filters.result = ''
+  filters.status = ''
+  reload()
+}
+
+async function onVirtualLazyLoad(event) {
+  if (!useVirtualScroll.value) return
+
+  const first = Number(event?.first || 0)
+  const last = Number(event?.last || first + PAGE_SIZE)
+  const startPage = Math.floor(first / PAGE_SIZE) + 1
+  const endPage = Math.floor(Math.max(last - 1, first) / PAGE_SIZE) + 1
+
+  for (let page = startPage; page <= endPage; page += 1) {
+    if (!loadedPages.value.has(page)) {
+      await fetchPage(page, { silent: true })
+    }
+  }
+}
+
+let filterTimer = null
+
+function scheduleFilterReload() {
+  window.clearTimeout(filterTimer)
+  filterTimer = window.setTimeout(reload, SEARCH_DELAY_MS)
+}
+
+function actionMessage(row, action) {
+  const employee = displayEmployee(row)
+
+  if (action === 'createAttendance') {
+    return tx(
+      'attendance.verification.confirmCreateAttendance',
+      `Create attendance for ${employee} from OT request ${row?.request?.requestNo || ''}?`,
+      { employee, requestNo: row?.request?.requestNo || '' },
+    )
+  }
+
+  if (action === 'createRequest') {
+    return tx(
+      'attendance.verification.confirmCreateRequest',
+      `Create a Pending OT request for ${employee} from actual attendance time? The employee's direct manager will be the requester.`,
+      { employee },
+    )
+  }
+
+  return tx(
+    'attendance.verification.confirmRecoverAttendance',
+    `Recover this OT Verification attendance for ${employee}? It will return to No Attendance.`,
+    { employee },
+  )
+}
+
+async function runAction(row, action) {
+  if (!window.confirm(actionMessage(row, action))) return
+
+  actionRowId.value = row.id
+
+  try {
+    let response
+
+    if (action === 'createAttendance') {
+      response = await createAttendanceFromOTVerification({
+        otRequestId: row.request.id,
+        employeeId: row.employee.employeeId,
+      })
+    } else if (action === 'createRequest') {
+      response = await createOTRequestFromAttendanceVerification({
+        attendanceRecordId: row.attendance.id,
+      })
+    } else {
+      response = await recoverAttendanceFromOTVerification({
+        attendanceRecordId: row.attendance.id,
+      })
+    }
+
+    const payload = normalizePayload(response)
+    const detail = action === 'createRequest'
+      ? tx('attendance.verification.requestCreatedDetail', `OT request ${payload?.otRequest?.requestNo || ''} was created.`, { requestNo: payload?.otRequest?.requestNo || '' })
+      : action === 'recover'
+        ? tx('attendance.verification.attendanceRecoveredDetail', 'Attendance was recovered successfully.')
+        : tx('attendance.verification.attendanceCreatedDetail', 'Attendance was created successfully.')
+
+    toast.add({
+      severity: 'success',
+      summary: tx('common.completed', 'Completed'),
+      detail,
+      life: 3500,
+    })
+
+    await reload()
+  } catch (error) {
+    toast.add({
+      severity: 'error',
+      summary: tx('attendance.verification.actionFailed', 'Action was not completed'),
+      detail: getApiErrorMessage(error, tx('attendance.verification.actionFailedDetail', 'Please check the row and try again.')),
+      life: 5000,
+    })
+  } finally {
+    actionRowId.value = ''
+  }
+}
+
+async function openHistory(row = null) {
+  historyVisible.value = true
+  historyLoading.value = true
+
+  try {
+    const payload = normalizePayload(await getOTAttendanceVerificationHistory({
+      attendanceDate: apiDate.value || undefined,
+      attendanceRecordId: row?.attendance?.id || undefined,
+      otRequestId: row?.request?.id || undefined,
+    }))
+
+    historyRows.value = Array.isArray(payload.items) ? payload.items : []
+  } catch (error) {
+    toast.add({
+      severity: 'error',
+      summary: tx('attendance.verification.historyLoadFailed', 'History could not load'),
+      detail: getApiErrorMessage(error, tx('attendance.verification.historyLoadFailedDetail', 'Please try again.')),
       life: 4000,
     })
   } finally {
-    if (requestId === currentVerifyRequestId) {
-      loading.value = false
-    }
+    historyLoading.value = false
   }
 }
 
-async function loadRequestsByDate(options = {}) {
-  const { silent = false } = options
-  const selectedDate = formatDateYMD(verificationDate.value)
+async function exportExcel() {
+  if (!apiDate.value || exporting.value) return
 
-  if (!selectedDate) {
-    requestOptions.value = []
-    selectedOtRequestId.value = ''
-    clearCurrentResultOnly()
-
-    if (!silent) {
-      toast.add({
-        severity: 'warn',
-        summary: t('attendance.verification.otDateRequired'),
-        detail: t('attendance.verification.otDateRequiredDetail'),
-        life: 2500,
-      })
-    }
-
-    return
-  }
-
-  searchLoading.value = true
-  requestOptions.value = []
-  selectedOtRequestId.value = ''
-  clearCurrentResultOnly()
+  exporting.value = true
 
   try {
-    const params = {
+    const response = await exportDailyOTAttendanceVerification({
+      ...buildParams(1),
       page: 1,
-      limit: 100,
-      otDateFrom: selectedDate,
-      otDateTo: selectedDate,
-    }
+      limit: 5000,
+    })
 
-    if (selectedRequestStatus.value) {
-      params.status = selectedRequestStatus.value
-    }
+    const blob = new Blob([response.data], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
 
-    const response = await searchOTVerificationRequests(params)
-    const payloadValue = normalizePayload(response)
-    const items = normalizeItems(payloadValue)
+    link.href = url
+    link.download = `OT_Verification_${apiDate.value}.xlsx`
 
-    requestOptions.value = normalizeRequestOptions(items)
-
-    if (!requestOptions.value.length && !silent) {
-      toast.add({
-        severity: 'warn',
-        summary: t('attendance.verification.noOtRequests'),
-        detail: t('attendance.verification.noOtRequestsDetail'),
-        life: 3000,
-      })
-    }
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
   } catch (error) {
     toast.add({
       severity: 'error',
-      summary: t('attendance.verification.loadFailed'),
-      detail:
-        error?.response?.data?.message ||
-        error?.message ||
-        t('attendance.verification.loadRequestsFailed'),
-      life: 3500,
+      summary: tx('attendance.verification.exportFailed', 'Export failed'),
+      detail: getApiErrorMessage(error, tx('attendance.verification.exportFailedDetail', 'Please try again.')),
+      life: 4000,
     })
   } finally {
-    searchLoading.value = false
+    exporting.value = false
   }
-}
-
-function scheduleRequestSearch() {
-  window.clearTimeout(requestSearchTimer)
-
-  requestOptions.value = []
-  selectedOtRequestId.value = ''
-  clearCurrentResultOnly()
-
-  if (!verificationDate.value) {
-    return
-  }
-
-  requestSearchTimer = window.setTimeout(() => {
-    loadRequestsByDate({ silent: true })
-  }, 250)
-}
-
-function clearAll() {
-  window.clearTimeout(requestSearchTimer)
-
-  verificationDate.value = ''
-  selectedRequestStatus.value = ''
-  requestOptions.value = []
-  selectedOtRequestId.value = ''
-  clearCurrentResultOnly()
 }
 
 watch(
-  () => [
-    formatDateYMD(verificationDate.value),
-    selectedRequestStatus.value,
-  ],
+  apiDate,
   () => {
-    if (suppressRequestSearch) {
-      suppressRequestSearch = false
-      return
-    }
-
-    scheduleRequestSearch()
+    reload()
   },
+  { immediate: true },
 )
 
 watch(
-  () => selectedOtRequestId.value,
-  async (value, oldValue) => {
-    if (value === oldValue) return
-
-    if (!value) {
-      clearCurrentResultOnly()
-      return
-    }
-
-    await loadData()
-  },
+  () => [filters.result, filters.status],
+  () => reload(),
 )
 
-onMounted(() => {
-  if (routeOtRequestId.value) {
-    selectedOtRequestId.value = routeOtRequestId.value
-  }
-})
+watch(
+  () => [filters.search, filters.requester, filters.employee, filters.line],
+  () => scheduleFilterReload(),
+)
 
-onBeforeUnmount(() => {
-  window.clearTimeout(requestSearchTimer)
-})
+onBeforeUnmount(() => window.clearTimeout(filterTimer))
 </script>
 
 <template>
-  <div class="ot-page-shell ot-verification-page">
-    <section class="ot-filter-bar ot-verification-filter-bar">
-      <div class="ot-field">
+  <div class="ot-page-shell attendance-verification-page attendance-verification-page--full">
+    <section class="ot-filter-bar attendance-verification-filter-bar">
+      <div class="ot-field verification-date-field">
         <HolidayDatePicker
-          v-model="verificationDate"
-          :label="t('attendance.verification.otDate')"
-          :placeholder="t('attendance.verification.selectOtDate')"
+          v-model="filters.attendanceDate"
+          :label="tx('attendance.verification.date', 'Verification date')"
+          :placeholder="tx('attendance.verification.date', 'Verification date')"
         />
       </div>
 
       <div class="ot-field">
         <label class="ot-field-label">
-          {{ t('attendance.verification.searchOtRequest') }}
+          {{ t('common.search') }}
         </label>
 
-        <Select
-          v-model="selectedOtRequestId"
-          :options="requestOptions"
-          option-label="optionLabel"
-          option-value="id"
+        <IconField>
+          <InputIcon class="pi pi-search" />
+
+          <InputText
+            v-model="filters.search"
+            :placeholder="tx('attendance.verification.searchPlaceholder', 'Request no., employee, line...')"
+            class="w-full"
+            size="small"
+          />
+        </IconField>
+      </div>
+
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ tx('attendance.verification.requester', 'Requester') }}
+        </label>
+
+        <InputText
+          v-model="filters.requester"
+          :placeholder="tx('attendance.verification.requesterPlaceholder', 'Requester ID or name')"
           class="w-full"
-          :placeholder="t('attendance.verification.selectOtRequest')"
-          :loading="searchLoading"
-          :disabled="!requestOptions.length || searchLoading"
-          filter
           size="small"
-          @update:model-value="loadData"
         />
       </div>
 
       <div class="ot-field">
         <label class="ot-field-label">
-          {{ t('attendance.verification.requestStatus') }}
+          {{ tx('attendance.verification.employee', 'Employee') }}
+        </label>
+
+        <InputText
+          v-model="filters.employee"
+          :placeholder="tx('attendance.verification.employeePlaceholder', 'Employee ID or name')"
+          class="w-full"
+          size="small"
+        />
+      </div>
+
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ tx('attendance.verification.line', 'Line') }}
+        </label>
+
+        <InputText
+          v-model="filters.line"
+          :placeholder="tx('attendance.verification.linePlaceholder', 'Line code or name')"
+          class="w-full"
+          size="small"
+        />
+      </div>
+
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ tx('attendance.verification.requestStatus', 'Request status') }}
         </label>
 
         <Select
-          v-model="selectedRequestStatus"
-          :options="requestStatusOptions"
+          v-model="filters.status"
+          :options="statusOptions"
           option-label="label"
           option-value="value"
           class="w-full"
-          :placeholder="t('common.allStatus')"
           size="small"
         />
       </div>
 
-      <div class="ot-verification-filter-actions">
+      <div class="ot-field">
+        <label class="ot-field-label">
+          {{ tx('attendance.verification.resultLabel', 'Result') }}
+        </label>
+
+        <Select
+          v-model="filters.result"
+          :options="resultOptions"
+          option-label="label"
+          option-value="value"
+          class="w-full"
+          size="small"
+        />
+      </div>
+
+      <div class="attendance-verification-filter-actions">
+        <span class="ot-loaded-badge">
+          {{ loadedLabel }}
+        </span>
+
         <Button
           :label="t('common.clear')"
           icon="pi pi-filter-slash"
           severity="secondary"
           outlined
           size="small"
-          class="verify-action-button"
-          @click="clearAll"
+          class="attendance-action-button"
+          @click="clearFilters"
+        />
+
+        <Button
+          :label="t('common.refresh')"
+          icon="pi pi-refresh"
+          severity="secondary"
+          outlined
+          size="small"
+          class="attendance-action-button"
+          :loading="loading"
+          @click="reload"
+        />
+
+        <Button
+          :label="t('common.export')"
+          icon="pi pi-file-excel"
+          severity="success"
+          outlined
+          size="small"
+          class="attendance-action-button"
+          :loading="exporting"
+          @click="exportExcel"
+        />
+
+        <Button
+          :label="tx('attendance.verification.history', 'History')"
+          icon="pi pi-history"
+          severity="secondary"
+          outlined
+          size="small"
+          class="attendance-action-button"
+          @click="openHistory()"
         />
       </div>
     </section>
 
-    <Message
-      v-if="payload && !isFinalApprovedRequest"
-      severity="warn"
-      :closable="false"
-    >
-      {{
-        t('attendance.verification.nonFinalWarning', {
-          status: requestStatusLabel(otRequest.status),
-        })
-      }}
-    </Message>
+    <section class="ot-table-card attendance-verification-summary-card-wrap">
+      <div class="ot-table-toolbar">
+        <div>
+          <h2 class="ot-table-title">
+            {{ tx('attendance.verification.title', 'Daily OT Verification') }}
+          </h2>
+        </div>
 
-    <AppTableLoading
-      v-if="loading"
-      :title="t('common.loadingData')"
-      :message="t('attendance.verification.loadingVerification')"
-      :rows="6"
-      :columns="8"
-      icon="pi pi-check-circle"
-    />
+        <div class="ot-table-actions">
+          <Tag
+            :value="selectedDateLabel"
+            class="attendance-rgb-tag attendance-date-tag"
+          />
+        </div>
+      </div>
 
-    <template v-else-if="payload">
-      <section class="verification-summary-grid">
+      <div class="attendance-summary-grid">
         <div
           v-for="card in summaryCards"
           :key="card.label"
-          class="verification-summary-card"
-          :class="`is-${card.tone}`"
+          class="attendance-summary-card"
+          :class="card.className"
         >
           <div class="summary-icon">
             <i :class="card.icon" />
@@ -1008,438 +721,431 @@ onBeforeUnmount(() => {
             </div>
 
             <div class="summary-value">
-              {{ card.value }}
+              {{ Number(card.value || 0) }}
             </div>
           </div>
-        </div>
-      </section>
-
-      <section class="ot-table-card">
-        <div class="ot-table-toolbar">
-          <div>
-            <h2 class="ot-table-title">
-              {{ otRequest.requestNo || t('attendance.verification.requestNo') }}
-            </h2>
-          </div>
-
-          <div class="ot-table-actions">
-            <Tag
-              :value="requestStatusLabel(otRequest.status)"
-              :class="requestStatusTagClass(otRequest.status)"
-            />
-          </div>
-        </div>
-
-        <div class="verification-info-grid">
-          <div class="verification-info-card card-blue">
-            <div class="verification-info-icon">
-              <i class="pi pi-user" />
-            </div>
-
-            <div class="verification-info-content">
-              <div class="verification-info-label">
-                {{ t('attendance.verification.requester') }}
-              </div>
-
-              <div
-                class="verification-info-value"
-                :title="otRequest.requesterName || '-'"
-              >
-                {{ otRequest.requesterName || '-' }}
-              </div>
-            </div>
-          </div>
-
-          <div class="verification-info-card card-green">
-            <div class="verification-info-icon">
-              <i class="pi pi-clock" />
-            </div>
-
-            <div class="verification-info-content">
-              <div class="verification-info-label">
-                {{ t('attendance.verification.shift') }}
-              </div>
-
-              <div class="verification-info-value">
-                {{ requestShiftTime }}
-              </div>
-            </div>
-          </div>
-
-          <div class="verification-info-card card-purple">
-            <div class="verification-info-icon">
-              <i class="pi pi-calendar-clock" />
-            </div>
-
-            <div class="verification-info-content">
-              <div class="verification-info-label">
-                {{ t('attendance.verification.expectedOt') }}
-              </div>
-
-              <div class="verification-info-value">
-                {{ requestExpectedOtTime }}
-              </div>
-            </div>
-          </div>
-
-          <div class="verification-info-card card-orange">
-            <div class="verification-info-icon">
-              <i class="pi pi-stopwatch" />
-            </div>
-
-            <div class="verification-info-content">
-              <div class="verification-info-label">
-                {{ t('attendance.verification.requested') }}
-              </div>
-
-              <div class="verification-info-value">
-                {{ requestRequestedOtLabel }}
-              </div>
-            </div>
-          </div>
-
-          <div class="verification-info-card card-blue">
-            <div class="verification-info-icon">
-              <i class="pi pi-shield" />
-            </div>
-
-            <div class="verification-info-content">
-              <div class="verification-info-label">
-                {{ t('attendance.verification.policy') }}
-              </div>
-
-              <div
-                class="verification-info-value"
-                :title="requestPolicyLabel"
-              >
-                {{ requestPolicyLabel }}
-              </div>
-            </div>
-          </div>
-
-          <div class="verification-info-card card-green">
-            <div class="verification-info-icon">
-              <i class="pi pi-cog" />
-            </div>
-
-            <div class="verification-info-content">
-              <div class="verification-info-label">
-                {{ t('attendance.verification.otType') }}
-              </div>
-
-              <div class="verification-info-tag">
-                <Tag
-                  :value="timingModeLabel(requestTimingMode)"
-                  :class="timingModeTagClass(requestTimingMode)"
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section class="ot-table-card">
-        <div class="ot-table-toolbar">
-          <div>
-            <h2 class="ot-table-title">
-              {{ t('attendance.verification.verificationResult') }}
-            </h2>
-          </div>
-
-          <div class="ot-table-actions">
-            <span class="ot-loaded-badge">
-              {{ resultLoadedLabel }}
-            </span>
-          </div>
-        </div>
-
-        <section class="ot-filter-bar ot-verification-result-filter-bar">
-          <div class="ot-field">
-            <label class="ot-field-label">
-              {{ t('common.search') }}
-            </label>
-
-            <IconField>
-              <InputIcon class="pi pi-search" />
-
-              <InputText
-                v-model="tableSearch"
-                size="small"
-                class="w-full"
-                :placeholder="t('attendance.verification.searchPlaceholder')"
-              />
-            </IconField>
-          </div>
-
-          <div class="ot-field">
-            <label class="ot-field-label">
-              {{ t('attendance.verification.results') }}
-            </label>
-
-            <Select
-              v-model="tableCategory"
-              :options="categoryOptions"
-              option-label="label"
-              option-value="value"
-              size="small"
-              class="w-full"
-              :placeholder="t('attendance.verification.results')"
-            />
-          </div>
-        </section>
-
-        <div class="ot-table-wrapper">
-          <DataTable
-            :value="filteredVerificationRows"
-            data-key="rowKey"
-            scrollable
-            scroll-height="520px"
-            table-style="width: max-content; min-width: 100%; table-layout: auto;"
-            class="ot-data-table ot-data-table-compact verification-table"
-          >
-            <template #empty>
-              <div class="ot-empty-state">
-                <div class="ot-empty-icon">
-                  <i class="pi pi-check-circle" />
-                </div>
-
-                <div class="ot-empty-title">
-                  {{ t('common.noData') }}
-                </div>
-
-                <div class="ot-empty-text">
-                  {{ t('attendance.verification.noVerificationRows') }}
-                </div>
-              </div>
-            </template>
-
-            <Column
-              :header="t('attendance.verification.meaning')"
-              style="width: 18rem; min-width: 18rem"
-            >
-              <template #body="{ data }">
-                <div
-                  class="result-meaning-label"
-                  :class="resultMeaningTone(data)"
-                  :title="data.reason || data.rawDecision || resultMeaningLabel(data)"
-                >
-                  {{ resultMeaningLabel(data) }}
-                </div>
-              </template>
-            </Column>
-
-            <Column
-              :header="t('attendance.verification.employee')"
-              style="width: 15rem; min-width: 15rem"
-            >
-              <template #body="{ data }">
-                <div class="verification-employee-cell">
-                  <div class="verification-employee-code">
-                    {{ data.employeeNo || '-' }}
-                  </div>
-
-                  <div class="verification-employee-name">
-                    {{ data.employeeName || '-' }}
-                  </div>
-                </div>
-              </template>
-            </Column>
-
-            <Column
-              :header="t('attendance.verification.otType')"
-              style="width: 11rem; min-width: 11rem"
-            >
-              <template #body="{ data }">
-                <Tag
-                  :value="data.isFixed ? t('attendance.verification.fixedOt') : timingModeLabel(data.timingMode)"
-                  :class="timingModeTagClass(data.timingMode)"
-                />
-              </template>
-            </Column>
-
-            <Column
-              :header="t('attendance.verification.scanIn')"
-              style="width: 8rem; min-width: 8rem"
-            >
-              <template #body="{ data }">
-                <span
-                  class="scan-time-chip"
-                  :class="scanTimeTone(data.clockIn)"
-                >
-                  {{ scanTimeLabel(data.clockIn) }}
-                </span>
-              </template>
-            </Column>
-
-            <Column
-              :header="t('attendance.verification.scanOut')"
-              style="width: 8rem; min-width: 8rem"
-            >
-              <template #body="{ data }">
-                <span
-                  class="scan-time-chip"
-                  :class="scanTimeTone(data.clockOut)"
-                >
-                  {{ scanTimeLabel(data.clockOut) }}
-                </span>
-              </template>
-            </Column>
-
-            <Column
-              :header="t('attendance.verification.status')"
-              style="width: 11rem; min-width: 11rem"
-            >
-              <template #body="{ data }">
-                <Tag
-                  :value="attendanceStatusLabel(data.attendanceStatus)"
-                  :class="statusTagClass(data.attendanceStatus)"
-                />
-              </template>
-            </Column>
-
-            <Column
-              :header="t('attendance.verification.expectedOt')"
-              style="width: 13rem; min-width: 13rem"
-            >
-              <template #body="{ data }">
-                <div class="verification-time-cell">
-                  <div class="verification-main-text">
-                    {{ data.expectedOtTime }}
-                  </div>
-
-                  <div class="verification-sub-text">
-                    {{ t('attendance.verification.requested') }}:
-                    {{ formatMinutesLabel(data.requestedMinutes) }}
-                  </div>
-                </div>
-              </template>
-            </Column>
-
-            <Column
-              :header="t('attendance.verification.creditedOt')"
-              style="width: 11rem; min-width: 11rem"
-            >
-              <template #body="{ data }">
-                <div class="verification-time-cell">
-                  <div class="verification-main-text">
-                    {{ formatMinutesLabel(data.roundedOtMinutes) }}
-                  </div>
-
-                  <div class="verification-sub-text">
-                    {{ t('attendance.verification.actual') }}:
-                    {{ formatMinutesLabel(data.actualOtMinutes) }}
-                  </div>
-                </div>
-              </template>
-            </Column>
-
-            <Column
-              :header="t('attendance.verification.shift')"
-              style="width: 13rem; min-width: 13rem"
-            >
-              <template #body="{ data }">
-                <div class="verification-shift-cell">
-                  <div class="verification-main-text">
-                    {{ data.shiftName || '-' }}
-                  </div>
-
-                  <div class="verification-sub-text">
-                    {{ data.shiftTime }}
-                  </div>
-                </div>
-              </template>
-            </Column>
-
-            <Column
-              :header="t('attendance.verification.reason')"
-              style="width: 18rem; min-width: 18rem"
-            >
-              <template #body="{ data }">
-                <div
-                  class="verification-reason-text"
-                  :title="data.reason || data.rawDecision || '-'"
-                >
-                  {{ data.reason || data.rawDecision || '-' }}
-                </div>
-              </template>
-            </Column>
-          </DataTable>
-        </div>
-      </section>
-    </template>
-
-    <div
-      v-else
-      class="verification-empty-card"
-    >
-      <div class="ot-empty-state">
-        <div class="ot-empty-icon">
-          <i class="pi pi-check-circle" />
-        </div>
-
-        <div class="ot-empty-title">
-          {{ t('attendance.verification.verificationResult') }}
-        </div>
-
-        <div class="ot-empty-text">
-          {{ t('attendance.verification.emptyInstruction') }}
         </div>
       </div>
-    </div>
+    </section>
+
+    <section class="ot-table-card">
+      <div class="ot-table-toolbar">
+        <div>
+          <h2 class="ot-table-title">
+            {{ tx('attendance.verification.listTitle', 'Verification List') }}
+          </h2>
+        </div>
+
+        <div class="ot-table-actions">
+          <span
+            v-if="loading && hasAnyData"
+            class="ot-loaded-badge"
+          >
+            <i class="pi pi-spin pi-spinner" />
+            {{ t('common.updating') }}
+          </span>
+        </div>
+      </div>
+
+      <div class="ot-table-wrapper">
+        <AppTableLoading
+          v-if="isFirstLoading"
+          :title="t('common.loadingData')"
+          :message="t('common.fetchingRecords')"
+          :rows="7"
+          :columns="8"
+          icon="pi pi-check-square"
+        />
+
+        <DataTable
+          v-else
+          :value="rows"
+          lazy
+          scrollable
+          scroll-height="560px"
+          table-style="width: max-content; min-width: 100%; table-layout: auto;"
+          class="ot-data-table ot-data-table-compact attendance-verification-table"
+          :virtual-scroller-options="useVirtualScroll ? {
+            lazy: true,
+            onLazyLoad: onVirtualLazyLoad,
+            itemSize: 58,
+            delay: 0,
+            showLoader: false,
+            loading: false,
+            numToleratedItems: 16,
+          } : null"
+        >
+          <template #empty>
+            <div class="ot-empty-state">
+              <div class="ot-empty-icon">
+                <i :class="hasLoaded ? 'pi pi-calendar-times' : 'pi pi-spin pi-spinner'" />
+              </div>
+
+              <div class="ot-empty-title">
+                {{ tx('attendance.verification.emptyTitle', 'No verification rows') }}
+              </div>
+
+              <div class="ot-empty-text">
+                {{ tx('attendance.verification.emptyText', 'Select a Calendar date or adjust the filters.') }}
+              </div>
+            </div>
+          </template>
+
+          <Column
+            :header="tx('attendance.verification.requestNo', 'Request No.')"
+            style="width: 10rem; min-width: 10rem"
+          >
+            <template #body="{ data }">
+              <span class="attendance-code-text">
+                {{ data?.request?.requestNo || '—' }}
+              </span>
+            </template>
+          </Column>
+
+          <Column
+            :header="t('common.status')"
+            style="width: 9rem; min-width: 9rem"
+          >
+            <template #body="{ data }">
+              <Tag
+                v-if="data?.request?.status"
+                :value="requestStatusLabel(data?.request?.status)"
+                class="attendance-rgb-tag"
+                :class="requestStatusTagClass(data?.request?.status)"
+              />
+              <span v-else class="attendance-meta-text">—</span>
+            </template>
+          </Column>
+
+          <Column
+            :header="tx('attendance.verification.requester', 'Requester')"
+            style="width: 15rem; min-width: 15rem"
+          >
+            <template #body="{ data }">
+              <span class="attendance-name-text">
+                {{ displayRequester(data) }}
+              </span>
+            </template>
+          </Column>
+
+          <Column
+            :header="tx('attendance.verification.employee', 'Employee')"
+            style="width: 18rem; min-width: 18rem"
+          >
+            <template #body="{ data }">
+              <span class="attendance-name-text">
+                {{ displayEmployee(data) }}
+              </span>
+            </template>
+          </Column>
+
+          <Column
+            :header="tx('attendance.verification.line', 'Line')"
+            style="width: 11rem; min-width: 11rem"
+          >
+            <template #body="{ data }">
+              <span class="attendance-meta-text">
+                {{ displayLine(data) }}
+              </span>
+            </template>
+          </Column>
+
+          <Column
+            :header="tx('attendance.verification.shift', 'Shift')"
+            style="width: 10rem; min-width: 10rem"
+          >
+            <template #body="{ data }">
+              <span class="attendance-meta-text">
+                {{ displayShift(data) }}
+              </span>
+            </template>
+          </Column>
+
+          <Column
+            :header="tx('attendance.verification.otHours', 'OT Time')"
+            style="width: 8rem; min-width: 8rem"
+          >
+            <template #body="{ data }">
+              <div class="attendance-time-cell">
+                <span class="attendance-time-value">
+                  {{ formatMinutes(data?.requestedOtMinutes || data?.potentialOtMinutes) }}
+                </span>
+
+                <span
+                  v-if="!data?.request?.id && data?.potentialOtMinutes"
+                  class="attendance-cell-hint"
+                >
+                  {{ tx('attendance.verification.fromAttendance', 'From attendance') }}
+                </span>
+              </div>
+            </template>
+          </Column>
+
+          <Column
+            :header="tx('attendance.verification.attendance', 'Attendance')"
+            style="width: 14rem; min-width: 14rem"
+          >
+            <template #body="{ data }">
+              <div class="attendance-attendance-cell">
+                <span class="attendance-meta-text">
+                  {{ attendanceText(data) }}
+                </span>
+
+                <Tag
+                  v-if="data?.attendance?.id"
+                  :value="sourceLabel(data?.attendance?.attendanceSource)"
+                  class="attendance-rgb-tag attendance-source-tag"
+                  :class="sourceTagClass(data?.attendance?.attendanceSource)"
+                />
+              </div>
+            </template>
+          </Column>
+
+          <Column
+            :header="tx('attendance.verification.resultLabel', 'Result')"
+            style="width: 13rem; min-width: 13rem"
+          >
+            <template #body="{ data }">
+              <Tag
+                :value="resultLabel(data?.result)"
+                class="attendance-rgb-tag"
+                :class="resultTagClass(data?.result)"
+              />
+            </template>
+          </Column>
+
+          <Column
+            :header="t('common.action')"
+            class="ot-action-col-header"
+            style="width: 18rem; min-width: 18rem"
+          >
+            <template #body="{ data }">
+              <div class="attendance-verification-actions ot-action-col-body">
+                <Button
+                  v-if="data?.canCreateAttendance"
+                  :label="tx('attendance.verification.createAttendance', 'Create attendance')"
+                  icon="pi pi-clock"
+                  size="small"
+                  severity="warning"
+                  class="attendance-row-action"
+                  :loading="actionRowId === data?.id"
+                  @click="runAction(data, 'createAttendance')"
+                />
+
+                <Button
+                  v-else-if="data?.canCreateOTRequest"
+                  :label="tx('attendance.verification.createOtRequest', 'Create OT request')"
+                  icon="pi pi-file-plus"
+                  size="small"
+                  severity="success"
+                  class="attendance-row-action"
+                  :loading="actionRowId === data?.id"
+                  @click="runAction(data, 'createRequest')"
+                />
+
+                <Button
+                  v-else-if="data?.canRecoverAttendance"
+                  :label="tx('attendance.verification.recover', 'Recover')"
+                  icon="pi pi-undo"
+                  size="small"
+                  severity="danger"
+                  outlined
+                  class="attendance-row-action"
+                  :loading="actionRowId === data?.id"
+                  @click="runAction(data, 'recover')"
+                />
+
+                <span
+                  v-else
+                  class="attendance-meta-text"
+                >
+                  —
+                </span>
+
+                <Button
+                  icon="pi pi-history"
+                  :aria-label="tx('attendance.verification.history', 'History')"
+                  size="small"
+                  severity="secondary"
+                  text
+                  rounded
+                  class="attendance-history-button"
+                  @click="openHistory(data)"
+                />
+              </div>
+            </template>
+          </Column>
+        </DataTable>
+      </div>
+    </section>
+
+    <Dialog
+      v-model:visible="historyVisible"
+      modal
+      :header="tx('attendance.verification.historyTitle', 'Verification History')"
+      :style="{ width: 'min(920px, 96vw)' }"
+    >
+      <DataTable
+        :value="historyRows"
+        :loading="historyLoading"
+        scrollable
+        scroll-height="420px"
+        size="small"
+        table-style="min-width: 46rem"
+        class="attendance-history-table"
+      >
+        <Column
+          field="createdAt"
+          :header="tx('attendance.verification.historyTime', 'Time')"
+          style="width: 13rem"
+        >
+          <template #body="{ data }">
+            {{ formatDateTime(data.createdAt) || '—' }}
+          </template>
+        </Column>
+
+        <Column
+          field="action"
+          :header="t('common.action')"
+          style="width: 13rem"
+        >
+          <template #body="{ data }">
+            <Tag
+              :value="data.action || '—'"
+              class="attendance-rgb-tag attendance-history-action"
+            />
+          </template>
+        </Column>
+
+        <Column
+          :header="tx('attendance.verification.employee', 'Employee')"
+          style="width: 18rem"
+        >
+          <template #body="{ data }">
+            {{ [data.employeeNo, data.employeeName].filter(Boolean).join(' · ') || '—' }}
+          </template>
+        </Column>
+
+        <Column
+          :header="tx('attendance.verification.requestNo', 'Request No.')"
+          style="width: 14rem"
+        >
+          <template #body="{ data }">
+            {{ data.generatedOTRequestNo || data.sourceOTRequestNo || '—' }}
+          </template>
+        </Column>
+      </DataTable>
+    </Dialog>
   </div>
 </template>
 
 <style scoped>
-.ot-verification-page {
-  --verify-code-rgb: 37 99 235;
-  --verify-name-rgb: 15 23 42;
-  --verify-meta-rgb: 71 85 105;
+.attendance-verification-page {
+  --attendance-code-rgb: 37 99 235;
+  --attendance-name-rgb: 15 23 42;
+  --attendance-meta-rgb: 71 85 105;
+  --attendance-total-rgb: 100 116 139;
+  --attendance-success-rgb: 34 197 94;
+  --attendance-failed-rgb: 239 68 68;
+  --attendance-amber-rgb: 245 158 11;
+  --attendance-blue-rgb: 59 130 246;
+  --attendance-muted-rgb: 100 116 139;
 
-  --verify-match-rgb: 34 197 94;
-  --verify-warning-rgb: 245 158 11;
-  --verify-danger-rgb: 239 68 68;
-  --verify-info-rgb: 59 130 246;
-  --verify-purple-rgb: 139 92 246;
-  --verify-muted-rgb: 100 116 139;
+  display: grid;
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  gap: 0.8rem;
+  margin: 0 !important;
+  padding: 0 !important;
+  box-sizing: border-box;
+  overflow-x: clip;
+}
+
+/* This page must use the complete application content area beside the sidebar. */
+:global(.attendance-verification-page.ot-page-shell),
+:global(.attendance-verification-page.ot-page-shell > .ot-filter-bar),
+:global(.attendance-verification-page.ot-page-shell > .ot-table-card) {
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  box-sizing: border-box;
 }
 
 /* =========================
-   Filter bar
+   Filter bar — never wider than the page
    ========================= */
-
-.ot-verification-filter-bar {
+.attendance-verification-filter-bar {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
   align-items: end;
+  overflow: visible;
+  box-sizing: border-box;
 }
 
-.ot-verification-filter-actions {
+.attendance-verification-filter-bar :deep(.ot-field),
+.attendance-verification-filter-bar :deep(.p-iconfield),
+.attendance-verification-filter-bar :deep(.p-inputtext),
+.attendance-verification-filter-bar :deep(.p-select),
+.attendance-verification-filter-bar :deep(.p-select-label) {
+  min-width: 0 !important;
+  max-width: 100%;
+}
+
+.attendance-verification-filter-bar :deep(.p-inputtext),
+.attendance-verification-filter-bar :deep(.p-select) {
+  width: 100% !important;
+  box-sizing: border-box;
+}
+
+.verification-date-field {
+  position: relative;
+  z-index: 5;
+  min-width: 0;
+}
+
+.attendance-verification-filter-actions {
   grid-column: 1 / -1;
   display: flex;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
   gap: 0.5rem;
+  box-sizing: border-box;
 }
 
-.ot-verification-result-filter-bar {
-  border-radius: 0;
-  border-right: 0;
-  border-left: 0;
-  box-shadow: none;
+.attendance-verification-filter-actions > * {
+  min-width: 0;
+  max-width: 100%;
+  flex: 0 1 auto;
 }
 
 /* =========================
    Summary cards
    ========================= */
-
-.verification-summary-grid {
-  display: grid;
-  gap: 0.75rem;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
+.attendance-verification-summary-card-wrap {
+  width: 100%;
+  min-width: 0;
+  overflow: visible;
 }
 
-.verification-summary-card {
-  --summary-rgb: var(--verify-muted-rgb);
+.attendance-summary-grid {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  box-sizing: border-box;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+}
+
+.attendance-summary-card {
   display: flex;
   min-width: 0;
   align-items: center;
@@ -1448,233 +1154,65 @@ onBeforeUnmount(() => {
   border-radius: 0.95rem;
   background: var(--ot-surface);
   padding: 0.78rem;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
-}
-
-.verification-summary-card.is-match {
-  --summary-rgb: var(--verify-match-rgb);
-}
-
-.verification-summary-card.is-warning {
-  --summary-rgb: var(--verify-warning-rgb);
-}
-
-.verification-summary-card.is-danger {
-  --summary-rgb: var(--verify-danger-rgb);
-}
-
-.verification-summary-card.is-info {
-  --summary-rgb: var(--verify-info-rgb);
-}
-
-.verification-summary-card.is-purple {
-  --summary-rgb: var(--verify-purple-rgb);
+  box-shadow: 0 10px 24px rgb(15 23 42 / 0.04);
 }
 
 .summary-icon {
   display: flex;
-  height: 2rem;
   width: 2rem;
+  height: 2rem;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
   border-radius: 0.75rem;
-  background: rgb(var(--summary-rgb) / 0.13);
-  color: rgb(var(--summary-rgb));
   font-size: 0.85rem;
 }
 
-.summary-content {
-  min-width: 0;
-  flex: 1;
-}
-
-.summary-label {
-  overflow: hidden;
-  color: var(--ot-text-muted);
-  font-size: 0.68rem;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.summary-value {
-  margin-top: 0.15rem;
-  overflow: hidden;
-  color: var(--ot-text);
-  font-size: 0.95rem;
-  font-weight: 800;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+.summary-content { min-width: 0; flex: 1; }
+.summary-label { overflow: hidden; color: var(--ot-text-muted); font-size: 0.68rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.summary-value { margin-top: 0.15rem; overflow: hidden; color: var(--ot-text); font-size: 0.9rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.card-blue .summary-icon { background: rgb(var(--attendance-blue-rgb) / 0.13); color: rgb(var(--attendance-blue-rgb)); }
+.card-green .summary-icon { background: rgb(var(--attendance-success-rgb) / 0.13); color: rgb(var(--attendance-success-rgb)); }
+.card-red .summary-icon { background: rgb(var(--attendance-failed-rgb) / 0.13); color: rgb(var(--attendance-failed-rgb)); }
+.card-amber .summary-icon { background: rgb(var(--attendance-amber-rgb) / 0.13); color: rgb(var(--attendance-amber-rgb)); }
+.card-slate .summary-icon { background: rgb(var(--attendance-total-rgb) / 0.13); color: rgb(var(--attendance-total-rgb)); }
 
 /* =========================
-   Info cards
+   Cells and RGB tags
    ========================= */
-
-.verification-info-grid {
-  display: grid;
-  gap: 0.75rem;
-  padding: 0.75rem;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
-}
-
-.verification-info-card {
-  --info-rgb: var(--verify-muted-rgb);
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 0.65rem;
-  border: 1px solid var(--ot-border);
-  border-radius: 0.95rem;
-  background: var(--ot-surface);
-  padding: 0.78rem;
-}
-
-.verification-info-card.card-blue {
-  --info-rgb: var(--verify-info-rgb);
-}
-
-.verification-info-card.card-green {
-  --info-rgb: var(--verify-match-rgb);
-}
-
-.verification-info-card.card-purple {
-  --info-rgb: var(--verify-purple-rgb);
-}
-
-.verification-info-card.card-orange {
-  --info-rgb: var(--verify-warning-rgb);
-}
-
-.verification-info-icon {
-  display: flex;
-  height: 2rem;
-  width: 2rem;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0.75rem;
-  background: rgb(var(--info-rgb) / 0.13);
-  color: rgb(var(--info-rgb));
-  font-size: 0.85rem;
-}
-
-.verification-info-content {
-  min-width: 0;
-  flex: 1;
-}
-
-.verification-info-label {
-  overflow: hidden;
-  color: var(--ot-text-muted);
-  font-size: 0.68rem;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.verification-info-value {
-  margin-top: 0.15rem;
-  overflow: hidden;
-  color: var(--ot-text);
-  font-size: 0.82rem;
-  font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.verification-info-tag {
-  margin-top: 0.2rem;
-}
-
-/* =========================
-   Text helpers
-   ========================= */
-
-.verification-employee-cell,
-.verification-time-cell,
-.verification-shift-cell {
-  display: inline-flex;
-  max-width: 100%;
-  min-width: 0;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-}
-
-.verification-employee-code {
-  display: inline-flex;
-  max-width: 100%;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  color: rgb(var(--verify-code-rgb));
-  font-size: 0.78rem;
-  font-weight: 750;
-  font-variant-numeric: tabular-nums;
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.verification-employee-name,
-.verification-sub-text,
-.verification-reason-text {
+.attendance-code-text,
+.attendance-name-text,
+.attendance-meta-text {
   display: inline-flex;
   max-width: 100%;
   min-width: 0;
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  color: rgb(var(--verify-meta-rgb));
-  font-size: 0.7rem;
-  font-weight: 500;
   text-align: center;
   text-overflow: ellipsis;
+  vertical-align: middle;
   white-space: nowrap;
 }
+.attendance-code-text { color: rgb(var(--attendance-code-rgb)); font-size: 0.8rem; font-weight: 750; font-variant-numeric: tabular-nums; }
+.attendance-name-text { color: rgb(var(--attendance-name-rgb)); font-size: 0.78rem; font-weight: 650; }
+.attendance-meta-text { color: rgb(var(--attendance-meta-rgb)); font-size: 0.78rem; font-weight: 500; }
+.attendance-time-cell,
+.attendance-attendance-cell { display: inline-flex; min-width: 0; flex-direction: column; align-items: center; justify-content: center; gap: 0.24rem; }
+.attendance-time-value { color: var(--ot-text); font-size: 0.8rem; font-weight: 750; white-space: nowrap; }
+.attendance-cell-hint { color: var(--ot-text-muted); font-size: 0.65rem; font-weight: 550; white-space: nowrap; }
 
-.verification-employee-name,
-.verification-sub-text {
-  margin-top: 0.12rem;
-}
-
-.verification-main-text {
-  display: inline-flex;
-  max-width: 100%;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  color: rgb(var(--verify-name-rgb));
-  font-size: 0.8rem;
-  font-weight: 700;
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.verification-reason-text {
-  max-width: 17rem;
-  font-size: 0.74rem;
-}
-
-/* =========================
-   Tags / chips
-   ========================= */
-
-.verify-rgb-tag {
-  --verify-tag-rgb: var(--verify-muted-rgb);
+.attendance-rgb-tag {
+  --attendance-tag-rgb: var(--attendance-muted-rgb);
   display: inline-flex !important;
   min-height: 1.42rem;
   max-width: 100%;
   align-items: center !important;
   justify-content: center !important;
-  border: 1px solid rgb(var(--verify-tag-rgb) / 0.28);
+  border: 1px solid rgb(var(--attendance-tag-rgb) / 0.28);
   border-radius: 999px;
-  background: rgb(var(--verify-tag-rgb) / 0.11);
-  color: rgb(var(--verify-tag-rgb) / 1);
+  background: rgb(var(--attendance-tag-rgb) / 0.11);
+  color: rgb(var(--attendance-tag-rgb));
   padding: 0.12rem 0.5rem;
   font-size: 0.7rem;
   font-weight: 750;
@@ -1683,240 +1221,117 @@ onBeforeUnmount(() => {
   vertical-align: middle;
   white-space: nowrap;
 }
+.attendance-date-tag,
+.attendance-source-import,
+.attendance-result-attendance-only,
+.attendance-history-action { --attendance-tag-rgb: var(--attendance-blue-rgb); }
+.attendance-source-scan,
+.attendance-status-approved,
+.attendance-result-matched { --attendance-tag-rgb: var(--attendance-success-rgb); }
+.attendance-source-verification,
+.attendance-status-pending,
+.attendance-result-missing-attendance { --attendance-tag-rgb: var(--attendance-amber-rgb); }
+.attendance-status-rejected,
+.attendance-result-missing-request { --attendance-tag-rgb: var(--attendance-failed-rgb); }
+.attendance-status-cancelled,
+.attendance-status-muted,
+.attendance-result-muted { --attendance-tag-rgb: var(--attendance-total-rgb); }
+.attendance-source-tag { min-height: 1.3rem; font-size: 0.64rem; }
 
-.verify-tag-match {
-  --verify-tag-rgb: var(--verify-match-rgb);
-}
-
-.verify-tag-warning {
-  --verify-tag-rgb: var(--verify-warning-rgb);
-}
-
-.verify-tag-danger {
-  --verify-tag-rgb: var(--verify-danger-rgb);
-}
-
-.verify-tag-info {
-  --verify-tag-rgb: var(--verify-info-rgb);
-}
-
-.verify-tag-muted {
-  --verify-tag-rgb: var(--verify-muted-rgb);
-}
-
-.scan-time-chip {
-  --scan-rgb: var(--verify-muted-rgb);
-  display: inline-flex;
-  min-width: 4.25rem;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid rgb(var(--scan-rgb) / 0.28);
-  border-radius: 999px;
-  background: rgb(var(--scan-rgb) / 0.11);
-  color: rgb(var(--scan-rgb) / 1);
-  padding: 0.22rem 0.58rem;
-  font-size: 0.74rem;
-  font-weight: 750;
-  line-height: 1;
-  text-align: center;
-  white-space: nowrap;
-}
-
-.scan-time-chip.is-complete {
-  --scan-rgb: var(--verify-match-rgb);
-}
-
-.scan-time-chip.is-missing {
-  --scan-rgb: var(--verify-danger-rgb);
-}
-
-.result-meaning-label {
-  --meaning-rgb: var(--verify-muted-rgb);
-  display: inline-flex;
-  max-width: 17rem;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  border: 1px solid rgb(var(--meaning-rgb) / 0.28);
-  border-radius: 999px;
-  background: rgb(var(--meaning-rgb) / 0.11);
-  color: rgb(var(--meaning-rgb) / 1);
-  padding: 0.22rem 0.58rem;
-  font-size: 0.7rem;
-  font-weight: 750;
-  line-height: 1.1;
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.result-meaning-label.is-match {
-  --meaning-rgb: var(--verify-match-rgb);
-}
-
-.result-meaning-label.is-mismatch {
-  --meaning-rgb: var(--verify-danger-rgb);
-}
-
-.result-meaning-label.is-warning {
-  --meaning-rgb: var(--verify-warning-rgb);
-}
-
-.result-meaning-label.is-forget {
-  --meaning-rgb: var(--verify-purple-rgb);
-}
-
-.verification-empty-card {
-  border: 1px dashed var(--ot-border);
-  border-radius: 1rem;
-  background: var(--ot-surface);
-}
+.attendance-verification-actions { display: inline-flex; min-height: 2rem; align-items: center; justify-content: center; gap: 0.28rem; white-space: nowrap; }
+:deep(.attendance-row-action .p-button-label) { font-size: 0.7rem; font-weight: 650; }
+:deep(.attendance-row-action .p-button-icon),
+:deep(.attendance-history-button .p-button-icon),
+:deep(.attendance-action-button .p-button-icon) { font-size: 0.76rem; }
 
 /* =========================
-   PrimeVue table center
+   Lazy table
    ========================= */
-
-:deep(.verification-table.p-datatable .p-datatable-table) {
-  width: max-content !important;
-  min-width: 100% !important;
-  table-layout: auto !important;
-}
-
-:deep(.verification-table.p-datatable .p-datatable-thead > tr > th),
-:deep(.verification-table.p-datatable .p-datatable-tbody > tr > td) {
-  text-align: center !important;
-  vertical-align: middle !important;
-}
-
-:deep(.verification-table.p-datatable .p-datatable-thead > tr > th) {
-  width: auto !important;
-  min-width: auto !important;
-  max-width: none !important;
-  padding: 0.58rem 0.68rem !important;
-  white-space: nowrap !important;
-  font-size: 0.78rem !important;
-  font-weight: 650 !important;
-}
-
-:deep(.verification-table.p-datatable .p-datatable-tbody > tr > td) {
-  width: auto !important;
-  min-width: auto !important;
-  max-width: none !important;
-  height: 58px !important;
-  padding: 0.42rem 0.62rem !important;
-  white-space: nowrap !important;
-  font-size: 0.8rem !important;
-}
-
-:deep(.verification-table.p-datatable .p-datatable-column-header-content),
-:deep(.verification-table.p-datatable .p-column-header-content) {
-  display: flex !important;
-  width: 100% !important;
-  align-items: center !important;
-  justify-content: center !important;
-  gap: 0.25rem !important;
-  text-align: center !important;
-}
-
-:deep(.verification-table.p-datatable .p-datatable-column-title),
-:deep(.verification-table.p-datatable .p-column-title) {
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  text-align: center !important;
-}
-
-:deep(.verification-table.p-datatable .p-datatable-tbody > tr > td > *) {
-  margin-inline: auto !important;
-}
-
-:deep(.verification-table.p-datatable .p-tag),
-:deep(.verification-table.p-datatable .p-button) {
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  margin-inline: auto !important;
-  text-align: center !important;
-}
-
-:deep(.verification-table.p-datatable .p-tag-value) {
-  max-width: 100%;
-  overflow: hidden;
-  text-align: center !important;
-  text-overflow: ellipsis;
-}
-
-:deep(.verify-action-button .p-button-label) {
-  font-weight: 500 !important;
-}
-
-:deep(.verify-action-button .p-button-icon) {
-  font-size: 0.76rem;
-}
+:deep(.attendance-verification-table.p-datatable) { width: 100%; min-width: 0; }
+:deep(.attendance-verification-table.p-datatable .p-datatable-wrapper) { width: 100%; max-width: 100%; overflow-x: auto; }
+:deep(.attendance-verification-table.p-datatable .p-datatable-table) { width: max-content !important; min-width: 100% !important; table-layout: auto !important; }
+:deep(.attendance-verification-table.p-datatable .p-datatable-thead > tr > th),
+:deep(.attendance-verification-table.p-datatable .p-datatable-tbody > tr > td) { text-align: center !important; vertical-align: middle !important; }
+:deep(.attendance-verification-table.p-datatable .p-datatable-thead > tr > th) { padding: 0.58rem 0.68rem !important; white-space: nowrap !important; font-size: 0.78rem !important; font-weight: 650 !important; }
+:deep(.attendance-verification-table.p-datatable .p-datatable-tbody > tr > td) { height: 58px !important; padding: 0.42rem 0.62rem !important; white-space: nowrap !important; font-size: 0.8rem !important; }
+:deep(.attendance-verification-table.p-datatable .p-datatable-tbody > tr > td > *) { margin-inline: auto !important; }
+:deep(.attendance-verification-table.p-datatable .p-tag),
+:deep(.attendance-verification-table.p-datatable .p-button) { display: inline-flex !important; align-items: center !important; justify-content: center !important; margin-inline: auto !important; text-align: center !important; }
+:deep(.attendance-verification-table.p-datatable .p-tag-value) { max-width: 100%; overflow: hidden; text-align: center !important; text-overflow: ellipsis; }
+:deep(.attendance-history-table .p-datatable-thead > tr > th),
+:deep(.attendance-history-table .p-datatable-tbody > tr > td) { text-align: center; vertical-align: middle; }
 
 /* =========================
    Dark mode
    ========================= */
-
-:global(.dark) .ot-verification-page {
-  --verify-name-rgb: 226 232 240;
-  --verify-meta-rgb: 203 213 225;
-}
-
-:global(.dark) .verification-summary-card {
-  box-shadow: none;
-}
-
-:global(.dark) .summary-icon,
-:global(.dark) .verification-info-icon {
-  background: rgb(var(--summary-rgb, var(--info-rgb)) / 0.18);
-}
-
-:global(.dark) .verify-rgb-tag,
-:global(.dark) .scan-time-chip,
-:global(.dark) .result-meaning-label {
-  border-color: rgb(var(--verify-tag-rgb, var(--scan-rgb, var(--meaning-rgb))) / 0.42);
-  background: rgb(var(--verify-tag-rgb, var(--scan-rgb, var(--meaning-rgb))) / 0.18);
-}
+:global(.dark) .attendance-verification-page { --attendance-name-rgb: 226 232 240; --attendance-meta-rgb: 203 213 225; }
+:global(.dark) .attendance-summary-card { box-shadow: none; }
+:global(.dark) .card-blue .summary-icon { background: rgb(var(--attendance-blue-rgb) / 0.18); color: #93c5fd; }
+:global(.dark) .card-green .summary-icon { background: rgb(var(--attendance-success-rgb) / 0.18); color: #86efac; }
+:global(.dark) .card-red .summary-icon { background: rgb(var(--attendance-failed-rgb) / 0.18); color: #fca5a5; }
+:global(.dark) .card-amber .summary-icon { background: rgb(var(--attendance-amber-rgb) / 0.18); color: #fcd34d; }
+:global(.dark) .card-slate .summary-icon { background: rgb(var(--attendance-total-rgb) / 0.18); color: #cbd5e1; }
+:global(.dark) .attendance-rgb-tag { border-color: rgb(var(--attendance-tag-rgb) / 0.42); background: rgb(var(--attendance-tag-rgb) / 0.18); }
 
 /* =========================
-   Responsive
+   Small screens
    ========================= */
-
-@media (min-width: 1024px) {
-  .ot-verification-filter-bar {
-    grid-template-columns:
-      minmax(180px, 220px)
-      minmax(320px, 1fr)
-      minmax(180px, 220px);
-  }
-
-  .ot-verification-filter-actions {
-    grid-column: 1 / -1;
-  }
+@media (max-width: 640px) {
+  .attendance-verification-filter-actions { justify-content: stretch; }
+  .attendance-verification-filter-actions > * { flex: 1 1 calc(50% - 0.25rem); }
+  .attendance-verification-filter-actions .ot-loaded-badge { flex-basis: 100%; }
+  .attendance-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
-@media (min-width: 1280px) {
-  .verification-summary-grid {
-    grid-template-columns: repeat(7, minmax(0, 1fr));
-  }
-
-  .verification-info-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .ot-verification-result-filter-bar {
-    grid-template-columns: minmax(260px, 1fr) minmax(220px, 280px);
-  }
+@media (min-width: 1200px) {
+  .attendance-summary-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 }
 
-@media (max-width: 768px) {
-  .ot-verification-filter-actions {
-    justify-content: stretch;
-  }
-
-  .ot-verification-filter-actions > * {
-    flex: 1 1 100%;
-  }
+/* =========================================
+   Verification table: exact header/cell alignment
+   ========================================= */
+:deep(.attendance-verification-table.p-datatable .p-datatable-thead > tr > th),
+:deep(.attendance-verification-table.p-datatable .p-datatable-tbody > tr > td) {
+  text-align: center !important;
+  vertical-align: middle !important;
 }
+
+:deep(.attendance-verification-table.p-datatable .p-datatable-column-header-content),
+:deep(.attendance-verification-table.p-datatable .p-column-header-content) {
+  display: flex !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 0.28rem !important;
+  text-align: center !important;
+}
+
+:deep(.attendance-verification-table.p-datatable .p-datatable-column-title),
+:deep(.attendance-verification-table.p-datatable .p-column-title) {
+  display: inline-flex !important;
+  min-width: 0 !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+}
+
+:deep(.attendance-verification-table.p-datatable .p-sortable-column-icon),
+:deep(.attendance-verification-table.p-datatable .p-datatable-sort-icon) {
+  margin-inline: 0 !important;
+  flex: 0 0 auto !important;
+}
+
+:deep(.attendance-verification-table.p-datatable .p-datatable-tbody > tr > td > *),
+:deep(.attendance-verification-table.p-datatable .attendance-time-cell),
+:deep(.attendance-verification-table.p-datatable .attendance-attendance-cell),
+:deep(.attendance-verification-table.p-datatable .attendance-verification-actions) {
+  margin-inline: auto !important;
+}
+
+:deep(.attendance-verification-table.p-datatable .p-datatable-tbody > tr > td .p-button),
+:deep(.attendance-verification-table.p-datatable .p-datatable-tbody > tr > td .p-tag) {
+  margin-inline: auto !important;
+}
+
 </style>

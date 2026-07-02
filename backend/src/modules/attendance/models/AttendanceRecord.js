@@ -278,7 +278,7 @@ const attendanceRecordSchema = new Schema(
     // Existing historical records are treated as IMPORT by the presenter fallback.
     attendanceSource: {
       type: String,
-      enum: ['IMPORT', 'SCAN_STATION'],
+      enum: ['IMPORT', 'SCAN_STATION', 'OT_VERIFICATION'],
       default: 'IMPORT',
       trim: true,
     },
@@ -295,6 +295,36 @@ const attendanceRecordSchema = new Schema(
       default: '',
       trim: true,
       maxlength: 50,
+    },
+
+    // Set only when Attendance Verification creates an attendance record
+    // from an OT request. It makes recovery safe and auditable.
+    verificationMeta: {
+      createdFromOTRequestId: {
+        type: Schema.Types.ObjectId,
+        ref: 'OTRequest',
+        default: null,
+      },
+      createdFromOTRequestNo: {
+        type: String,
+        default: '',
+        trim: true,
+        maxlength: 100,
+      },
+      createdFromEmployeeId: {
+        type: Schema.Types.ObjectId,
+        ref: 'Employee',
+        default: null,
+      },
+      generatedAt: {
+        type: Date,
+        default: null,
+      },
+      generatedBy: {
+        type: Schema.Types.ObjectId,
+        ref: 'Account',
+        default: null,
+      },
     },
 
     status: {
@@ -558,6 +588,7 @@ attendanceRecordSchema.index({ importId: 1, rawRowNo: 1 })
 attendanceRecordSchema.index({ attendanceDate: -1, employeeNo: 1 })
 attendanceRecordSchema.index({ attendanceSource: 1, attendanceDate: -1 })
 attendanceRecordSchema.index({ lastScanAt: -1 })
+attendanceRecordSchema.index({ 'verificationMeta.createdFromOTRequestId': 1, attendanceDate: -1 })
 
 // Optimized for Attendance Records first-page and virtual-scroll loading after large imports.
 attendanceRecordSchema.index({ attendanceDate: -1, employeeNo: 1, rawRowNo: 1, createdAt: -1, _id: -1 })

@@ -204,6 +204,58 @@ export function getAttendanceScanSummary(params = {}) {
   })
 }
 
+
+
+// =========================
+// Daily OT / Attendance Reconciliation
+// =========================
+function normalizeDailyVerificationParams(params = {}) {
+  return {
+    ...params,
+    attendanceDate: normalizeDateParam(params.attendanceDate),
+  }
+}
+
+export function getDailyOTAttendanceVerification(params = {}) {
+  return api.get('/attendance/verification/daily', {
+    params: normalizeDailyVerificationParams(params),
+    timeout: ATTENDANCE_VERIFY_TIMEOUT_MS,
+  })
+}
+
+export function exportDailyOTAttendanceVerification(params = {}) {
+  return api.get('/attendance/verification/daily/export', {
+    params: normalizeDailyVerificationParams(params),
+    responseType: 'blob',
+    timeout: ATTENDANCE_VERIFY_TIMEOUT_MS,
+  })
+}
+
+export function createAttendanceFromOTVerification(payload = {}) {
+  return api.post('/attendance/verification/daily/create-attendance', payload, {
+    timeout: ATTENDANCE_VERIFY_TIMEOUT_MS,
+  })
+}
+
+export function createOTRequestFromAttendanceVerification(payload = {}) {
+  return api.post('/attendance/verification/daily/create-ot-request', payload, {
+    timeout: ATTENDANCE_VERIFY_TIMEOUT_MS,
+  })
+}
+
+export function recoverAttendanceFromOTVerification(payload = {}) {
+  return api.post('/attendance/verification/daily/recover-attendance', payload, {
+    timeout: ATTENDANCE_VERIFY_TIMEOUT_MS,
+  })
+}
+
+export function getOTAttendanceVerificationHistory(params = {}) {
+  return api.get('/attendance/verification/daily/history', {
+    params: normalizeDailyVerificationParams(params),
+    timeout: ATTENDANCE_VERIFY_TIMEOUT_MS,
+  })
+}
+
 // =========================
 // OT Attendance Verification
 // =========================
@@ -256,6 +308,13 @@ const attendanceService = {
   submitAttendanceScan,
   getAttendanceScanLogs,
   getAttendanceScanSummary,
+
+  getDailyOTAttendanceVerification,
+  exportDailyOTAttendanceVerification,
+  createAttendanceFromOTVerification,
+  createOTRequestFromAttendanceVerification,
+  recoverAttendanceFromOTVerification,
+  getOTAttendanceVerificationHistory,
 
   searchOTRequestsForVerification,
   searchOTVerificationRequests,
