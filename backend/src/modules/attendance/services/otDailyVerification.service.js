@@ -281,17 +281,27 @@ function buildAttendanceOnlyEmployee(record = {}) {
   }
 }
 
-function calculatePotentialOtMinutes(attendance = {}) {
-  if (!attendance?.clockOut || !attendance?.shiftEndTime) return 0
+function calculatePotentialOtMinutes(attendance = {}, dayType = '') {
+  const resolvedDayType = upper(dayType || attendance?.dayType || 'WORKING_DAY')
+  const isSundayOrHoliday = ['SUNDAY', 'HOLIDAY'].includes(resolvedDayType)
+
+  // Sunday and Holiday work is itself OT. It must be measured from the first
+  // scan to the last scan, not only from the normal shift end time.
+  const startTime = isSundayOrHoliday
+    ? s(attendance?.clockIn)
+    : s(attendance?.shiftEndTime)
+  const endTime = s(attendance?.clockOut)
+
+  if (!startTime || !endTime) return 0
 
   const minutes = timeDifferenceMinutes(
-    attendance.shiftEndTime,
-    attendance.clockOut,
+    startTime,
+    endTime,
     attendance.isCrossMidnightShift === true,
   )
 
-  // For a normal shift, a scan-out before the shift end is not OT. For a
-  // cross-midnight shift, timeDifferenceMinutes already carries the end time
+  // On a normal working day, only time after the shift end is potential OT.
+  // For a cross-midnight shift, timeDifferenceMinutes carries the final scan
   // into the following day when appropriate.
   return minutes > 0 ? minutes : 0
 }
@@ -819,9 +829,65 @@ function optionMinutes(option = {}) {
   )
 }
 
-async function resolveShiftOptionForAttendance(employee = {}, attendance = {}) {
+function policyMinutes(value, fallback = 0) {
+  const minutes = Number(value)
+  return Number.isFinite(minutes) && minutes >= 0 ? Math.round(minutes) : fallback
+}
+
+function roundMinutesByPolicy(minutes, unitMinutes, roundMethod) {
+  const rawMinutes = Math.max(0, policyMinutes(minutes))
+  const unit = Math.max(1, policyMinutes(unitMinutes, 30))
+  const method = upper(roundMethod || 'CEIL')
+  const ratio = rawMinutes / unit
+
+  if (method === 'FLOOR') return Math.floor(ratio) * unit
+  if (method === 'NEAREST') return Math.round(ratio) * unit
+
+  return Math.ceil(ratio) * unit
+}
+
+function getPolicyEligibleMinutes(actualMinutes, policy = {}, dayType = 'WORKING_DAY') {
+  const rawMinutes = Math.max(0, policyMinutes(actualMinutes))
+  const resolvedDayType = upper(dayType || 'WORKING_DAY')
+
+  // Sunday/Holiday work is evaluated as the actual attendance window. For a
+  // normal working day, the policy grace period is unpaid time immediately
+  // after the shift end, matching payment verification logic.
+  const eligibleMinutes = resolvedDayType === 'WORKING_DAY'
+    ? policy?.allowPostShiftOT === false
+      ? 0
+      : Math.max(0, rawMinutes - policyMinutes(policy?.graceAfterShiftEndMinutes))
+    : rawMinutes
+
+  const minEligibleMinutes = policyMinutes(policy?.minEligibleMinutes)
+  if (eligibleMinutes < minEligibleMinutes) {
+    return {
+      eligibleMinutes,
+      roundedMinutes: 0,
+      isEligible: false,
+    }
+  }
+
+  return {
+    eligibleMinutes,
+    roundedMinutes: roundMinutesByPolicy(
+      eligibleMinutes,
+      policy?.roundUnitMinutes,
+      policy?.roundMethod,
+    ),
+    isEligible: true,
+  }
+}
+
+async function resolveShiftOptionForAttendance(employee = {}, attendance = {}, dayType = '') {
   const shiftId = asId(employee.shiftId)
-  if (!shiftId) throw appError('Employee has no assigned shift. OT request cannot be generated.', 409, 'EMPLOYEE_SHIFT_MISSING')
+  if (!shiftId) {
+    throw appError(
+      'Employee has no assigned shift. OT request cannot be generated.',
+      409,
+      'EMPLOYEE_SHIFT_MISSING',
+    )
+  }
 
   const lookup = await otTimingService.getShiftOTOptionsByShift(shiftId, {
     otDate: attendance.attendanceDate,
@@ -833,17 +899,47 @@ async function resolveShiftOptionForAttendance(employee = {}, attendance = {}) {
       ? lookup.items
       : []
 
-  const expectedMinutes = calculatePotentialOtMinutes(mapAttendance(attendance))
-  const option = rows
-    .filter((item) => optionId(item))
-    .sort((a, b) => {
-      const aDefault = a?.isDefault === true ? 0 : 1
-      const bDefault = b?.isDefault === true ? 0 : 1
-      if (aDefault !== bDefault) return aDefault - bDefault
-      return Math.abs(optionMinutes(a) - expectedMinutes) - Math.abs(optionMinutes(b) - expectedMinutes)
-    })[0]
+  const resolvedDayType = upper(dayType || lookup?.dayType || attendance?.dayType || 'WORKING_DAY')
+  const actualMinutes = calculatePotentialOtMinutes(
+    mapAttendance(attendance),
+    resolvedDayType,
+  )
 
-  if (!option) {
+  const candidates = rows
+    .filter((item) => optionId(item) && optionMinutes(item) > 0)
+    .map((item) => {
+      const policy = item?.calculationPolicy || {}
+      const result = getPolicyEligibleMinutes(actualMinutes, policy, resolvedDayType)
+
+      return {
+        item,
+        policy,
+        ...result,
+      }
+    })
+    .filter((candidate) =>
+      candidate.isEligible &&
+      candidate.roundedMinutes > 0 &&
+      optionMinutes(candidate.item) === candidate.roundedMinutes,
+    )
+    .sort((left, right) => {
+      const sequenceDifference = Number(left.item?.sequence || 0) - Number(right.item?.sequence || 0)
+      if (sequenceDifference !== 0) return sequenceDifference
+      return optionMinutes(left.item) - optionMinutes(right.item)
+    })
+
+  const selected = candidates[0]
+  if (selected) {
+    return {
+      shiftOtOptionId: optionId(selected.item),
+      option: selected.item,
+      actualMinutes,
+      eligibleMinutes: selected.eligibleMinutes,
+      roundedMinutes: selected.roundedMinutes,
+    }
+  }
+
+  if (!rows.length) {
     throw appError(
       'No active OT option is configured for this employee shift and date.',
       409,
@@ -851,7 +947,35 @@ async function resolveShiftOptionForAttendance(employee = {}, attendance = {}) {
     )
   }
 
-  return optionId(option)
+  const policyResults = rows
+    .filter((item) => optionId(item))
+    .map((item) => {
+      const result = getPolicyEligibleMinutes(
+        actualMinutes,
+        item?.calculationPolicy || {},
+        resolvedDayType,
+      )
+      return {
+        policyName: s(item?.calculationPolicy?.name || item?.calculationPolicy?.code || item?.label),
+        ...result,
+      }
+    })
+
+  const firstEligible = policyResults.find((item) => item.isEligible && item.roundedMinutes > 0)
+
+  if (!firstEligible) {
+    throw appError(
+      `Actual OT (${minutesToLabel(actualMinutes)}) is below the minimum OT policy threshold.`,
+      409,
+      'OT_BELOW_MINIMUM_POLICY',
+    )
+  }
+
+  throw appError(
+    `OT policy rounds the actual OT to ${minutesToLabel(firstEligible.roundedMinutes)}, but no active OT option for this shift/date has that duration. Add the matching option before generating the request.`,
+    409,
+    'SHIFT_OT_OPTION_POLICY_MISMATCH',
+  )
 }
 
 async function createOTRequestFromAttendance(payload = {}, authUser = {}) {
@@ -864,10 +988,18 @@ async function createOTRequestFromAttendance(payload = {}, authUser = {}) {
   if (!attendance) throw appError('Attendance record not found', 404, 'ATTENDANCE_NOT_FOUND')
   if (!attendance.employeeId) throw appError('Attendance record has no matched employee', 409, 'ATTENDANCE_EMPLOYEE_MISSING')
 
-  const potentialMinutes = calculatePotentialOtMinutes(mapAttendance(attendance))
+  const dayInfo = await classifyDayType(attendance.attendanceDate)
+  const potentialMinutes = calculatePotentialOtMinutes(
+    mapAttendance(attendance),
+    dayInfo?.dayType,
+  )
+
   if (potentialMinutes <= 0) {
+    const isSundayOrHoliday = ['SUNDAY', 'HOLIDAY'].includes(upper(dayInfo?.dayType))
     throw appError(
-      'Attendance scan-out does not show overtime after the shift end time.',
+      isSundayOrHoliday
+        ? 'Attendance must have valid scan-in and scan-out times before an OT request can be generated.'
+        : 'Attendance scan-out does not show overtime after the shift end time.',
       409,
       'ATTENDANCE_HAS_NO_OVERTIME',
     )
@@ -907,28 +1039,17 @@ async function createOTRequestFromAttendance(payload = {}, authUser = {}) {
     )
   }
 
-  const shiftOptionId = await resolveShiftOptionForAttendance(employee, attendance)
-  const customStartTime = s(attendance.shiftEndTime || employee?.shiftId?.endTime)
-  const customEndTime = s(attendance.clockOut)
+  const selection = await resolveShiftOptionForAttendance(
+    employee,
+    attendance,
+    dayInfo?.dayType,
+  )
 
-  const generatedCrossMidnight = attendance.isCrossMidnightShift === true
-
-  if (
-    !isHHmm(customStartTime) ||
-    !isHHmm(customEndTime) ||
-    timeDifferenceMinutes(customStartTime, customEndTime, generatedCrossMidnight) <= 0
-  ) {
-    throw appError(
-      'Attendance or shift time is incomplete. A generated OT request needs a scan-out after the employee shift end time.',
-      409,
-      'ATTENDANCE_OT_TIMING_INVALID',
-    )
-  }
-
-  // The OT service remains the only place that builds the timing, policy snapshot,
-  // approval chain, notifications, and duplicate protection. We deliberately use
-  // CUSTOM_FIXED so the request follows the actual scan-out time; the selected
-  // shift option supplies the correct OT policy for that shift/date.
+  // Do not create flexible clock-to-clock OT from attendance. The employee's
+  // actual scans determine which policy-approved duration applies, but the
+  // generated request itself must use the configured discrete Shift OT Option
+  // (0.5h, 1h, 1.5h, and so on). This keeps the request and payment policy
+  // aligned and prevents unsupported values such as 1.25h from being created.
   const generatedRequesterAuth = {
     ...authUser,
     employeeId: String(manager._id),
@@ -939,13 +1060,14 @@ async function createOTRequestFromAttendance(payload = {}, authUser = {}) {
     {
       employeeIds: [String(employee._id)],
       otDate: attendance.attendanceDate,
-      otTimingSource: 'CUSTOM_FIXED',
-      shiftOtOptionId,
-      customStartTime,
-      customEndTime,
-      customBreakMinutes: 0,
+      otTimingSource: 'SHIFT_OPTION',
+      shiftOtOptionId: selection.shiftOtOptionId,
       employeeTimeOverrides: [],
-      reason: `Generated from attendance verification using the employee's actual scan-out: ${customEndTime}.`,
+      reason: `Generated from attendance verification. Actual OT: ${minutesToLabel(
+        selection.actualMinutes,
+      )}; policy-eligible OT: ${minutesToLabel(selection.eligibleMinutes)}; selected option: ${s(
+        selection.option?.label,
+      )} (${minutesToLabel(selection.roundedMinutes)}).`,
     },
     generatedRequesterAuth,
   )
@@ -983,8 +1105,12 @@ async function createOTRequestFromAttendance(payload = {}, authUser = {}) {
       requesterName: s(manager.displayName),
       otDate: attendance.attendanceDate,
       status: upper(generatedDoc?.status || created?.status || 'PENDING'),
-      scanOut: customEndTime,
+      scanOut: s(attendance.clockOut),
       generatedFromAttendance: true,
+      actualOtMinutes: selection.actualMinutes,
+      policyEligibleOtMinutes: selection.eligibleMinutes,
+      generatedOtMinutes: selection.roundedMinutes,
+      selectedOtOptionLabel: s(selection.option?.label),
     },
   }
 }

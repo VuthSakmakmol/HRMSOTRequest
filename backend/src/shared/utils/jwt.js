@@ -4,7 +4,7 @@ const env = require('../../config/env')
 
 function signAccessToken(payload) {
   return jwt.sign(payload, env.jwtAccessSecret, {
-    expiresIn: '1d',
+    expiresIn: '365d',
   })
 }
 
