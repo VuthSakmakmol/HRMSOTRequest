@@ -247,6 +247,20 @@ const navGroups = computed(() => {
       icon: 'pi pi-calendar-clock',
       items: [
         {
+          key: 'attendance-scan-station',
+          label: t('nav.attendanceScanStation'),
+          icon: 'pi pi-id-card',
+          to: '/attendance/scan-station',
+          permissions: ['ATTENDANCE_SCAN_USE'],
+        },
+        {
+          key: 'attendance-scan-logs',
+          label: t('nav.attendanceScanLogs'),
+          icon: 'pi pi-list',
+          to: '/attendance/scan-logs',
+          permissions: ['ATTENDANCE_SCAN_LOG_VIEW'],
+        },
+        {
           key: 'attendance-imports',
           label: t('nav.attendanceImport'),
           icon: 'pi pi-upload',

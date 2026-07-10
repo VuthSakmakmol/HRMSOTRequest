@@ -36,6 +36,8 @@ import PaymentProcessView from '@/modules/payment/views/PaymentProcessView.vue'
 
 import AttendanceImportView from '@/modules/attendance/views/AttendanceImportView.vue'
 import AttendanceRecordsView from '@/modules/attendance/views/AttendanceRecordsView.vue'
+import AttendanceScanStationView from '@/modules/attendance/views/AttendanceScanStationView.vue'
+import AttendanceScanLogsView from '@/modules/attendance/views/AttendanceScanLogsView.vue'
 import OTAttendanceVerificationView from '@/modules/attendance/views/OTAttendanceVerificationView.vue'
 
 import PaymentAllowancePolicyView from '@/modules/payment/views/PaymentAllowancePolicyView.vue'
@@ -412,6 +414,28 @@ const routes = [
       // =========================
       // Attendance
       // =========================
+      {
+        path: 'attendance/scan-station',
+        name: 'attendance-scan-station',
+        component: AttendanceScanStationView,
+        meta: {
+          requiresAuth: true,
+          title: 'Attendance Scan Station',
+          titleKey: 'nav.attendanceScanStation',
+          requiredAnyPermissions: ['ATTENDANCE_SCAN_USE'],
+        },
+      },
+      {
+        path: 'attendance/scan-logs',
+        name: 'attendance-scan-logs',
+        component: AttendanceScanLogsView,
+        meta: {
+          requiresAuth: true,
+          title: 'Attendance Scan Logs',
+          titleKey: 'nav.attendanceScanLogs',
+          requiredAnyPermissions: ['ATTENDANCE_SCAN_LOG_VIEW'],
+        },
+      },
       {
         path: 'attendance/imports',
         name: 'attendance-imports',

@@ -265,6 +265,18 @@ const PERMISSIONS = [
     'ATTENDANCE',
     'Allow verifying OT requests against attendance records',
   ),
+  permission(
+    'ATTENDANCE_SCAN_USE',
+    'Use Attendance Scan Station',
+    'ATTENDANCE',
+    'Allow recording employee attendance by scanner at the attendance station',
+  ),
+  permission(
+    'ATTENDANCE_SCAN_LOG_VIEW',
+    'View Attendance Scan Logs',
+    'ATTENDANCE',
+    'Allow viewing attendance scanner activity and failed scan records',
+  ),
 
   // =========================
   // OT Policy Master
