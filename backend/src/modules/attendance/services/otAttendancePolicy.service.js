@@ -42,6 +42,44 @@ function timeToMinutes(value) {
   return hours * 60 + minutes
 }
 
+function minutesToHHmm(value) {
+  const normalized = ((Math.round(number(value)) % 1440) + 1440) % 1440
+  const hours = Math.floor(normalized / 60)
+  const minutes = normalized % 60
+
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
+}
+
+function addMinutesToHHmm(value, minutesToAdd) {
+  const startMinutes = timeToMinutes(value)
+  if (startMinutes == null) return ''
+
+  return minutesToHHmm(startMinutes + Math.round(number(minutesToAdd)))
+}
+
+function roundMinutesByPolicy(minutes, unitMinutes, roundMethod) {
+  const rawMinutes = Math.max(0, Math.round(number(minutes)))
+  const unit = Math.max(1, Math.round(number(unitMinutes, 30)))
+  const factor = rawMinutes / unit
+  const method = upper(roundMethod || 'CEIL')
+
+  if (method === 'FLOOR') return Math.floor(factor) * unit
+  if (method === 'NEAREST') return Math.round(factor) * unit
+
+  return Math.ceil(factor) * unit
+}
+
+function formatHoursLabel(minutes) {
+  const normalized = Math.max(0, Math.round(number(minutes)))
+  const hours = Math.floor(normalized / 60)
+  const rest = normalized % 60
+
+  if (!rest) return `${hours}h`
+  if (!hours) return `${rest}m`
+
+  return `${hours}h ${rest}m`
+}
+
 function normalizeMinuteNear(rawMinute, anchorMinute) {
   if (rawMinute == null || anchorMinute == null) return rawMinute
 
@@ -167,6 +205,111 @@ function buildConfiguredRequest(option = {}, lookup = {}, dayType = '') {
   }
 }
 
+
+function policyGroupKey(item = {}) {
+  const request = item.configuredRequest || {}
+  const policy = request.otCalculationPolicySnapshot || {}
+
+  return [
+    asId(policy.calculationPolicyId || request.otCalculationPolicyId),
+    upper(request.shiftOtOptionTimingMode),
+    s(request.requestStartTime),
+    upper(request.dayType),
+  ].join('|')
+}
+
+function buildWorkingDayRoundedCandidate(items = [], attendance = {}) {
+  const validItems = Array.isArray(items) ? items.filter(Boolean) : []
+  if (!validItems.length) return null
+
+  const first = validItems[0]
+  const configuredRequest = first.configuredRequest || {}
+  const policy = configuredRequest.otCalculationPolicySnapshot || {}
+  const requestStart = timeToMinutes(configuredRequest.requestStartTime)
+  const clockOutRaw = timeToMinutes(attendance.clockOut)
+
+  if (requestStart == null || clockOutRaw == null || policy.allowPostShiftOT === false) {
+    return null
+  }
+
+  const shiftEndRaw = timeToMinutes(configuredRequest.shiftEndTime)
+  const normalizedShiftEnd = shiftEndRaw == null
+    ? requestStart
+    : normalizeMinuteNear(shiftEndRaw, requestStart)
+
+  const policyStart = Math.max(
+    requestStart,
+    normalizedShiftEnd + Math.max(0, Math.round(number(policy.graceAfterShiftEndMinutes))),
+  )
+
+  const clockOut = normalizeMinuteNear(clockOutRaw, policyStart)
+  const eligibleOtMinutes = Math.max(0, clockOut - policyStart)
+  const minimumMinutes = Math.max(0, Math.round(number(policy.minEligibleMinutes)))
+
+  if (eligibleOtMinutes <= 0 || eligibleOtMinutes < minimumMinutes) {
+    return null
+  }
+
+  const maximumConfiguredMinutes = validItems.reduce(
+    (maximum, item) => Math.max(maximum, optionPaidMinutes(item.option)),
+    0,
+  )
+
+  let roundedOtMinutes = roundMinutesByPolicy(
+    eligibleOtMinutes,
+    policy.roundUnitMinutes,
+    policy.roundMethod,
+  )
+
+  if (maximumConfiguredMinutes > 0) {
+    roundedOtMinutes = Math.min(roundedOtMinutes, maximumConfiguredMinutes)
+  }
+
+  if (roundedOtMinutes <= 0) return null
+
+  const orderedByPaidMinutes = validItems
+    .slice()
+    .sort((left, right) => {
+      const paidDifference = optionPaidMinutes(left.option) - optionPaidMinutes(right.option)
+      if (paidDifference !== 0) return paidDifference
+
+      return number(left.option.sequence) - number(right.option.sequence)
+    })
+
+  const exactOption = orderedByPaidMinutes.find(
+    (item) => optionPaidMinutes(item.option) === roundedOtMinutes,
+  )
+
+  const carrierOption = exactOption || orderedByPaidMinutes.find(
+    (item) => optionPaidMinutes(item.option) >= roundedOtMinutes,
+  ) || orderedByPaidMinutes[orderedByPaidMinutes.length - 1]
+
+  if (!carrierOption) return null
+
+  const breakMinutes = Math.max(
+    0,
+    Math.round(number(carrierOption.configuredRequest?.breakMinutes)),
+  )
+
+  const requestStartTime = minutesToHHmm(policyStart)
+  const requestEndTime = addMinutesToHHmm(
+    requestStartTime,
+    roundedOtMinutes + breakMinutes,
+  )
+
+  return {
+    carrierOption,
+    exactOption: Boolean(exactOption),
+    eligibleOtMinutes,
+    roundedOtMinutes,
+    generatedOtMinutes: roundedOtMinutes,
+    requestStartTime,
+    requestEndTime,
+    breakMinutes,
+    policy,
+  }
+}
+
 function normalizeAttendanceForPolicy(attendance = {}, configuredRequest = {}) {
   const dayType = upper(configuredRequest.dayType || attendance.dayType || 'WORKING_DAY')
 
@@ -208,7 +351,11 @@ function evaluateAttendanceAgainstConfiguredOptions({
       const configuredRequest = buildConfiguredRequest(option, lookup, resolvedDayType)
       const paidMinutes = optionPaidMinutes(option)
 
-      if (!paidMinutes || !isHHmm(configuredRequest.requestStartTime) || !isHHmm(configuredRequest.requestEndTime)) {
+      if (
+        !paidMinutes ||
+        !isHHmm(configuredRequest.requestStartTime) ||
+        !isHHmm(configuredRequest.requestEndTime)
+      ) {
         return null
       }
 
@@ -227,9 +374,6 @@ function evaluateAttendanceAgainstConfiguredOptions({
     })
     .filter(Boolean)
 
-  // Several shorter options may also match because policy caps payable minutes
-  // by the configured request. The largest matching option is the strongest
-  // valid result and prevents 2h attendance from being reduced to 0.5h.
   const matchingOptions = evaluatedOptions
     .filter((item) => item.isMatch)
     .sort((left, right) => {
@@ -239,8 +383,32 @@ function evaluateAttendanceAgainstConfiguredOptions({
       return number(left.option.sequence) - number(right.option.sequence)
     })
 
-  const selected = matchingOptions[0] || null
-  const bestEvaluation = selected || evaluatedOptions
+  let roundedSelection = null
+
+  if (resolvedDayType === 'WORKING_DAY') {
+    const groups = new Map()
+
+    for (const item of evaluatedOptions) {
+      const key = policyGroupKey(item)
+      const group = groups.get(key) || []
+      group.push(item)
+      groups.set(key, group)
+    }
+
+    roundedSelection = [...groups.values()]
+      .map((items) => buildWorkingDayRoundedCandidate(items, attendance))
+      .filter(Boolean)
+      .sort((left, right) => {
+        const roundedDifference = right.roundedOtMinutes - left.roundedOtMinutes
+        if (roundedDifference !== 0) return roundedDifference
+
+        return number(left.carrierOption?.option?.sequence) - number(right.carrierOption?.option?.sequence)
+      })[0] || null
+  }
+
+  const legacySelected = matchingOptions[0] || null
+  const selectedItem = roundedSelection?.carrierOption || legacySelected
+  const bestEvaluation = selectedItem || evaluatedOptions
     .slice()
     .sort((left, right) => {
       const roundedDifference = number(right.metrics.roundedOtMinutes) - number(left.metrics.roundedOtMinutes)
@@ -249,31 +417,61 @@ function evaluateAttendanceAgainstConfiguredOptions({
       return left.paidMinutes - right.paidMinutes
     })[0] || null
 
+  const generatedOtMinutes = roundedSelection
+    ? roundedSelection.generatedOtMinutes
+    : legacySelected?.paidMinutes || 0
+
+  const selectedPolicy = selectedItem?.configuredRequest?.otCalculationPolicySnapshot || {}
+  const selectedOptionLabel = roundedSelection && !roundedSelection.exactOption
+    ? `${formatHoursLabel(generatedOtMinutes)} · ${upper(selectedPolicy.roundMethod || 'CEIL')}`
+    : s(selectedItem?.option?.label || selectedItem?.option?.optionLabel)
+
   return {
     dayType: resolvedDayType,
     rawPotentialOtMinutes: rawMinutes,
 
-    isEligible: Boolean(selected),
-    result: selected ? 'MATCH' : upper(bestEvaluation?.metrics?.otResult || 'MISMATCH'),
-    reason: s(bestEvaluation?.metrics?.otResultReason),
-    reasonKey: s(bestEvaluation?.metrics?.otResultReasonKey),
+    isEligible: generatedOtMinutes > 0,
+    result: generatedOtMinutes > 0
+      ? 'MATCH'
+      : upper(bestEvaluation?.metrics?.otResult || 'MISMATCH'),
+    reason: generatedOtMinutes > 0
+      ? 'Attendance satisfies the configured OT policy and rounding method'
+      : s(bestEvaluation?.metrics?.otResultReason),
+    reasonKey: generatedOtMinutes > 0
+      ? 'attendance.verification.policy_match'
+      : s(bestEvaluation?.metrics?.otResultReasonKey),
 
-    actualOtMinutes: number(bestEvaluation?.metrics?.actualOtMinutes),
-    eligibleOtMinutes: number(bestEvaluation?.metrics?.eligibleOtMinutes),
-    roundedOtMinutes: number(bestEvaluation?.metrics?.roundedOtMinutes),
+    actualOtMinutes: roundedSelection
+      ? roundedSelection.eligibleOtMinutes
+      : number(bestEvaluation?.metrics?.actualOtMinutes),
+    eligibleOtMinutes: roundedSelection
+      ? roundedSelection.eligibleOtMinutes
+      : number(bestEvaluation?.metrics?.eligibleOtMinutes),
+    roundedOtMinutes: roundedSelection
+      ? roundedSelection.roundedOtMinutes
+      : number(bestEvaluation?.metrics?.roundedOtMinutes),
 
-    generatedOtMinutes: selected ? selected.paidMinutes : 0,
-    requestStartTime: s(selected?.configuredRequest?.requestStartTime),
-    requestEndTime: s(selected?.configuredRequest?.requestEndTime),
+    generatedOtMinutes,
+    generatedBreakMinutes: roundedSelection?.breakMinutes || 0,
+    generatedFromPolicyRounding: Boolean(roundedSelection),
+    requestStartTime: roundedSelection
+      ? roundedSelection.requestStartTime
+      : s(legacySelected?.configuredRequest?.requestStartTime),
+    requestEndTime: roundedSelection
+      ? roundedSelection.requestEndTime
+      : s(legacySelected?.configuredRequest?.requestEndTime),
 
-    shiftOtOptionId: asId(selected?.option?.id || selected?.option?._id),
-    shiftOtOptionLabel: s(selected?.option?.label || selected?.option?.optionLabel),
+    shiftOtOptionId: asId(selectedItem?.option?.id || selectedItem?.option?._id),
+    shiftOtOptionLabel: selectedOptionLabel,
+    selectedOptionPaidMinutes: optionPaidMinutes(selectedItem?.option || {}),
     calculationPolicyId: asId(
-      selected?.option?.calculationPolicy?.id ||
-      selected?.option?.calculationPolicy?._id,
+      selectedItem?.option?.calculationPolicy?.id ||
+      selectedItem?.option?.calculationPolicy?._id,
     ),
-    calculationPolicyCode: upper(selected?.option?.calculationPolicy?.code),
-    calculationPolicyName: s(selected?.option?.calculationPolicy?.name),
+    calculationPolicyCode: upper(selectedItem?.option?.calculationPolicy?.code),
+    calculationPolicyName: s(selectedItem?.option?.calculationPolicy?.name),
+    calculationPolicyRoundMethod: upper(selectedPolicy.roundMethod),
+    calculationPolicyRoundUnitMinutes: number(selectedPolicy.roundUnitMinutes),
 
     evaluatedOptions: evaluatedOptions.map((item) => ({
       shiftOtOptionId: asId(item.option.id || item.option._id),

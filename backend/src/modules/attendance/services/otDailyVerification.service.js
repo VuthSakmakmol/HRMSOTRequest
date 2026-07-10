@@ -1138,6 +1138,12 @@ async function resolveShiftOptionForAttendance(
       actualMinutes: evaluation.rawPotentialOtMinutes,
       eligibleMinutes: evaluation.eligibleOtMinutes,
       roundedMinutes: evaluation.generatedOtMinutes,
+      breakMinutes: Math.max(
+        0,
+        Math.round(Number(evaluation.generatedBreakMinutes || 0)),
+      ),
+      requestStartTime: s(evaluation.requestStartTime),
+      requestEndTime: s(evaluation.requestEndTime),
       policyEvaluation: evaluation,
     }
   }
@@ -1242,14 +1248,27 @@ async function createOTRequestFromAttendance(payload = {}, authUser = {}) {
     {
       employeeIds: [String(employee._id)],
       otDate: attendance.attendanceDate,
-      otTimingSource: 'SHIFT_OPTION',
+
+      // The selected Shift OT Option remains the policy carrier, but the
+      // generated request window must use the exact policy-rounded duration.
+      // Example: 18:00 policy start + 19:21 clock-out with NEAREST/30 becomes
+      // 18:00-19:30 (90 minutes), even when only 1h and 2h options exist.
+      otTimingSource: 'CUSTOM_FIXED',
       shiftOtOptionId: selection.shiftOtOptionId,
+      customStartTime: selection.requestStartTime,
+      customEndTime: selection.requestEndTime,
+      customBreakMinutes: selection.breakMinutes,
       employeeTimeOverrides: [],
       reason: `Generated from attendance verification. Actual OT: ${minutesToLabel(
         selection.actualMinutes,
-      )}; policy-eligible OT: ${minutesToLabel(selection.eligibleMinutes)}; selected option: ${s(
-        selection.option?.label,
-      )} (${minutesToLabel(selection.roundedMinutes)}).`,
+      )}; policy-eligible OT: ${minutesToLabel(selection.eligibleMinutes)}; policy-rounded OT: ${minutesToLabel(
+        selection.roundedMinutes,
+      )}; policy: ${upper(selection.policyEvaluation?.calculationPolicyCode)} (${upper(
+        selection.policyEvaluation?.calculationPolicyRoundMethod,
+      )}/${Math.max(
+        0,
+        Math.round(Number(selection.policyEvaluation?.calculationPolicyRoundUnitMinutes || 0)),
+      )}m).`,
     },
     generatedRequesterAuth,
   )
