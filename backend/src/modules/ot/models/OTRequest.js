@@ -14,6 +14,15 @@ function nullableId(value) {
   return s(value) ? value : null
 }
 
+function firstPositiveNumber(...values) {
+  for (const value of values) {
+    const number = Number(value)
+    if (Number.isFinite(number) && number > 0) return number
+  }
+
+  return 0
+}
+
 const OT_STATUS = ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED']
 
 const OT_DAY_TYPES = ['WORKING_DAY', 'SUNDAY', 'HOLIDAY']
@@ -76,8 +85,10 @@ function normalizeEmployeeCollection(items = []) {
     const breakMinutes = Number(item?.breakMinutes || 0)
     const requestedMinutes = Number(item?.requestedMinutes || 0)
 
-    const totalRequestPaidMinutes = Number(
-      item?.totalRequestPaidMinutes ?? item?.totalMinutes ?? requestedMinutes ?? 0,
+    const totalRequestPaidMinutes = firstPositiveNumber(
+      item?.totalRequestPaidMinutes,
+      item?.totalMinutes,
+      requestedMinutes,
     )
 
     result.push({
@@ -842,8 +853,10 @@ OTRequestSchema.pre('validate', function normalize(next) {
   this.breakMinutes = Number(this.breakMinutes || 0)
   this.requestedMinutes = Number(this.requestedMinutes || 0)
 
-  this.totalRequestPaidMinutes = Number(
-    this.totalRequestPaidMinutes ?? this.totalMinutes ?? 0,
+  this.totalRequestPaidMinutes = firstPositiveNumber(
+    this.totalRequestPaidMinutes,
+    this.totalMinutes,
+    this.requestedMinutes,
   )
 
   this.totalMinutes = this.totalRequestPaidMinutes

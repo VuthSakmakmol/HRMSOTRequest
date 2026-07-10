@@ -483,7 +483,12 @@ function buildTrustedEmployeeTiming({
 }
 
 function applyTimingToEmployeeSnapshot(snapshot = {}, employeeTiming = {}) {
-  const paidMinutes = n(employeeTiming.totalRequestPaidMinutes ?? employeeTiming.totalMinutes)
+  const paidMinutes = Math.max(
+    0,
+    n(employeeTiming.totalRequestPaidMinutes),
+    n(employeeTiming.totalMinutes),
+    n(employeeTiming.requestedMinutes),
+  )
 
   return {
     ...snapshot,

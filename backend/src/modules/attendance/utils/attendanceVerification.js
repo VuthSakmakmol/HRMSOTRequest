@@ -1722,5 +1722,6 @@ function verifyAttendanceAgainstOT({
 module.exports = {
   MESSAGE_KEYS,
   deriveAttendanceResult,
+  calculatePolicyDrivenOtMetrics,
   verifyAttendanceAgainstOT,
 }

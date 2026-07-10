@@ -12,6 +12,11 @@ router.get('/export', requirePermission('ATTENDANCE_VERIFY'), controller.exportD
 router.get('/history', requirePermission('ATTENDANCE_VERIFY'), controller.history)
 router.post('/create-attendance', requirePermission('ATTENDANCE_VERIFY'), controller.createAttendance)
 router.post('/create-ot-request', requirePermission('ATTENDANCE_VERIFY'), controller.createOTRequest)
+router.post(
+  '/recover-ot-request',
+  requirePermission('ATTENDANCE_VERIFY'),
+  controller.recoverOTRequest,
+)
 router.post('/recover-attendance', requirePermission('ATTENDANCE_VERIFY'), controller.recoverAttendance)
 
 module.exports = router

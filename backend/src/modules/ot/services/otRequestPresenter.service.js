@@ -27,6 +27,15 @@ function firstText(...values) {
   return ''
 }
 
+function firstPositiveNumber(...values) {
+  for (const value of values) {
+    const number = Number(value)
+    if (Number.isFinite(number) && number > 0) return number
+  }
+
+  return 0
+}
+
 function firstArray(...values) {
   for (const value of values) {
     if (Array.isArray(value) && value.length) {
@@ -215,10 +224,17 @@ function mapEmployeeOutput(item = {}) {
   const lineCode = s(item.lineCode)
   const lineName = s(item.lineName)
 
-  const requestedMinutes = n(item.requestedMinutes)
+  const paidMinutes = firstPositiveNumber(
+    item.totalRequestPaidMinutes,
+    item.totalMinutes,
+    item.requestedMinutes,
+  )
+  const requestedMinutes = firstPositiveNumber(item.requestedMinutes, paidMinutes)
   const breakMinutes = n(item.breakMinutes)
-  const paidMinutes = n(item.totalRequestPaidMinutes ?? item.totalMinutes)
-  const totalHours = n(item.totalHours, minutesToHours(paidMinutes))
+  const totalHours = firstPositiveNumber(
+    item.totalHours,
+    minutesToHours(paidMinutes),
+  )
 
   return {
     employeeId: toId(item.employeeId),
@@ -546,9 +562,13 @@ function buildApprovalDisplay(doc = {}) {
 }
 
 function buildOtOptionOutput(doc = {}) {
-  const requestedMinutes = n(doc.requestedMinutes)
+  const paidMinutes = firstPositiveNumber(
+    doc.totalRequestPaidMinutes,
+    doc.totalMinutes,
+    doc.requestedMinutes,
+  )
+  const requestedMinutes = firstPositiveNumber(doc.requestedMinutes, paidMinutes)
   const breakMinutes = n(doc.breakMinutes)
-  const paidMinutes = n(doc.totalRequestPaidMinutes ?? doc.totalMinutes)
 
   return {
     id: toId(doc.shiftOtOptionId),
@@ -592,9 +612,13 @@ function buildOtOptionOutput(doc = {}) {
 }
 
 function buildTimeDisplay(doc = {}) {
-  const requestedMinutes = n(doc.requestedMinutes)
+  const paidMinutes = firstPositiveNumber(
+    doc.totalRequestPaidMinutes,
+    doc.totalMinutes,
+    doc.requestedMinutes,
+  )
+  const requestedMinutes = firstPositiveNumber(doc.requestedMinutes, paidMinutes)
   const breakMinutes = n(doc.breakMinutes)
-  const paidMinutes = n(doc.totalRequestPaidMinutes ?? doc.totalMinutes)
 
   return {
     startTime: s(doc.startTime),

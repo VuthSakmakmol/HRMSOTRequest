@@ -8,6 +8,7 @@ const ACTIONS = [
   'CREATE_ATTENDANCE',
   'RECOVER_ATTENDANCE',
   'CREATE_OT_REQUEST',
+  'RECOVER_OT_REQUEST',
 ]
 
 function s(value) {

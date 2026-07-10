@@ -350,6 +350,8 @@ const dailyOTVerificationQuerySchema = z.object({
     'MISSING_ATTENDANCE',
     'MISSING_OT_REQUEST',
     'ATTENDANCE_ONLY',
+    'POLICY_MISMATCH',
+    'PENDING_REVIEW',
   ]),
 })
 
@@ -364,6 +366,10 @@ const createVerificationOTRequestSchema = z.object({
 
 const recoverVerificationAttendanceSchema = z.object({
   attendanceRecordId: objectIdSchema,
+})
+
+const recoverVerificationOTRequestSchema = z.object({
+  otRequestId: objectIdSchema,
 })
 
 const verificationHistoryQuerySchema = z.object({
@@ -385,6 +391,7 @@ module.exports = {
   createVerificationAttendanceSchema,
   createVerificationOTRequestSchema,
   recoverVerificationAttendanceSchema,
+  recoverVerificationOTRequestSchema,
   verificationHistoryQuerySchema,
   submitAttendanceScanSchema,
   listAttendanceScanLogsQuerySchema,

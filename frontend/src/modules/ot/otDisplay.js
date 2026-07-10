@@ -144,7 +144,7 @@ export function dayTypeSeverity(dayType) {
 }
 
 export function getPaidMinutes(row = {}) {
-  return firstNumber(
+  const values = [
     row?.paidMinutes,
     row?.time?.paidMinutes,
     row?.time?.totalRequestPaidMinutes,
@@ -153,17 +153,23 @@ export function getPaidMinutes(row = {}) {
     row?.totalRequestPaidMinutes,
     row?.totalMinutes,
     row?.approvedMinutes,
-  )
+  ]
+
+  const positive = firstPositiveNumber(...values)
+  return positive > 0 ? positive : firstNumber(...values)
 }
 
 export function getRequestedMinutes(row = {}) {
-  return firstNumber(
+  const values = [
     row?.requestedMinutes,
     row?.time?.requestedMinutes,
     row?.otOption?.requestedMinutes,
     row?.totalRequestedMinutes,
     row?.otRequestedMinutes,
-  )
+  ]
+
+  const positive = firstPositiveNumber(...values)
+  return positive > 0 ? positive : firstNumber(...values)
 }
 
 export function getBreakMinutes(row = {}) {

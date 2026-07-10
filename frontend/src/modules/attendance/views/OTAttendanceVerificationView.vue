@@ -23,6 +23,7 @@ import {
   getDailyOTAttendanceVerification,
   getOTAttendanceVerificationHistory,
   recoverAttendanceFromOTVerification,
+  recoverOTRequestFromAttendanceVerification,
 } from '@/modules/attendance/attendance.api'
 import { getApiErrorMessage } from '@/shared/utils/apiError'
 import { formatDate, formatDateTime, toApiDate } from '@/shared/utils/dateFormat'
@@ -70,6 +71,8 @@ const resultOptions = computed(() => [
   { label: tx('attendance.verification.result.matched', 'Matched'), value: 'MATCHED' },
   { label: tx('attendance.verification.result.missingAttendance', 'Missing attendance'), value: 'MISSING_ATTENDANCE' },
   { label: tx('attendance.verification.result.missingOtRequest', 'Missing OT request'), value: 'MISSING_OT_REQUEST' },
+  { label: tx('attendance.verification.result.policyMismatch', 'Policy mismatch'), value: 'POLICY_MISMATCH' },
+  { label: tx('attendance.verification.result.pendingReview', 'Pending review'), value: 'PENDING_REVIEW' },
   { label: tx('attendance.verification.result.attendanceOnly', 'Attendance only'), value: 'ATTENDANCE_ONLY' },
 ])
 
@@ -126,6 +129,18 @@ const summaryCards = computed(() => [
     icon: 'pi pi-file-plus',
     className: 'card-red',
   },
+  {
+    label: tx('attendance.verification.summary.policyMismatch', 'Policy mismatch'),
+    value: summary.value.policyMismatchCount,
+    icon: 'pi pi-exclamation-triangle',
+    className: 'card-purple',
+  },
+  {
+    label: tx('attendance.verification.summary.pendingReview', 'Pending review'),
+    value: summary.value.pendingReviewCount,
+    icon: 'pi pi-hourglass',
+    className: 'card-amber',
+  },
 ])
 
 function emptySummary() {
@@ -137,6 +152,8 @@ function emptySummary() {
     missingAttendanceCount: 0,
     missingRequestCount: 0,
     attendanceOnlyCount: 0,
+    policyMismatchCount: 0,
+    pendingReviewCount: 0,
   }
 }
 
@@ -162,6 +179,37 @@ function formatMinutes(value) {
   if (!hours) return `${rest}m`
   if (!rest) return `${hours}h`
   return `${hours}h ${rest}m`
+}
+
+function displayOtMinutes(row = {}) {
+  if (row?.request?.id) {
+    return Number(row?.requestedOtMinutes || 0)
+  }
+
+  return Number(row?.verifiedOtMinutes || row?.potentialOtMinutes || 0)
+}
+
+function policyWindowHint(row = {}) {
+  if (row?.request?.id) {
+    if (upper(row?.policyResult) === 'MATCH') {
+      return tx('attendance.verification.policyVerified', 'Policy verified')
+    }
+
+    if (Number(row?.verifiedOtMinutes || 0) > 0) {
+      return `${tx('attendance.verification.verified', 'Verified')}: ${formatMinutes(row.verifiedOtMinutes)}`
+    }
+
+    return s(row?.policyReason)
+  }
+
+  const start = s(row?.policyWindowStartTime)
+  const end = s(row?.policyWindowEndTime || row?.attendance?.clockOut)
+
+  if (start && end && Number(row?.potentialOtMinutes || 0) > 0) {
+    return `${start} - ${end}`
+  }
+
+  return s(row?.policyReason) || tx('attendance.verification.policyChecked', 'Policy checked')
 }
 
 function displayEmployee(row) {
@@ -214,6 +262,8 @@ function resultLabel(value) {
     MATCHED: tx('attendance.verification.result.matched', 'Matched'),
     MISSING_ATTENDANCE: tx('attendance.verification.result.missingAttendance', 'Missing attendance'),
     MISSING_OT_REQUEST: tx('attendance.verification.result.missingOtRequest', 'Missing OT request'),
+    POLICY_MISMATCH: tx('attendance.verification.result.policyMismatch', 'Policy mismatch'),
+    PENDING_REVIEW: tx('attendance.verification.result.pendingReview', 'Pending review'),
     ATTENDANCE_ONLY: tx('attendance.verification.result.attendanceOnly', 'Attendance only'),
   }
 
@@ -225,6 +275,8 @@ function resultTagClass(value) {
     MATCHED: 'attendance-result-matched',
     MISSING_ATTENDANCE: 'attendance-result-missing-attendance',
     MISSING_OT_REQUEST: 'attendance-result-missing-request',
+    POLICY_MISMATCH: 'attendance-result-policy-mismatch',
+    PENDING_REVIEW: 'attendance-result-pending-review',
     ATTENDANCE_ONLY: 'attendance-result-attendance-only',
   }
 
@@ -403,6 +455,14 @@ function actionMessage(row, action) {
     )
   }
 
+  if (action === 'recoverRequest') {
+    return tx(
+      'attendance.verification.confirmRecoverRequest',
+      `Recover OT request ${row?.request?.requestNo || ''} for ${employee}? The generated request will be removed and this row will return to Missing OT Request.`,
+      { employee, requestNo: row?.request?.requestNo || '' },
+    )
+  }
+
   return tx(
     'attendance.verification.confirmRecoverAttendance',
     `Recover this OT Verification attendance for ${employee}? It will return to No Attendance.`,
@@ -427,6 +487,10 @@ async function runAction(row, action) {
       response = await createOTRequestFromAttendanceVerification({
         attendanceRecordId: row.attendance.id,
       })
+    } else if (action === 'recoverRequest') {
+      response = await recoverOTRequestFromAttendanceVerification({
+        otRequestId: row.request.id,
+      })
     } else {
       response = await recoverAttendanceFromOTVerification({
         attendanceRecordId: row.attendance.id,
@@ -436,9 +500,11 @@ async function runAction(row, action) {
     const payload = normalizePayload(response)
     const detail = action === 'createRequest'
       ? tx('attendance.verification.requestCreatedDetail', `OT request ${payload?.otRequest?.requestNo || ''} was created.`, { requestNo: payload?.otRequest?.requestNo || '' })
-      : action === 'recover'
-        ? tx('attendance.verification.attendanceRecoveredDetail', 'Attendance was recovered successfully.')
-        : tx('attendance.verification.attendanceCreatedDetail', 'Attendance was created successfully.')
+      : action === 'recoverRequest'
+        ? tx('attendance.verification.requestRecoveredDetail', `OT request ${payload?.requestNo || row?.request?.requestNo || ''} was recovered successfully.`, { requestNo: payload?.requestNo || row?.request?.requestNo || '' })
+        : action === 'recover'
+          ? tx('attendance.verification.attendanceRecoveredDetail', 'Attendance was recovered successfully.')
+          : tx('attendance.verification.attendanceCreatedDetail', 'Attendance was created successfully.')
 
     toast.add({
       severity: 'success',
@@ -868,14 +934,15 @@ onBeforeUnmount(() => window.clearTimeout(filterTimer))
             <template #body="{ data }">
               <div class="attendance-time-cell">
                 <span class="attendance-time-value">
-                  {{ formatMinutes(data?.requestedOtMinutes || data?.potentialOtMinutes) }}
+                  {{ formatMinutes(displayOtMinutes(data)) }}
                 </span>
 
                 <span
-                  v-if="!data?.request?.id && data?.potentialOtMinutes"
-                  class="attendance-cell-hint"
+                  v-if="policyWindowHint(data)"
+                  class="attendance-cell-hint attendance-policy-hint"
+                  :title="data?.policyReason || policyWindowHint(data)"
                 >
-                  {{ tx('attendance.verification.fromAttendance', 'From attendance') }}
+                  {{ policyWindowHint(data) }}
                 </span>
               </div>
             </template>
@@ -933,7 +1000,7 @@ onBeforeUnmount(() => window.clearTimeout(filterTimer))
                 />
 
                 <Button
-                  v-else-if="data?.canCreateOTRequest"
+                  v-if="data?.canCreateOTRequest"
                   :label="tx('attendance.verification.createOtRequest', 'Create OT request')"
                   icon="pi pi-file-plus"
                   size="small"
@@ -944,7 +1011,19 @@ onBeforeUnmount(() => window.clearTimeout(filterTimer))
                 />
 
                 <Button
-                  v-else-if="data?.canRecoverAttendance"
+                  v-if="data?.canRecoverOTRequest"
+                  :label="tx('attendance.verification.recoverOtRequest', 'Recover OT request')"
+                  icon="pi pi-undo"
+                  size="small"
+                  severity="danger"
+                  outlined
+                  class="attendance-row-action"
+                  :loading="actionRowId === data?.id"
+                  @click="runAction(data, 'recoverRequest')"
+                />
+
+                <Button
+                  v-if="data?.canRecoverAttendance"
                   :label="tx('attendance.verification.recover', 'Recover')"
                   icon="pi pi-undo"
                   size="small"
@@ -956,7 +1035,12 @@ onBeforeUnmount(() => window.clearTimeout(filterTimer))
                 />
 
                 <span
-                  v-else
+                  v-if="
+                    !data?.canCreateAttendance &&
+                    !data?.canCreateOTRequest &&
+                    !data?.canRecoverOTRequest &&
+                    !data?.canRecoverAttendance
+                  "
                   class="attendance-meta-text"
                 >
                   —
@@ -1176,6 +1260,7 @@ onBeforeUnmount(() => window.clearTimeout(filterTimer))
 .card-red .summary-icon { background: rgb(var(--attendance-failed-rgb) / 0.13); color: rgb(var(--attendance-failed-rgb)); }
 .card-amber .summary-icon { background: rgb(var(--attendance-amber-rgb) / 0.13); color: rgb(var(--attendance-amber-rgb)); }
 .card-slate .summary-icon { background: rgb(var(--attendance-total-rgb) / 0.13); color: rgb(var(--attendance-total-rgb)); }
+.card-purple .summary-icon { background: rgb(139 92 246 / 0.13); color: rgb(124 58 237); }
 
 /* =========================
    Cells and RGB tags
@@ -1201,6 +1286,7 @@ onBeforeUnmount(() => window.clearTimeout(filterTimer))
 .attendance-attendance-cell { display: inline-flex; min-width: 0; flex-direction: column; align-items: center; justify-content: center; gap: 0.24rem; }
 .attendance-time-value { color: var(--ot-text); font-size: 0.8rem; font-weight: 750; white-space: nowrap; }
 .attendance-cell-hint { color: var(--ot-text-muted); font-size: 0.65rem; font-weight: 550; white-space: nowrap; }
+.attendance-policy-hint { max-width: 10rem; overflow: hidden; text-overflow: ellipsis; }
 
 .attendance-rgb-tag {
   --attendance-tag-rgb: var(--attendance-muted-rgb);
@@ -1230,9 +1316,11 @@ onBeforeUnmount(() => window.clearTimeout(filterTimer))
 .attendance-result-matched { --attendance-tag-rgb: var(--attendance-success-rgb); }
 .attendance-source-verification,
 .attendance-status-pending,
-.attendance-result-missing-attendance { --attendance-tag-rgb: var(--attendance-amber-rgb); }
+.attendance-result-missing-attendance,
+.attendance-result-pending-review { --attendance-tag-rgb: var(--attendance-amber-rgb); }
 .attendance-status-rejected,
 .attendance-result-missing-request { --attendance-tag-rgb: var(--attendance-failed-rgb); }
+.attendance-result-policy-mismatch { --attendance-tag-rgb: 124 58 237; }
 .attendance-status-cancelled,
 .attendance-status-muted,
 .attendance-result-muted { --attendance-tag-rgb: var(--attendance-total-rgb); }
@@ -1269,6 +1357,7 @@ onBeforeUnmount(() => window.clearTimeout(filterTimer))
 :global(.dark) .card-blue .summary-icon { background: rgb(var(--attendance-blue-rgb) / 0.18); color: #93c5fd; }
 :global(.dark) .card-green .summary-icon { background: rgb(var(--attendance-success-rgb) / 0.18); color: #86efac; }
 :global(.dark) .card-red .summary-icon { background: rgb(var(--attendance-failed-rgb) / 0.18); color: #fca5a5; }
+:global(.dark) .card-purple .summary-icon { background: rgb(139 92 246 / 0.2); color: #c4b5fd; }
 :global(.dark) .card-amber .summary-icon { background: rgb(var(--attendance-amber-rgb) / 0.18); color: #fcd34d; }
 :global(.dark) .card-slate .summary-icon { background: rgb(var(--attendance-total-rgb) / 0.18); color: #cbd5e1; }
 :global(.dark) .attendance-rgb-tag { border-color: rgb(var(--attendance-tag-rgb) / 0.42); background: rgb(var(--attendance-tag-rgb) / 0.18); }

@@ -7,6 +7,7 @@ const {
   createVerificationAttendanceSchema,
   createVerificationOTRequestSchema,
   recoverVerificationAttendanceSchema,
+  recoverVerificationOTRequestSchema,
   verificationHistoryQuerySchema,
 } = require('../validators/attendance.validation')
 
@@ -60,6 +61,20 @@ async function createOTRequest(req, res, next) {
   }
 }
 
+async function recoverOTRequest(req, res, next) {
+  try {
+    const payload = parse(recoverVerificationOTRequestSchema, req.body)
+    const result = await service.recoverVerificationOTRequest(
+      payload,
+      req.user,
+    )
+
+    return successResponse(res, result)
+  } catch (error) {
+    return next(error)
+  }
+}
+
 async function recoverAttendance(req, res, next) {
   try {
     const payload = parse(recoverVerificationAttendanceSchema, req.body)
@@ -83,6 +98,7 @@ module.exports = {
   exportDaily,
   createAttendance,
   createOTRequest,
+  recoverOTRequest,
   recoverAttendance,
   history,
 }

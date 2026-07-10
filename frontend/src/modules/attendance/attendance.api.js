@@ -243,6 +243,12 @@ export function createOTRequestFromAttendanceVerification(payload = {}) {
   })
 }
 
+export function recoverOTRequestFromAttendanceVerification(payload = {}) {
+  return api.post('/attendance/verification/daily/recover-ot-request', payload, {
+    timeout: ATTENDANCE_VERIFY_TIMEOUT_MS,
+  })
+}
+
 export function recoverAttendanceFromOTVerification(payload = {}) {
   return api.post('/attendance/verification/daily/recover-attendance', payload, {
     timeout: ATTENDANCE_VERIFY_TIMEOUT_MS,
@@ -314,6 +320,7 @@ const attendanceService = {
   createAttendanceFromOTVerification,
   createOTRequestFromAttendanceVerification,
   recoverAttendanceFromOTVerification,
+  recoverOTRequestFromAttendanceVerification,
   getOTAttendanceVerificationHistory,
 
   searchOTRequestsForVerification,

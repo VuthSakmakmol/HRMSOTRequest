@@ -29,7 +29,12 @@ function getRequestId(input) {
 }
 
 function getPaidMinutes(row = {}) {
-  return n(row.totalRequestPaidMinutes ?? row.totalMinutes)
+  return Math.max(
+    0,
+    n(row.totalRequestPaidMinutes),
+    n(row.totalMinutes),
+    n(row.requestedMinutes),
+  )
 }
 
 function normalizePaidTimingFields(row = {}) {

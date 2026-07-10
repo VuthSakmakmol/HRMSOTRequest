@@ -92,14 +92,16 @@ function otDate(otRequest = {}) {
 }
 
 function paidHoursLabel(otRequest = {}) {
-  const minutes = Number(
-    otRequest.totalRequestPaidMinutes ??
-      otRequest.totalMinutes ??
-      otRequest.paidMinutes ??
-      0,
-  )
+  const minutes = [
+    otRequest.totalRequestPaidMinutes,
+    otRequest.totalMinutes,
+    otRequest.paidMinutes,
+    otRequest.requestedMinutes,
+  ]
+    .map(Number)
+    .find((value) => Number.isFinite(value) && value > 0) || 0
 
-  if (!Number.isFinite(minutes) || minutes <= 0) return ''
+  if (minutes <= 0) return ''
 
   const hours = Math.floor(minutes / 60)
   const mins = minutes % 60

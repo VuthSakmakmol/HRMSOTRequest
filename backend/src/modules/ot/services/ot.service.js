@@ -119,6 +119,15 @@ function firstText(...values) {
   return ''
 }
 
+function firstPositiveNumber(...values) {
+  for (const value of values) {
+    const number = Number(value)
+    if (Number.isFinite(number) && number > 0) return number
+  }
+
+  return 0
+}
+
 function formatDateTime(value) {
   if (!value) return ''
 
@@ -832,6 +841,15 @@ async function resolveApprovalFlow(requesterEmployeeId, dayType = 'WORKING_DAY')
 function mapEmployeeOutput(item = {}) {
   const lineCode = s(item.lineCode)
   const lineName = s(item.lineName)
+  const totalRequestPaidMinutes = firstPositiveNumber(
+    item.totalRequestPaidMinutes,
+    item.totalMinutes,
+    item.requestedMinutes,
+  )
+  const storedTotalHours = Number(item.totalHours)
+  const totalHours = Number.isFinite(storedTotalHours) && storedTotalHours > 0
+    ? storedTotalHours
+    : Number((totalRequestPaidMinutes / 60).toFixed(2))
 
   return {
     employeeId: item.employeeId ? String(item.employeeId) : null,
@@ -863,11 +881,11 @@ function mapEmployeeOutput(item = {}) {
     breakMinutes: Number(item.breakMinutes || 0),
     requestedMinutes: Number(item.requestedMinutes || 0),
 
-    totalRequestPaidMinutes: Number(
-      item.totalRequestPaidMinutes ?? item.totalMinutes ?? 0,
-    ),
-    totalMinutes: Number(item.totalRequestPaidMinutes ?? item.totalMinutes ?? 0),
-    totalHours: Number(item.totalHours || 0),
+    paidMinutes: totalRequestPaidMinutes,
+    totalRequestPaidMinutes,
+    totalMinutes: totalRequestPaidMinutes,
+    totalHours,
+    paidHours: totalHours,
   }
 }
 
@@ -892,8 +910,10 @@ function mapApprovalStepOutput(step = {}) {
 function buildOtOptionOutput(doc = {}) {
   const requestedMinutes = Number(doc.requestedMinutes || 0)
   const breakMinutes = Number(doc.breakMinutes || 0)
-  const totalRequestPaidMinutes = Number(
-    doc.totalRequestPaidMinutes ?? doc.totalMinutes ?? 0,
+  const totalRequestPaidMinutes = firstPositiveNumber(
+    doc.totalRequestPaidMinutes,
+    doc.totalMinutes,
+    doc.requestedMinutes,
   )
 
   return {
@@ -907,8 +927,10 @@ function buildOtOptionOutput(doc = {}) {
 
     requestedMinutes,
     breakMinutes,
+    paidMinutes: totalRequestPaidMinutes,
     totalRequestPaidMinutes,
     totalRequestPaidHours: Number((totalRequestPaidMinutes / 60).toFixed(2)),
+    paidHours: Number((totalRequestPaidMinutes / 60).toFixed(2)),
 
     fixedStartTime: s(doc.shiftOtOptionFixedStartTime),
     fixedEndTime: s(doc.shiftOtOptionFixedEndTime),
@@ -1250,9 +1272,15 @@ function mapListItem(doc = {}, authUser = {}) {
   const approvalContext = buildApprovalActionContext(doc, authUser)
   const approvalDisplay = buildApprovalDisplay(doc)
   const approvedBy = buildApprovedByOutput(doc)
-  const totalRequestPaidMinutes = Number(
-    doc.totalRequestPaidMinutes ?? doc.totalMinutes ?? 0,
+  const totalRequestPaidMinutes = firstPositiveNumber(
+    doc.totalRequestPaidMinutes,
+    doc.totalMinutes,
+    doc.requestedMinutes,
   )
+  const storedTotalHours = Number(doc.totalHours)
+  const totalHours = Number.isFinite(storedTotalHours) && storedTotalHours > 0
+    ? storedTotalHours
+    : Number((totalRequestPaidMinutes / 60).toFixed(2))
 
   return {
     id: String(doc._id),
@@ -1281,9 +1309,11 @@ function mapListItem(doc = {}, authUser = {}) {
 
     requestedMinutes: Number(doc.requestedMinutes || 0),
     breakMinutes: Number(doc.breakMinutes || 0),
+    paidMinutes: totalRequestPaidMinutes,
     totalRequestPaidMinutes,
     totalMinutes: totalRequestPaidMinutes,
-    totalHours: Number(doc.totalHours || 0),
+    totalHours,
+    paidHours: totalHours,
 
     shiftId: doc.shiftId ? String(doc.shiftId) : null,
     shiftCode: s(doc.shiftCode),
@@ -1642,7 +1672,11 @@ function appendEmployeeSection(rows, title, employees = []) {
   ])
 
   for (const [index, item] of employees.entries()) {
-    const paidMinutes = Number(item.totalRequestPaidMinutes ?? item.totalMinutes ?? 0)
+    const paidMinutes = firstPositiveNumber(
+      item.totalRequestPaidMinutes,
+      item.totalMinutes,
+      item.requestedMinutes,
+    )
 
     rows.push([
       index + 1,
@@ -1672,8 +1706,10 @@ function buildRequestSheetRows(doc = {}) {
     ? doc.approvedEmployees
     : []
   const approvalSteps = Array.isArray(doc.approvalSteps) ? doc.approvalSteps : []
-  const totalRequestPaidMinutes = Number(
-    doc.totalRequestPaidMinutes ?? doc.totalMinutes ?? 0,
+  const totalRequestPaidMinutes = firstPositiveNumber(
+    doc.totalRequestPaidMinutes,
+    doc.totalMinutes,
+    doc.requestedMinutes,
   )
 
   const rows = [
@@ -1817,7 +1853,11 @@ function formatExportHoursFromMinutes(minutes) {
 }
 
 function exportRequestOtTime(doc = {}) {
-  const minutes = numberOrZero(doc.totalRequestPaidMinutes ?? doc.totalMinutes)
+  const minutes = firstPositiveNumber(
+    doc.totalRequestPaidMinutes,
+    doc.totalMinutes,
+    doc.requestedMinutes,
+  )
 
   if (minutes > 0) return `${formatExportHoursFromMinutes(minutes)}h`
 
@@ -1838,12 +1878,13 @@ function requestEmployeeRowsForExport(doc = {}) {
 }
 
 function makeSimpleEmployeeExportRow(doc = {}, item = {}, rowNo = 1) {
-  const paidMinutes = Number(
-    item?.totalRequestPaidMinutes ??
-      item?.totalMinutes ??
-      doc.totalRequestPaidMinutes ??
-      doc.totalMinutes ??
-      0,
+  const paidMinutes = firstPositiveNumber(
+    item?.totalRequestPaidMinutes,
+    item?.totalMinutes,
+    item?.requestedMinutes,
+    doc.totalRequestPaidMinutes,
+    doc.totalMinutes,
+    doc.requestedMinutes,
   )
 
   const requestedMinutes = Number(

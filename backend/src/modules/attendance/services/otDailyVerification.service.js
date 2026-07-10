@@ -13,9 +13,22 @@ const { classifyDayType } = require('../../calendar/services/dayType.service')
 const { deriveAttendanceResult } = require('../utils/attendanceVerification')
 const otService = require('../../ot/services/ot.service')
 const otTimingService = require('../../ot/services/otTiming.service')
+const otAttendancePolicyService = require('./otAttendancePolicy.service')
 
 const ACTIVE_OT_STATUSES = ['PENDING', 'APPROVED']
 const VERIFICATION_ATTENDANCE_SOURCE = 'OT_VERIFICATION'
+
+function hasOTApprovalProgress(request = {}) {
+  const steps = Array.isArray(request.approvalSteps)
+    ? request.approvalSteps
+    : []
+
+  const hasProcessedStep = steps.some((step) =>
+    ['APPROVED', 'REJECTED', 'ACKNOWLEDGED'].includes(upper(step?.status)),
+  )
+
+  return hasProcessedStep || Boolean(request.lastAdjustmentAt)
+}
 
 function s(value) {
   return String(value ?? '').trim()
@@ -306,26 +319,62 @@ function calculatePotentialOtMinutes(attendance = {}, dayType = '') {
   return minutes > 0 ? minutes : 0
 }
 
-function createVerificationRow({ request = null, employee, attendance = null }) {
+function createVerificationRow({
+  request = null,
+  employee,
+  attendance = null,
+  policyEvaluation = null,
+  generatedFromVerification = false,
+}) {
   const requestHeader = request ? mapRequestHeader(request) : null
   const otEmployee = employee && employee.requestedMinutes !== undefined
     ? mapOtEmployee(employee)
     : buildAttendanceOnlyEmployee(attendance || {})
 
   const attendanceOutput = mapAttendance(attendance)
-  const potentialOtMinutes = requestHeader
-    ? firstPositiveNumber(otEmployee.requestedMinutes)
-    : calculatePotentialOtMinutes(attendanceOutput || {})
-
   const hasAttendance = Boolean(attendanceOutput?.id)
   const hasRequest = Boolean(requestHeader?.id)
-  const result = hasRequest
-    ? hasAttendance
-      ? 'MATCHED'
-      : 'MISSING_ATTENDANCE'
-    : potentialOtMinutes > 0
-      ? 'MISSING_OT_REQUEST'
-      : 'ATTENDANCE_ONLY'
+
+  const requestedOtMinutes = hasRequest
+    ? firstPositiveNumber(otEmployee.requestedMinutes)
+    : 0
+
+  const generatedOtMinutes = hasRequest
+    ? 0
+    : firstPositiveNumber(policyEvaluation?.generatedOtMinutes)
+
+  const policyResult = upper(policyEvaluation?.result)
+  const rawPotentialOtMinutes = Math.max(
+    0,
+    Math.round(Number(policyEvaluation?.rawPotentialOtMinutes || 0)),
+  )
+
+  let result = 'ATTENDANCE_ONLY'
+
+  if (hasRequest) {
+    if (!hasAttendance) {
+      result = 'MISSING_ATTENDANCE'
+    } else if (policyResult === 'MATCH') {
+      result = 'MATCHED'
+    } else if (policyResult === 'PENDING_REVIEW') {
+      result = 'PENDING_REVIEW'
+    } else {
+      result = 'POLICY_MISMATCH'
+    }
+  } else if (generatedOtMinutes > 0) {
+    result = 'MISSING_OT_REQUEST'
+  } else if (policyResult === 'PENDING_REVIEW') {
+    result = 'PENDING_REVIEW'
+  } else if (rawPotentialOtMinutes > 0 && policyResult === 'MISMATCH') {
+    result = 'POLICY_MISMATCH'
+  }
+
+  const verifiedOtMinutes = hasRequest
+    ? firstPositiveNumber(
+        policyEvaluation?.payableOtMinutes,
+        policyEvaluation?.roundedOtMinutes,
+      )
+    : generatedOtMinutes
 
   return {
     id: hasRequest
@@ -336,14 +385,52 @@ function createVerificationRow({ request = null, employee, attendance = null }) 
     request: requestHeader,
     employee: otEmployee,
     attendance: attendanceOutput,
-    requestedOtMinutes: hasRequest ? potentialOtMinutes : 0,
-    potentialOtMinutes: hasRequest ? 0 : potentialOtMinutes,
+
+    // Keep potentialOtMinutes for frontend/backward compatibility, but it is
+    // now the policy-approved duration rather than raw time after shift end.
+    requestedOtMinutes,
+    potentialOtMinutes: generatedOtMinutes,
+    rawPotentialOtMinutes,
+    policyEligibleOtMinutes: Math.max(
+      0,
+      Math.round(Number(policyEvaluation?.eligibleOtMinutes || 0)),
+    ),
+    policyRoundedOtMinutes: Math.max(
+      0,
+      Math.round(Number(policyEvaluation?.roundedOtMinutes || 0)),
+    ),
+    verifiedOtMinutes,
+
+    policyResult,
+    policyReason: s(policyEvaluation?.reason),
+    policyReasonKey: s(policyEvaluation?.reasonKey),
+    policyWindowStartTime: s(policyEvaluation?.requestStartTime),
+    policyWindowEndTime: s(policyEvaluation?.requestEndTime),
+    selectedShiftOtOptionId: asId(policyEvaluation?.shiftOtOptionId),
+    selectedShiftOtOptionLabel: s(policyEvaluation?.shiftOtOptionLabel),
+    selectedCalculationPolicyId: asId(policyEvaluation?.calculationPolicyId),
+    selectedCalculationPolicyCode: upper(
+      policyEvaluation?.calculationPolicyCode || policyEvaluation?.policyCode,
+    ),
+    selectedCalculationPolicyName: s(
+      policyEvaluation?.calculationPolicyName || policyEvaluation?.policyName,
+    ),
+
     result,
-    canCreateAttendance: result === 'MISSING_ATTENDANCE' && ACTIVE_OT_STATUSES.includes(requestHeader?.status),
-    canCreateOTRequest: result === 'MISSING_OT_REQUEST' && potentialOtMinutes > 0,
+    canCreateAttendance:
+      result === 'MISSING_ATTENDANCE' &&
+      ACTIVE_OT_STATUSES.includes(requestHeader?.status),
+    canCreateOTRequest:
+      result === 'MISSING_OT_REQUEST' &&
+      generatedOtMinutes > 0 &&
+      Boolean(policyEvaluation?.shiftOtOptionId),
     canRecoverAttendance:
       attendanceOutput?.attendanceSource === VERIFICATION_ATTENDANCE_SOURCE &&
       Boolean(attendanceOutput?.verificationMeta?.createdFromOTRequestId),
+    canRecoverOTRequest:
+      generatedFromVerification === true &&
+      upper(request?.status) === 'PENDING' &&
+      !hasOTApprovalProgress(request),
   }
 }
 
@@ -368,6 +455,10 @@ function matchesRow(row, query = {}) {
     row?.employee?.lineName,
     row?.attendance?.clockIn,
     row?.attendance?.clockOut,
+    row?.policyReason,
+    row?.policyWindowStartTime,
+    row?.policyWindowEndTime,
+    row?.selectedShiftOtOptionLabel,
     row?.result,
   ].join(' ').toLowerCase()
 
@@ -412,6 +503,8 @@ function buildSummary(rows = []) {
     missingAttendanceCount: count('MISSING_ATTENDANCE'),
     missingRequestCount: count('MISSING_OT_REQUEST'),
     attendanceOnlyCount: count('ATTENDANCE_ONLY'),
+    policyMismatchCount: count('POLICY_MISMATCH'),
+    pendingReviewCount: count('PENDING_REVIEW'),
   }
 }
 
@@ -458,9 +551,48 @@ async function hydrateLegacyAttendanceEmployees(records = []) {
   })
 }
 
+async function hydrateAttendanceShiftIds(records = []) {
+  const employeeIds = Array.from(new Set(
+    records
+      .filter((record) => !asId(record?.shiftId) && isObjectId(record?.employeeId))
+      .map((record) => asId(record.employeeId))
+      .filter(Boolean),
+  ))
+
+  if (!employeeIds.length) return records
+
+  const employees = await Employee.find({
+    _id: { $in: employeeIds },
+  })
+    .select({ _id: 1, shiftId: 1 })
+    .lean()
+
+  const shiftByEmployeeId = new Map(
+    employees.map((employee) => [asId(employee._id), employee.shiftId || null]),
+  )
+
+  return records.map((record) => {
+    if (asId(record?.shiftId)) return record
+
+    const shiftId = shiftByEmployeeId.get(asId(record?.employeeId))
+    if (!shiftId) return record
+
+    return {
+      ...record,
+      shiftId,
+    }
+  })
+}
+
 async function listDailyVerification(query = {}) {
   const attendanceDate = normalizeYmd(query.attendanceDate)
-  if (!attendanceDate) throw appError('Verification date is required', 400, 'VERIFICATION_DATE_REQUIRED')
+  if (!attendanceDate) {
+    throw appError(
+      'Verification date is required',
+      400,
+      'VERIFICATION_DATE_REQUIRED',
+    )
+  }
 
   const dateStart = toUtcMidnight(attendanceDate)
   const dateEnd = nextUtcDay(attendanceDate)
@@ -480,37 +612,80 @@ async function listDailyVerification(query = {}) {
       }
     : { attendanceDate }
 
-  const [requests, rawAttendanceRecords] = await Promise.all([
+  const [
+    requests,
+    rawAttendanceRecords,
+    dayInfo,
+    generationAudits,
+  ] = await Promise.all([
     OTRequest.find(requestFilter)
       .sort({ requestNo: 1, createdAt: 1, _id: 1 })
       .lean(),
     AttendanceRecord.find({
       ...attendanceDateFilter,
-      $and: [{ $or: [{ employeeId: { $ne: null } }, { employeeNo: { $ne: '' } }, { importedEmployeeId: { $ne: '' } }] }],
+      $and: [
+        {
+          $or: [
+            { employeeId: { $ne: null } },
+            { employeeNo: { $ne: '' } },
+            { importedEmployeeId: { $ne: '' } },
+          ],
+        },
+      ],
     })
       .sort({ employeeNo: 1, importedEmployeeId: 1, updatedAt: -1, _id: -1 })
       .lean(),
+    classifyDayType(attendanceDate),
+    AttendanceVerificationAudit.find({
+      attendanceDate,
+      action: 'CREATE_OT_REQUEST',
+      generatedOTRequestId: { $ne: null },
+    })
+      .select({ generatedOTRequestId: 1 })
+      .lean(),
   ])
 
-  const attendanceRecords = await hydrateLegacyAttendanceEmployees(rawAttendanceRecords)
+  const generatedOTRequestIds = new Set(
+    generationAudits.map((audit) => asId(audit.generatedOTRequestId)).filter(Boolean),
+  )
+
+  const resolvedDayType = upper(dayInfo?.dayType || 'WORKING_DAY')
+  const legacyHydratedRecords = await hydrateLegacyAttendanceEmployees(
+    rawAttendanceRecords,
+  )
+  const attendanceRecords = await hydrateAttendanceShiftIds(
+    legacyHydratedRecords,
+  )
+
   const attendanceByEmployeeId = new Map()
   const attendanceByEmployeeNo = new Map()
 
   for (const record of attendanceRecords) {
     const id = asId(record.employeeId)
-    const employeeNo = normalizedEmployeeNo(record.employeeNo, record.importedEmployeeId)
+    const employeeNo = normalizedEmployeeNo(
+      record.employeeNo,
+      record.importedEmployeeId,
+    )
     const updatedAt = new Date(record.updatedAt || record.createdAt || 0).getTime()
 
     if (id) {
       const previous = attendanceByEmployeeId.get(id)
-      if (!previous || updatedAt >= new Date(previous.updatedAt || previous.createdAt || 0).getTime()) {
+      const previousUpdatedAt = new Date(
+        previous?.updatedAt || previous?.createdAt || 0,
+      ).getTime()
+
+      if (!previous || updatedAt >= previousUpdatedAt) {
         attendanceByEmployeeId.set(id, record)
       }
     }
 
     if (employeeNo) {
       const previous = attendanceByEmployeeNo.get(employeeNo)
-      if (!previous || updatedAt >= new Date(previous.updatedAt || previous.createdAt || 0).getTime()) {
+      const previousUpdatedAt = new Date(
+        previous?.updatedAt || previous?.createdAt || 0,
+      ).getTime()
+
+      if (!previous || updatedAt >= previousUpdatedAt) {
         attendanceByEmployeeNo.set(employeeNo, record)
       }
     }
@@ -518,10 +693,35 @@ async function listDailyVerification(query = {}) {
 
   function getAttendanceForEmployee(employee = {}) {
     const id = asId(employee.employeeId)
-    const employeeNo = normalizedEmployeeNo(employee.employeeNo, employee.employeeCode)
-    return (id && attendanceByEmployeeId.get(id)) ||
+    const employeeNo = normalizedEmployeeNo(
+      employee.employeeNo,
+      employee.employeeCode,
+    )
+
+    return (
+      (id && attendanceByEmployeeId.get(id)) ||
       (employeeNo && attendanceByEmployeeNo.get(employeeNo)) ||
       null
+    )
+  }
+
+  const shiftOptionLookupCache = new Map()
+
+  async function getShiftOptionLookup(shiftId) {
+    const cleanShiftId = asId(shiftId)
+    if (!cleanShiftId) return null
+
+    if (!shiftOptionLookupCache.has(cleanShiftId)) {
+      shiftOptionLookupCache.set(
+        cleanShiftId,
+        otTimingService.getShiftOTOptionsByShift(cleanShiftId, {
+          otDate: attendanceDate,
+          dayType: resolvedDayType,
+        }),
+      )
+    }
+
+    return shiftOptionLookupCache.get(cleanShiftId)
   }
 
   const rows = []
@@ -531,29 +731,97 @@ async function listDailyVerification(query = {}) {
     for (const employee of effectiveOtEmployees(request)) {
       const keys = employeeIdentityKeys(employee)
       if (!keys.length) continue
+
       keys.forEach((key) => requestEmployeeKeys.add(key))
+
+      const attendance = getAttendanceForEmployee(employee)
+      const policyEvaluation = attendance
+        ? otAttendancePolicyService.evaluateSavedRequestAttendance({
+            request,
+            employee,
+            attendance,
+          })
+        : null
 
       rows.push(
         createVerificationRow({
           request,
           employee,
-          attendance: getAttendanceForEmployee(employee),
+          attendance,
+          policyEvaluation,
+          generatedFromVerification: generatedOTRequestIds.has(
+            asId(request._id),
+          ),
         }),
       )
     }
   }
 
-  for (const record of attendanceRecords) {
+  const attendanceOnlyRecords = attendanceRecords.filter((record) => {
     const keys = employeeIdentityKeys(record)
-    if (!keys.length || keys.some((key) => requestEmployeeKeys.has(key))) continue
-    rows.push(createVerificationRow({ attendance: record }))
-  }
+    return keys.length && !keys.some((key) => requestEmployeeKeys.has(key))
+  })
+
+  const attendanceOnlyRows = await Promise.all(
+    attendanceOnlyRecords.map(async (record) => {
+      const attendanceOutput = mapAttendance(record)
+      const shiftId = asId(record.shiftId)
+
+      if (!shiftId) {
+        return createVerificationRow({
+          attendance: record,
+          policyEvaluation: {
+            result: 'MISMATCH',
+            reason:
+              'Employee has no assigned shift, so attendance cannot be evaluated against OT policy.',
+            rawPotentialOtMinutes: calculatePotentialOtMinutes(
+              attendanceOutput,
+              resolvedDayType,
+            ),
+          },
+        })
+      }
+
+      try {
+        const lookup = await getShiftOptionLookup(shiftId)
+        const policyEvaluation =
+          otAttendancePolicyService.evaluateAttendanceAgainstConfiguredOptions({
+            attendance: attendanceOutput,
+            lookup,
+            dayType: resolvedDayType,
+          })
+
+        return createVerificationRow({
+          attendance: record,
+          policyEvaluation,
+        })
+      } catch (error) {
+        return createVerificationRow({
+          attendance: record,
+          policyEvaluation: {
+            result: 'MISMATCH',
+            reason: s(error?.message || 'Unable to evaluate OT policy.'),
+            rawPotentialOtMinutes: calculatePotentialOtMinutes(
+              attendanceOutput,
+              resolvedDayType,
+            ),
+          },
+        })
+      }
+    }),
+  )
+
+  rows.push(...attendanceOnlyRows)
 
   const filteredRows = rows
     .filter((row) => matchesRow(row, query))
     .sort((a, b) => {
-      const aEmployee = `${a?.employee?.employeeNo || ''} ${a?.employee?.employeeName || ''}`
-      const bEmployee = `${b?.employee?.employeeNo || ''} ${b?.employee?.employeeName || ''}`
+      const aEmployee = `${a?.employee?.employeeNo || ''} ${
+        a?.employee?.employeeName || ''
+      }`
+      const bEmployee = `${b?.employee?.employeeNo || ''} ${
+        b?.employee?.employeeName || ''
+      }`
       const employeeCompare = aEmployee.localeCompare(bEmployee)
       if (employeeCompare) return employeeCompare
       return s(a?.request?.requestNo).localeCompare(s(b?.request?.requestNo))
@@ -566,6 +834,7 @@ async function listDailyVerification(query = {}) {
 
   return {
     attendanceDate,
+    dayType: resolvedDayType,
     items,
     summary: buildSummary(filteredRows),
     pagination: {
@@ -821,66 +1090,13 @@ function optionId(option = {}) {
   return asId(option?.id || option?._id || option?.shiftOtOptionId)
 }
 
-function optionMinutes(option = {}) {
-  return firstPositiveNumber(
-    option.totalRequestPaidMinutes,
-    option.totalMinutes,
-    option.requestedMinutes,
-  )
-}
+async function resolveShiftOptionForAttendance(
+  employee = {},
+  attendance = {},
+  dayType = '',
+) {
+  const shiftId = asId(employee.shiftId || attendance.shiftId)
 
-function policyMinutes(value, fallback = 0) {
-  const minutes = Number(value)
-  return Number.isFinite(minutes) && minutes >= 0 ? Math.round(minutes) : fallback
-}
-
-function roundMinutesByPolicy(minutes, unitMinutes, roundMethod) {
-  const rawMinutes = Math.max(0, policyMinutes(minutes))
-  const unit = Math.max(1, policyMinutes(unitMinutes, 30))
-  const method = upper(roundMethod || 'CEIL')
-  const ratio = rawMinutes / unit
-
-  if (method === 'FLOOR') return Math.floor(ratio) * unit
-  if (method === 'NEAREST') return Math.round(ratio) * unit
-
-  return Math.ceil(ratio) * unit
-}
-
-function getPolicyEligibleMinutes(actualMinutes, policy = {}, dayType = 'WORKING_DAY') {
-  const rawMinutes = Math.max(0, policyMinutes(actualMinutes))
-  const resolvedDayType = upper(dayType || 'WORKING_DAY')
-
-  // Sunday/Holiday work is evaluated as the actual attendance window. For a
-  // normal working day, the policy grace period is unpaid time immediately
-  // after the shift end, matching payment verification logic.
-  const eligibleMinutes = resolvedDayType === 'WORKING_DAY'
-    ? policy?.allowPostShiftOT === false
-      ? 0
-      : Math.max(0, rawMinutes - policyMinutes(policy?.graceAfterShiftEndMinutes))
-    : rawMinutes
-
-  const minEligibleMinutes = policyMinutes(policy?.minEligibleMinutes)
-  if (eligibleMinutes < minEligibleMinutes) {
-    return {
-      eligibleMinutes,
-      roundedMinutes: 0,
-      isEligible: false,
-    }
-  }
-
-  return {
-    eligibleMinutes,
-    roundedMinutes: roundMinutesByPolicy(
-      eligibleMinutes,
-      policy?.roundUnitMinutes,
-      policy?.roundMethod,
-    ),
-    isEligible: true,
-  }
-}
-
-async function resolveShiftOptionForAttendance(employee = {}, attendance = {}, dayType = '') {
-  const shiftId = asId(employee.shiftId)
   if (!shiftId) {
     throw appError(
       'Employee has no assigned shift. OT request cannot be generated.',
@@ -891,53 +1107,10 @@ async function resolveShiftOptionForAttendance(employee = {}, attendance = {}, d
 
   const lookup = await otTimingService.getShiftOTOptionsByShift(shiftId, {
     otDate: attendance.attendanceDate,
+    dayType,
   })
 
-  const rows = Array.isArray(lookup)
-    ? lookup
-    : Array.isArray(lookup?.items)
-      ? lookup.items
-      : []
-
-  const resolvedDayType = upper(dayType || lookup?.dayType || attendance?.dayType || 'WORKING_DAY')
-  const actualMinutes = calculatePotentialOtMinutes(
-    mapAttendance(attendance),
-    resolvedDayType,
-  )
-
-  const candidates = rows
-    .filter((item) => optionId(item) && optionMinutes(item) > 0)
-    .map((item) => {
-      const policy = item?.calculationPolicy || {}
-      const result = getPolicyEligibleMinutes(actualMinutes, policy, resolvedDayType)
-
-      return {
-        item,
-        policy,
-        ...result,
-      }
-    })
-    .filter((candidate) =>
-      candidate.isEligible &&
-      candidate.roundedMinutes > 0 &&
-      optionMinutes(candidate.item) === candidate.roundedMinutes,
-    )
-    .sort((left, right) => {
-      const sequenceDifference = Number(left.item?.sequence || 0) - Number(right.item?.sequence || 0)
-      if (sequenceDifference !== 0) return sequenceDifference
-      return optionMinutes(left.item) - optionMinutes(right.item)
-    })
-
-  const selected = candidates[0]
-  if (selected) {
-    return {
-      shiftOtOptionId: optionId(selected.item),
-      option: selected.item,
-      actualMinutes,
-      eligibleMinutes: selected.eligibleMinutes,
-      roundedMinutes: selected.roundedMinutes,
-    }
-  }
+  const rows = Array.isArray(lookup?.items) ? lookup.items : []
 
   if (!rows.length) {
     throw appError(
@@ -947,32 +1120,44 @@ async function resolveShiftOptionForAttendance(employee = {}, attendance = {}, d
     )
   }
 
-  const policyResults = rows
-    .filter((item) => optionId(item))
-    .map((item) => {
-      const result = getPolicyEligibleMinutes(
-        actualMinutes,
-        item?.calculationPolicy || {},
-        resolvedDayType,
-      )
-      return {
-        policyName: s(item?.calculationPolicy?.name || item?.calculationPolicy?.code || item?.label),
-        ...result,
-      }
+  const evaluation =
+    otAttendancePolicyService.evaluateAttendanceAgainstConfiguredOptions({
+      attendance: mapAttendance(attendance),
+      lookup,
+      dayType,
     })
 
-  const firstEligible = policyResults.find((item) => item.isEligible && item.roundedMinutes > 0)
+  if (evaluation.isEligible && evaluation.shiftOtOptionId) {
+    const selectedOption = rows.find(
+      (item) => optionId(item) === evaluation.shiftOtOptionId,
+    )
 
-  if (!firstEligible) {
+    return {
+      shiftOtOptionId: evaluation.shiftOtOptionId,
+      option: selectedOption || {},
+      actualMinutes: evaluation.rawPotentialOtMinutes,
+      eligibleMinutes: evaluation.eligibleOtMinutes,
+      roundedMinutes: evaluation.generatedOtMinutes,
+      policyEvaluation: evaluation,
+    }
+  }
+
+  if (evaluation.result === 'PENDING_REVIEW') {
     throw appError(
-      `Actual OT (${minutesToLabel(actualMinutes)}) is below the minimum OT policy threshold.`,
+      evaluation.reason || 'Attendance requires manual review by OT policy.',
       409,
-      'OT_BELOW_MINIMUM_POLICY',
+      'OT_POLICY_PENDING_REVIEW',
     )
   }
 
+  const rawMinutes = Math.max(
+    0,
+    Math.round(Number(evaluation.rawPotentialOtMinutes || 0)),
+  )
+
   throw appError(
-    `OT policy rounds the actual OT to ${minutesToLabel(firstEligible.roundedMinutes)}, but no active OT option for this shift/date has that duration. Add the matching option before generating the request.`,
+    evaluation.reason ||
+      `Attendance has ${minutesToLabel(rawMinutes)} after shift, but it does not satisfy any active OT policy option for this shift/date.`,
     409,
     'SHIFT_OT_OPTION_POLICY_MISMATCH',
   )
@@ -989,17 +1174,14 @@ async function createOTRequestFromAttendance(payload = {}, authUser = {}) {
   if (!attendance.employeeId) throw appError('Attendance record has no matched employee', 409, 'ATTENDANCE_EMPLOYEE_MISSING')
 
   const dayInfo = await classifyDayType(attendance.attendanceDate)
-  const potentialMinutes = calculatePotentialOtMinutes(
-    mapAttendance(attendance),
-    dayInfo?.dayType,
-  )
+  const resolvedDayType = upper(dayInfo?.dayType || attendance.dayType || 'WORKING_DAY')
+  const isSundayOrHoliday = ['SUNDAY', 'HOLIDAY'].includes(resolvedDayType)
 
-  if (potentialMinutes <= 0) {
-    const isSundayOrHoliday = ['SUNDAY', 'HOLIDAY'].includes(upper(dayInfo?.dayType))
+  if (!isHHmm(attendance.clockOut) || (isSundayOrHoliday && !isHHmm(attendance.clockIn))) {
     throw appError(
       isSundayOrHoliday
         ? 'Attendance must have valid scan-in and scan-out times before an OT request can be generated.'
-        : 'Attendance scan-out does not show overtime after the shift end time.',
+        : 'Attendance must have a valid scan-out time before an OT request can be generated.',
       409,
       'ATTENDANCE_HAS_NO_OVERTIME',
     )
@@ -1042,7 +1224,7 @@ async function createOTRequestFromAttendance(payload = {}, authUser = {}) {
   const selection = await resolveShiftOptionForAttendance(
     employee,
     attendance,
-    dayInfo?.dayType,
+    resolvedDayType,
   )
 
   // Do not create flexible clock-to-clock OT from attendance. The employee's
@@ -1111,7 +1293,111 @@ async function createOTRequestFromAttendance(payload = {}, authUser = {}) {
       policyEligibleOtMinutes: selection.eligibleMinutes,
       generatedOtMinutes: selection.roundedMinutes,
       selectedOtOptionLabel: s(selection.option?.label),
+      policyWindowStartTime: s(selection.policyEvaluation?.requestStartTime),
+      policyWindowEndTime: s(selection.policyEvaluation?.requestEndTime),
+      policyCode: upper(selection.policyEvaluation?.calculationPolicyCode),
+      policyName: s(selection.policyEvaluation?.calculationPolicyName),
     },
+  }
+}
+
+async function recoverVerificationOTRequest(payload = {}, authUser = {}) {
+  const otRequestId = s(payload.otRequestId)
+  if (!isObjectId(otRequestId)) {
+    throw appError('OT request is required', 400, 'INVALID_OT_REQUEST')
+  }
+
+  const generationAudit = await AttendanceVerificationAudit.findOne({
+    action: 'CREATE_OT_REQUEST',
+    generatedOTRequestId: otRequestId,
+  })
+    .sort({ createdAt: -1, _id: -1 })
+    .lean()
+
+  if (!generationAudit) {
+    throw appError(
+      'Only an OT request created by OT Verification can be recovered from this page.',
+      409,
+      'OT_REQUEST_RECOVERY_NOT_ALLOWED',
+    )
+  }
+
+  const request = await OTRequest.findById(otRequestId).exec()
+
+  if (!request) {
+    const previousRecovery = await AttendanceVerificationAudit.findOne({
+      action: 'RECOVER_OT_REQUEST',
+      generatedOTRequestId: otRequestId,
+    })
+      .sort({ createdAt: -1, _id: -1 })
+      .lean()
+
+    if (previousRecovery) {
+      return {
+        action: 'ALREADY_RECOVERED',
+        otRequestId,
+        requestNo: upper(previousRecovery.generatedOTRequestNo),
+      }
+    }
+
+    throw appError('OT request not found', 404, 'OT_REQUEST_NOT_FOUND')
+  }
+
+  if (upper(request.status) !== 'PENDING') {
+    throw appError(
+      'Only a Pending OT request can be recovered. Approved, rejected, or cancelled requests must remain in history.',
+      409,
+      'OT_REQUEST_RECOVERY_STATUS_NOT_ALLOWED',
+    )
+  }
+
+  if (hasOTApprovalProgress(request)) {
+    throw appError(
+      'This OT request already has approval activity and can no longer be recovered.',
+      409,
+      'OT_REQUEST_RECOVERY_APPROVAL_STARTED',
+    )
+  }
+
+  const before = request.toObject()
+  const actorAccountId = getActorAccountId(authUser)
+
+  await AttendanceVerificationAudit.create({
+    action: 'RECOVER_OT_REQUEST',
+    attendanceDate: generationAudit.attendanceDate || request.otDate,
+    employeeId: generationAudit.employeeId || null,
+    employeeNo: generationAudit.employeeNo || '',
+    employeeName: generationAudit.employeeName || '',
+    attendanceRecordId: generationAudit.attendanceRecordId || null,
+    generatedOTRequestId: request._id,
+    generatedOTRequestNo: request.requestNo,
+    requesterEmployeeId:
+      request.requesterEmployeeId ||
+      generationAudit.requesterEmployeeId ||
+      null,
+    requesterEmployeeCode:
+      request.requesterEmployeeCode ||
+      generationAudit.requesterEmployeeCode ||
+      '',
+    requesterName:
+      request.requesterName || generationAudit.requesterName || '',
+    before,
+    after: {
+      recovered: true,
+      deleted: true,
+      result: 'MISSING_OT_REQUEST',
+    },
+    createdBy: actorAccountId,
+  })
+
+  await request.deleteOne()
+
+  return {
+    action: 'RECOVERED',
+    otRequestId,
+    requestNo: upper(before.requestNo),
+    attendanceDate: before.otDate,
+    attendanceRecordId: asId(generationAudit.attendanceRecordId),
   }
 }
 
@@ -1146,11 +1432,19 @@ function buildExportRows(items = []) {
     Line: row.employee?.lineName || '',
     Shift: row.request?.shiftName || row.attendance?.shiftName || '',
     'Requested OT': row.requestedOtMinutes ? minutesToLabel(row.requestedOtMinutes) : '',
-    'Potential OT': row.potentialOtMinutes ? minutesToLabel(row.potentialOtMinutes) : '',
+    'Raw After Shift': row.rawPotentialOtMinutes ? minutesToLabel(row.rawPotentialOtMinutes) : '',
+    'Policy Eligible OT': row.policyEligibleOtMinutes ? minutesToLabel(row.policyEligibleOtMinutes) : '',
+    'Verified / Generated OT': row.verifiedOtMinutes ? minutesToLabel(row.verifiedOtMinutes) : '',
+    'Policy Window': [row.policyWindowStartTime, row.policyWindowEndTime]
+      .filter(Boolean)
+      .join(' - '),
+    'OT Option': row.selectedShiftOtOptionLabel || row.request?.shiftOtOptionLabel || '',
+    'OT Policy': row.selectedCalculationPolicyName || row.selectedCalculationPolicyCode || '',
     'Clock In': row.attendance?.clockIn || '',
     'Clock Out': row.attendance?.clockOut || '',
     'Attendance Source': row.attendance?.attendanceSource || '',
     Result: row.result,
+    'Policy Reason': row.policyReason || '',
   }))
 }
 
@@ -1164,9 +1458,27 @@ async function exportDailyVerification(query = {}) {
   const workbook = XLSX.utils.book_new()
   const worksheet = XLSX.utils.json_to_sheet(buildExportRows(result.items))
   worksheet['!cols'] = [
-    { wch: 6 }, { wch: 13 }, { wch: 16 }, { wch: 15 }, { wch: 22 },
-    { wch: 15 }, { wch: 26 }, { wch: 18 }, { wch: 18 }, { wch: 14 },
-    { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 18 }, { wch: 22 }, { wch: 22 },
+    { wch: 6 },
+    { wch: 13 },
+    { wch: 16 },
+    { wch: 15 },
+    { wch: 22 },
+    { wch: 15 },
+    { wch: 26 },
+    { wch: 18 },
+    { wch: 18 },
+    { wch: 14 },
+    { wch: 16 },
+    { wch: 18 },
+    { wch: 20 },
+    { wch: 18 },
+    { wch: 20 },
+    { wch: 22 },
+    { wch: 12 },
+    { wch: 12 },
+    { wch: 18 },
+    { wch: 22 },
+    { wch: 32 },
   ]
   XLSX.utils.book_append_sheet(workbook, worksheet, 'OT Verification')
 
@@ -1181,6 +1493,7 @@ module.exports = {
   listDailyVerification,
   createAttendanceFromOTRequest,
   recoverVerificationAttendance,
+  recoverVerificationOTRequest,
   createOTRequestFromAttendance,
   listHistory,
   exportDailyVerification,
