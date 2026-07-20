@@ -8,7 +8,7 @@ const requirePermission = require('../../../middlewares/requirePermission.middle
 
 const router = express.Router()
 
-const ATTENDANCE_IMPORT_TIMEOUT_MS = 30 * 60 * 1000
+const ATTENDANCE_IMPORT_TIMEOUT_MS = 0
 const ATTENDANCE_IMPORT_FILE_SIZE_LIMIT = 50 * 1024 * 1024
 
 function useLongAttendanceImportTimeout(req, res, next) {

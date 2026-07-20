@@ -3,9 +3,9 @@
 import api from '@/shared/services/api'
 import { toApiDate } from '@/shared/utils/dateFormat'
 
-const ATTENDANCE_IMPORT_TIMEOUT_MS = 30 * 60 * 1000
-const ATTENDANCE_LIST_TIMEOUT_MS = 5 * 60 * 1000
-const ATTENDANCE_VERIFY_TIMEOUT_MS = 5 * 60 * 1000
+const ATTENDANCE_IMPORT_TIMEOUT_MS = 0
+const ATTENDANCE_LIST_TIMEOUT_MS = 0
+const ATTENDANCE_VERIFY_TIMEOUT_MS = 0
 
 // =========================
 // Helpers

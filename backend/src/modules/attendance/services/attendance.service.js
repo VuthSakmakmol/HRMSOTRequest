@@ -248,7 +248,7 @@ async function searchOTRequestsForVerification(query = {}) {
       })
       .skip(skip)
       .limit(limit + 1)
-      .maxTimeMS(120000)
+      .maxTimeMS(0)
       .lean()
   } catch (error) {
     console.warn('[attendance.verification] search fallback:', error?.message || error)
@@ -257,7 +257,7 @@ async function searchOTRequestsForVerification(query = {}) {
       .sort({ _id: -1 })
       .skip(skip)
       .limit(limit + 1)
-      .maxTimeMS(120000)
+      .maxTimeMS(0)
       .lean()
   }
 
@@ -268,7 +268,7 @@ async function searchOTRequestsForVerification(query = {}) {
   let total = fallbackTotal
 
   try {
-    total = await OTRequest.countDocuments(filter).maxTimeMS(8000)
+    total = await OTRequest.countDocuments(filter).maxTimeMS(0)
     total = Math.max(Number(total || 0), fallbackTotal)
   } catch (error) {
     console.warn('[attendance.verification] count fallback:', error?.message || error)

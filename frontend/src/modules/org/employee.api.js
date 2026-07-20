@@ -3,11 +3,11 @@
 import api from '@/shared/services/api'
 import { toFileFormData } from '@/shared/utils/formData'
 
-const IMPORT_TIMEOUT_MS = 15 * 60 * 1000
-const EXPORT_TIMEOUT_MS = 180000
-const SAMPLE_TIMEOUT_MS = 60000
-const PROGRESS_TIMEOUT_MS = 15000
-const LOOKUP_TIMEOUT_MS = 120000
+const IMPORT_TIMEOUT_MS = 0
+const EXPORT_TIMEOUT_MS = 0
+const SAMPLE_TIMEOUT_MS = 0
+const PROGRESS_TIMEOUT_MS = 0
+const LOOKUP_TIMEOUT_MS = 0
 
 function cleanId(id) {
   return encodeURIComponent(String(id ?? '').trim())

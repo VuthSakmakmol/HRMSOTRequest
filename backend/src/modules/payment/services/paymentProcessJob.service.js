@@ -119,7 +119,9 @@ function cleanupJobs() {
   for (const [id, job] of jobs.entries()) {
     const ageMs = now - Number(job.createdAtMs || 0)
 
-    if (ageMs > JOB_TTL_MS) {
+    // Never expire an active payment job. A 15,000-row payment process may run
+    // longer than the completed-result retention window.
+    if (ageMs > JOB_TTL_MS && ['COMPLETED', 'FAILED'].includes(job.status)) {
       jobs.delete(id)
       continue
     }

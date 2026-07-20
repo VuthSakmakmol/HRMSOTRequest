@@ -2,9 +2,9 @@
 
 import api from '@/shared/services/api'
 
-const PAYMENT_PROCESS_TIMEOUT_MS = 5 * 60 * 1000
-const PAYMENT_LOOKUP_TIMEOUT_MS = 60000
-const PAYMENT_PROGRESS_TIMEOUT_MS = 15000
+const PAYMENT_PROCESS_TIMEOUT_MS = 0
+const PAYMENT_LOOKUP_TIMEOUT_MS = 0
+const PAYMENT_PROGRESS_TIMEOUT_MS = 0
 
 // =========================
 // Helpers
