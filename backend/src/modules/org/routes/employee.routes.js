@@ -56,6 +56,19 @@ router.get(
   employeeController.getOrgTree,
 )
 
+
+router.patch(
+  '/bulk/ot-eligibility',
+  requirePermission('EMPLOYEE_UPDATE'),
+  employeeController.bulkUpdateOTEligibility,
+)
+
+router.patch(
+  '/bulk/manager',
+  requirePermission('EMPLOYEE_UPDATE'),
+  employeeController.bulkAssignManager,
+)
+
 router.get(
   '/',
   requirePermission('EMPLOYEE_VIEW'),

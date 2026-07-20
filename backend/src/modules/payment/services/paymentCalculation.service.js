@@ -521,6 +521,9 @@ function mapFormula(doc = {}) {
 
     hourRules: normalizeHourRules(doc.hourRules),
 
+    maximumPaymentEnabled: doc.maximumPaymentEnabled === true,
+    maximumPaymentAmount: safeNonNegativeNumber(doc.maximumPaymentAmount, 0),
+
     roundingDecimals: Math.min(Math.max(Number(doc.roundingDecimals || 2), 0), 6),
     currency: upper(doc.currency || 'USD'),
 
@@ -1822,9 +1825,20 @@ function buildPaymentItem({ otRequest, employee, formula, salaryInfo, exchangeRa
   const payableHours = payableMinutes / 60
   const rawAmount = amountInfo.rawAmount
 
-  const amount = salaryInfo.hasSalary
+  const calculatedAmount = salaryInfo.hasSalary
     ? roundAmount(rawAmount, formula.roundingDecimals)
     : 0
+
+  const maximumPaymentEnabled = formula.maximumPaymentEnabled === true
+  const maximumPaymentAmount = safeNonNegativeNumber(formula.maximumPaymentAmount, 0)
+  const maximumPaymentApplied =
+    maximumPaymentEnabled &&
+    maximumPaymentAmount > 0 &&
+    calculatedAmount > maximumPaymentAmount
+
+  const amount = maximumPaymentApplied
+    ? roundAmount(maximumPaymentAmount, formula.roundingDecimals)
+    : calculatedAmount
 
   const exchange = calculateExchangeAmount(amount, exchangeRate)
 
@@ -1929,6 +1943,14 @@ function buildPaymentItem({ otRequest, employee, formula, salaryInfo, exchangeRa
     allowanceEligibleByFormula: isAllowanceAllowedByFormula({ formula, payableMinutes }),
 
     currency: formula.currency,
+    calculatedAmount,
+    calculatedAmountUsd: calculatedAmount,
+    maximumPaymentEnabled,
+    maximumPaymentAmount,
+    maximumPaymentApplied,
+    maximumPaymentDeduction: maximumPaymentApplied
+      ? roundAmount(calculatedAmount - amount, formula.roundingDecimals)
+      : 0,
     amount,
 
     amountUsd: exchange.amountUsd,
@@ -2217,6 +2239,11 @@ function buildPaymentAuditRow({ otRequest = {}, employee = {}, salaryInfo = {}, 
     hourlyRate: item ? safeNonNegativeNumber(item.hourlyRate, 0) : 0,
 
     rateFormula: s(item?.progressiveHourFormulaText),
+    calculatedAmountUsd: item ? safeNonNegativeNumber(item.calculatedAmountUsd, item.amountUsd) : 0,
+    maximumPaymentEnabled: item?.maximumPaymentEnabled === true,
+    maximumPaymentAmount: item ? safeNonNegativeNumber(item.maximumPaymentAmount, 0) : 0,
+    maximumPaymentApplied: item?.maximumPaymentApplied === true,
+    maximumPaymentDeduction: item ? safeNonNegativeNumber(item.maximumPaymentDeduction, 0) : 0,
     amountUsd: item ? safeNonNegativeNumber(item.amountUsd, 0) : 0,
     allowanceAmountUsd: item ? safeNonNegativeNumber(item.allowanceAmountUsd, 0) : 0,
     totalUsd: item ? roundAmount(safeNonNegativeNumber(item.amountUsd, 0) + safeNonNegativeNumber(item.allowanceAmountUsd, 0), 2) : 0,

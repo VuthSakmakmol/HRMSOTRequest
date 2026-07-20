@@ -232,6 +232,8 @@ const createEmployeeSchema = z.object({
 
   reportsToEmployeeId: optionalObjectIdField('org.employee.field.reportsToEmployeeId'),
 
+  isOTEligible: z.boolean().optional().default(true),
+
   otWorkflowRole: otWorkflowRoleField.default('NONE'),
 
   phone: phoneField,
@@ -258,6 +260,8 @@ const updateEmployeeSchema = z
       'org.employee.field.reportsToEmployeeId',
     ).optional(),
 
+    isOTEligible: z.boolean().optional(),
+
     otWorkflowRole: otWorkflowRoleField.optional(),
 
     phone: z.string().trim().max(30, 'org.employee.validation.phoneTooLong').optional(),
@@ -281,6 +285,7 @@ const updateEmployeeSchema = z
       value.lineIds !== undefined ||
       value.shiftId !== undefined ||
       value.reportsToEmployeeId !== undefined ||
+      value.isOTEligible !== undefined ||
       value.otWorkflowRole !== undefined ||
       value.phone !== undefined ||
       value.joinDate !== undefined ||
@@ -290,6 +295,23 @@ const updateEmployeeSchema = z
       message: 'org.employee.validation.updatePayloadRequired',
     },
   )
+
+const bulkEmployeeIdsField = z
+  .array(objectIdField('org.employee.field.employeeIds'))
+  .min(1, 'org.employee.validation.employeeSelectionRequired')
+  .max(5000, 'org.employee.validation.employeeSelectionTooLarge')
+  .transform((values) => [...new Set(values.map((value) => s(value)))])
+
+const bulkOTEligibilitySchema = z.object({
+  employeeIds: bulkEmployeeIdsField,
+  isOTEligible: z.boolean(),
+})
+
+const bulkAssignManagerSchema = z.object({
+  employeeIds: bulkEmployeeIdsField,
+  managerEmployeeId: optionalObjectIdField('org.employee.field.managerEmployeeId'),
+})
+
 // Import rule:
 // - Employee Code is required.
 // - If Employee Code already exists, update that employee.
@@ -402,6 +424,8 @@ function normalizeLookupQuery(raw = {}) {
 module.exports = {
   createEmployeeSchema,
   updateEmployeeSchema,
+  bulkOTEligibilitySchema,
+  bulkAssignManagerSchema,
   importEmployeeRowSchema,
   normalizeListQuery,
   normalizeExportQuery,

@@ -858,6 +858,8 @@ function sanitize(doc, accountDoc = null) {
       .filter(Boolean)
       .join(', '),
 
+    isOTEligible: doc.isOTEligible !== false,
+
     otWorkflowRole: workflowRole,
     otWorkflowRoleKey: otWorkflowRoleKey(workflowRole),
 
@@ -915,6 +917,8 @@ function sanitizeOrgNode(doc) {
     lineManagerIds: item.lineManagerIds,
     lineManagers: item.lineManagers,
     lineManagerNames: item.lineManagerNames,
+
+    isOTEligible: item.isOTEligible !== false,
 
     otWorkflowRole: item.otWorkflowRole,
     otWorkflowRoleKey: item.otWorkflowRoleKey,
@@ -980,6 +984,8 @@ function buildEmployeeListFilter(
   }
 
   if (otEligibleOnly === true) {
+    filter.isOTEligible = { $ne: false }
+
     addAndFilter(filter, {
       $or: [
         { lineId: { $exists: true, $ne: null } },
@@ -4223,6 +4229,7 @@ async function create(payload, currentUser = null) {
       shiftId: payload.shiftId,
       reportsToEmployeeId: managerResult.primaryManagerId || null,
       lineManagerIds: managerResult.lineManagerIds || [],
+      isOTEligible: payload.isOTEligible !== false,
       otWorkflowRole: normalizeOTWorkflowRole(payload.otWorkflowRole),
       phone: s(payload.phone),
       email: s(payload.email).toLowerCase(),
@@ -4323,6 +4330,10 @@ async function update(employeeId, payload, currentUser = null) {
   doc.lineId = nextLineId || null
   doc.lineIds = nextLineIds
   doc.shiftId = nextShiftId
+  if (payload.isOTEligible !== undefined) {
+    doc.isOTEligible = !!payload.isOTEligible
+  }
+
   doc.otWorkflowRole = nextOTWorkflowRole
   doc.phone = nextPhone
   doc.email = nextEmail
@@ -4363,6 +4374,130 @@ async function update(employeeId, payload, currentUser = null) {
   return getById(doc._id, currentUser)
 }
 
+
+async function ensureBulkEmployeesInScope(employeeIds, currentUser = null) {
+  const uniqueEmployeeIds = uniqueIds(employeeIds)
+
+  if (!uniqueEmployeeIds.length) {
+    throw appError({
+      statusCode: 400,
+      code: 'EMPLOYEE_SELECTION_REQUIRED',
+      messageKey: 'org.employee.validation.employeeSelectionRequired',
+      message: 'Select at least one employee.',
+      field: 'employeeIds',
+    })
+  }
+
+  const scopeFilter = await employeeScopeService.buildEmployeeScopeFilter(currentUser)
+  const filter = {
+    $and: [
+      scopeFilter,
+      { _id: { $in: uniqueEmployeeIds.map(objectId) } },
+    ],
+  }
+
+  const employees = await Employee.find(filter, '_id reportsToEmployeeId isActive').lean()
+
+  if (employees.length !== uniqueEmployeeIds.length) {
+    throw appError({
+      statusCode: 403,
+      code: 'EMPLOYEE_BULK_SCOPE_DENIED',
+      messageKey: 'errors.permissionDenied',
+      message: 'One or more selected employees are outside your employee scope.',
+      field: 'employeeIds',
+    })
+  }
+
+  return employees
+}
+
+async function bulkUpdateOTEligibility(payload, currentUser = null) {
+  const employees = await ensureBulkEmployeesInScope(payload.employeeIds, currentUser)
+  const employeeIds = employees.map((employee) => employee._id)
+
+  const result = await Employee.updateMany(
+    { _id: { $in: employeeIds } },
+    { $set: { isOTEligible: payload.isOTEligible === true } },
+  )
+
+  return {
+    matched: Number(result.matchedCount || 0),
+    modified: Number(result.modifiedCount || 0),
+    isOTEligible: payload.isOTEligible === true,
+  }
+}
+
+async function assertNoManagerCycle(managerEmployeeId, subordinateIds) {
+  if (!managerEmployeeId) return
+
+  const subordinateSet = new Set(uniqueIds(subordinateIds))
+  const managerId = id(managerEmployeeId)
+
+  if (subordinateSet.has(managerId)) {
+    throw appError({
+      statusCode: 400,
+      code: 'EMPLOYEE_MANAGER_SELF',
+      messageKey: 'org.employee.error.reportToSelf',
+      message: 'A manager cannot report to themselves.',
+      field: 'managerEmployeeId',
+    })
+  }
+
+  let currentId = managerId
+  const visited = new Set()
+
+  while (currentId && !visited.has(currentId)) {
+    if (subordinateSet.has(currentId)) {
+      throw appError({
+        statusCode: 400,
+        code: 'EMPLOYEE_MANAGER_CYCLE',
+        messageKey: 'org.employee.error.managerCycle',
+        message: 'This manager assignment would create a circular reporting chain.',
+        field: 'managerEmployeeId',
+      })
+    }
+
+    visited.add(currentId)
+    const current = await Employee.findById(currentId, 'reportsToEmployeeId').lean()
+    currentId = id(current?.reportsToEmployeeId)
+  }
+}
+
+async function bulkAssignManager(payload, currentUser = null) {
+  const employees = await ensureBulkEmployeesInScope(payload.employeeIds, currentUser)
+  const employeeIds = employees.map((employee) => employee._id)
+  const managerEmployeeId = payload.managerEmployeeId || null
+
+  if (managerEmployeeId) {
+    const manager = await ensureReportsToEmployeeExists(managerEmployeeId)
+
+    if (manager.isActive === false) {
+      throw appError({
+        statusCode: 400,
+        code: 'EMPLOYEE_MANAGER_INACTIVE',
+        messageKey: 'org.employee.error.managerInactive',
+        message: 'The selected manager is inactive.',
+        field: 'managerEmployeeId',
+      })
+    }
+
+    await assertNoManagerCycle(manager._id, employeeIds)
+  }
+
+  const result = await Employee.updateMany(
+    { _id: { $in: employeeIds } },
+    { $set: { reportsToEmployeeId: managerEmployeeId || null } },
+  )
+
+  await syncSameLineManagersForAllEmployees()
+
+  return {
+    matched: Number(result.matchedCount || 0),
+    modified: Number(result.modifiedCount || 0),
+    managerEmployeeId: managerEmployeeId ? id(managerEmployeeId) : null,
+  }
+}
+
 module.exports = {
   lookup,
   list,
@@ -4376,5 +4511,7 @@ module.exports = {
   getOrgTree,
   create,
   update,
+  bulkUpdateOTEligibility,
+  bulkAssignManager,
   syncSameLineManagersForAllEmployees,
 }

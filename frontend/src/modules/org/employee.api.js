@@ -56,6 +56,15 @@ export function updateEmployee(id, payload) {
   return api.patch(`/org/employees/${cleanId(id)}`, payload)
 }
 
+
+export function bulkUpdateEmployeeOTEligibility(payload) {
+  return api.patch('/org/employees/bulk/ot-eligibility', payload)
+}
+
+export function bulkAssignEmployeeManager(payload) {
+  return api.patch('/org/employees/bulk/manager', payload)
+}
+
 export function exportEmployeesExcel(params = {}) {
   return api.get('/org/employees/export', {
     params,

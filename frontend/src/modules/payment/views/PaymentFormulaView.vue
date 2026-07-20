@@ -113,6 +113,8 @@ function defaultForm() {
       HOLIDAY: 3,
     },
     hourRules: [],
+    maximumPaymentEnabled: false,
+    maximumPaymentAmount: 40,
     roundingDecimals: 2,
     currency: 'USD',
     payoutCurrency: 'KHR',
@@ -512,6 +514,8 @@ function openEditDialog(row) {
       HOLIDAY: Number(row.multipliers?.HOLIDAY ?? 3),
     },
     hourRules: normalizeHourRules(row.hourRules),
+    maximumPaymentEnabled: row.maximumPaymentEnabled === true,
+    maximumPaymentAmount: Number(row.maximumPaymentAmount || 0),
     roundingDecimals: Number(row.roundingDecimals ?? 2),
     currency: upper(row.currency || 'USD'),
     payoutCurrency: upper(row.payoutCurrency || 'KHR'),
@@ -538,6 +542,8 @@ function normalizeSavePayload() {
       HOLIDAY: Number(form.multipliers.HOLIDAY || 0),
     },
     hourRules: normalizeHourRules(form.hourRules),
+    maximumPaymentEnabled: Boolean(form.maximumPaymentEnabled),
+    maximumPaymentAmount: Number(form.maximumPaymentAmount || 0),
     roundingDecimals: Number(form.roundingDecimals ?? 2),
     currency: upper(form.currency || 'USD'),
     payoutCurrency: upper(form.payoutCurrency || 'KHR'),
@@ -573,6 +579,9 @@ function validateBeforeSave(payload = {}) {
   })
   if (invalidHourRule) {
     return 'Please check OT hour rules. From hours and multiplier are required. Up to hours must be greater than From hours.'
+  }
+  if (payload.maximumPaymentEnabled && payload.maximumPaymentAmount <= 0) {
+    return 'Maximum payment amount must be greater than 0 when the limit is enabled'
   }
   if (!payload.currency) return 'Base currency is required'
   if (!payload.payoutCurrency) return 'Payout currency is required'
@@ -928,6 +937,23 @@ onBeforeUnmount(() => {
           </Column>
 
           <Column
+            field="maximumPaymentAmount"
+            header="Maximum payment"
+            sortable
+            style="width: 11rem; min-width: 11rem"
+          >
+            <template #body="{ data }">
+              <Tag
+                v-if="data?.maximumPaymentEnabled"
+                :value="`${formatNumber(data.maximumPaymentAmount, 2)} ${data.currency || 'USD'}`"
+                class="payment-rgb-tag payment-tag-purple"
+              />
+
+              <span v-else class="payment-meta-text">No limit</span>
+            </template>
+          </Column>
+
+          <Column
             field="currency"
             :header="t('payment.formulas.currency')"
             sortable
@@ -1141,6 +1167,51 @@ onBeforeUnmount(() => {
               placeholder="USD"
               :disabled="saving"
             />
+          </div>
+        </div>
+
+        <div class="ot-panel">
+          <div class="payment-panel-title">
+            Maximum salary-based OT payment
+          </div>
+
+          <div class="grid gap-3 md:grid-cols-2">
+            <div class="ot-field">
+              <label class="ot-field-label">Enable maximum payment</label>
+
+              <div class="payment-checkbox-row">
+                <Checkbox
+                  v-model="form.maximumPaymentEnabled"
+                  binary
+                  input-id="maximum-payment-enabled"
+                  :disabled="saving"
+                />
+
+                <label for="maximum-payment-enabled">
+                  Cap the calculated OT amount before allowances
+                </label>
+              </div>
+            </div>
+
+            <div class="ot-field">
+              <label class="ot-field-label">
+                Maximum amount ({{ form.currency || 'USD' }})
+              </label>
+
+              <InputNumber
+                v-model="form.maximumPaymentAmount"
+                class="w-full"
+                input-class="w-full"
+                :min="0"
+                :min-fraction-digits="2"
+                :max-fraction-digits="2"
+                :disabled="saving || !form.maximumPaymentEnabled"
+              />
+
+              <div class="payment-field-help">
+                Example: calculated amount 50, maximum 40, final OT amount 40. Allowances are added separately.
+              </div>
+            </div>
           </div>
         </div>
 

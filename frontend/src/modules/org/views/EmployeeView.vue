@@ -24,6 +24,8 @@ import { getDepartmentLookupOptions } from '@/modules/org/department.api'
 import { getPositionLookupOptions } from '@/modules/org/position.api'
 import { getLineLookupOptions } from '@/modules/org/line.api'
 import {
+  bulkAssignEmployeeManager,
+  bulkUpdateEmployeeOTEligibility,
   createEmployee,
   exportEmployeesExcel,
   getEmployeeLookupOptions,
@@ -62,6 +64,12 @@ const backgroundLoading = ref(false)
 const employeeDialogVisible = ref(false)
 const importDialogVisible = ref(false)
 const editingEmployeeId = ref('')
+const selectedEmployees = ref([])
+const bulkOTDialogVisible = ref(false)
+const bulkManagerDialogVisible = ref(false)
+const bulkSaving = ref(false)
+const bulkOTEligible = ref(true)
+const bulkManagerEmployeeId = ref(null)
 
 const departmentOptions = ref([])
 const positionOptions = ref([])
@@ -109,6 +117,13 @@ const form = reactive({
 
 const canCreate = computed(() => auth.hasPermission('EMPLOYEE_CREATE'))
 const canUpdate = computed(() => auth.hasPermission('EMPLOYEE_UPDATE'))
+const selectedEmployeeIds = computed(() =>
+  selectedEmployees.value
+    .filter(Boolean)
+    .map((employee) => normalizeId(employee))
+    .filter(Boolean),
+)
+const selectedEmployeeCount = computed(() => selectedEmployeeIds.value.length)
 
 const statusOptions = computed(() => [
   { label: t('common.allStatus'), value: '' },
@@ -1216,6 +1231,94 @@ async function onVirtualLazyLoad(event) {
   }
 }
 
+
+function clearEmployeeSelection() {
+  selectedEmployees.value = []
+}
+
+function openBulkOTDialog() {
+  if (!selectedEmployeeCount.value) return
+
+  bulkOTEligible.value = true
+  bulkOTDialogVisible.value = true
+}
+
+async function openBulkManagerDialog() {
+  if (!selectedEmployeeCount.value) return
+
+  bulkManagerEmployeeId.value = null
+  bulkManagerDialogVisible.value = true
+
+  if (!managerOptions.value.length) {
+    await fetchManagersForDropdown('', {
+      page: 1,
+      reset: true,
+    })
+  }
+}
+
+async function submitBulkOTEligibility() {
+  if (!selectedEmployeeCount.value || bulkSaving.value) return
+
+  bulkSaving.value = true
+
+  try {
+    await bulkUpdateEmployeeOTEligibility({
+      employeeIds: selectedEmployeeIds.value,
+      isOTEligible: bulkOTEligible.value === true,
+    })
+
+    showToast(
+      'success',
+      t('common.success'),
+      `${selectedEmployeeCount.value} employee(s) updated successfully.`,
+    )
+
+    bulkOTDialogVisible.value = false
+    clearEmployeeSelection()
+    await reloadFirstPage({ keepVisible: true })
+  } catch (error) {
+    showToast(
+      'error',
+      t('common.saveFailed'),
+      getApiErrorMessage(error, t('common.saveFailed')),
+    )
+  } finally {
+    bulkSaving.value = false
+  }
+}
+
+async function submitBulkManager() {
+  if (!selectedEmployeeCount.value || bulkSaving.value) return
+
+  bulkSaving.value = true
+
+  try {
+    await bulkAssignEmployeeManager({
+      employeeIds: selectedEmployeeIds.value,
+      managerEmployeeId: bulkManagerEmployeeId.value || null,
+    })
+
+    showToast(
+      'success',
+      t('common.success'),
+      `${selectedEmployeeCount.value} employee(s) updated successfully.`,
+    )
+
+    bulkManagerDialogVisible.value = false
+    clearEmployeeSelection()
+    await reloadFirstPage({ keepVisible: true })
+  } catch (error) {
+    showToast(
+      'error',
+      t('common.saveFailed'),
+      getApiErrorMessage(error, t('common.saveFailed')),
+    )
+  } finally {
+    bulkSaving.value = false
+  }
+}
+
 function resetForm() {
   editingEmployeeId.value = ''
   form.employeeCode = ''
@@ -1804,6 +1907,41 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="ot-table-actions">
+          <div
+            v-if="canUpdate && selectedEmployeeCount"
+            class="employee-bulk-actions"
+          >
+            <span class="employee-selection-count">
+              {{ selectedEmployeeCount }} selected
+            </span>
+
+            <Button
+              label="Set OT"
+              icon="pi pi-clock"
+              size="small"
+              outlined
+              @click="openBulkOTDialog"
+            />
+
+            <Button
+              label="Assign Manager"
+              icon="pi pi-sitemap"
+              size="small"
+              outlined
+              @click="openBulkManagerDialog"
+            />
+
+            <Button
+              icon="pi pi-times"
+              severity="secondary"
+              text
+              rounded
+              size="small"
+              aria-label="Clear selection"
+              @click="clearEmployeeSelection"
+            />
+          </div>
+
           <span
             v-if="backgroundLoading && hasAnyData"
             class="ot-loaded-badge"
@@ -1826,7 +1964,9 @@ onBeforeUnmount(() => {
 
         <DataTable
           v-else
+          v-model:selection="selectedEmployees"
           :value="rows"
+          data-key="id"
           lazy
           removable-sort
           scrollable
@@ -1864,6 +2004,13 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </template>
+
+          <Column
+            v-if="canUpdate"
+            selection-mode="multiple"
+            header-style="width: 3rem"
+            body-style="width: 3rem"
+          />
 
           <Column
             field="employeeCode"
@@ -1969,6 +2116,21 @@ onBeforeUnmount(() => {
               >
                 {{ managerLabel(data) }}
               </span>
+            </template>
+          </Column>
+
+          <Column
+            field="isOTEligible"
+            header="OT"
+            style="min-width: 7rem"
+          >
+            <template #body="{ data }">
+              <Tag
+                v-if="data"
+                :value="data.isOTEligible === false ? 'None OT' : 'OT'"
+                class="employee-rgb-tag"
+                :class="data.isOTEligible === false ? 'employee-tag-red' : 'employee-tag-green'"
+              />
             </template>
           </Column>
 
@@ -2111,6 +2273,100 @@ onBeforeUnmount(() => {
         </DataTable>
       </div>
     </section>
+
+    <Dialog
+      v-model:visible="bulkOTDialogVisible"
+      modal
+      header="Update OT Eligibility"
+      :style="{ width: '30rem', maxWidth: '94vw' }"
+    >
+      <div class="ot-dialog-form">
+        <div class="employee-bulk-summary">
+          {{ selectedEmployeeCount }} employee(s) selected
+        </div>
+
+        <div class="ot-field">
+          <label class="ot-field-label">OT Eligibility</label>
+
+          <Select
+            v-model="bulkOTEligible"
+            :options="[
+              { label: 'OT', value: true },
+              { label: 'None OT', value: false },
+            ]"
+            option-label="label"
+            option-value="value"
+            class="w-full"
+          />
+        </div>
+      </div>
+
+      <template #footer>
+        <Button
+          :label="t('common.cancel')"
+          severity="secondary"
+          text
+          @click="bulkOTDialogVisible = false"
+        />
+
+        <Button
+          :label="t('common.save')"
+          icon="pi pi-check"
+          :loading="bulkSaving"
+          @click="submitBulkOTEligibility"
+        />
+      </template>
+    </Dialog>
+
+    <Dialog
+      v-model:visible="bulkManagerDialogVisible"
+      modal
+      header="Assign Manager"
+      :style="{ width: '34rem', maxWidth: '94vw' }"
+    >
+      <div class="ot-dialog-form">
+        <div class="employee-bulk-summary">
+          {{ selectedEmployeeCount }} employee(s) selected
+        </div>
+
+        <div class="ot-field">
+          <label class="ot-field-label">Manager</label>
+
+          <Select
+            v-model="bulkManagerEmployeeId"
+            :options="managerOptions"
+            option-label="label"
+            option-value="value"
+            filter
+            show-clear
+            class="w-full"
+            placeholder="Select manager or leave empty to remove manager"
+            :loading="loadingManagers"
+            @filter="onManagerLookupFilter"
+          />
+        </div>
+
+        <small class="employee-bulk-help">
+          Leaving the manager empty removes the current manager from all selected employees.
+        </small>
+      </div>
+
+      <template #footer>
+        <Button
+          :label="t('common.cancel')"
+          severity="secondary"
+          text
+          @click="bulkManagerDialogVisible = false"
+        />
+
+        <Button
+          :label="t('common.save')"
+          icon="pi pi-check"
+          :loading="bulkSaving"
+          @click="submitBulkManager"
+        />
+      </template>
+    </Dialog>
 
     <Dialog
       v-model:visible="employeeDialogVisible"
@@ -2903,5 +3159,46 @@ onBeforeUnmount(() => {
 
 .employee-page :deep(.employee-data-table.p-datatable .p-button) {
   justify-content: center !important;
+}
+
+.employee-bulk-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.employee-selection-count {
+  padding: 0.3rem 0.55rem;
+  border: 1px solid var(--surface-border);
+  border-radius: 999px;
+  background: var(--surface-50);
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.employee-bulk-summary {
+  padding: 0.75rem;
+  border: 1px solid var(--surface-border);
+  border-radius: 0.65rem;
+  background: var(--surface-50);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.employee-bulk-help {
+  color: var(--text-color-secondary);
+  line-height: 1.45;
+}
+
+@media (max-width: 640px) {
+  .employee-bulk-actions {
+    width: 100%;
+  }
+
+  .employee-bulk-actions .p-button {
+    flex: 1 1 auto;
+  }
 }
 </style>

@@ -274,6 +274,16 @@ async function resolveEmployeeSnapshot(employeeId) {
 
   const employee = await Employee.findById(cleanEmployeeId).lean()
 
+  if (employee && employee.isOTEligible === false) {
+    throw appError({
+      statusCode: 400,
+      code: 'EMPLOYEE_NOT_OT_ELIGIBLE',
+      messageKey: 'ot.request.error.employeeNotEligible',
+      message: 'This employee is not eligible for OT requests.',
+      field: 'employeeId',
+    })
+  }
+
   if (!employee) {
     throw appError({
       statusCode: 404,

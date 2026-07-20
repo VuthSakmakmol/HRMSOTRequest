@@ -208,6 +208,19 @@ const PaymentFormulaSchema = new Schema(
       default: () => [],
     },
 
+    // Optional maximum salary-based OT amount per employee payment row.
+    // Allowances are added after this limit and are not capped.
+    maximumPaymentEnabled: {
+      type: Boolean,
+      default: false,
+    },
+
+    maximumPaymentAmount: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
     // USD/base-currency rounding before exchange.
     roundingDecimals: {
       type: Number,
@@ -297,6 +310,9 @@ PaymentFormulaSchema.pre('validate', function preValidate(next) {
 
   this.monthlyWorkingDays = safePositiveNumber(this.monthlyWorkingDays, 26)
   this.hoursPerDay = safePositiveNumber(this.hoursPerDay, 8)
+
+  this.maximumPaymentEnabled = this.maximumPaymentEnabled === true
+  this.maximumPaymentAmount = safeNonNegativeNumber(this.maximumPaymentAmount, 0)
 
   this.roundingDecimals = Math.min(
     Math.max(Math.round(safeNonNegativeNumber(this.roundingDecimals, 2)), 0),

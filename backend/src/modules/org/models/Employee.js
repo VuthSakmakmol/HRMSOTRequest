@@ -100,6 +100,12 @@ const employeeSchema = new Schema(
       },
     ],
 
+    isOTEligible: {
+      type: Boolean,
+      default: true,
+      index: true,
+    },
+
     otWorkflowRole: {
       type: String,
       enum: ['NONE', 'APPROVER', 'ACKNOWLEDGE'],
@@ -194,6 +200,7 @@ employeeSchema.index({ lineIds: 1, positionId: 1, isActive: 1 })
 employeeSchema.index({ shiftId: 1, isActive: 1 })
 employeeSchema.index({ reportsToEmployeeId: 1, isActive: 1 })
 employeeSchema.index({ lineManagerIds: 1, isActive: 1 })
+employeeSchema.index({ isOTEligible: 1, isActive: 1 })
 employeeSchema.index({ otWorkflowRole: 1, isActive: 1 })
 employeeSchema.index({ createdAt: -1 })
 

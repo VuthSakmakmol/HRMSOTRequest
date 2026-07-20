@@ -88,6 +88,7 @@ export function safeRedirectPath(value, auth, fallback = '') {
   if (path.startsWith('//')) return defaultPath
   if (path === '/') return defaultPath
   if (path === '/dashboard') return defaultPath
+  if (path === '/403') return defaultPath
   if (path.startsWith('/login')) return defaultPath
 
   return path

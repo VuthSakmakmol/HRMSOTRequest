@@ -14,6 +14,7 @@ const FORMULA_SORT_FIELDS = [
   'updatedAt',
   'monthlyWorkingDays',
   'hoursPerDay',
+  'maximumPaymentAmount',
   'roundingDecimals',
   'currency',
   'payoutCurrency',
@@ -215,6 +216,9 @@ const createPaymentFormulaSchema = z.object({
 
   hourRules: hourRulesSchema,
 
+  maximumPaymentEnabled: z.boolean().optional().default(false),
+  maximumPaymentAmount: numberField('Maximum payment amount', 0).default(0),
+
   roundingDecimals: z.coerce.number().int().min(0).max(6).default(2),
   currency: optionalUpperString(10).default('USD'),
 
@@ -239,6 +243,9 @@ const updatePaymentFormulaSchema = z
 
     multipliers: multiplierSchema.partial().optional(),
     hourRules: hourRulesSchema.optional(),
+
+    maximumPaymentEnabled: z.boolean().optional(),
+    maximumPaymentAmount: optionalNumberField('Maximum payment amount', 0),
 
     roundingDecimals: z.coerce.number().int().min(0).max(6).optional(),
     currency: optionalUpperString(10),

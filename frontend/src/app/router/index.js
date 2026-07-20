@@ -553,8 +553,16 @@ router.beforeEach(async (to) => {
     return safeRedirectPath(to.query?.redirect, auth)
   }
 
-  if (routeRequiresAuth(to) && auth.token && (to.path === '/' || to.path === '/dashboard')) {
-    return resolveDefaultHomePath(auth)
+  if (
+    routeRequiresAuth(to) &&
+    auth.token &&
+    (to.path === '/' || to.path === '/dashboard' || to.name === 'forbidden')
+  ) {
+    const homePath = resolveDefaultHomePath(auth)
+
+    if (homePath !== '/403' || to.name !== 'forbidden') {
+      return homePath
+    }
   }
 
   if (routeRequiresAuth(to) && !auth.token) {
@@ -567,8 +575,21 @@ router.beforeEach(async (to) => {
   }
 
   if (routeRequiresAuth(to) && auth.token && !hasRoutePermission(auth, to)) {
+    const homePath = resolveDefaultHomePath(auth)
+
+    if (homePath && homePath !== '/403' && homePath !== to.path) {
+      return {
+        path: homePath,
+        replace: true,
+      }
+    }
+
     if (to.name === 'forbidden') return true
-    return '/403'
+
+    return {
+      path: '/403',
+      replace: true,
+    }
   }
 
   return true

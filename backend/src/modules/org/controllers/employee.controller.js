@@ -6,6 +6,8 @@ const { successResponse } = require('../../../shared/utils/apiResponse')
 const {
   createEmployeeSchema,
   updateEmployeeSchema,
+  bulkOTEligibilitySchema,
+  bulkAssignManagerSchema,
   normalizeListQuery,
   normalizeExportQuery,
   normalizeLookupQuery,
@@ -179,6 +181,29 @@ async function create(req, res, next) {
   }
 }
 
+
+async function bulkUpdateOTEligibility(req, res, next) {
+  try {
+    const payload = parse(bulkOTEligibilitySchema, req.body || {})
+    const item = await employeeService.bulkUpdateOTEligibility(payload, req.user)
+
+    return successResponse(res, { item })
+  } catch (error) {
+    return next(error)
+  }
+}
+
+async function bulkAssignManager(req, res, next) {
+  try {
+    const payload = parse(bulkAssignManagerSchema, req.body || {})
+    const item = await employeeService.bulkAssignManager(payload, req.user)
+
+    return successResponse(res, { item })
+  } catch (error) {
+    return next(error)
+  }
+}
+
 async function update(req, res, next) {
   try {
     const payload = parse(updateEmployeeSchema, req.body || {})
@@ -203,5 +228,7 @@ module.exports = {
   getOrgChart,
   getOrgTree,
   create,
+  bulkUpdateOTEligibility,
+  bulkAssignManager,
   update,
 }

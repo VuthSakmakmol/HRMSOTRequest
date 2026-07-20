@@ -126,6 +126,14 @@ function normalizeFormulaPayload(payload = {}) {
     data.salaryBasis = upper(data.salaryBasis || 'MONTHLY_SALARY')
   }
 
+  if (Object.prototype.hasOwnProperty.call(data, 'maximumPaymentEnabled')) {
+    data.maximumPaymentEnabled = data.maximumPaymentEnabled === true
+  }
+
+  if (Object.prototype.hasOwnProperty.call(data, 'maximumPaymentAmount')) {
+    data.maximumPaymentAmount = Math.max(0, safeNumber(data.maximumPaymentAmount, 0))
+  }
+
   if (Object.prototype.hasOwnProperty.call(data, 'currency')) {
     data.currency = upper(data.currency || 'USD')
   }
@@ -214,6 +222,7 @@ function buildFormulaSort(query = {}) {
       updatedAt: 'updatedAt',
       monthlyWorkingDays: 'monthlyWorkingDays',
       hoursPerDay: 'hoursPerDay',
+      maximumPaymentAmount: 'maximumPaymentAmount',
       roundingDecimals: 'roundingDecimals',
       currency: 'currency',
       payoutCurrency: 'payoutCurrency',
@@ -247,6 +256,9 @@ function mapFormulaItem(doc = {}) {
 
     multipliers,
     hourRules: normalizeHourRules(doc.hourRules),
+
+    maximumPaymentEnabled: doc.maximumPaymentEnabled === true,
+    maximumPaymentAmount: Math.max(0, safeNumber(doc.maximumPaymentAmount, 0)),
 
     roundingDecimals: safeNumber(doc.roundingDecimals, 2),
     currency: upper(doc.currency || 'USD'),
@@ -287,6 +299,8 @@ function mapFormulaLookupItem(doc = {}) {
     hoursPerDay: item.hoursPerDay,
     multipliers: item.multipliers,
     hourRules: item.hourRules,
+    maximumPaymentEnabled: item.maximumPaymentEnabled,
+    maximumPaymentAmount: item.maximumPaymentAmount,
     roundingDecimals: item.roundingDecimals,
     currency: item.currency,
 
