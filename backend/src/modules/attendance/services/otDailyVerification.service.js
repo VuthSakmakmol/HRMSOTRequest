@@ -1439,6 +1439,64 @@ async function listHistory(query = {}) {
   return { items: docs.map(mapAudit) }
 }
 
+async function deleteVerificationAttendance(attendanceRecordId, authUser = {}) {
+  if (!isObjectId(attendanceRecordId)) {
+    throw appError(
+      'Invalid attendance record id',
+      400,
+      'ATTENDANCE_RECORD_ID_INVALID',
+    )
+  }
+
+  const record = await AttendanceRecord.findById(attendanceRecordId)
+
+  if (!record) {
+    throw appError(
+      'Attendance record not found',
+      404,
+      'ATTENDANCE_RECORD_NOT_FOUND',
+    )
+  }
+
+  if (
+    upper(record.attendanceSource) === VERIFICATION_ATTENDANCE_SOURCE ||
+    record.verificationMeta?.createdFromOTRequestId
+  ) {
+    throw appError(
+      'Attendance created by OT Verification must be removed with Recover Attendance.',
+      409,
+      'ATTENDANCE_USE_RECOVER_ACTION',
+    )
+  }
+
+  const before = record.toObject()
+  const actorAccountId = getActorAccountId(authUser)
+
+  await AttendanceVerificationAudit.create({
+    action: 'DELETE_ATTENDANCE',
+    attendanceDate: record.attendanceDate,
+    employeeId: record.employeeId || null,
+    employeeNo: normalizedEmployeeNo(record.employeeNo, record.importedEmployeeId),
+    employeeName: s(record.employeeName),
+    attendanceRecordId: record._id,
+    before,
+    after: {
+      deleted: true,
+      result: 'MISSING_ATTENDANCE',
+    },
+    createdBy: actorAccountId,
+  })
+
+  await record.deleteOne()
+
+  return {
+    action: 'DELETED',
+    attendanceRecordId,
+    attendanceDate: before.attendanceDate,
+    employeeNo: normalizedEmployeeNo(before.employeeNo, before.importedEmployeeId),
+  }
+}
+
 function buildExportRows(items = []) {
   return items.map((row, index) => ({
     No: index + 1,
@@ -1512,6 +1570,7 @@ module.exports = {
   listDailyVerification,
   createAttendanceFromOTRequest,
   recoverVerificationAttendance,
+  deleteVerificationAttendance,
   recoverVerificationOTRequest,
   createOTRequestFromAttendance,
   listHistory,

@@ -84,6 +84,18 @@ async function recoverAttendance(req, res, next) {
   }
 }
 
+async function deleteAttendance(req, res, next) {
+  try {
+    const result = await service.deleteVerificationAttendance(
+      req.params?.id,
+      req.user,
+    )
+    return successResponse(res, result)
+  } catch (error) {
+    return next(error)
+  }
+}
+
 async function history(req, res, next) {
   try {
     const query = parse(verificationHistoryQuerySchema, req.query)
@@ -100,5 +112,6 @@ module.exports = {
   createOTRequest,
   recoverOTRequest,
   recoverAttendance,
+  deleteAttendance,
   history,
 }

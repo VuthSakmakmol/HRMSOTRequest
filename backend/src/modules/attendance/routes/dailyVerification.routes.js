@@ -18,5 +18,10 @@ router.post(
   controller.recoverOTRequest,
 )
 router.post('/recover-attendance', requirePermission('ATTENDANCE_VERIFY'), controller.recoverAttendance)
+router.delete(
+  '/attendance/:id',
+  requirePermission('ATTENDANCE_DELETE'),
+  controller.deleteAttendance,
+)
 
 module.exports = router

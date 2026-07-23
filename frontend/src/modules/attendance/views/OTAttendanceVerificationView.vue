@@ -18,6 +18,7 @@ import HolidayDatePicker from '@/modules/calendar/components/HolidayDatePicker.v
 import AppTableLoading from '@/shared/components/AppTableLoading.vue'
 import {
   createAttendanceFromOTVerification,
+  deleteAttendanceFromOTVerification,
   createOTRequestFromAttendanceVerification,
   exportDailyOTAttendanceVerification,
   getDailyOTAttendanceVerification,
@@ -25,11 +26,14 @@ import {
   recoverAttendanceFromOTVerification,
   recoverOTRequestFromAttendanceVerification,
 } from '@/modules/attendance/attendance.api'
+import { useAuthStore } from '@/modules/auth/auth.store'
 import { getApiErrorMessage } from '@/shared/utils/apiError'
 import { formatDate, formatDateTime, toApiDate } from '@/shared/utils/dateFormat'
 
 const toast = useToast()
 const { t } = useI18n()
+const auth = useAuthStore()
+const canDeleteAttendance = computed(() => auth.hasPermission?.('ATTENDANCE_DELETE') === true)
 
 const PAGE_SIZE = 50
 const SEARCH_DELAY_MS = 300
@@ -463,6 +467,14 @@ function actionMessage(row, action) {
     )
   }
 
+  if (action === 'deleteAttendance') {
+    return tx(
+      'attendance.verification.confirmDeleteAttendance',
+      `Delete the attendance record for ${employee}? This cannot be undone and verification will show No Attendance.`,
+      { employee },
+    )
+  }
+
   return tx(
     'attendance.verification.confirmRecoverAttendance',
     `Recover this OT Verification attendance for ${employee}? It will return to No Attendance.`,
@@ -491,10 +503,12 @@ async function runAction(row, action) {
       response = await recoverOTRequestFromAttendanceVerification({
         otRequestId: row.request.id,
       })
-    } else {
+    } else if (action === 'recover') {
       response = await recoverAttendanceFromOTVerification({
         attendanceRecordId: row.attendance.id,
       })
+    } else {
+      response = await deleteAttendanceFromOTVerification(row.attendance.id)
     }
 
     const payload = normalizePayload(response)
@@ -502,6 +516,8 @@ async function runAction(row, action) {
       ? tx('attendance.verification.requestCreatedDetail', `OT request ${payload?.otRequest?.requestNo || ''} was created.`, { requestNo: payload?.otRequest?.requestNo || '' })
       : action === 'recoverRequest'
         ? tx('attendance.verification.requestRecoveredDetail', `OT request ${payload?.requestNo || row?.request?.requestNo || ''} was recovered successfully.`, { requestNo: payload?.requestNo || row?.request?.requestNo || '' })
+        : action === 'deleteAttendance'
+          ? tx('attendance.verification.attendanceDeletedDetail', 'Attendance was deleted successfully.')
         : action === 'recover'
           ? tx('attendance.verification.attendanceRecoveredDetail', 'Attendance was recovered successfully.')
           : tx('attendance.verification.attendanceCreatedDetail', 'Attendance was created successfully.')
@@ -1034,12 +1050,24 @@ onBeforeUnmount(() => window.clearTimeout(filterTimer))
                   @click="runAction(data, 'recover')"
                 />
 
+                <Button
+                  v-if="canDeleteAttendance && data?.attendance?.id && !data?.canRecoverAttendance"
+                  :label="tx('attendance.verification.deleteAttendance', 'Delete attendance')"
+                  icon="pi pi-trash"
+                  size="small"
+                  severity="danger"
+                  class="attendance-row-action"
+                  :loading="actionRowId === data?.id"
+                  @click="runAction(data, 'deleteAttendance')"
+                />
+
                 <span
                   v-if="
                     !data?.canCreateAttendance &&
                     !data?.canCreateOTRequest &&
                     !data?.canRecoverOTRequest &&
-                    !data?.canRecoverAttendance
+                    !data?.canRecoverAttendance &&
+                    !(canDeleteAttendance && data?.attendance?.id)
                   "
                   class="attendance-meta-text"
                 >

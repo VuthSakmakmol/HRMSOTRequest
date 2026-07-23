@@ -266,6 +266,12 @@ const PERMISSIONS = [
     'Allow verifying OT requests against attendance records',
   ),
   permission(
+    'ATTENDANCE_DELETE',
+    'Delete Attendance',
+    'ATTENDANCE',
+    'Allow deleting incorrect attendance records from OT attendance verification',
+  ),
+  permission(
     'ATTENDANCE_SCAN_USE',
     'Use Attendance Scan Station',
     'ATTENDANCE',

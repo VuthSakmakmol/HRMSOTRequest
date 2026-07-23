@@ -255,6 +255,13 @@ export function recoverAttendanceFromOTVerification(payload = {}) {
   })
 }
 
+export function deleteAttendanceFromOTVerification(attendanceRecordId) {
+  return api.delete(
+    `/attendance/verification/daily/attendance/${cleanId(attendanceRecordId)}`,
+    { timeout: ATTENDANCE_VERIFY_TIMEOUT_MS },
+  )
+}
+
 export function getOTAttendanceVerificationHistory(params = {}) {
   return api.get('/attendance/verification/daily/history', {
     params: normalizeDailyVerificationParams(params),
@@ -320,6 +327,7 @@ const attendanceService = {
   createAttendanceFromOTVerification,
   createOTRequestFromAttendanceVerification,
   recoverAttendanceFromOTVerification,
+  deleteAttendanceFromOTVerification,
   recoverOTRequestFromAttendanceVerification,
   getOTAttendanceVerificationHistory,
 

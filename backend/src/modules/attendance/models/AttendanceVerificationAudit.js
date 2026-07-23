@@ -7,6 +7,7 @@ const { Schema } = mongoose
 const ACTIONS = [
   'CREATE_ATTENDANCE',
   'RECOVER_ATTENDANCE',
+  'DELETE_ATTENDANCE',
   'CREATE_OT_REQUEST',
   'RECOVER_OT_REQUEST',
 ]
