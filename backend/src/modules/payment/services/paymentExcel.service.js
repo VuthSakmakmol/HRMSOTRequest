@@ -594,7 +594,7 @@ function styleNumberColumn(worksheet, colNumbers = [], numberFormat = '#,##0') {
 }
 
 function setDetailColumns(worksheet, dateRateCount, denominations = []) {
-  const widths = [4.5, 10, 18, 13, 22]
+  const widths = [4.5, 10, 18, 18, 13, 22]
   for (let i = 0; i < dateRateCount; i += 1) widths.push(5.5)
   widths.push(10, 10, 10, 11)
   denominations.forEach(() => widths.push(6))
@@ -692,7 +692,7 @@ function addDetailHeader(worksheet, data = {}, group = {}, plan = {}, lastCol) {
   worksheet.getRow(1).height = 18
   worksheet.getRow(2).height = 18
 
-  const fixedHeaders = ['No', 'ID', 'Name', 'Position', 'Line']
+  const fixedHeaders = ['No', 'ID', 'Name', 'Department', 'Position', 'Line']
   fixedHeaders.forEach((header, index) => {
     const col = index + 1
     const cell = worksheet.getCell(3, col)
@@ -700,7 +700,7 @@ function addDetailHeader(worksheet, data = {}, group = {}, plan = {}, lastCol) {
     styleHeaderCell(cell)
   })
 
-  const firstDateCol = 6
+  const firstDateCol = 7
   plan.columns.forEach((column, index) => {
     const cell = worksheet.getCell(3, firstDateCol + index)
     cell.value = column.label
@@ -737,7 +737,7 @@ function addDetailHeader(worksheet, data = {}, group = {}, plan = {}, lastCol) {
 
 function addDetailRows(worksheet, group = {}, plan = {}, denominations = []) {
   const firstDataRow = 4
-  const firstDateCol = 6
+  const firstDateCol = 7
   const moneyStartCol = firstDateCol + plan.columns.length
   const denominationStartCol = moneyStartCol + 4
   const signatureCol = denominationStartCol + denominations.length
@@ -749,8 +749,9 @@ function addDetailRows(worksheet, group = {}, plan = {}, denominations = []) {
     row.getCell(1).value = index + 1
     row.getCell(2).value = employee.employeeNo
     row.getCell(3).value = employee.employeeName
-    row.getCell(4).value = employee.positionName
-    row.getCell(5).value = lineDisplayValue(group)
+    row.getCell(4).value = employee.departmentName
+    row.getCell(5).value = employee.positionName
+    row.getCell(6).value = lineDisplayValue(group)
 
     plan.columns.forEach((column, columnIndex) => {
       const hours = getEmployeeHoursForDate(employee, column.otDate)
@@ -773,7 +774,7 @@ function addDetailRows(worksheet, group = {}, plan = {}, denominations = []) {
 
   const totalRowNumber = firstDataRow + group.employees.length
   const totalRow = worksheet.getRow(totalRowNumber)
-  worksheet.mergeCells(totalRowNumber, 1, totalRowNumber, 5)
+  worksheet.mergeCells(totalRowNumber, 1, totalRowNumber, 6)
   totalRow.getCell(1).value = 'Total'
   totalRow.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' }
   totalRow.getCell(1).font = { name: WORKBOOK_FONT, bold: true, size: 9 }
@@ -867,17 +868,17 @@ function finishDetailSheet(worksheet, metrics, plan, denominations = [], options
     row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
       cell.alignment = {
         vertical: 'middle',
-        horizontal: [3, 4, 5].includes(colNumber) ? 'left' : 'center',
+        horizontal: [3, 4, 5, 6].includes(colNumber) ? 'left' : 'center',
         wrapText: true,
       }
     })
   }
 
   styleSubtotalRows(worksheet, metrics.subtotalRows || [metrics.totalRowNumber], lastCol)
-  styleNumberColumn(worksheet, [5], '@')
+  styleNumberColumn(worksheet, [6], '@')
 
   const hourColumns = []
-  for (let index = 0; index < plan.columns.length; index += 1) hourColumns.push(6 + index)
+  for (let index = 0; index < plan.columns.length; index += 1) hourColumns.push(7 + index)
   styleNumberColumn(worksheet, hourColumns, 'General')
   styleNumberColumn(worksheet, [metrics.moneyStartCol, metrics.moneyStartCol + 1, metrics.moneyStartCol + 2], '$#,##0.00')
   styleNumberColumn(worksheet, [metrics.moneyStartCol + 3], '#,##0')
@@ -904,7 +905,7 @@ function addLineDetailSheet(workbook, data = {}, group = {}, denominations = [])
   })
 
   const plan = buildDateColumnPlan(group)
-  const lastCol = 5 + plan.columns.length + 4 + denominations.length + 2
+  const lastCol = 6 + plan.columns.length + 4 + denominations.length + 2
 
   data.__denominations = denominations
   setDetailColumns(worksheet, plan.columns.length, denominations)
@@ -1086,7 +1087,7 @@ function packSheetName(pack = {}) {
 function addPackedDetailRows(worksheet, pack = {}, plan = {}, denominations = []) {
   const groups = pack.groups || []
   const firstDataRow = 4
-  const firstDateCol = 6
+  const firstDateCol = 7
   const moneyStartCol = firstDateCol + plan.columns.length
   const denominationStartCol = moneyStartCol + 4
   const signatureCol = denominationStartCol + denominations.length
@@ -1105,8 +1106,9 @@ function addPackedDetailRows(worksheet, pack = {}, plan = {}, denominations = []
       row.getCell(1).value = runningNo
       row.getCell(2).value = employee.employeeNo
       row.getCell(3).value = employee.employeeName
-      row.getCell(4).value = employee.positionName
-      row.getCell(5).value = lineDisplayValue(group)
+      row.getCell(4).value = employee.departmentName
+      row.getCell(5).value = employee.positionName
+      row.getCell(6).value = lineDisplayValue(group)
 
       plan.columns.forEach((column, columnIndex) => {
         const hours = getEmployeeHoursForDate(employee, column.otDate)
@@ -1134,7 +1136,7 @@ function addPackedDetailRows(worksheet, pack = {}, plan = {}, denominations = []
     const subtotalRow = worksheet.getRow(subtotalRowNumber)
     const lastEmployeeRow = Math.max(groupFirstRow, subtotalRowNumber - 1)
 
-    worksheet.mergeCells(subtotalRowNumber, 1, subtotalRowNumber, 5)
+    worksheet.mergeCells(subtotalRowNumber, 1, subtotalRowNumber, 6)
     subtotalRow.getCell(1).value = `${lineDisplayValue(group)} Total`
 
     plan.columns.forEach((_, columnIndex) => {
@@ -1202,7 +1204,7 @@ function addPackedDetailRows(worksheet, pack = {}, plan = {}, denominations = []
       return `SUM(${lineSubtotalRows.map((subtotalRow) => `${letter}${subtotalRow}`).join(',')})`
     }
 
-    worksheet.mergeCells(sheetTotalRowNumber, 1, sheetTotalRowNumber, 5)
+    worksheet.mergeCells(sheetTotalRowNumber, 1, sheetTotalRowNumber, 6)
     sheetTotalRow.getCell(1).value = 'Sheet Total'
 
     plan.columns.forEach((_, columnIndex) => {
@@ -1277,7 +1279,7 @@ function addPackedDetailSheet(workbook, data = {}, pack = {}, denominations = []
   })
 
   const plan = buildPackedDateColumnPlan(pack.groups || [])
-  const lastCol = 5 + plan.columns.length + 4 + denominations.length + 2
+  const lastCol = 6 + plan.columns.length + 4 + denominations.length + 2
 
   data.__denominations = denominations
   setDetailColumns(worksheet, plan.columns.length, denominations)
@@ -1478,7 +1480,7 @@ function addSummaryRows(worksheet, data = {}, detailSheets = [], denominations =
 
 
 function setAuditColumns(worksheet) {
-  const widths = [4.5, 12, 13, 12, 20, 10, 16, 13, 10, 13, 10, 10, 11, 10, 18, 11, 11, 11, 12, 12, 35]
+  const widths = [4.5, 12, 13, 12, 20, 10, 18, 16, 13, 10, 13, 10, 10, 11, 10, 18, 11, 11, 11, 12, 12, 35]
 
   widths.forEach((width, index) => {
     worksheet.getColumn(index + 1).width = width
@@ -1535,6 +1537,7 @@ function addAllRequestAuditSheet(workbook, data = {}) {
     'Employee ID',
     'Employee Name',
     'Line Code',
+    'Department',
     'Position',
     'Request Status',
     'Requested H',
@@ -1586,21 +1589,22 @@ function addAllRequestAuditSheet(workbook, data = {}) {
     row.getCell(4).value = upper(item.employeeNo)
     row.getCell(5).value = s(item.employeeName)
     row.getCell(6).value = auditLineValue(item)
-    row.getCell(7).value = s(item.positionName)
-    row.getCell(8).value = upper(item.requestStatus)
-    row.getCell(9).value = formatHourValue(item.requestedHours)
-    row.getCell(10).value = auditAttendanceStatus(item)
-    row.getCell(11).value = s(item.clockIn)
-    row.getCell(12).value = s(item.clockOut)
-    row.getCell(13).value = formatHourValue(item.actualOtHours)
-    row.getCell(14).value = formatHourValue(item.payableHours)
-    row.getCell(15).value = s(item.rateFormula)
-    row.getCell(16).value = roundAmount(item.amountUsd, 2)
-    row.getCell(17).value = roundAmount(item.allowanceAmountUsd, 2)
-    row.getCell(18).value = roundAmount(item.totalUsd, 2)
-    row.getCell(19).value = Math.round(n(item.totalKhr, 0))
-    row.getCell(20).value = s(item.paymentStatus)
-    row.getCell(21).value = auditIssueText(item)
+    row.getCell(7).value = s(item.departmentName)
+    row.getCell(8).value = s(item.positionName)
+    row.getCell(9).value = upper(item.requestStatus)
+    row.getCell(10).value = formatHourValue(item.requestedHours)
+    row.getCell(11).value = auditAttendanceStatus(item)
+    row.getCell(12).value = s(item.clockIn)
+    row.getCell(13).value = s(item.clockOut)
+    row.getCell(14).value = formatHourValue(item.actualOtHours)
+    row.getCell(15).value = formatHourValue(item.payableHours)
+    row.getCell(16).value = s(item.rateFormula)
+    row.getCell(17).value = roundAmount(item.amountUsd, 2)
+    row.getCell(18).value = roundAmount(item.allowanceAmountUsd, 2)
+    row.getCell(19).value = roundAmount(item.totalUsd, 2)
+    row.getCell(20).value = Math.round(n(item.totalKhr, 0))
+    row.getCell(21).value = s(item.paymentStatus)
+    row.getCell(22).value = auditIssueText(item)
     row.height = 18
   })
 
@@ -1609,22 +1613,22 @@ function addAllRequestAuditSheet(workbook, data = {}) {
 
   if (rows.length) {
     const totalRow = worksheet.getRow(totalRowNumber)
-    worksheet.mergeCells(totalRowNumber, 1, totalRowNumber, 8)
+    worksheet.mergeCells(totalRowNumber, 1, totalRowNumber, 9)
     totalRow.getCell(1).value = 'Total'
     totalRow.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' }
 
-    ;[9, 13, 14, 16, 17, 18, 19].forEach((col) => {
+    ;[10, 14, 15, 17, 18, 19, 20].forEach((col) => {
       const letter = columnLetter(col)
       totalRow.getCell(col).value = {
         formula: `SUM(${letter}${firstDataRow}:${letter}${lastDataRow})`,
         result: rows.reduce((sum, item) => {
-          if (col === 9) return sum + n(item.requestedHours, 0)
-          if (col === 13) return sum + n(item.actualOtHours, 0)
-          if (col === 14) return sum + n(item.payableHours, 0)
-          if (col === 16) return sum + n(item.amountUsd, 0)
-          if (col === 17) return sum + n(item.allowanceAmountUsd, 0)
-          if (col === 18) return sum + n(item.totalUsd, 0)
-          if (col === 19) return sum + n(item.totalKhr, 0)
+          if (col === 10) return sum + n(item.requestedHours, 0)
+          if (col === 14) return sum + n(item.actualOtHours, 0)
+          if (col === 15) return sum + n(item.payableHours, 0)
+          if (col === 17) return sum + n(item.amountUsd, 0)
+          if (col === 18) return sum + n(item.allowanceAmountUsd, 0)
+          if (col === 19) return sum + n(item.totalUsd, 0)
+          if (col === 20) return sum + n(item.totalKhr, 0)
           return sum
         }, 0),
       }
@@ -1650,15 +1654,15 @@ function addAllRequestAuditSheet(workbook, data = {}) {
     row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
       cell.alignment = {
         vertical: 'middle',
-        horizontal: [5, 7, 15, 21].includes(colNumber) ? 'left' : 'center',
+        horizontal: [5, 7, 8, 16, 22].includes(colNumber) ? 'left' : 'center',
         wrapText: true,
       }
     })
   }
 
-  styleNumberColumn(worksheet, [9, 13, 14], 'General')
-  styleNumberColumn(worksheet, [16, 17, 18], '$#,##0.00')
-  styleNumberColumn(worksheet, [19], '#,##0')
+  styleNumberColumn(worksheet, [10, 14, 15], 'General')
+  styleNumberColumn(worksheet, [17, 18, 19], '$#,##0.00')
+  styleNumberColumn(worksheet, [20], '#,##0')
   setAuditColumns(worksheet)
 
   worksheet.views = [{ state: 'frozen', ySplit: 4 }]
