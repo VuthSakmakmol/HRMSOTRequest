@@ -72,6 +72,8 @@ const listProductionLineQuerySchema = z.object({
 })
 
 const productionLineLookupQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+
   search: z.string().trim().optional().default(''),
 
   departmentId: optionalObjectIdField('org.line.field.departmentId')
@@ -196,6 +198,7 @@ function normalizeLookupQuery(raw = {}) {
   const parsed = productionLineLookupQuerySchema.parse(raw)
 
   return {
+    page: parsed.page,
     search: parsed.search,
     departmentId: parsed.departmentId,
     isActive: parsed.isActive,
