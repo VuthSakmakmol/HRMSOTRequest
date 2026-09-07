@@ -33,6 +33,7 @@ import OTApprovalCalendarRulesView from '@/modules/ot/views/OTApprovalCalendarRu
 
 import PaymentFormulaView from '@/modules/payment/views/PaymentFormulaView.vue'
 import PaymentProcessView from '@/modules/payment/views/PaymentProcessView.vue'
+import PaymentReportSettingsView from '@/modules/payment/views/PaymentReportSettingsView.vue'
 
 import AttendanceImportView from '@/modules/attendance/views/AttendanceImportView.vue'
 import AttendanceRecordsView from '@/modules/attendance/views/AttendanceRecordsView.vue'
@@ -508,6 +509,21 @@ const routes = [
             'PAYMENT_ALLOWANCE_POLICY_CREATE',
             'PAYMENT_ALLOWANCE_POLICY_UPDATE',
           ],
+        },
+      },
+
+      // =========================
+      // Settings
+      // =========================
+      {
+        path: 'settings/payment-report-separation',
+        name: 'payment-report-separation-settings',
+        component: PaymentReportSettingsView,
+        meta: {
+          requiresAuth: true,
+          title: 'Payment Report Separation',
+          titleKey: 'nav.paymentReportSeparation',
+          requiredAnyPermissions: ['PAYMENT_REPORT_SETTING_VIEW'],
         },
       },
 

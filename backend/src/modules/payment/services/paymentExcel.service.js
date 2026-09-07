@@ -464,9 +464,26 @@ function getSelectedDateNote(data = {}) {
   return ` · ${selectedDateCount} selected day${selectedDateCount === 1 ? '' : 's'}, ${excludedDateCount} excluded`
 }
 
+function getReportSplitLabel(data = {}) {
+  const type = upper(data?.reportSplit?.type)
+  const positions = Array.isArray(data?.reportSplit?.selectedPositions)
+    ? data.reportSplit.selectedPositions
+    : []
+  const names = positions.map((item) => s(item?.name || item?.code)).filter(Boolean)
+  const displayedNames = names.length > 3
+    ? `${names.slice(0, 3).join(', ')} +${names.length - 3} more`
+    : names.join(', ')
+  const positionText = displayedNames ? `: ${displayedNames}` : ''
+
+  if (type === 'MAIN') return ` - MAIN REPORT (Separated positions excluded${positionText})`
+  if (type === 'SEPARATE_POSITIONS') return ` - SEPARATED POSITION REPORT${positionText}`
+
+  return ''
+}
+
 function reportTitle(data = {}) {
   const period = getPeriodLabel(data)
-  return `(Name List Worker Working Extra OT On ${period}${getSelectedDateNote(data)})`
+  return `(Name List Worker Working Extra OT On ${period}${getSelectedDateNote(data)})${getReportSplitLabel(data)}`
 }
 
 function colLetter(colNumber) {
@@ -1299,7 +1316,7 @@ function addPackedDetailSheet(workbook, data = {}, pack = {}, denominations = []
 
 function addSummaryHeader(worksheet, data = {}, lastCol) {
   worksheet.getCell(1, 1).value = COMPANY_NAME
-  worksheet.getCell(2, 1).value = `Payment Summary by Line (${getPeriodLabel(data)}${getSelectedDateNote(data)})`
+  worksheet.getCell(2, 1).value = `Payment Summary by Line (${getPeriodLabel(data)}${getSelectedDateNote(data)})${getReportSplitLabel(data)}`
   worksheet.mergeCells(1, 1, 1, lastCol)
   worksheet.mergeCells(2, 1, 2, lastCol)
   styleTitleRow(worksheet.getRow(1), 12)
@@ -1558,7 +1575,7 @@ function addAllRequestAuditSheet(workbook, data = {}) {
   const lastCol = headers.length
 
   worksheet.getCell(1, 1).value = COMPANY_NAME
-  worksheet.getCell(2, 1).value = `All OT Request Check (${getPeriodLabel(data)}${getSelectedDateNote(data)})`
+  worksheet.getCell(2, 1).value = `All OT Request Check (${getPeriodLabel(data)}${getSelectedDateNote(data)})${getReportSplitLabel(data)}`
   worksheet.mergeCells(1, 1, 1, lastCol)
   worksheet.mergeCells(2, 1, 2, lastCol)
   styleTitleRow(worksheet.getRow(1), 12)
@@ -1710,7 +1727,9 @@ async function buildPaymentWorkbook(data) {
   if (!groups.length) {
     const emptySheet = workbook.addWorksheet('No Payment Rows')
     emptySheet.getCell('A1').value = COMPANY_NAME
-    emptySheet.getCell('A2').value = 'No payable OT rows found for this payment period.'
+    emptySheet.getCell('A2').value = data?.reportSplit?.type === 'SEPARATE_POSITIONS'
+      ? 'No payable OT rows found for the configured separated positions in this payment period.'
+      : 'No payable OT rows found for this payment period.'
     styleTitleRow(emptySheet.getRow(1), 12)
     styleTitleRow(emptySheet.getRow(2), 11)
   }

@@ -4,6 +4,8 @@ const crypto = require('crypto')
 
 const { buildPaymentPreview } = require('./paymentCalculation.service')
 const { buildPaymentWorkbook } = require('./paymentExcel.service')
+const paymentReportSettingsService = require('./paymentReportSettings.service')
+const { splitPaymentPreviewData } = require('./paymentReportSplit.service')
 
 const JOB_TTL_MS = 30 * 60 * 1000
 const MAX_COMPLETED_JOBS = 50
@@ -79,8 +81,19 @@ function makePublicJob(job, options = {}) {
     failedAt: job.failedAt,
     error: job.error || null,
     meta: job.meta || {},
-    downloadReady: Boolean(job.result?.buffer && job.result?.filename),
-    filename: s(job.result?.filename),
+    downloadReady: Boolean(
+      (job.result?.buffer && job.result?.filename) ||
+        (Array.isArray(job.result?.files) && job.result.files.some((file) => file?.buffer && file?.filename)),
+    ),
+    filename: s(job.result?.filename || job.result?.files?.[0]?.filename),
+    files: Array.isArray(job.result?.files)
+      ? job.result.files.map((file) => ({
+          key: s(file?.key),
+          filename: s(file?.filename),
+          label: s(file?.label),
+          rowCount: Number(file?.rowCount || 0),
+        }))
+      : [],
   }
 
   if (includeResult && job.type === 'PREVIEW' && job.status === 'COMPLETED') {
@@ -262,38 +275,95 @@ async function runExportJob(jobId) {
       onProgress: buildProgressUpdater(jobId),
     })
 
+    const reportSettings = await paymentReportSettingsService.getSettingsForExport()
+    const split = splitPaymentPreviewData(data, reportSettings)
+
     updateJob(jobId, {
       status: 'RUNNING',
       progress: 96,
       phase: 'BUILDING_EXCEL',
-      message: 'Building Excel workbook',
+      message: split.enabled ? 'Building main and separated-position Excel workbooks' : 'Building Excel workbook',
       meta: {
         paymentRows: Array.isArray(data?.items) ? data.items.length : 0,
         totalRequests: Number(data?.otRequestCount || 0),
+        reportSplitEnabled: split.enabled,
+        mainPaymentRows: Number(split.counts?.mainItems || 0),
+        separatePaymentRows: Number(split.counts?.separateItems || 0),
+        separatePositionCount: Array.isArray(split.selectedPositions) ? split.selectedPositions.length : 0,
       },
     })
 
     const safeFrom = s(job.input.fromDate).replace(/[^\d-]/g, '')
     const safeTo = s(job.input.toDate).replace(/[^\d-]/g, '')
+    const exportedBy = s(job.actor?.label)
 
-    const buffer = await buildPaymentWorkbook({
-      ...data,
-      exportedBy: s(job.actor?.label),
-    })
+    const files = []
+
+    if (split.enabled) {
+      const mainBuffer = await buildPaymentWorkbook({
+        ...split.main,
+        exportedBy,
+      })
+
+      files.push({
+        key: 'main',
+        label: 'Main payment report',
+        filename: `payment-calculation-main-${safeFrom}-to-${safeTo}.xlsx`,
+        buffer: mainBuffer,
+        rowCount: Number(split.counts?.mainItems || 0),
+      })
+
+      const separateBuffer = await buildPaymentWorkbook({
+        ...split.separate,
+        exportedBy,
+      })
+
+      files.push({
+        key: 'separate',
+        label: 'Separated positions payment report',
+        filename: `payment-calculation-separated-positions-${safeFrom}-to-${safeTo}.xlsx`,
+        buffer: separateBuffer,
+        rowCount: Number(split.counts?.separateItems || 0),
+      })
+    } else {
+      const buffer = await buildPaymentWorkbook({
+        ...data,
+        exportedBy,
+      })
+
+      files.push({
+        key: 'main',
+        label: 'Payment report',
+        filename: `payment-calculation-${safeFrom}-to-${safeTo}.xlsx`,
+        buffer,
+        rowCount: Array.isArray(data?.items) ? data.items.length : 0,
+      })
+    }
 
     updateJob(jobId, {
       status: 'COMPLETED',
       progress: 100,
       phase: 'COMPLETED',
-      message: 'Payment Excel is ready to download',
+      message: split.enabled ? 'Two payment Excel reports are ready to download' : 'Payment Excel is ready to download',
       completedAt: nowIso(),
       result: {
-        filename: `payment-calculation-${safeFrom}-to-${safeTo}.xlsx`,
-        buffer,
+        filename: files[0]?.filename || `payment-calculation-${safeFrom}-to-${safeTo}.xlsx`,
+        files,
       },
       meta: {
         paymentRows: Array.isArray(data?.items) ? data.items.length : 0,
         totalRequests: Number(data?.otRequestCount || 0),
+        reportSplitEnabled: split.enabled,
+        mainPaymentRows: Number(split.counts?.mainItems || 0),
+        separatePaymentRows: Number(split.counts?.separateItems || 0),
+        separatePositionCount: Array.isArray(split.selectedPositions) ? split.selectedPositions.length : 0,
+        separatePositions: Array.isArray(split.selectedPositions)
+          ? split.selectedPositions.map((item) => ({
+              id: s(item?.id),
+              code: s(item?.code),
+              name: s(item?.name),
+            }))
+          : [],
       },
     })
   } catch (error) {
@@ -346,14 +416,37 @@ function getPaymentJobStatus(jobId) {
   })
 }
 
-function getPaymentExportDownload(jobId) {
+function getPaymentExportDownload(jobId, fileKey = '') {
   const job = getJobOrThrow(jobId)
 
   if (job.type !== 'EXPORT') {
     throw createHttpError('This payment job is not an export job', 400, 'payment.job.not_export')
   }
 
-  if (job.status !== 'COMPLETED' || !job.result?.buffer) {
+  if (job.status !== 'COMPLETED') {
+    throw createHttpError('Payment Excel is not ready yet', 409, 'payment.job.not_ready')
+  }
+
+  const files = Array.isArray(job.result?.files) ? job.result.files : []
+
+  if (files.length) {
+    const requestedKey = s(fileKey)
+    const file = requestedKey
+      ? files.find((item) => s(item?.key) === requestedKey)
+      : files[0]
+
+    if (!file?.buffer) {
+      throw createHttpError('Requested payment Excel file was not found', 404, 'payment.job.file_not_found')
+    }
+
+    return {
+      filename: s(file.filename) || 'payment-calculation.xlsx',
+      buffer: file.buffer,
+    }
+  }
+
+  // Backward compatibility for any already-running job created before this update.
+  if (!job.result?.buffer) {
     throw createHttpError('Payment Excel is not ready yet', 409, 'payment.job.not_ready')
   }
 

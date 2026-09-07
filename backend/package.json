@@ -7,9 +7,10 @@
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
     "seed:admin": "node src/database/seeds/seedAdmin.js",
-    "test": "npm run test:ot-timing && npm run test:ot-saved-data",
+    "test": "npm run test:ot-timing && npm run test:ot-saved-data && npm run test:payment-report-split",
     "test:ot-timing": "node src/modules/ot/tests/otRequestSourceOfTruth.test.js",
-    "test:ot-saved-data": "node src/modules/ot/tests/otSavedDataAudit.test.js"
+    "test:ot-saved-data": "node src/modules/ot/tests/otSavedDataAudit.test.js",
+    "test:payment-report-split": "node src/modules/payment/tests/paymentReportSplit.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

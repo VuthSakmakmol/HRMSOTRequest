@@ -9,6 +9,7 @@ import Button from 'primevue/button'
 import Checkbox from 'primevue/checkbox'
 import Column from 'primevue/column'
 import DataTable from 'primevue/datatable'
+import Dialog from 'primevue/dialog'
 import InputNumber from 'primevue/inputnumber'
 import ProgressBar from 'primevue/progressbar'
 import Select from 'primevue/select'
@@ -345,6 +346,12 @@ const processProgressMetaLabel = computed(() => {
 
   if (Number(meta.paymentRows || 0) > 0) {
     pieces.push(`Rows ${Number(meta.paymentRows || 0)}`)
+  }
+
+  if (meta.reportSplitEnabled === true) {
+    pieces.push(
+      `Main ${Number(meta.mainPaymentRows || 0)} · Separate ${Number(meta.separatePaymentRows || 0)}`,
+    )
   }
 
   if (Number(processProgress.uploadProgress || 0) > 0 && processProgress.status === 'UPLOADING') {
@@ -1217,13 +1224,35 @@ async function handleGenerate() {
     const completedJob = await waitForPaymentProcessJob(startedJob.jobId, 'EXPORT', runId)
     updateProcessProgress(completedJob)
 
-    const downloadRes = await downloadPaymentProcessJobResult(completedJob.jobId)
-    downloadBlob(
-      downloadRes,
-      completedJob.filename || `payment_${periodStartYMD.value}_to_${periodEndYMD.value}.xlsx`,
-    )
+    const files = asArray(completedJob.files)
 
-    showToast('success', 'Generated', 'Payment Excel generated')
+    if (files.length) {
+      for (const file of files) {
+        const downloadRes = await downloadPaymentProcessJobResult(
+          completedJob.jobId,
+          file.key,
+        )
+
+        downloadBlob(
+          downloadRes,
+          file.filename || `payment_${periodStartYMD.value}_to_${periodEndYMD.value}.xlsx`,
+        )
+
+        if (files.length > 1) await sleep(150)
+      }
+    } else {
+      const downloadRes = await downloadPaymentProcessJobResult(completedJob.jobId)
+      downloadBlob(
+        downloadRes,
+        completedJob.filename || `payment_${periodStartYMD.value}_to_${periodEndYMD.value}.xlsx`,
+      )
+    }
+
+    showToast(
+      'success',
+      'Generated',
+      files.length > 1 ? `${files.length} payment Excel reports generated` : 'Payment Excel generated',
+    )
   } catch (error) {
     showToast(
       'error',
@@ -3120,7 +3149,9 @@ onBeforeUnmount(() => {
 @media (max-width: 680px) {
   .payment-approval-rule-banner {
     align-items: flex-start;
+    flex-wrap: wrap;
   }
+
 
   .payment-approval-rule-banner :deep(.p-tag) {
     display: none;

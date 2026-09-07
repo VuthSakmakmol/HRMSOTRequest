@@ -352,6 +352,34 @@ const PERMISSIONS = [
   ),
 
   // =========================
+  // Settings / Payment Report Separation
+  // =========================
+  permission(
+    'PAYMENT_REPORT_SETTING_VIEW',
+    'View Payment Report Separation',
+    'SETTINGS',
+    'Allow viewing positions configured for separate payment Excel reports',
+  ),
+  permission(
+    'PAYMENT_REPORT_SETTING_CREATE',
+    'Create Payment Report Separation',
+    'SETTINGS',
+    'Allow adding positions to separate payment Excel reports',
+  ),
+  permission(
+    'PAYMENT_REPORT_SETTING_UPDATE',
+    'Update Payment Report Separation',
+    'SETTINGS',
+    'Allow changing positions configured for separate payment Excel reports',
+  ),
+  permission(
+    'PAYMENT_REPORT_SETTING_DELETE',
+    'Delete Payment Report Separation',
+    'SETTINGS',
+    'Allow removing positions from separate payment Excel reports',
+  ),
+
+  // =========================
   // Payment / Process
   // =========================
   permission(

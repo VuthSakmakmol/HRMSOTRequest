@@ -292,6 +292,8 @@ export default {
     paymentProcess: 'Payment Process',
     paymentFormulas: 'Payment Formulas',
     paymentExchangeRates: 'Exchange Rates',
+    settings: 'Settings',
+    paymentReportSeparation: 'Payment Report Separation',
   },
   
 

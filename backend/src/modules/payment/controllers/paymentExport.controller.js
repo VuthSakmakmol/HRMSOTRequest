@@ -147,7 +147,7 @@ async function getPaymentJobStatus(req, res, next) {
 
 async function downloadPaymentJobResult(req, res, next) {
   try {
-    const result = paymentProcessJobService.getPaymentExportDownload(req.params.jobId)
+    const result = paymentProcessJobService.getPaymentExportDownload(req.params.jobId, req.query?.file)
 
     res.setHeader(
       'Content-Type',

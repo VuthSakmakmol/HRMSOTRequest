@@ -290,6 +290,8 @@ export default {
     paymentProcess: 'ประมวลผลการจ่ายเงิน',
     paymentFormulas: 'สูตรการจ่ายเงิน',
     paymentExchangeRates: 'อัตราแลกเปลี่ยน',
+    settings: 'การตั้งค่า',
+    paymentReportSeparation: 'แยกรายงานการจ่ายเงิน',
   },
 
   access: {

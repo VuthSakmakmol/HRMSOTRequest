@@ -55,6 +55,10 @@ const HOME_CANDIDATES = Object.freeze([
     path: DEFAULT_HOME_PATHS.otAcknowledgements,
     permissions: ['OT_REQUEST_ACKNOWLEDGE'],
   },
+  {
+    path: '/settings/payment-report-separation',
+    permissions: ['PAYMENT_REPORT_SETTING_VIEW'],
+  },
 ])
 
 export function canOpenByAnyPermission(auth, permissions = []) {

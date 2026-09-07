@@ -288,6 +288,8 @@ export default {
     paymentProcess: 'ដំណើរការទូទាត់',
     paymentFormulas: 'រូបមន្តទូទាត់',
     paymentExchangeRates: 'អត្រាប្តូរប្រាក់',
+    settings: 'ការកំណត់',
+    paymentReportSeparation: 'បំបែករបាយការណ៍ទូទាត់',
   },
 
   access: {

@@ -7,6 +7,9 @@ const app = require('./app')
 const env = require('./config/env')
 const { connectMongo } = require('./database/mongoose')
 const { setIo } = require('./shared/services/socket.service')
+const {
+  ensurePaymentReportSettingPermissions,
+} = require('./modules/payment/paymentReportSettings.permissions')
 
 const {
   setRealtimeServer,
@@ -42,6 +45,7 @@ function createSocketServer(server) {
 async function start() {
   try {
     await connectMongo()
+    await ensurePaymentReportSettingPermissions()
 
     httpServer = http.createServer(app)
 

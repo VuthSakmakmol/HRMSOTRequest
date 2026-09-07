@@ -94,6 +94,32 @@ export function updatePaymentAllowancePolicy(id, payload) {
   return api.patch(`/payment/allowance-policies/${id}`, payload)
 }
 
+
+// =========================
+// Payment Report Separation Settings
+// =========================
+export function getPaymentReportSettings() {
+  return api.get('/payment/report-settings', { timeout: PAYMENT_LOOKUP_TIMEOUT_MS })
+}
+
+export function createPaymentReportSetting(payload = {}) {
+  return api.post('/payment/report-settings/positions', payload, {
+    timeout: PAYMENT_LOOKUP_TIMEOUT_MS,
+  })
+}
+
+export function updatePaymentReportSetting(positionId, payload = {}) {
+  return api.patch(`/payment/report-settings/positions/${positionId}`, payload, {
+    timeout: PAYMENT_LOOKUP_TIMEOUT_MS,
+  })
+}
+
+export function deletePaymentReportSetting(positionId) {
+  return api.delete(`/payment/report-settings/positions/${positionId}`, {
+    timeout: PAYMENT_LOOKUP_TIMEOUT_MS,
+  })
+}
+
 // =========================
 // Payment Process
 // =========================
@@ -160,8 +186,9 @@ export function getPaymentProcessJobStatus(jobId) {
   })
 }
 
-export function downloadPaymentProcessJobResult(jobId) {
+export function downloadPaymentProcessJobResult(jobId, fileKey = '') {
   return api.get(`/payment/jobs/${encodeURIComponent(String(jobId || ''))}/download`, {
+    params: fileKey ? { file: fileKey } : {},
     responseType: 'blob',
     timeout: PAYMENT_PROCESS_TIMEOUT_MS,
   })

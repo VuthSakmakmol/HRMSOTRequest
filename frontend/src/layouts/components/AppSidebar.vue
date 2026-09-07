@@ -371,6 +371,20 @@ const navGroups = computed(() => {
         },
       ],
     },
+    {
+      key: 'settings',
+      label: t('nav.settings'),
+      icon: 'pi pi-cog',
+      items: [
+        {
+          key: 'payment-report-separation-settings',
+          label: t('nav.paymentReportSeparation'),
+          icon: 'pi pi-file-export',
+          to: '/settings/payment-report-separation',
+          permissions: ['PAYMENT_REPORT_SETTING_VIEW'],
+        },
+      ],
+    },
   ]
 
   return groups
