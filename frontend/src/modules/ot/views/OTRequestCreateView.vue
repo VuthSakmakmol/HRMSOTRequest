@@ -1338,6 +1338,10 @@ function validateBeforeSubmit(payload) {
     return t('ot.requests.create.selectDateFirst')
   }
 
+  if (!s(payload.reason)) {
+    return t('ot.requests.create.reasonRequired')
+  }
+
   if (isSelectedPastDateBlocked.value) {
     return 'New OT requests for a past date are currently not allowed. Select today or a future date.'
   }

@@ -1367,7 +1367,7 @@ onBeforeUnmount(() => {
         :title="tr('ot.requests.loading', 'Loading my OT requests')"
         :message="tr('ot.requests.fetchingRecords', 'Fetching my OT request records')"
         :rows="8"
-        :columns="7"
+        :columns="8"
         icon="pi pi-clock"
       />
 
@@ -1387,7 +1387,7 @@ onBeforeUnmount(() => {
           scroll-height="calc(100vh - 260px)"
           :sort-field="filters.sortBy"
           :sort-order="filters.sortOrder"
-          table-style="min-width: 53rem; table-layout: auto;"
+          table-style="min-width: 67rem; table-layout: auto;"
           class="ot-request-table ot-data-table ot-data-table-compact"
           @sort="onSort"
         >
@@ -1431,6 +1431,21 @@ onBeforeUnmount(() => {
                 <div class="ot-request-sub-text">
                   {{ displayRequester(data).employeeNo }}
                 </div>
+              </div>
+            </template>
+          </Column>
+
+          <Column
+            field="reason"
+            :header="tr('ot.requests.reason', 'Reason')"
+            style="width: 14rem; min-width: 14rem"
+          >
+            <template #body="{ data }">
+              <div
+                class="ot-reason-cell"
+                :title="String(data?.reason || '').trim()"
+              >
+                {{ String(data?.reason || '').trim() }}
               </div>
             </template>
           </Column>
@@ -2173,6 +2188,14 @@ onBeforeUnmount(() => {
 
 :deep(.ot-request-table.p-datatable .p-row-toggler:hover) {
   background: var(--ot-info-soft) !important;
+}
+
+.ot-reason-cell {
+  max-width: 14rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.3;
+  color: var(--ot-text);
 }
 
 /* Action column */

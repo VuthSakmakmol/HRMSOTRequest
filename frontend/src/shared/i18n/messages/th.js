@@ -2101,6 +2101,7 @@ export default {
 
       approvalStatus: 'สถานะการอนุมัติ',
       approvedBy: 'อนุมัติโดย',
+      reason: 'เหตุผล',
       staff: 'พนักงาน',
       staffCount: '{count} คน',
       timing: 'เวลา',
@@ -2212,6 +2213,7 @@ export default {
 
         reason: '5. เหตุผล',
         optional: 'ไม่บังคับ',
+        reasonRequired: 'โปรดกรอกเหตุผล',
         reasonPlaceholder:
           'ตัวอย่าง: งานผลิตเร่งด่วน, กำหนดส่งสินค้า...',
 
@@ -2605,6 +2607,7 @@ export default {
         breakMinutesTooLarge:
           'นาทีพักต้องไม่นานกว่าหรือเท่ากับระยะเวลา OT',
 
+        reasonRequired: 'โปรดกรอกเหตุผล',
         reasonTooLong: 'เหตุผลต้องไม่เกิน 2000 ตัวอักษร',
         remarkTooLong: 'หมายเหตุต้องไม่เกิน 1000 ตัวอักษร',
 

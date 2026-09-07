@@ -10,6 +10,14 @@ function s(value) {
   return String(value ?? '').trim()
 }
 
+const LEGACY_ATTENDANCE_REASON_PREFIX = 'Generated from attendance verification.'
+
+function requestReasonForOutput(value) {
+  const reason = s(value)
+  if (reason.startsWith(LEGACY_ATTENDANCE_REASON_PREFIX)) return ''
+  return reason
+}
+
 function upper(value) {
   return s(value).toUpperCase()
 }
@@ -498,7 +506,7 @@ function mapListItem(doc = {}, authUser = {}) {
       : null,
     otCalculationPolicySnapshot: doc.otCalculationPolicySnapshot || {},
 
-    reason: s(doc.reason),
+    reason: requestReasonForOutput(doc.reason),
 
     employeeCount: employees.length,
     approvedEmployeeCount: employees.length,

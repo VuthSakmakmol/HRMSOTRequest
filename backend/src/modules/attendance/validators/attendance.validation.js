@@ -334,12 +334,15 @@ const verifyOTAttendanceParamSchema = z.object({
 })
 
 
-// Daily OT/attendance reconciliation. One date is intentionally required so
-// the screen stays a clear employee-level daily verification view.
+// OT/attendance reconciliation supports a From -> To date range. Keep the
+// legacy attendanceDate parameter so older clients still work as a one-day
+// range while the current UI sends attendanceDateFrom/attendanceDateTo.
 const dailyOTVerificationQuerySchema = z.object({
-  attendanceDate: ymdSchema,
+  attendanceDate: optionalYmdSchema,
+  attendanceDateFrom: optionalYmdSchema,
+  attendanceDateTo: optionalYmdSchema,
   page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce.number().int().min(1).max(5000).default(50),
+  limit: z.coerce.number().int().min(1).max(50000).default(50),
   search: optionalTrimmedString(200),
   requester: optionalTrimmedString(200),
   employee: optionalTrimmedString(200),
@@ -353,6 +356,34 @@ const dailyOTVerificationQuerySchema = z.object({
     'POLICY_MISMATCH',
     'PENDING_REVIEW',
   ]),
+}).superRefine((value, ctx) => {
+  const legacyDate = value.attendanceDate
+  const from = value.attendanceDateFrom || legacyDate
+  const to = value.attendanceDateTo || legacyDate
+
+  if (!from) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['attendanceDateFrom'],
+      message: 'From date is required',
+    })
+  }
+
+  if (!to) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['attendanceDateTo'],
+      message: 'To date is required',
+    })
+  }
+
+  if (from && to && from > to) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['attendanceDateTo'],
+      message: 'To date must be on or after From date',
+    })
+  }
 })
 
 const createVerificationAttendanceSchema = z.object({
@@ -362,6 +393,14 @@ const createVerificationAttendanceSchema = z.object({
 
 const createVerificationOTRequestSchema = z.object({
   attendanceRecordId: objectIdSchema,
+  reason: z
+    .string({
+      required_error: 'ot.request.validation.reasonRequired',
+      invalid_type_error: 'ot.request.validation.reasonRequired',
+    })
+    .trim()
+    .min(1, 'ot.request.validation.reasonRequired')
+    .max(2000, 'ot.request.validation.reasonTooLong'),
 })
 
 const recoverVerificationAttendanceSchema = z.object({
@@ -374,9 +413,23 @@ const recoverVerificationOTRequestSchema = z.object({
 
 const verificationHistoryQuerySchema = z.object({
   attendanceDate: optionalYmdSchema,
+  attendanceDateFrom: optionalYmdSchema,
+  attendanceDateTo: optionalYmdSchema,
   attendanceRecordId: optionalObjectIdSchema,
   otRequestId: optionalObjectIdSchema,
   limit: z.coerce.number().int().min(1).max(500).default(100),
+}).superRefine((value, ctx) => {
+  if (
+    value.attendanceDateFrom &&
+    value.attendanceDateTo &&
+    value.attendanceDateFrom > value.attendanceDateTo
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['attendanceDateTo'],
+      message: 'To date must be on or after From date',
+    })
+  }
 })
 
 module.exports = {

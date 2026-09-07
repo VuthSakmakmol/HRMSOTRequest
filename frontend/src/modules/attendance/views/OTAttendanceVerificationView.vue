@@ -13,6 +13,7 @@ import InputIcon from 'primevue/inputicon'
 import InputText from 'primevue/inputtext'
 import Select from 'primevue/select'
 import Tag from 'primevue/tag'
+import Textarea from 'primevue/textarea'
 
 import HolidayDatePicker from '@/modules/calendar/components/HolidayDatePicker.vue'
 import AppTableLoading from '@/shared/components/AppTableLoading.vue'
@@ -54,9 +55,16 @@ const historyVisible = ref(false)
 const historyRows = ref([])
 const historyLoading = ref(false)
 
+const createRequestVisible = ref(false)
+const createRequestRow = ref(null)
+const createRequestReason = ref('')
+const createRequestSubmitting = ref(false)
+
 const summary = ref(emptySummary())
+const todayYmd = toApiDate(new Date(), '')
 const filters = reactive({
-  attendanceDate: toApiDate(new Date(), ''),
+  attendanceDateFrom: todayYmd,
+  attendanceDateTo: todayYmd,
   search: '',
   requester: '',
   employee: '',
@@ -88,8 +96,24 @@ const statusOptions = computed(() => [
   { label: tx('ot.status.cancelled', 'Cancelled'), value: 'CANCELLED' },
 ])
 
-const apiDate = computed(() => toApiDate(filters.attendanceDate, ''))
-const selectedDateLabel = computed(() => formatDate(apiDate.value) || tx('attendance.verification.selectDate', 'Select date'))
+const apiDateFrom = computed(() => toApiDate(filters.attendanceDateFrom, ''))
+const apiDateTo = computed(() => toApiDate(filters.attendanceDateTo, ''))
+const hasValidDateRange = computed(() => (
+  Boolean(apiDateFrom.value) &&
+  Boolean(apiDateTo.value) &&
+  apiDateFrom.value <= apiDateTo.value
+))
+const selectedDateLabel = computed(() => {
+  if (!apiDateFrom.value || !apiDateTo.value) {
+    return `${t('common.fromDate')} - ${t('common.toDate')}`
+  }
+
+  const fromLabel = formatDate(apiDateFrom.value) || apiDateFrom.value
+  const toLabel = formatDate(apiDateTo.value) || apiDateTo.value
+  return apiDateFrom.value === apiDateTo.value
+    ? fromLabel
+    : `${fromLabel} - ${toLabel}`
+})
 const loadedCount = computed(() => rows.value.filter(Boolean).length)
 const loadedLabel = computed(() =>
   tx(
@@ -312,7 +336,8 @@ function requestStatusTagClass(value) {
 
 function buildParams(page = 1) {
   return {
-    attendanceDate: apiDate.value,
+    attendanceDateFrom: apiDateFrom.value,
+    attendanceDateTo: apiDateTo.value,
     page,
     limit: PAGE_SIZE,
     search: s(filters.search) || undefined,
@@ -325,7 +350,7 @@ function buildParams(page = 1) {
 }
 
 async function fetchPage(page, { replace = false, silent = false } = {}) {
-  if (!apiDate.value) {
+  if (!hasValidDateRange.value) {
     rows.value = []
     totalRecords.value = 0
     loadedPages.value = new Set()
@@ -393,7 +418,7 @@ async function fetchPage(page, { replace = false, silent = false } = {}) {
     toast.add({
       severity: 'error',
       summary: tx('attendance.verification.loadFailed', 'Verification could not load'),
-      detail: getApiErrorMessage(error, tx('attendance.verification.loadFailedDetail', 'Please check the selected date and try again.')),
+      detail: getApiErrorMessage(error, tx('attendance.verification.loadFailedDetail', 'Please check the selected date range and try again.')),
       life: 4500,
     })
   } finally {
@@ -482,7 +507,83 @@ function actionMessage(row, action) {
   )
 }
 
+function openCreateRequestDialog(row) {
+  createRequestRow.value = row
+  createRequestReason.value = ''
+  createRequestVisible.value = true
+}
+
+function closeCreateRequestDialog() {
+  if (createRequestSubmitting.value) return
+  createRequestVisible.value = false
+  createRequestRow.value = null
+  createRequestReason.value = ''
+}
+
+async function submitCreateRequest() {
+  const row = createRequestRow.value
+  const reason = s(createRequestReason.value)
+
+  if (!row?.attendance?.id) return
+
+  if (!reason) {
+    toast.add({
+      severity: 'warn',
+      summary: tx('common.required', 'Required'),
+      detail: tx('ot.requests.create.reasonRequired', 'Please enter reason.'),
+      life: 3500,
+    })
+    return
+  }
+
+  createRequestSubmitting.value = true
+  actionRowId.value = row.id
+
+  try {
+    const response = await createOTRequestFromAttendanceVerification({
+      attendanceRecordId: row.attendance.id,
+      reason,
+    })
+
+    const payload = normalizePayload(response)
+
+    toast.add({
+      severity: 'success',
+      summary: tx('common.completed', 'Completed'),
+      detail: tx(
+        'attendance.verification.requestCreatedDetail',
+        `OT request ${payload?.otRequest?.requestNo || ''} was created.`,
+        { requestNo: payload?.otRequest?.requestNo || '' },
+      ),
+      life: 3500,
+    })
+
+    createRequestVisible.value = false
+    createRequestRow.value = null
+    createRequestReason.value = ''
+    await reload()
+  } catch (error) {
+    toast.add({
+      severity: 'error',
+      summary: tx('attendance.verification.actionFailed', 'Action was not completed'),
+      detail: getApiErrorMessage(
+        error,
+        tx('attendance.verification.actionFailedDetail', 'Please check the row and try again.'),
+      ),
+      life: 5000,
+    })
+  } finally {
+    createRequestSubmitting.value = false
+    actionRowId.value = ''
+  }
+}
+
 async function runAction(row, action) {
+  if (action === 'createRequest') {
+    openCreateRequestDialog(row)
+    return
+  }
+
   if (!window.confirm(actionMessage(row, action))) return
 
   actionRowId.value = row.id
@@ -494,10 +595,6 @@ async function runAction(row, action) {
       response = await createAttendanceFromOTVerification({
         otRequestId: row.request.id,
         employeeId: row.employee.employeeId,
-      })
-    } else if (action === 'createRequest') {
-      response = await createOTRequestFromAttendanceVerification({
-        attendanceRecordId: row.attendance.id,
       })
     } else if (action === 'recoverRequest') {
       response = await recoverOTRequestFromAttendanceVerification({
@@ -548,7 +645,8 @@ async function openHistory(row = null) {
 
   try {
     const payload = normalizePayload(await getOTAttendanceVerificationHistory({
-      attendanceDate: apiDate.value || undefined,
+      attendanceDateFrom: apiDateFrom.value || undefined,
+      attendanceDateTo: apiDateTo.value || undefined,
       attendanceRecordId: row?.attendance?.id || undefined,
       otRequestId: row?.request?.id || undefined,
     }))
@@ -567,7 +665,7 @@ async function openHistory(row = null) {
 }
 
 async function exportExcel() {
-  if (!apiDate.value || exporting.value) return
+  if (!hasValidDateRange.value || exporting.value) return
 
   exporting.value = true
 
@@ -575,7 +673,7 @@ async function exportExcel() {
     const response = await exportDailyOTAttendanceVerification({
       ...buildParams(1),
       page: 1,
-      limit: 5000,
+      limit: 50000,
     })
 
     const blob = new Blob([response.data], {
@@ -585,7 +683,10 @@ async function exportExcel() {
     const link = document.createElement('a')
 
     link.href = url
-    link.download = `OT_Verification_${apiDate.value}.xlsx`
+    const exportDateLabel = apiDateFrom.value === apiDateTo.value
+      ? apiDateFrom.value
+      : `${apiDateFrom.value}_to_${apiDateTo.value}`
+    link.download = `OT_Verification_${exportDateLabel}.xlsx`
 
     document.body.appendChild(link)
     link.click()
@@ -604,8 +705,20 @@ async function exportExcel() {
 }
 
 watch(
-  apiDate,
-  () => {
+  [apiDateFrom, apiDateTo],
+  ([from, to], [previousFrom, previousTo] = []) => {
+    // Keep the range valid without forcing the user through an error state.
+    // If From moves after To, move To forward. If To moves before From, move
+    // From back to the selected To date.
+    if (from && to && from > to) {
+      if (from !== previousFrom) {
+        filters.attendanceDateTo = from
+      } else if (to !== previousTo) {
+        filters.attendanceDateFrom = to
+      }
+      return
+    }
+
     reload()
   },
   { immediate: true },
@@ -629,9 +742,19 @@ onBeforeUnmount(() => window.clearTimeout(filterTimer))
     <section class="ot-filter-bar attendance-verification-filter-bar">
       <div class="ot-field verification-date-field">
         <HolidayDatePicker
-          v-model="filters.attendanceDate"
-          :label="tx('attendance.verification.date', 'Verification date')"
-          :placeholder="tx('attendance.verification.date', 'Verification date')"
+          v-model="filters.attendanceDateFrom"
+          :label="t('common.fromDate')"
+          :placeholder="t('common.fromDate')"
+          :clearable="false"
+        />
+      </div>
+
+      <div class="ot-field verification-date-field">
+        <HolidayDatePicker
+          v-model="filters.attendanceDateTo"
+          :label="t('common.toDate')"
+          :placeholder="t('common.toDate')"
+          :clearable="false"
         />
       </div>
 
@@ -835,7 +958,7 @@ onBeforeUnmount(() => window.clearTimeout(filterTimer))
           :title="t('common.loadingData')"
           :message="t('common.fetchingRecords')"
           :rows="7"
-          :columns="8"
+          :columns="10"
           icon="pi pi-check-square"
         />
 
@@ -868,10 +991,21 @@ onBeforeUnmount(() => window.clearTimeout(filterTimer))
               </div>
 
               <div class="ot-empty-text">
-                {{ tx('attendance.verification.emptyText', 'Select a Calendar date or adjust the filters.') }}
+                {{ tx('attendance.verification.emptyText', 'Select a date range or adjust the filters.') }}
               </div>
             </div>
           </template>
+
+          <Column
+            :header="t('common.date')"
+            style="width: 8rem; min-width: 8rem"
+          >
+            <template #body="{ data }">
+              <span class="attendance-meta-text">
+                {{ formatDate(data?.attendanceDate) || '—' }}
+              </span>
+            </template>
+          </Column>
 
           <Column
             :header="tx('attendance.verification.requestNo', 'Request No.')"
@@ -906,6 +1040,20 @@ onBeforeUnmount(() => window.clearTimeout(filterTimer))
             <template #body="{ data }">
               <span class="attendance-name-text">
                 {{ displayRequester(data) }}
+              </span>
+            </template>
+          </Column>
+
+          <Column
+            :header="tx('ot.requests.create.reason', 'Reason')"
+            style="width: 18rem; min-width: 18rem"
+          >
+            <template #body="{ data }">
+              <span
+                class="attendance-reason-text"
+                :title="String(data?.request?.reason || '').trim()"
+              >
+                {{ String(data?.request?.reason || '').trim() }}
               </span>
             </template>
           </Column>
@@ -1092,6 +1240,76 @@ onBeforeUnmount(() => window.clearTimeout(filterTimer))
     </section>
 
     <Dialog
+      v-model:visible="createRequestVisible"
+      modal
+      :closable="!createRequestSubmitting"
+      :close-on-escape="!createRequestSubmitting"
+      :header="tx('attendance.verification.createOtRequest', 'Create OT request')"
+      :style="{ width: 'min(560px, 94vw)' }"
+      @hide="closeCreateRequestDialog"
+    >
+      <div class="attendance-create-request-dialog">
+        <div class="attendance-create-request-summary">
+          <div>
+            <span class="attendance-create-request-label">
+              {{ t('common.date') }}
+            </span>
+            <strong>{{ formatDate(createRequestRow?.attendanceDate) || '—' }}</strong>
+          </div>
+
+          <div>
+            <span class="attendance-create-request-label">
+              {{ tx('attendance.verification.employee', 'Employee') }}
+            </span>
+            <strong>{{ displayEmployee(createRequestRow) }}</strong>
+          </div>
+
+          <div>
+            <span class="attendance-create-request-label">
+              {{ tx('attendance.verification.otHours', 'OT Time') }}
+            </span>
+            <strong>{{ formatMinutes(displayOtMinutes(createRequestRow)) }}</strong>
+          </div>
+        </div>
+
+        <label class="attendance-create-request-field">
+          <span class="attendance-create-request-label">
+            {{ tx('ot.requests.create.reason', 'Reason') }}
+            <span class="attendance-required-mark">*</span>
+          </span>
+
+          <Textarea
+            v-model="createRequestReason"
+            rows="4"
+            maxlength="2000"
+            auto-resize
+            class="attendance-create-request-reason"
+            :placeholder="tx('ot.requests.create.reasonPlaceholder', 'Enter the reason for this OT request')"
+            :disabled="createRequestSubmitting"
+          />
+        </label>
+      </div>
+
+      <template #footer>
+        <Button
+          :label="tx('common.cancel', 'Cancel')"
+          severity="secondary"
+          outlined
+          :disabled="createRequestSubmitting"
+          @click="closeCreateRequestDialog"
+        />
+        <Button
+          :label="tx('attendance.verification.createOtRequest', 'Create OT request')"
+          icon="pi pi-file-plus"
+          severity="success"
+          :loading="createRequestSubmitting"
+          :disabled="!s(createRequestReason)"
+          @click="submitCreateRequest"
+        />
+      </template>
+    </Dialog>
+
+    <Dialog
       v-model:visible="historyVisible"
       modal
       :header="tx('attendance.verification.historyTitle', 'Verification History')"
@@ -1106,6 +1324,16 @@ onBeforeUnmount(() => window.clearTimeout(filterTimer))
         table-style="min-width: 46rem"
         class="attendance-history-table"
       >
+        <Column
+          field="attendanceDate"
+          :header="t('common.date')"
+          style="width: 9rem"
+        >
+          <template #body="{ data }">
+            {{ formatDate(data.attendanceDate) || '—' }}
+          </template>
+        </Column>
+
         <Column
           field="createdAt"
           :header="tx('attendance.verification.historyTime', 'Time')"
@@ -1451,4 +1679,55 @@ onBeforeUnmount(() => window.clearTimeout(filterTimer))
   margin-inline: auto !important;
 }
 
+
+.attendance-create-request-dialog {
+  display: grid;
+  gap: 1rem;
+}
+
+.attendance-create-request-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  padding: 0.8rem;
+  border: 1px solid rgb(226 232 240);
+  border-radius: 0.75rem;
+  background: rgb(248 250 252);
+}
+
+.attendance-create-request-summary > div,
+.attendance-create-request-field {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.attendance-create-request-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: rgb(71 85 105);
+}
+
+.attendance-required-mark {
+  color: rgb(220 38 38);
+}
+
+.attendance-create-request-reason {
+  width: 100%;
+  min-height: 6.5rem;
+  resize: vertical;
+}
+
+@media (max-width: 560px) {
+  .attendance-create-request-summary {
+    grid-template-columns: 1fr;
+  }
+}
+
+.attendance-reason-text {
+  display: block;
+  max-width: 18rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
 </style>

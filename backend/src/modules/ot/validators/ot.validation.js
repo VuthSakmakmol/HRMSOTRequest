@@ -212,7 +212,14 @@ const otRequestWriteSchema = z
       .optional()
       .default([]),
 
-    reason: optionalTextSchema(2000, 'ot.request.validation.reasonTooLong'),
+    reason: z
+      .string({
+        required_error: 'ot.request.validation.reasonRequired',
+        invalid_type_error: 'ot.request.validation.reasonRequired',
+      })
+      .trim()
+      .min(1, 'ot.request.validation.reasonRequired')
+      .max(2000, 'ot.request.validation.reasonTooLong'),
   })
   .superRefine((value, ctx) => {
     if (value.otTimingSource === 'CUSTOM_FIXED') {

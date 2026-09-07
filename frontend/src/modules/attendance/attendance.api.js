@@ -213,6 +213,8 @@ function normalizeDailyVerificationParams(params = {}) {
   return {
     ...params,
     attendanceDate: normalizeDateParam(params.attendanceDate),
+    attendanceDateFrom: normalizeDateParam(params.attendanceDateFrom),
+    attendanceDateTo: normalizeDateParam(params.attendanceDateTo),
   }
 }
 

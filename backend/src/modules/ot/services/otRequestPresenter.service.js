@@ -4,6 +4,14 @@ function s(value) {
   return String(value ?? '').trim()
 }
 
+const LEGACY_ATTENDANCE_REASON_PREFIX = 'Generated from attendance verification.'
+
+function requestReasonForOutput(value) {
+  const reason = s(value)
+  if (reason.startsWith(LEGACY_ATTENDANCE_REASON_PREFIX)) return ''
+  return reason
+}
+
 function upper(value) {
   return s(value).toUpperCase()
 }
@@ -786,7 +794,7 @@ function presentOTRequest(doc = {}, authUser = {}) {
 
     permissions: buildPermissionOutput(doc, authUser),
 
-    reason: s(doc.reason),
+    reason: requestReasonForOutput(doc.reason),
     remark: s(doc.remark),
 
     createdBy: toId(doc.createdBy),

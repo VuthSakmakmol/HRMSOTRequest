@@ -2121,6 +2121,7 @@ export default {
 
       approvalStatus: 'Approval Status',
       approvedBy: 'Approved By',
+      reason: 'Reason',
       staff: 'Staff',
       staffCount: '{count} staff',
       timing: 'Timing',
@@ -2231,6 +2232,7 @@ export default {
 
         reason: 'Reason',
         optional: 'Optional',
+        reasonRequired: 'Please enter reason.',
         reasonPlaceholder:
           'Example: urgent production order, shipment deadline...',
 
@@ -2627,6 +2629,7 @@ export default {
         breakMinutesTooLarge:
           'Break minutes cannot be greater than or equal to OT duration.',
 
+        reasonRequired: 'Please enter reason.',
         reasonTooLong: 'Reason must not be longer than 2000 characters.',
         remarkTooLong: 'Remark must not be longer than 1000 characters.',
 

@@ -1247,7 +1247,7 @@ onBeforeUnmount(() => {
         :title="tr('ot.approval.loading', 'Loading approval inbox')"
         :message="tr('ot.approval.fetchingRecords', 'Fetching approval records')"
         :rows="8"
-        :columns="9"
+        :columns="10"
         icon="pi pi-inbox"
       />
 
@@ -1267,7 +1267,7 @@ onBeforeUnmount(() => {
           scroll-height="calc(100vh - 260px)"
           :sort-field="filters.sortBy"
           :sort-order="filters.sortOrder"
-          table-style="min-width: 73rem; table-layout: auto;"
+          table-style="min-width: 87rem; table-layout: auto;"
           class="ot-approval-table ot-data-table ot-data-table-compact"
           @sort="onSort"
         >
@@ -1347,6 +1347,21 @@ onBeforeUnmount(() => {
                 <div class="ot-sub-text">
                   {{ displayRequester(data).employeeNo }}
                 </div>
+              </div>
+            </template>
+          </Column>
+
+          <Column
+            field="reason"
+            :header="tr('ot.requests.reason', 'Reason')"
+            style="width: 14rem; min-width: 14rem"
+          >
+            <template #body="{ data }">
+              <div
+                class="ot-reason-cell"
+                :title="String(data?.reason || '').trim()"
+              >
+                {{ String(data?.reason || '').trim() }}
               </div>
             </template>
           </Column>
@@ -2355,6 +2370,14 @@ onBeforeUnmount(() => {
   border-color: #15803d !important;
   background: #15803d !important;
   color: #ffffff !important;
+}
+
+.ot-reason-cell {
+  max-width: 14rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.3;
+  color: var(--ot-text);
 }
 
 .ot-muted-action {

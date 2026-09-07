@@ -28,6 +28,14 @@ function s(value) {
   return String(value ?? '').trim()
 }
 
+const LEGACY_ATTENDANCE_REASON_PREFIX = 'Generated from attendance verification.'
+
+function requestReasonForOutput(value) {
+  const reason = s(value)
+  if (reason.startsWith(LEGACY_ATTENDANCE_REASON_PREFIX)) return ''
+  return reason
+}
+
 function upper(value) {
   return s(value).toUpperCase()
 }
@@ -1351,7 +1359,7 @@ function mapListItem(doc = {}, authUser = {}) {
       : null,
     otCalculationPolicySnapshot: doc.otCalculationPolicySnapshot || {},
 
-    reason: s(doc.reason),
+    reason: requestReasonForOutput(doc.reason),
 
     employeeCount: effectiveEmployeeCountForDoc(doc),
     requestedEmployeeCount: Number(doc.requestedEmployeeCount || 0),
@@ -1733,7 +1741,7 @@ function buildRequestSheetRows(doc = {}) {
     ['Day Type', s(doc.dayType)],
     ['Status', s(doc.status)],
     ['Current Step', Number(doc.currentApprovalStep || 1)],
-    ['Reason', s(doc.reason)],
+    ['Reason', requestReasonForOutput(doc.reason)],
     [],
     ['Shift Code', s(doc.shiftCode)],
     ['Shift Name', s(doc.shiftName)],
@@ -1948,7 +1956,7 @@ function makeAllRequestsExportRow(doc = {}, item = {}, rowNo = 1) {
     employeeRow[11],
     employeeRow[12],
     firstText(doc.currentApproverName, doc.currentApproverCode),
-    s(doc.reason),
+    requestReasonForOutput(doc.reason),
   ]
 }
 
@@ -2148,6 +2156,18 @@ function buildRequestsByDateWorkbook(items = [], query = {}, emptySheetName = 'O
 }
 
 async function create(payload, authUser) {
+  const requestReason = s(payload?.reason)
+
+  if (!requestReason) {
+    throw appError({
+      statusCode: 400,
+      code: 'OT_REASON_REQUIRED',
+      messageKey: 'ot.request.validation.reasonRequired',
+      message: 'Please enter reason',
+      field: 'reason',
+    })
+  }
+
   const requesterEmployeeId = s(authUser?.employeeId)
 
   if (!requesterEmployeeId || !isObjectId(requesterEmployeeId)) {
@@ -2254,7 +2274,7 @@ async function create(payload, authUser) {
     otCalculationPolicyId: timingContext.otCalculationPolicyId,
     otCalculationPolicySnapshot: timingContext.otCalculationPolicySnapshot,
 
-    reason: s(payload.reason),
+    reason: requestReason,
 
     approvalSteps: approvalFlow.approvalSteps,
     currentApprovalStep: approvalFlow.currentApprovalStep,
@@ -2270,6 +2290,18 @@ async function create(payload, authUser) {
 }
 
 async function update(requestId, payload, authUser) {
+  const requestReason = s(payload?.reason)
+
+  if (!requestReason) {
+    throw appError({
+      statusCode: 400,
+      code: 'OT_REASON_REQUIRED',
+      messageKey: 'ot.request.validation.reasonRequired',
+      message: 'Please enter reason',
+      field: 'reason',
+    })
+  }
+
   if (!isObjectId(requestId)) {
     throw appError({
       statusCode: 400,
@@ -2387,7 +2419,7 @@ async function update(requestId, payload, authUser) {
   doc.otCalculationPolicyId = timingContext.otCalculationPolicyId
   doc.otCalculationPolicySnapshot = timingContext.otCalculationPolicySnapshot
 
-  doc.reason = s(payload.reason)
+  doc.reason = requestReason
 
   doc.approvalSteps = approvalFlow.approvalSteps
   doc.currentApprovalStep = approvalFlow.currentApprovalStep

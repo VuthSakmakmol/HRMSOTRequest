@@ -99,7 +99,7 @@ const CUSTOM_OPTION_VALUE = '__OTHER_CUSTOM_TIME__'
 const OT_DURATION_STEP_HOURS = 0.5
 const MIN_OT_DURATION_HOURS = 1
 const MAX_OT_DURATION_HOURS = 24
-const SHOW_REQUEST_REASON_FIELD = false
+const SHOW_REQUEST_REASON_FIELD = true
 
 const toast = useToast()
 const { t, locale } = useI18n()
@@ -950,9 +950,7 @@ onMounted(() => {
           >
             <label class="ot-field-label">
               {{ t('ot.requests.create.reason') }}
-              <span class="ot-optional-text">
-                {{ t('ot.requests.create.optional') }}
-              </span>
+              <span class="ot-required-star">*</span>
             </label>
 
             <Textarea
@@ -960,6 +958,8 @@ onMounted(() => {
               rows="5"
               auto-resize
               class="w-full"
+              maxlength="2000"
+              required
               :placeholder="t('ot.requests.create.reasonPlaceholder')"
             />
           </div>

@@ -34,6 +34,14 @@ function s(value) {
   return String(value ?? '').trim()
 }
 
+const LEGACY_ATTENDANCE_REASON_PREFIX = 'Generated from attendance verification.'
+
+function requestReasonForOutput(value) {
+  const reason = s(value)
+  if (reason.startsWith(LEGACY_ATTENDANCE_REASON_PREFIX)) return ''
+  return reason
+}
+
 function upper(value) {
   return s(value).toUpperCase()
 }
@@ -244,6 +252,7 @@ function mapRequestHeader(request = {}) {
     requesterEmployeeId: asId(request.requesterEmployeeId),
     requesterEmployeeCode: upper(request.requesterEmployeeCode),
     requesterName: s(request.requesterName),
+    reason: requestReasonForOutput(request.reason),
     otDate: s(request.otDate),
     dayType: upper(request.dayType || 'WORKING_DAY'),
     status: upper(request.status),
@@ -446,6 +455,7 @@ function matchesRow(row, query = {}) {
   const employee = s(query.employee).toLowerCase()
 
   const searchBag = [
+    row?.attendanceDate,
     row?.request?.requestNo,
     row?.request?.requesterEmployeeCode,
     row?.request?.requesterName,
@@ -585,41 +595,71 @@ async function hydrateAttendanceShiftIds(records = []) {
 }
 
 async function listDailyVerification(query = {}) {
-  const attendanceDate = normalizeYmd(query.attendanceDate)
-  if (!attendanceDate) {
+  const legacyAttendanceDate = normalizeYmd(query.attendanceDate)
+  const attendanceDateFrom = normalizeYmd(
+    query.attendanceDateFrom || legacyAttendanceDate,
+  )
+  const attendanceDateTo = normalizeYmd(
+    query.attendanceDateTo || legacyAttendanceDate,
+  )
+
+  if (!attendanceDateFrom || !attendanceDateTo) {
     throw appError(
-      'Verification date is required',
+      'Verification date range is required',
       400,
-      'VERIFICATION_DATE_REQUIRED',
+      'VERIFICATION_DATE_RANGE_REQUIRED',
     )
   }
 
-  const dateStart = toUtcMidnight(attendanceDate)
-  const dateEnd = nextUtcDay(attendanceDate)
+  if (attendanceDateFrom > attendanceDateTo) {
+    throw appError(
+      'From date cannot be after To date',
+      400,
+      'VERIFICATION_DATE_RANGE_INVALID',
+    )
+  }
+
+  const dateStart = toUtcMidnight(attendanceDateFrom)
+  const dateEndExclusive = nextUtcDay(attendanceDateTo)
 
   // Do not silently hide rejected/cancelled/history rows. The status filter on
   // the page decides what is visible; creation buttons remain restricted to
   // active request statuses only.
-  const requestFilter = { otDate: attendanceDate }
+  const requestFilter = {
+    otDate: {
+      $gte: attendanceDateFrom,
+      $lte: attendanceDateTo,
+    },
+  }
   if (s(query.status)) requestFilter.status = upper(query.status)
 
-  const attendanceDateFilter = dateStart && dateEnd
+  const attendanceDateFilter = dateStart && dateEndExclusive
     ? {
         $or: [
-          { attendanceDate },
-          { attendanceDateValue: { $gte: dateStart, $lt: dateEnd } },
+          {
+            attendanceDate: {
+              $gte: attendanceDateFrom,
+              $lte: attendanceDateTo,
+            },
+          },
+          {
+            attendanceDateValue: {
+              $gte: dateStart,
+              $lt: dateEndExclusive,
+            },
+          },
         ],
       }
-    : { attendanceDate }
+    : {
+        attendanceDate: {
+          $gte: attendanceDateFrom,
+          $lte: attendanceDateTo,
+        },
+      }
 
-  const [
-    requests,
-    rawAttendanceRecords,
-    dayInfo,
-    generationAudits,
-  ] = await Promise.all([
+  const [requests, rawAttendanceRecords, generationAudits] = await Promise.all([
     OTRequest.find(requestFilter)
-      .sort({ requestNo: 1, createdAt: 1, _id: 1 })
+      .sort({ otDate: 1, requestNo: 1, createdAt: 1, _id: 1 })
       .lean(),
     AttendanceRecord.find({
       ...attendanceDateFilter,
@@ -633,11 +673,13 @@ async function listDailyVerification(query = {}) {
         },
       ],
     })
-      .sort({ employeeNo: 1, importedEmployeeId: 1, updatedAt: -1, _id: -1 })
+      .sort({ attendanceDate: 1, employeeNo: 1, importedEmployeeId: 1, updatedAt: -1, _id: -1 })
       .lean(),
-    classifyDayType(attendanceDate),
     AttendanceVerificationAudit.find({
-      attendanceDate,
+      attendanceDate: {
+        $gte: attendanceDateFrom,
+        $lte: attendanceDateTo,
+      },
       action: 'CREATE_OT_REQUEST',
       generatedOTRequestId: { $ne: null },
     })
@@ -649,7 +691,6 @@ async function listDailyVerification(query = {}) {
     generationAudits.map((audit) => asId(audit.generatedOTRequestId)).filter(Boolean),
   )
 
-  const resolvedDayType = upper(dayInfo?.dayType || 'WORKING_DAY')
   const legacyHydratedRecords = await hydrateLegacyAttendanceEmployees(
     rawAttendanceRecords,
   )
@@ -657,10 +698,48 @@ async function listDailyVerification(query = {}) {
     legacyHydratedRecords,
   )
 
-  const attendanceByEmployeeId = new Map()
-  const attendanceByEmployeeNo = new Map()
+  const verificationDates = Array.from(
+    new Set([
+      ...requests.map((request) => normalizeYmd(request?.otDate)),
+      ...attendanceRecords.map((record) =>
+        normalizeYmd(record?.attendanceDate || record?.attendanceDateValue),
+      ),
+    ].filter(Boolean)),
+  )
+
+  const dayTypeEntries = await Promise.all(
+    verificationDates.map(async (date) => {
+      const dayInfo = await classifyDayType(date)
+      return [date, upper(dayInfo?.dayType || 'WORKING_DAY')]
+    }),
+  )
+  const dayTypeByDate = new Map(dayTypeEntries)
+
+  // Attendance matching must be isolated per date. The same employee can have
+  // one attendance record on every day in the selected range.
+  const attendanceByDate = new Map()
+
+  function getAttendanceBucket(date) {
+    if (!attendanceByDate.has(date)) {
+      attendanceByDate.set(date, {
+        records: [],
+        byEmployeeId: new Map(),
+        byEmployeeNo: new Map(),
+      })
+    }
+
+    return attendanceByDate.get(date)
+  }
 
   for (const record of attendanceRecords) {
+    const recordDate = normalizeYmd(
+      record?.attendanceDate || record?.attendanceDateValue,
+    )
+    if (!recordDate) continue
+
+    const bucket = getAttendanceBucket(recordDate)
+    bucket.records.push(record)
+
     const id = asId(record.employeeId)
     const employeeNo = normalizedEmployeeNo(
       record.employeeNo,
@@ -669,29 +748,32 @@ async function listDailyVerification(query = {}) {
     const updatedAt = new Date(record.updatedAt || record.createdAt || 0).getTime()
 
     if (id) {
-      const previous = attendanceByEmployeeId.get(id)
+      const previous = bucket.byEmployeeId.get(id)
       const previousUpdatedAt = new Date(
         previous?.updatedAt || previous?.createdAt || 0,
       ).getTime()
 
       if (!previous || updatedAt >= previousUpdatedAt) {
-        attendanceByEmployeeId.set(id, record)
+        bucket.byEmployeeId.set(id, record)
       }
     }
 
     if (employeeNo) {
-      const previous = attendanceByEmployeeNo.get(employeeNo)
+      const previous = bucket.byEmployeeNo.get(employeeNo)
       const previousUpdatedAt = new Date(
         previous?.updatedAt || previous?.createdAt || 0,
       ).getTime()
 
       if (!previous || updatedAt >= previousUpdatedAt) {
-        attendanceByEmployeeNo.set(employeeNo, record)
+        bucket.byEmployeeNo.set(employeeNo, record)
       }
     }
   }
 
-  function getAttendanceForEmployee(employee = {}) {
+  function getAttendanceForEmployee(employee = {}, attendanceDate = '') {
+    const bucket = attendanceByDate.get(attendanceDate)
+    if (!bucket) return null
+
     const id = asId(employee.employeeId)
     const employeeNo = normalizedEmployeeNo(
       employee.employeeNo,
@@ -699,42 +781,56 @@ async function listDailyVerification(query = {}) {
     )
 
     return (
-      (id && attendanceByEmployeeId.get(id)) ||
-      (employeeNo && attendanceByEmployeeNo.get(employeeNo)) ||
+      (id && bucket.byEmployeeId.get(id)) ||
+      (employeeNo && bucket.byEmployeeNo.get(employeeNo)) ||
       null
     )
   }
 
   const shiftOptionLookupCache = new Map()
 
-  async function getShiftOptionLookup(shiftId) {
+  async function getShiftOptionLookup(shiftId, attendanceDate, dayType) {
     const cleanShiftId = asId(shiftId)
     if (!cleanShiftId) return null
 
-    if (!shiftOptionLookupCache.has(cleanShiftId)) {
+    const cacheKey = `${cleanShiftId}:${attendanceDate}:${dayType}`
+
+    if (!shiftOptionLookupCache.has(cacheKey)) {
       shiftOptionLookupCache.set(
-        cleanShiftId,
+        cacheKey,
         otTimingService.getShiftOTOptionsByShift(cleanShiftId, {
           otDate: attendanceDate,
-          dayType: resolvedDayType,
+          dayType,
         }),
       )
     }
 
-    return shiftOptionLookupCache.get(cleanShiftId)
+    return shiftOptionLookupCache.get(cacheKey)
   }
 
   const rows = []
-  const requestEmployeeKeys = new Set()
+  const requestEmployeeKeysByDate = new Map()
+
+  function requestEmployeeKeysForDate(date) {
+    if (!requestEmployeeKeysByDate.has(date)) {
+      requestEmployeeKeysByDate.set(date, new Set())
+    }
+    return requestEmployeeKeysByDate.get(date)
+  }
 
   for (const request of requests) {
+    const requestDate = normalizeYmd(request?.otDate)
+    if (!requestDate) continue
+
+    const requestEmployeeKeys = requestEmployeeKeysForDate(requestDate)
+
     for (const employee of effectiveOtEmployees(request)) {
       const keys = employeeIdentityKeys(employee)
       if (!keys.length) continue
 
       keys.forEach((key) => requestEmployeeKeys.add(key))
 
-      const attendance = getAttendanceForEmployee(employee)
+      const attendance = getAttendanceForEmployee(employee, requestDate)
       const policyEvaluation = attendance
         ? otAttendancePolicyService.evaluateSavedRequestAttendance({
             request,
@@ -758,13 +854,25 @@ async function listDailyVerification(query = {}) {
   }
 
   const attendanceOnlyRecords = attendanceRecords.filter((record) => {
+    const recordDate = normalizeYmd(
+      record?.attendanceDate || record?.attendanceDateValue,
+    )
     const keys = employeeIdentityKeys(record)
-    return keys.length && !keys.some((key) => requestEmployeeKeys.has(key))
+    const requestEmployeeKeys = requestEmployeeKeysByDate.get(recordDate)
+
+    return (
+      keys.length &&
+      (!requestEmployeeKeys ||
+        !keys.some((key) => requestEmployeeKeys.has(key)))
+    )
   })
 
   const attendanceOnlyRows = await Promise.all(
     attendanceOnlyRecords.map(async (record) => {
       const attendanceOutput = mapAttendance(record)
+      const attendanceDate = normalizeYmd(attendanceOutput?.attendanceDate)
+      const resolvedDayType =
+        dayTypeByDate.get(attendanceDate) || 'WORKING_DAY'
       const shiftId = asId(record.shiftId)
 
       if (!shiftId) {
@@ -783,7 +891,11 @@ async function listDailyVerification(query = {}) {
       }
 
       try {
-        const lookup = await getShiftOptionLookup(shiftId)
+        const lookup = await getShiftOptionLookup(
+          shiftId,
+          attendanceDate,
+          resolvedDayType,
+        )
         const policyEvaluation =
           otAttendancePolicyService.evaluateAttendanceAgainstConfiguredOptions({
             attendance: attendanceOutput,
@@ -816,6 +928,11 @@ async function listDailyVerification(query = {}) {
   const filteredRows = rows
     .filter((row) => matchesRow(row, query))
     .sort((a, b) => {
+      const dateCompare = s(a?.attendanceDate).localeCompare(
+        s(b?.attendanceDate),
+      )
+      if (dateCompare) return dateCompare
+
       const aEmployee = `${a?.employee?.employeeNo || ''} ${
         a?.employee?.employeeName || ''
       }`
@@ -828,13 +945,18 @@ async function listDailyVerification(query = {}) {
     })
 
   const page = Math.max(Number(query.page || 1), 1)
-  const limit = Math.min(Math.max(Number(query.limit || 100), 1), 5000)
+  const limit = Math.min(Math.max(Number(query.limit || 100), 1), 50000)
   const start = (page - 1) * limit
   const items = filteredRows.slice(start, start + limit)
+  const isSingleDate = attendanceDateFrom === attendanceDateTo
 
   return {
-    attendanceDate,
-    dayType: resolvedDayType,
+    attendanceDate: isSingleDate ? attendanceDateFrom : '',
+    attendanceDateFrom,
+    attendanceDateTo,
+    dayType: isSingleDate
+      ? dayTypeByDate.get(attendanceDateFrom) || 'WORKING_DAY'
+      : '',
     items,
     summary: buildSummary(filteredRows),
     pagination: {
@@ -1171,6 +1293,16 @@ async function resolveShiftOptionForAttendance(
 
 async function createOTRequestFromAttendance(payload = {}, authUser = {}) {
   const attendanceRecordId = s(payload.attendanceRecordId)
+  const requestReason = s(payload.reason)
+
+  if (!requestReason) {
+    throw appError('Please enter reason', 400, 'OT_REQUEST_REASON_REQUIRED')
+  }
+
+  if (requestReason.length > 2000) {
+    throw appError('Reason must not be longer than 2000 characters', 400, 'OT_REQUEST_REASON_TOO_LONG')
+  }
+
   if (!isObjectId(attendanceRecordId)) {
     throw appError('Attendance record is required', 400, 'INVALID_ATTENDANCE_RECORD')
   }
@@ -1259,16 +1391,7 @@ async function createOTRequestFromAttendance(payload = {}, authUser = {}) {
       customEndTime: selection.requestEndTime,
       customBreakMinutes: selection.breakMinutes,
       employeeTimeOverrides: [],
-      reason: `Generated from attendance verification. Actual OT: ${minutesToLabel(
-        selection.actualMinutes,
-      )}; policy-eligible OT: ${minutesToLabel(selection.eligibleMinutes)}; policy-rounded OT: ${minutesToLabel(
-        selection.roundedMinutes,
-      )}; policy: ${upper(selection.policyEvaluation?.calculationPolicyCode)} (${upper(
-        selection.policyEvaluation?.calculationPolicyRoundMethod,
-      )}/${Math.max(
-        0,
-        Math.round(Number(selection.policyEvaluation?.calculationPolicyRoundUnitMinutes || 0)),
-      )}m).`,
+      reason: requestReason,
     },
     generatedRequesterAuth,
   )
@@ -1422,7 +1545,25 @@ async function recoverVerificationOTRequest(payload = {}, authUser = {}) {
 
 async function listHistory(query = {}) {
   const filter = {}
-  if (s(query.attendanceDate)) filter.attendanceDate = s(query.attendanceDate)
+  const legacyAttendanceDate = normalizeYmd(query.attendanceDate)
+  const attendanceDateFrom = normalizeYmd(
+    query.attendanceDateFrom || legacyAttendanceDate,
+  )
+  const attendanceDateTo = normalizeYmd(
+    query.attendanceDateTo || legacyAttendanceDate,
+  )
+
+  if (attendanceDateFrom && attendanceDateTo) {
+    filter.attendanceDate = {
+      $gte: attendanceDateFrom,
+      $lte: attendanceDateTo,
+    }
+  } else if (attendanceDateFrom) {
+    filter.attendanceDate = { $gte: attendanceDateFrom }
+  } else if (attendanceDateTo) {
+    filter.attendanceDate = { $lte: attendanceDateTo }
+  }
+
   if (isObjectId(query.attendanceRecordId)) filter.attendanceRecordId = query.attendanceRecordId
   if (isObjectId(query.otRequestId)) {
     filter.$or = [
@@ -1504,6 +1645,7 @@ function buildExportRows(items = []) {
     'Request No': row.request?.requestNo || '',
     'Requester ID': row.request?.requesterEmployeeCode || '',
     Requester: row.request?.requesterName || '',
+    Reason: row.request?.reason || '',
     'Employee ID': row.employee?.employeeNo || '',
     Employee: row.employee?.employeeName || '',
     Line: row.employee?.lineName || '',
@@ -1529,7 +1671,7 @@ async function exportDailyVerification(query = {}) {
   const result = await listDailyVerification({
     ...query,
     page: 1,
-    limit: 5000,
+    limit: 50000,
   })
 
   const workbook = XLSX.utils.book_new()
@@ -1559,9 +1701,17 @@ async function exportDailyVerification(query = {}) {
   ]
   XLSX.utils.book_append_sheet(workbook, worksheet, 'OT Verification')
 
+  const exportFrom = result.attendanceDateFrom || s(query.attendanceDate) || ''
+  const exportTo = result.attendanceDateTo || exportFrom
+  const exportDateLabel = exportFrom
+    ? exportFrom === exportTo
+      ? exportFrom
+      : `${exportFrom}_to_${exportTo}`
+    : 'Export'
+
   return {
     buffer: XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }),
-    fileName: `OT_Verification_${s(query.attendanceDate) || 'Export'}.xlsx`,
+    fileName: `OT_Verification_${exportDateLabel}.xlsx`,
     summary: result.summary,
   }
 }
