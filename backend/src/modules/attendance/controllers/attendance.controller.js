@@ -1,6 +1,8 @@
 // backend/src/modules/attendance/controllers/attendance.controller.js
 
 const attendanceService = require('../services/attendance.service')
+const attendanceImportService = require('../services/attendanceImport.service')
+const attendanceRecordService = require('../services/attendanceRecord.service')
 const { successResponse } = require('../../../shared/utils/apiResponse')
 
 const {
@@ -29,7 +31,7 @@ function setExcelHeaders(res, filename) {
 async function importAttendanceExcel(req, res, next) {
   try {
     const payload = parse(createAttendanceImportSchema, req.body || {})
-    const result = await attendanceService.importExcel(req.file, payload, req.user)
+    const result = await attendanceImportService.importExcel(req.file, payload, req.user)
 
     return successResponse(res, result, 201)
   } catch (error) {
@@ -39,7 +41,7 @@ async function importAttendanceExcel(req, res, next) {
 
 async function downloadAttendanceImportSample(req, res, next) {
   try {
-    const result = await attendanceService.downloadImportSample()
+    const result = await attendanceImportService.downloadImportSample()
 
     setExcelHeaders(res, result.filename)
 
@@ -52,7 +54,7 @@ async function downloadAttendanceImportSample(req, res, next) {
 async function listAttendanceImports(req, res, next) {
   try {
     const query = parse(listAttendanceImportsQuerySchema, req.query || {})
-    const result = await attendanceService.listImports(query)
+    const result = await attendanceImportService.listImports(query)
 
     return successResponse(res, result)
   } catch (error) {
@@ -63,7 +65,7 @@ async function listAttendanceImports(req, res, next) {
 async function getAttendanceImportById(req, res, next) {
   try {
     const params = parse(attendanceImportIdParamSchema, req.params || {})
-    const result = await attendanceService.getImportById(params.id)
+    const result = await attendanceImportService.getImportById(params.id)
 
     return successResponse(res, result)
   } catch (error) {
@@ -74,7 +76,7 @@ async function getAttendanceImportById(req, res, next) {
 async function listAttendanceRecords(req, res, next) {
   try {
     const query = parse(listAttendanceRecordsQuerySchema, req.query || {})
-    const result = await attendanceService.listRecords(query)
+    const result = await attendanceRecordService.listRecords(query)
 
     return successResponse(res, result)
   } catch (error) {
@@ -85,7 +87,7 @@ async function listAttendanceRecords(req, res, next) {
 async function getAttendanceRecordById(req, res, next) {
   try {
     const params = parse(attendanceRecordIdParamSchema, req.params || {})
-    const result = await attendanceService.getRecordById(params.id)
+    const result = await attendanceRecordService.getRecordById(params.id)
 
     return successResponse(res, result)
   } catch (error) {

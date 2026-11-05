@@ -2099,7 +2099,6 @@ export default {
 
       approvalStatus: 'ស្ថានភាពអនុម័ត',
       approvedBy: 'អនុម័តដោយ',
-      reason: 'មូលហេតុ',
       staff: 'បុគ្គលិក',
       staffCount: 'បុគ្គលិក {count}',
       timing: 'ពេលវេលា',
@@ -2211,9 +2210,13 @@ export default {
 
         reason: '5. មូលហេតុ',
         optional: 'មិនចាំបាច់',
-        reasonRequired: 'សូមបញ្ចូលមូលហេតុ។',
         reasonPlaceholder:
           'ឧទាហរណ៍៖ ការបញ្ជាទិញបន្ទាន់, ថ្ងៃកំណត់ដឹកជញ្ជូន...',
+        selectReason: 'ជ្រើសរើសមូលហេតុ',
+        reasonOptions: {
+          shipProduct: 'បញ្ជូនផលិតផល',
+          other: 'ផ្សេងៗ',
+        },
 
         validationTitle: 'ពិនិត្យ Form',
         waitAvailability: 'សូមរង់ចាំរហូតដល់ពិនិត្យភាពអាចប្រើ OT បានបញ្ចប់។',
@@ -2604,7 +2607,6 @@ export default {
         breakMinutesTooLarge:
           'នាទីសម្រាកមិនអាចធំជាង ឬស្មើរយៈពេល OT បានទេ។',
 
-        reasonRequired: 'សូមបញ្ចូលមូលហេតុ។',
         reasonTooLong: 'មូលហេតុមិនត្រូវលើស 2000 តួអក្សរ។',
         remarkTooLong: 'កំណត់ចំណាំមិនត្រូវលើស 1000 តួអក្សរ។',
 

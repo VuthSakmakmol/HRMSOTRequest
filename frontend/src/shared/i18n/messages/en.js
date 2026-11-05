@@ -77,7 +77,7 @@ export default {
     notifications: 'Notifications',
     language: 'Language',
 
-    status: {
+    statusValue: {
       active: 'Active',
       inactive: 'Inactive',
       unknown: 'Unknown',
@@ -2121,7 +2121,6 @@ export default {
 
       approvalStatus: 'Approval Status',
       approvedBy: 'Approved By',
-      reason: 'Reason',
       staff: 'Staff',
       staffCount: '{count} staff',
       timing: 'Timing',
@@ -2232,9 +2231,13 @@ export default {
 
         reason: 'Reason',
         optional: 'Optional',
-        reasonRequired: 'Please enter reason.',
         reasonPlaceholder:
           'Example: urgent production order, shipment deadline...',
+        selectReason: 'Select reason',
+        reasonOptions: {
+          shipProduct: 'Ship Product',
+          other: 'Other',
+        },
 
         validationTitle: 'Check form',
         waitAvailability: 'Please wait until OT availability check finishes.',
@@ -2629,7 +2632,6 @@ export default {
         breakMinutesTooLarge:
           'Break minutes cannot be greater than or equal to OT duration.',
 
-        reasonRequired: 'Please enter reason.',
         reasonTooLong: 'Reason must not be longer than 2000 characters.',
         remarkTooLong: 'Remark must not be longer than 1000 characters.',
 

@@ -100,9 +100,79 @@ const OT_DURATION_STEP_HOURS = 0.5
 const MIN_OT_DURATION_HOURS = 1
 const MAX_OT_DURATION_HOURS = 24
 const SHOW_REQUEST_REASON_FIELD = true
+const REQUEST_REASON_SHIP_PRODUCT = 'Ship Product'
+const REQUEST_REASON_OTHER = '__OTHER_REQUEST_REASON__'
+const REQUEST_REASON_SHIP_PRODUCT_ALIASES = new Set([
+  'Ship Product',
+  'បញ្ជូនផលិតផល',
+  'Ship Product = បញ្ជូនផលិតផល',
+])
 
 const toast = useToast()
 const { t, locale } = useI18n()
+
+const reasonChoice = ref('')
+const otherReason = ref('')
+
+const reasonOptions = computed(() => [
+  {
+    label: t('ot.requests.create.reasonOptions.shipProduct'),
+    value: REQUEST_REASON_SHIP_PRODUCT,
+  },
+  {
+    label: t('ot.requests.create.reasonOptions.other'),
+    value: REQUEST_REASON_OTHER,
+  },
+])
+
+watch(
+  () => props.form.reason,
+  (value) => {
+    const reason = String(value || '').trim()
+
+    if (REQUEST_REASON_SHIP_PRODUCT_ALIASES.has(reason)) {
+      if (reasonChoice.value !== REQUEST_REASON_SHIP_PRODUCT) {
+        reasonChoice.value = REQUEST_REASON_SHIP_PRODUCT
+      }
+      if (otherReason.value) otherReason.value = ''
+      return
+    }
+
+    if (reason) {
+      if (reasonChoice.value !== REQUEST_REASON_OTHER) {
+        reasonChoice.value = REQUEST_REASON_OTHER
+      }
+      if (otherReason.value !== reason) otherReason.value = reason
+      return
+    }
+
+    // Keep the Other option selected while the requester is about to type.
+    if (reasonChoice.value !== REQUEST_REASON_OTHER) {
+      reasonChoice.value = ''
+      if (otherReason.value) otherReason.value = ''
+    }
+  },
+  { immediate: true },
+)
+
+watch(reasonChoice, (value) => {
+  if (value === REQUEST_REASON_SHIP_PRODUCT) {
+    props.form.reason = REQUEST_REASON_SHIP_PRODUCT
+    return
+  }
+
+  if (value === REQUEST_REASON_OTHER) {
+    props.form.reason = String(otherReason.value || '').trim()
+    return
+  }
+
+  props.form.reason = ''
+})
+
+watch(otherReason, (value) => {
+  if (reasonChoice.value !== REQUEST_REASON_OTHER) return
+  props.form.reason = String(value || '').trim()
+})
 
 const loadingCalendar = ref(false)
 const monthHolidayRows = ref([])
@@ -953,11 +1023,21 @@ onMounted(() => {
               <span class="ot-required-star">*</span>
             </label>
 
-            <Textarea
-              v-model.trim="props.form.reason"
-              rows="5"
-              auto-resize
+            <Select
+              v-model="reasonChoice"
+              :options="reasonOptions"
+              option-label="label"
+              option-value="value"
               class="w-full"
+              :placeholder="t('ot.requests.create.selectReason')"
+            />
+
+            <Textarea
+              v-if="reasonChoice === REQUEST_REASON_OTHER"
+              v-model="otherReason"
+              rows="4"
+              auto-resize
+              class="w-full ot-reason-other-input"
               maxlength="2000"
               required
               :placeholder="t('ot.requests.create.reasonPlaceholder')"
@@ -976,6 +1056,10 @@ onMounted(() => {
 
 .ot-setup-card {
   overflow: hidden;
+}
+
+.ot-reason-other-input {
+  margin-top: 0.55rem;
 }
 
 .ot-setup-head {

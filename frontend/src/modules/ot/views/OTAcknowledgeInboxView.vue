@@ -36,6 +36,24 @@ import {
 } from '@/modules/ot/otDisplay'
 
 const { t, te } = useI18n()
+
+const REQUEST_REASON_SHIP_PRODUCT_ALIASES = new Set([
+  'Ship Product',
+  'បញ្ជូនផលិតផល',
+  'Ship Product = បញ្ជូនផលិតផល',
+])
+
+function displayOTReason(value) {
+  const reason = String(value || '').trim()
+  if (!reason) return ''
+
+  if (REQUEST_REASON_SHIP_PRODUCT_ALIASES.has(reason)) {
+    const translated = t('ot.requests.create.reasonOptions.shipProduct')
+    return translated === 'ot.requests.create.reasonOptions.shipProduct' ? 'Ship Product' : translated
+  }
+
+  return reason
+}
 const toast = useToast()
 
 const PAGE_SIZE = 10
@@ -916,9 +934,9 @@ onBeforeUnmount(() => {
             <template #body="{ data }">
               <div
                 class="ot-reason-cell"
-                :title="String(data?.reason || '').trim()"
+                :title="displayOTReason(data?.reason)"
               >
-                {{ String(data?.reason || '').trim() }}
+                {{ displayOTReason(data?.reason) }}
               </div>
             </template>
           </Column>

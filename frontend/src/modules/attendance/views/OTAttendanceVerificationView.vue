@@ -57,8 +57,40 @@ const historyLoading = ref(false)
 
 const createRequestVisible = ref(false)
 const createRequestRow = ref(null)
-const createRequestReason = ref('')
+const createRequestReasonChoice = ref('')
+const createRequestOtherReason = ref('')
 const createRequestSubmitting = ref(false)
+
+const REQUEST_REASON_SHIP_PRODUCT = 'Ship Product'
+const REQUEST_REASON_OTHER = '__OTHER_REQUEST_REASON__'
+const REQUEST_REASON_SHIP_PRODUCT_ALIASES = new Set([
+  'Ship Product',
+  'បញ្ជូនផលិតផល',
+  'Ship Product = បញ្ជូនផលិតផល',
+])
+
+const createRequestReasonOptions = computed(() => [
+  {
+    label: tx('ot.requests.create.reasonOptions.shipProduct', 'Ship Product'),
+    value: REQUEST_REASON_SHIP_PRODUCT,
+  },
+  {
+    label: tx('ot.requests.create.reasonOptions.other', 'Other'),
+    value: REQUEST_REASON_OTHER,
+  },
+])
+
+const createRequestReason = computed(() => {
+  if (createRequestReasonChoice.value === REQUEST_REASON_SHIP_PRODUCT) {
+    return REQUEST_REASON_SHIP_PRODUCT
+  }
+
+  if (createRequestReasonChoice.value === REQUEST_REASON_OTHER) {
+    return s(createRequestOtherReason.value)
+  }
+
+  return ''
+})
 
 const summary = ref(emptySummary())
 const todayYmd = toApiDate(new Date(), '')
@@ -76,6 +108,17 @@ const filters = reactive({
 function tx(key, fallback, params = {}) {
   const translated = t(key, params)
   return translated === key ? fallback : translated
+}
+
+function displayOTReason(value) {
+  const reason = s(value)
+  if (!reason) return ''
+
+  if (REQUEST_REASON_SHIP_PRODUCT_ALIASES.has(reason)) {
+    return tx('ot.requests.create.reasonOptions.shipProduct', 'Ship Product')
+  }
+
+  return reason
 }
 
 const resultOptions = computed(() => [
@@ -509,7 +552,8 @@ function actionMessage(row, action) {
 
 function openCreateRequestDialog(row) {
   createRequestRow.value = row
-  createRequestReason.value = ''
+  createRequestReasonChoice.value = ''
+  createRequestOtherReason.value = ''
   createRequestVisible.value = true
 }
 
@@ -517,7 +561,8 @@ function closeCreateRequestDialog() {
   if (createRequestSubmitting.value) return
   createRequestVisible.value = false
   createRequestRow.value = null
-  createRequestReason.value = ''
+  createRequestReasonChoice.value = ''
+  createRequestOtherReason.value = ''
 }
 
 async function submitCreateRequest() {
@@ -560,7 +605,8 @@ async function submitCreateRequest() {
 
     createRequestVisible.value = false
     createRequestRow.value = null
-    createRequestReason.value = ''
+    createRequestReasonChoice.value = ''
+    createRequestOtherReason.value = ''
     await reload()
   } catch (error) {
     toast.add({
@@ -1051,9 +1097,9 @@ onBeforeUnmount(() => window.clearTimeout(filterTimer))
             <template #body="{ data }">
               <span
                 class="attendance-reason-text"
-                :title="String(data?.request?.reason || '').trim()"
+                :title="displayOTReason(data?.request?.reason)"
               >
-                {{ String(data?.request?.reason || '').trim() }}
+                {{ displayOTReason(data?.request?.reason) }}
               </span>
             </template>
           </Column>
@@ -1278,8 +1324,19 @@ onBeforeUnmount(() => window.clearTimeout(filterTimer))
             <span class="attendance-required-mark">*</span>
           </span>
 
+          <Select
+            v-model="createRequestReasonChoice"
+            :options="createRequestReasonOptions"
+            option-label="label"
+            option-value="value"
+            class="attendance-create-request-reason-select"
+            :placeholder="tx('ot.requests.create.selectReason', 'Select reason')"
+            :disabled="createRequestSubmitting"
+          />
+
           <Textarea
-            v-model="createRequestReason"
+            v-if="createRequestReasonChoice === REQUEST_REASON_OTHER"
+            v-model="createRequestOtherReason"
             rows="4"
             maxlength="2000"
             auto-resize
@@ -1711,9 +1768,14 @@ onBeforeUnmount(() => window.clearTimeout(filterTimer))
   color: rgb(220 38 38);
 }
 
+.attendance-create-request-reason-select {
+  width: 100%;
+}
+
 .attendance-create-request-reason {
   width: 100%;
   min-height: 6.5rem;
+  margin-top: 0.55rem;
   resize: vertical;
 }
 
