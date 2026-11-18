@@ -4,6 +4,10 @@ const mongoose = require('mongoose')
 
 const PaymentFormula = require('../models/PaymentFormula.model')
 
+const Employee = require('../../org/models/Employee')
+const Position = require('../../org/models/Position')
+const { findCurrentApprovalStep } = require('../../ot/services/otRequestPresenter.service')
+
 const OTRequest = require('../../ot/models/OTRequest')
 const OTCalculationPolicy = require('../../ot/models/OTCalculationPolicy')
 const ShiftOTOption = require('../../ot/models/ShiftOTOption')
@@ -676,6 +680,33 @@ async function fetchPaymentOTRequests(fromDate, toDate, selectedDates = []) {
     .lean()
 }
 
+async function loadPendingApproverLabels(otRequests) {
+  const pendingRequests = otRequests.filter((request) => normalizeStatus(request.status) === 'PENDING')
+  const approvers = pendingRequests.map((request) => {
+    const step = findCurrentApprovalStep(request)
+    return {
+      request,
+      step,
+      employeeId: s(request.currentApproverEmployeeId) || s(step?.approverEmployeeId),
+    }
+  })
+  const employeeIds = [...new Set(approvers.map(({ employeeId }) => employeeId).filter(Boolean))]
+  const employees = employeeIds.length
+    ? await Employee.find({ _id: { $in: employeeIds } })
+      .select('positionId')
+      .populate({ path: 'positionId', model: Position, select: 'code name' })
+      .lean()
+    : []
+  const positionByEmployeeId = new Map(employees.map((employee) => [s(employee._id), employee.positionId]))
+
+  for (const { request, step, employeeId } of approvers) {
+    const position = positionByEmployeeId.get(employeeId)
+    const stepMatchesApprover = !employeeId || s(step?.approverEmployeeId) === employeeId
+    request.pendingApproverLabel = s(position?.code) || s(position?.name) ||
+      (stepMatchesApprover ? s(step?.approverName) || s(step?.approverCode) : '')
+  }
+}
+
 function splitOTRequestsForPayment(otRequests = [], paymentRequiresFinalApproval = false) {
   const source = Array.isArray(otRequests) ? otRequests : []
 
@@ -1011,6 +1042,7 @@ function buildVerificationOTRequestPayload(otRequest, approvedEmployees = [], op
       storedDayType !== internalCalendarDayType,
 
     status: upper(otRequest.status),
+    pendingApproverLabel: otRequest.pendingApproverLabel,
 
     shiftId: otRequest.shiftId ? String(otRequest.shiftId) : null,
     shiftCode: upper(otRequest.shiftCode),
@@ -2064,6 +2096,7 @@ function buildApprovalRequiredAuditRow(otRequest = {}, employee = {}) {
     otDate: s(otRequest.otDate),
     otDateDisplay: formatYmdToDmy(otRequest.otDate),
     requestStatus: normalizeStatus(otRequest.status),
+    pendingApproverLabel: otRequest.pendingApproverLabel,
 
     employeeId: getObjectIdString(employee.employeeId),
     employeeNo: normalizeEmployeeNo(employee.employeeNo || employee.employeeCode),
@@ -2211,6 +2244,7 @@ function buildPaymentAuditRow({ otRequest = {}, employee = {}, salaryInfo = {}, 
     otDate: s(otRequest.otDate),
     otDateDisplay: formatYmdToDmy(otRequest.otDate),
     requestStatus: normalizeStatus(otRequest.status),
+    pendingApproverLabel: otRequest.pendingApproverLabel,
 
     employeeId: getObjectIdString(employee.employeeId),
     employeeNo: normalizeEmployeeNo(employee.employeeNo || employee.employeeCode),
@@ -2772,6 +2806,7 @@ async function buildPaymentPreview({
     toDate,
     effectiveSelectedDates,
   )
+  await loadPendingApproverLabels(candidateOtRequests)
   const {
     eligibleRequests: otRequests,
     excludedUnapprovedRequests,

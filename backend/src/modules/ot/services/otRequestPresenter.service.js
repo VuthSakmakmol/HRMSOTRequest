@@ -821,6 +821,7 @@ module.exports = {
 
   mapEmployeeOutput,
   mapApprovalStepOutput,
+  findCurrentApprovalStep,
 
   buildApprovalDisplay,
   buildApprovalActionContext,

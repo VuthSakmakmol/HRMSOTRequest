@@ -14,6 +14,7 @@ const { deriveAttendanceResult } = require('../utils/attendanceVerification')
 const otService = require('../../ot/services/ot.service')
 const otTimingService = require('../../ot/services/otTiming.service')
 const otAttendancePolicyService = require('./otAttendancePolicy.service')
+const { resolveAttendanceOTRequester } = require('./attendanceOTRequester.service')
 
 const ACTIVE_OT_STATUSES = ['PENDING', 'APPROVED']
 const VERIFICATION_ATTENDANCE_SOURCE = 'OT_VERIFICATION'
@@ -1326,19 +1327,7 @@ async function createOTRequestFromAttendance(payload = {}, authUser = {}) {
   }
 
   const employee = await loadEmployeeForVerification(asId(attendance.employeeId))
-  const managerId = asId(employee.reportsToEmployeeId)
-  if (!managerId) {
-    throw appError(
-      'Employee has no direct manager. Set Reports To before generating this OT request.',
-      409,
-      'EMPLOYEE_MANAGER_MISSING',
-    )
-  }
-
-  const manager = await Employee.findById(managerId).lean()
-  if (!manager || manager.isActive === false) {
-    throw appError('Employee direct manager is missing or inactive.', 409, 'EMPLOYEE_MANAGER_INVALID')
-  }
+  const requester = await resolveAttendanceOTRequester(employee)
 
   const activeDuplicate = await OTRequest.findOne({
     otDate: attendance.attendanceDate,
@@ -1372,7 +1361,7 @@ async function createOTRequestFromAttendance(payload = {}, authUser = {}) {
   // aligned and prevents unsupported values such as 1.25h from being created.
   const generatedRequesterAuth = {
     ...authUser,
-    employeeId: String(manager._id),
+    employeeId: String(requester._id),
     isRootAdmin: true,
   }
 
@@ -1411,9 +1400,9 @@ async function createOTRequestFromAttendance(payload = {}, authUser = {}) {
     attendanceRecordId: attendance._id,
     generatedOTRequestId: generatedDoc?._id || generatedId || null,
     generatedOTRequestNo: generatedDoc?.requestNo || created?.requestNo || '',
-    requesterEmployeeId: manager._id,
-    requesterEmployeeCode: manager.employeeCode,
-    requesterName: manager.displayName,
+    requesterEmployeeId: requester._id,
+    requesterEmployeeCode: requester.employeeCode,
+    requesterName: requester.displayName,
     before: mapAttendance(attendance),
     after: generatedDoc || created || null,
     createdBy: actorAccountId,
@@ -1424,9 +1413,9 @@ async function createOTRequestFromAttendance(payload = {}, authUser = {}) {
     otRequest: {
       id: generatedId || null,
       requestNo: upper(generatedDoc?.requestNo || created?.requestNo),
-      requesterEmployeeId: String(manager._id),
-      requesterEmployeeCode: upper(manager.employeeCode),
-      requesterName: s(manager.displayName),
+      requesterEmployeeId: String(requester._id),
+      requesterEmployeeCode: upper(requester.employeeCode),
+      requesterName: s(requester.displayName),
       otDate: attendance.attendanceDate,
       status: upper(generatedDoc?.status || created?.status || 'PENDING'),
       scanOut: s(attendance.clockOut),

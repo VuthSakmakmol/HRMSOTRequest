@@ -475,7 +475,6 @@ function getReportSplitLabel(data = {}) {
     : names.join(', ')
   const positionText = displayedNames ? `: ${displayedNames}` : ''
 
-  if (type === 'MAIN') return ` - MAIN REPORT (Separated positions excluded${positionText})`
   if (type === 'SEPARATE_POSITIONS') return ` - SEPARATED POSITION REPORT${positionText}`
 
   return ''
@@ -1497,7 +1496,7 @@ function addSummaryRows(worksheet, data = {}, detailSheets = [], denominations =
 
 
 function setAuditColumns(worksheet) {
-  const widths = [4.5, 12, 13, 12, 20, 10, 18, 16, 13, 10, 13, 10, 10, 11, 10, 18, 11, 11, 11, 12, 12, 35]
+  const widths = [4.5, 12, 13, 12, 20, 10, 18, 16, 19, 10, 13, 10, 10, 11, 10, 18, 11, 11, 11, 12, 12, 35]
 
   widths.forEach((width, index) => {
     worksheet.getColumn(index + 1).width = width
@@ -1608,7 +1607,11 @@ function addAllRequestAuditSheet(workbook, data = {}) {
     row.getCell(6).value = auditLineValue(item)
     row.getCell(7).value = s(item.departmentName)
     row.getCell(8).value = s(item.positionName)
-    row.getCell(9).value = upper(item.requestStatus)
+    const requestStatus = upper(item.requestStatus)
+    const pendingApprover = s(item.pendingApproverLabel)
+    row.getCell(9).value = requestStatus === 'PENDING' && pendingApprover
+      ? `PENDING ${pendingApprover}`
+      : requestStatus
     row.getCell(10).value = formatHourValue(item.requestedHours)
     row.getCell(11).value = auditAttendanceStatus(item)
     row.getCell(12).value = s(item.clockIn)
